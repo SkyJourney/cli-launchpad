@@ -2,10 +2,11 @@ node_modules/
 dist/
 dist-ssr/
 target/
+src-tauri/target/
 .vite/
+.idea/
 .DS_Store
 *.log
 *.sqlite
 *.sqlite3
 src-tauri/gen/
-

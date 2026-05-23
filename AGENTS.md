@@ -1,40 +1,68 @@
-# Agent Notes
+# Agent 说明
 
-## Working Principles
+## 工作原则
 
-- Keep this app lightweight. Do not introduce Electron or a server runtime.
-- Prefer the existing Tauri + React + Rust structure.
-- Keep user data in SQLite unless it is clearly device-only UI state.
-- Keep launch logic in Rust services, not React components.
-- Avoid ad hoc command string concatenation. Build argument lists and quote only at the shell boundary.
+- 保持应用轻量，不引入 Electron 或服务端运行时。
+- 优先沿用现有 Tauri + React + Rust 结构。
+- 除非明确是设备本地 UI 状态，否则用户数据保存在 SQLite 中。
+- 启动逻辑放在 Rust services 中，不放在 React 组件里。
+- 避免临时拼接命令字符串。应先构造参数列表，只在 Shell 边界做必要转义。
 
-## Architecture
+## 架构边界
 
-- `src/` owns presentation state and calls Tauri commands.
-- `src-tauri/src/commands/` exposes small IPC entry points.
-- `src-tauri/src/services/` owns behavior such as command composition and validation.
-- `src-tauri/src/db/` owns SQLite schema, connection, and repositories.
-- `src-tauri/src/platform/` owns OS-specific command launch details.
+- `src/` 负责展示状态，并调用 Tauri commands。
+- `src-tauri/src/commands/` 暴露小而清晰的 IPC 入口。
+- `src-tauri/src/services/` 负责命令组合、校验等行为逻辑。
+- `src-tauri/src/db/` 负责 SQLite schema、连接和 repositories。
+- `src-tauri/src/platform/` 负责操作系统相关的命令启动细节。
 
-## Safety Rules
+## 安全规则
 
-- Treat configured directories as user-controlled input.
-- Use PowerShell `Set-Location -LiteralPath` for Windows paths.
-- Preview launch commands in the UI before executing.
-- Do not store secrets in SQLite. Use OS credential storage if secrets become necessary.
-- Never add destructive git or filesystem behavior without explicit user request.
+- 将用户配置的目录视为不可信输入。
+- Windows 路径使用 PowerShell `Set-Location -LiteralPath`。
+- 执行启动前，必须在 UI 中预览最终命令。
+- 不要把密钥存进 SQLite；如果后续需要密钥，使用系统凭据存储。
+- 未经用户明确要求，不要加入破坏性的 git 或文件系统行为。
 
-## Development
+## 开发约定
+
+项目使用 pnpm 作为 Node 包管理器。不要引入 `package-lock.json`、`yarn.lock` 或其他包管理器锁文件。
 
 ```powershell
-npm install
-npm run tauri dev
+pnpm install
+pnpm tauri dev
 ```
 
-Run formatting before larger commits:
+较大提交前运行格式化：
 
 ```powershell
-npm run format
+pnpm run format
 cargo fmt --manifest-path src-tauri/Cargo.toml
 ```
 
+单独检查 Rust 依赖和编译状态：
+
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+## 本地工具链
+
+Windows 开发环境应具备：
+
+- Node.js
+- pnpm
+- rustup + Rust stable
+- Cargo
+- WebView2 Runtime
+- Visual Studio Build Tools 2022
+- MSVC C++ x64/x86 编译工具
+- Windows SDK
+
+VS Build Tools 自带的 CMake 和 Ninja 可以作为编译辅助工具；当前项目不要求它们在普通 PATH 中可见。
+
+## 打包约定
+
+项目目标包括构建为公司内部使用的 Windows 安装包。打包前需要补齐 Tauri 图标资源，例如 `src-tauri/icons/icon.ico`。
+
+后续根据内部分发策略选择 MSI 或 EXE 安装器，并按 Tauri Windows 打包要求补齐 WiX、NSIS 或相关工具链。

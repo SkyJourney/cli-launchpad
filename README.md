@@ -1,23 +1,23 @@
 # CLI Launchpad
 
-CLI Launchpad is a lightweight desktop launcher for opening frequently used project directories with Antigravity CLI, Codex CLI, or Claude Code CLI.
+CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。
 
-The project follows a Tauri-style architecture inspired by CC-Switch:
+项目采用 Tauri 风格架构，参考 CC-Switch 的组织方式：
 
-- React + TypeScript for the desktop UI.
-- Rust/Tauri commands for filesystem, SQLite, and process launching.
-- SQLite as the single source of truth for directories, tools, shell profiles, and per-directory arguments.
-- Device-local UI preferences can later live in JSON/Tauri store.
+- React + TypeScript 负责桌面 UI。
+- Rust/Tauri commands 负责文件系统访问、SQLite 读写和进程启动。
+- SQLite 作为目录、工具、Shell 配置和目录级参数的单一数据源。
+- 设备本地 UI 偏好后续可以放在 JSON 或 Tauri store 中。
 
-## Goals
+## 目标
 
-- Cache frequently used directories in SQLite.
-- Launch a configured CLI in the selected directory with one click.
-- Keep shell parameters, global CLI parameters, and directory-specific CLI parameters decoupled.
-- Prefer a small desktop footprint over Electron-style packaging.
-- Make the final command previewable before launching.
+- 将常用目录缓存在 SQLite 中。
+- 在选中目录中一键启动配置好的 CLI 工具。
+- 将 Shell 参数、全局 CLI 参数和目录专属 CLI 参数解耦。
+- 保持桌面应用体积轻量，不引入 Electron 或服务端运行时。
+- 在真正启动前，让用户可以预览最终命令。
 
-## Planned Stack
+## 技术栈
 
 - Tauri 2
 - React
@@ -25,37 +25,65 @@ The project follows a Tauri-style architecture inspired by CC-Switch:
 - Vite
 - Rust
 - rusqlite
-- Windows Terminal / PowerShell integration
+- Windows Terminal / PowerShell 集成
 
-The current repository is a deliberate skeleton. Dependencies are declared, but not installed.
+## 本地依赖
 
-## First Run
+需要提前安装：
 
-After installing Node.js, Rust, and the Tauri prerequisites:
+- Node.js
+- pnpm
+- Rust stable 工具链，推荐通过 rustup 安装
+- Visual Studio Build Tools 2022
+- MSVC C++ x64/x86 编译工具
+- Windows SDK
+- WebView2 Runtime
+
+当前项目使用 pnpm 作为 Node 包管理器。不要混用 npm、yarn 或其他锁文件。
+
+## 首次运行
+
+安装 Node 依赖：
 
 ```powershell
-npm install
-npm run tauri dev
+pnpm install
 ```
 
-## Project Layout
+启动 Tauri 开发环境：
+
+```powershell
+pnpm tauri dev
+```
+
+如果需要单独检查 Rust 依赖：
+
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+## 打包说明
+
+项目设计目标包括编译为公司内部使用的 Windows 安装包。正式打包前需要补齐 Tauri 图标资源，例如 `src-tauri/icons/icon.ico`。
+
+当前 `src-tauri/tauri.conf.json` 中启用了 bundle，后续可根据内部分发策略选择 MSI 或 EXE 安装器，并按 Tauri Windows 打包要求补齐 WiX、NSIS 或相关工具链。
+
+## 项目结构
 
 ```text
-docs/                         Product and architecture notes
+docs/                         产品和架构说明
 src/                          React UI
-src-tauri/                    Tauri/Rust backend
-src-tauri/migrations/         SQLite migrations
-src-tauri/src/commands/       IPC commands exposed to the UI
-src-tauri/src/services/       Business logic
-src-tauri/src/db/             DB connection and repositories
-src-tauri/src/platform/       OS-specific launch helpers
+src-tauri/                    Tauri/Rust 后端
+src-tauri/migrations/         SQLite 迁移脚本
+src-tauri/src/commands/       暴露给 UI 的 IPC commands
+src-tauri/src/services/       业务逻辑
+src-tauri/src/db/             数据库连接和仓储
+src-tauri/src/platform/       平台相关启动逻辑
 ```
 
-## MVP Scope
+## MVP 范围
 
-- Directory CRUD.
-- Tool configuration for Antigravity, Codex, and Claude Code.
-- Shell profile configuration.
-- Command preview.
-- One-click launch into a terminal session.
-
+- 目录增删改查。
+- Antigravity、Codex 和 Claude Code 的工具配置。
+- Shell profile 配置。
+- 命令预览。
+- 一键启动终端会话。
