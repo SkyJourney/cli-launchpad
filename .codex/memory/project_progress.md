@@ -1,9 +1,9 @@
 ---
 name: 项目进度
-description: 当前完成状态、未提交变更和近期待办
+description: 当前完成状态和近期待办
 type: project
 last_updated: 2026-05-23
-commit: a2fbb54
+commit: b99a354
 ---
 
 # 项目进度
@@ -17,19 +17,7 @@ commit: a2fbb54
 - `README.md` 和 `AGENTS.md` 已中文化。
 - `docs/` 已更新为中文，并围绕 `claude`、`codex`、`agy` 收窄产品范围。
 - 官方资料已同步到文档：Claude、Codex、Antigravity 的命令和安装来源。
-
-## 当前未提交变更
-
-本次记忆初始化前，工作区已有未提交文档变更：
-
-- `AGENTS.md`
-- `docs/adr-0001-technology-stack.md`
-- `docs/architecture.md`
-- `docs/product-requirements.md`
-- `docs/roadmap.md`
-- `docs/tooling-and-installation.md`
-
-记忆文件本身是本次新增内容，不应自动提交，除非用户明确要求。
+- 文档与记忆初始化已提交到 `main`，当前记忆同步以 `b99a354` 作为 Base commit。
 
 ## 近期待办
 

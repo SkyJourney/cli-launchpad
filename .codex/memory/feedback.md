@@ -3,7 +3,7 @@ name: 协作反馈
 description: 用户协作偏好、范围纠正和执行约束
 type: feedback
 last_updated: 2026-05-23
-commit: a2fbb54
+commit: b99a354
 ---
 
 # 协作反馈

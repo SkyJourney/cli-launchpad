@@ -1,21 +1,22 @@
 # Memory Lint Report
-> _Last checked: 2026-05-23 | Base commit: `a2fbb54`_
+> _Last checked: 2026-05-23 | Base commit: `b99a354`_
 
 ## 健康概览
 
 - 记忆目录：`.codex/memory/`
-- 索引文件：5
-- 磁盘记忆文件：5
+- 索引文件：6
+- 磁盘记忆文件：6
 - 孤儿：0
 - 幽灵：0
 - NEED-HUMAN：0
 
 ## AUTO-FIX 已执行
 
-- 首次初始化索引。
-- 首次写入项目、决策、进度、反馈和参考资料记忆。
+- 按新版 `memory-sync` 约束补充 `AGENTS.md` 的会话启动记忆引导。
+- 将 `MEMORY.md` 和记忆文件 commit 锚点刷新为 `b99a354`。
+- 将 `lint_report.md` 补入 `MEMORY.md` 索引。
+- 移除 `project_progress.md` 中已过期的未提交变更段落。
 - 刷新 `MEMORY.md` 引用计数，并按引用次数排序。
-- 补齐高置信双向引用链接。
 
 ## 条目级高频引用 Top
 
@@ -26,3 +27,8 @@
 ## NEED-HUMAN
 
 无。
+
+## 未执行项或跳过项
+
+- 本次未创建 `synthesis_*.md`；高频引用条目仅作为候选保留。
+- 未修改业务代码或 Tauri 配置。

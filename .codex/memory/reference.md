@@ -3,7 +3,7 @@ name: 参考资料
 description: 官方 CLI 文档调研摘要和外部依据
 type: reference
 last_updated: 2026-05-23
-commit: a2fbb54
+commit: b99a354
 ---
 
 # 参考资料

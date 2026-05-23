@@ -3,7 +3,7 @@ name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
 last_updated: 2026-05-23
-commit: a2fbb54
+commit: b99a354
 ---
 
 # 项目决策

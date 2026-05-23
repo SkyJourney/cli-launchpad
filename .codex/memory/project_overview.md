@@ -3,7 +3,7 @@ name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
 last_updated: 2026-05-23
-commit: a2fbb54
+commit: b99a354
 ---
 
 # 项目概览

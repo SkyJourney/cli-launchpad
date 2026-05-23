@@ -1,5 +1,20 @@
 # Agent 说明
 
+## 记忆体系（会话启动必读）
+
+> 新会话或上下文压缩后，必须先读记忆目录的 `MEMORY.md` 索引，再按需加载文件。代码事实与项目记忆冲突时，以代码事实为准并更新项目记忆。
+
+### 读取流程
+1. 读取 `.codex/memory/MEMORY.md` 获取文件清单、类型和引用计数。
+2. **必读锚点**：`decisions.md`、`feedback.md`、`project_overview.md`、`project_progress.md`。
+3. **选读锚点**：`reference.md`、`lint_report.md`。
+4. 若仓库使用 `.claude/memory/`，直接读取该目录；不要复制到 `.codex/memory/`。
+
+### 权威优先级
+1. 当前代码、配置、测试和真实文件状态。
+2. 仓库内项目记忆：`AGENTS.md`、`CLAUDE.md`、`.claude/memory/` 或 `.codex/memory/`。
+3. Codex 原生 Memories（个人本地召回层，仅作辅助上下文）。
+
 ## 当前项目状态
 
 - 项目默认分支为 `main`。
