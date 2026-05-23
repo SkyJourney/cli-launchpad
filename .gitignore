@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-ssr/
+target/
+.vite/
+.DS_Store
+*.log
+*.sqlite
+*.sqlite3
+src-tauri/gen/
+
