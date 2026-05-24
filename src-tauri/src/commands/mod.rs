@@ -1,4 +1,5 @@
 pub mod cli_status;
+pub mod config;
 pub mod directory;
 pub mod install;
 pub mod launch;

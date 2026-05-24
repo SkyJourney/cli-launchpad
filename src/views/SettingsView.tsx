@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, RefreshCw } from "lucide-react";
+import { ArrowLeft, Copy, Download, RefreshCw, Upload } from "lucide-react";
 import clsx from "clsx";
 import { useState } from "react";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
+import { copyText } from "../lib/clipboard";
 import { hasUpdate } from "../lib/format";
 import { TOOLS } from "../lib/tools";
 import {
+  exportConfig,
   fetchLatestVersions,
   getInstallPlan,
+  importConfig,
   runInstall,
   type CliAvailability,
   type InstallKind,
@@ -52,6 +55,24 @@ export function SettingsView() {
 
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [outcome, setOutcome] = useState<InstallOutcome | null>(null);
+
+  const [exportText, setExportText] = useState("");
+  const [importText, setImportText] = useState("");
+
+  const exportMutation = useMutation({
+    mutationFn: exportConfig,
+    onSuccess: (json) => setExportText(json),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (json: string) => importConfig(json),
+    onSuccess: () => {
+      setImportText("");
+      queryClient.invalidateQueries({ queryKey: ["directories"] });
+      queryClient.invalidateQueries({ queryKey: ["tools"] });
+      queryClient.invalidateQueries({ queryKey: ["directory-tool-args"] });
+    },
+  });
 
   const startAction = async (toolKey: ToolKey, kind: InstallKind) => {
     setOutcome(null);
@@ -155,6 +176,56 @@ export function SettingsView() {
             </div>
           );
         })}
+      </section>
+
+      <section className="config-backup">
+        <div className="section-heading">配置备份</div>
+        <div className="config-actions">
+          <button
+            className="ghost-button"
+            onClick={() => exportMutation.mutate()}
+            disabled={exportMutation.isPending}
+          >
+            <Download size={15} />
+            导出配置
+          </button>
+          {exportText && (
+            <button
+              className="ghost-button"
+              onClick={() => void copyText(exportText)}
+            >
+              <Copy size={14} />
+              复制
+            </button>
+          )}
+        </div>
+        {exportText && (
+          <textarea className="config-text" readOnly value={exportText} />
+        )}
+
+        <p className="muted">
+          粘贴配置 JSON 后导入（按路径合并，不会重复添加目录）：
+        </p>
+        <textarea
+          className="config-text"
+          placeholder="在此粘贴导出的配置 JSON"
+          value={importText}
+          onChange={(event) => setImportText(event.target.value)}
+        />
+        <div className="config-actions">
+          <button
+            className="primary-button"
+            disabled={!importText.trim() || importMutation.isPending}
+            onClick={() => importMutation.mutate(importText)}
+          >
+            <Upload size={15} />
+            导入配置
+          </button>
+        </div>
+        {importMutation.isError && (
+          <p className="error">导入失败：{String(importMutation.error)}</p>
+        )}
+        {importMutation.isSuccess && <p className="muted">导入成功。</p>}
       </section>
 
       {pending && (

@@ -55,9 +55,18 @@ CLI 状态与版本
 
 Shell 配置
   get_shell_profiles / save_shell_profile
+
+配置备份
+  export_config / import_config   导出/导入目录、参数、工具全局参数（JSON）
 ```
 
 commands 保持小而清晰，业务组合放在 services。
+
+## 桌面集成
+
+- 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主窗口/退出"，左键点击托盘显示窗口。
+- 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置。
+- 打包：Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`），避免 WiX 依赖。
 
 ## 目标 CLI 范围
 

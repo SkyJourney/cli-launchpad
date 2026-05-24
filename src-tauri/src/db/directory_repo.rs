@@ -30,6 +30,11 @@ pub fn get(conn: &Connection, id: i64) -> rusqlite::Result<Option<Directory>> {
         .optional()
 }
 
+pub fn get_by_path(conn: &Connection, path: &str) -> rusqlite::Result<Option<Directory>> {
+    conn.query_row(&format!("{SELECT} where path = ?1"), params![path], map_row)
+        .optional()
+}
+
 pub fn add(
     conn: &Connection,
     name: &str,
@@ -54,6 +59,19 @@ pub fn update(conn: &Connection, id: i64, name: &str, note: Option<&str>) -> rus
 
 pub fn remove(conn: &Connection, id: i64) -> rusqlite::Result<()> {
     conn.execute("delete from directories where id = ?1", params![id])?;
+    Ok(())
+}
+
+pub fn set_pinned_and_note(
+    conn: &Connection,
+    id: i64,
+    pinned: bool,
+    note: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "update directories set pinned = ?2, note = ?3 where id = ?1",
+        params![id, i64::from(pinned), note],
+    )?;
     Ok(())
 }
 

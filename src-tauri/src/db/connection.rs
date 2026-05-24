@@ -20,7 +20,7 @@ pub fn init_database(path: &Path) -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
     let current: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
     for (version, sql) in MIGRATIONS {

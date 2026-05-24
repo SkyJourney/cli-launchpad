@@ -113,6 +113,15 @@ export function detectCliStatus() {
   return invoke<CliStatus[]>("detect_cli_status");
 }
 
+// Config backup
+export function exportConfig() {
+  return invoke<string>("export_config");
+}
+
+export function importConfig(json: string) {
+  return invoke<void>("import_config", { json });
+}
+
 // Version & install/update
 export function fetchLatestVersions() {
   return invoke<LatestVersion[]>("fetch_latest_versions");

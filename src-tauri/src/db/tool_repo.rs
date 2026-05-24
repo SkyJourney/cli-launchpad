@@ -37,3 +37,15 @@ pub fn get_by_key(conn: &Connection, key: ToolKey) -> rusqlite::Result<Option<To
     )
     .optional()
 }
+
+pub fn update_global_args(
+    conn: &Connection,
+    key: ToolKey,
+    global_args: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "update tools set global_args = ?2 where key = ?1",
+        params![key.as_str(), global_args],
+    )?;
+    Ok(())
+}
