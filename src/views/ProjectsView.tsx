@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Search } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, Plus, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ProjectCard } from "../components/ProjectCard";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
@@ -79,6 +80,28 @@ export function ProjectsView() {
     return sorted;
   }, [directories, search, sortMode]);
 
+  const pickFolder = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "选择项目目录",
+    });
+    if (typeof selected === "string") {
+      setNewPath(selected);
+      // Auto-fill the name from the folder basename when it is still empty.
+      if (!newName.trim()) {
+        const base =
+          selected
+            .replace(/[\\/]+$/, "")
+            .split(/[\\/]/)
+            .pop() ?? "";
+        if (base) {
+          setNewName(base);
+        }
+      }
+    }
+  };
+
   const handleLaunch = (id: number, toolKey: ToolKey) => {
     void launchTool(id, toolKey);
   };
@@ -143,10 +166,14 @@ export function ProjectsView() {
             onChange={(event) => setNewName(event.target.value)}
           />
           <input
-            placeholder="完整路径，例如 C:\\Projects\\my-app"
+            placeholder="完整路径，或点击「浏览」选择"
             value={newPath}
             onChange={(event) => setNewPath(event.target.value)}
           />
+          <button className="ghost-button" onClick={() => void pickFolder()}>
+            <FolderOpen size={15} />
+            浏览
+          </button>
           <button
             className="primary-button"
             disabled={!canSubmit || addMutation.isPending}

@@ -1,18 +1,49 @@
-import { Bot, Code2, Rocket, type LucideIcon } from "lucide-react";
+import type { ComponentType } from "react";
+// Import only the colored SVG sub-component + brand color, not each brand's
+// index barrel (which also pulls Avatar/Combine/Text/Mono and bloats the build).
+import AntigravityColor from "@lobehub/icons/es/Antigravity/components/Color";
+import { COLOR_PRIMARY as ANTIGRAVITY_COLOR } from "@lobehub/icons/es/Antigravity/style";
+import ClaudeCodeColor from "@lobehub/icons/es/ClaudeCode/components/Color";
+import { COLOR_PRIMARY as CLAUDE_COLOR } from "@lobehub/icons/es/ClaudeCode/style";
+import CodexColor from "@lobehub/icons/es/Codex/components/Color";
+import { COLOR_PRIMARY as CODEX_COLOR } from "@lobehub/icons/es/Codex/style";
 import type { ToolKey } from "./tauri";
+
+type IconComponent = ComponentType<{ size?: number | string }>;
 
 export interface ToolMeta {
   key: ToolKey;
   label: string;
   shortLabel: string;
-  icon: LucideIcon;
+  icon: IconComponent;
+  /// Official brand color, used for accents.
+  colorPrimary: string;
 }
 
-/// Display order across the app: Claude, Codex, Antigravity.
+/// Display order across the app: Claude, Codex, Antigravity. Icons are the
+/// official colored brand marks from @lobehub/icons.
 export const TOOLS: ToolMeta[] = [
-  { key: "claude", label: "Claude Code", shortLabel: "C", icon: Bot },
-  { key: "codex", label: "Codex", shortLabel: "X", icon: Code2 },
-  { key: "antigravity", label: "Antigravity", shortLabel: "A", icon: Rocket },
+  {
+    key: "claude",
+    label: "Claude Code",
+    shortLabel: "C",
+    icon: ClaudeCodeColor,
+    colorPrimary: CLAUDE_COLOR,
+  },
+  {
+    key: "codex",
+    label: "Codex",
+    shortLabel: "X",
+    icon: CodexColor,
+    colorPrimary: CODEX_COLOR,
+  },
+  {
+    key: "antigravity",
+    label: "Antigravity",
+    shortLabel: "A",
+    icon: AntigravityColor,
+    colorPrimary: ANTIGRAVITY_COLOR,
+  },
 ];
 
 /// Quick-select presets for Claude's `--model` flag.

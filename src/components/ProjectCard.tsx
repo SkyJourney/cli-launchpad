@@ -8,13 +8,11 @@ import type { CliAvailability, Directory, ToolKey } from "../lib/tauri";
 
 const STATUS_CLASS: Record<CliAvailability, string> = {
   available: "badge-available",
-  path_not_visible: "badge-warn",
   missing: "badge-missing",
 };
 
 const STATUS_TITLE: Record<CliAvailability, string> = {
   available: "已安装，可直接启动",
-  path_not_visible: "已安装但 PATH 不可见",
   missing: "未检测到，前往设置安装",
 };
 
@@ -49,11 +47,18 @@ export function ProjectCard({
   }, [confirmingRemove]);
 
   return (
-    <div className="project-card">
-      <button
-        className="project-card-main"
-        onClick={() => onOpen(directory.id)}
-      >
+    <div
+      className="project-card"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(directory.id)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          onOpen(directory.id);
+        }
+      }}
+    >
+      <div className="project-card-main">
         <div className="project-card-head">
           <strong>
             {directory.pinned && <span className="pin-mark">★</span>}
@@ -62,9 +67,10 @@ export function ProjectCard({
           <span className="muted">{formatRelative(directory.lastUsedAt)}</span>
         </div>
         <span className="project-card-path">{directory.path}</span>
-      </button>
+      </div>
 
-      <div className="badge-row">
+      {/* Stop propagation so launching a tool does not also open the detail view. */}
+      <div className="badge-row" onClick={(event) => event.stopPropagation()}>
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key]?.status ?? "missing";
           const launchable = status === "available";
@@ -76,14 +82,16 @@ export function ProjectCard({
               disabled={!launchable}
               onClick={() => onLaunch(directory.id, tool.key)}
             >
-              <tool.icon size={14} />
-              <span>{tool.shortLabel}</span>
+              <tool.icon size={16} />
             </button>
           );
         })}
       </div>
 
-      <div className="project-card-actions">
+      <div
+        className="project-card-actions"
+        onClick={(event) => event.stopPropagation()}
+      >
         <button
           className={clsx("icon-button", { active: directory.pinned })}
           title={directory.pinned ? "取消置顶" : "置顶"}

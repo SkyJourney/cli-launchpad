@@ -45,7 +45,7 @@ create table if not exists launch_history (
 
 insert or ignore into tools (key, display_name, executable)
 values
-  ('antigravity', 'Antigravity', 'antigravity'),
+  ('antigravity', 'Antigravity', 'agy'),
   ('codex', 'Codex', 'codex'),
   ('claude', 'Claude Code', 'claude');
 

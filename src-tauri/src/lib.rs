@@ -18,6 +18,8 @@ pub fn run() {
     tauri::Builder::default()
         // Restore and persist window size/position across launches.
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Native file/folder picker for the add-directory flow.
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -39,16 +41,18 @@ pub fn run() {
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
             commands::tool::list_tools,
+            commands::tool::save_tool_global_args,
             commands::cli_status::detect_cli_status,
             commands::install::fetch_latest_versions,
             commands::install::get_install_plan,
             commands::install::run_install,
             commands::shell::get_shell_profiles,
             commands::shell::save_shell_profile,
+            commands::shell::set_shell_kind,
             commands::tool_args::get_directory_tool_args,
             commands::tool_args::save_directory_tool_args,
-            commands::config::export_config,
-            commands::config::import_config,
+            commands::config::export_config_to_path,
+            commands::config::import_config_from_path,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run CLI Launchpad");

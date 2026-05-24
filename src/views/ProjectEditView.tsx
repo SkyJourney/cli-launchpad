@@ -131,7 +131,7 @@ export function ProjectEditView() {
             </div>
 
             <div className="edit-field">
-              <label className="muted">全局参数（只读）</label>
+              <label className="muted">全局参数（只读，在设置中修改）</label>
               <code className="readonly-args">{globalArgs || "（无）"}</code>
             </div>
 
@@ -158,6 +158,22 @@ export function ProjectEditView() {
                     </button>
                   ))}
                 </div>
+                <input
+                  value={claudeModel ?? ""}
+                  disabled={disabled}
+                  placeholder="或手动输入模型名（支持第三方模型）"
+                  onChange={(event) => {
+                    const value = event.target.value.trim();
+                    updateArgs(
+                      "claude",
+                      setFlagValue(
+                        args.claude,
+                        "--model",
+                        value === "" ? null : value,
+                      ),
+                    );
+                  }}
+                />
               </div>
             )}
 

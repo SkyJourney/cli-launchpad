@@ -25,6 +25,16 @@ impl ToolKey {
             _ => None,
         }
     }
+
+    /// Candidate commands to resolve, in priority order. Antigravity's official
+    /// command is `agy`; `antigravity` is only a conservative compatibility probe.
+    pub fn command_candidates(self) -> &'static [&'static str] {
+        match self {
+            ToolKey::Claude => &["claude"],
+            ToolKey::Codex => &["codex"],
+            ToolKey::Antigravity => &["agy", "antigravity"],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

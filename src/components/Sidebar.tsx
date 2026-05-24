@@ -1,4 +1,4 @@
-import { FolderKanban, Settings, Terminal } from "lucide-react";
+import { FolderKanban, Info, Settings, Terminal } from "lucide-react";
 import clsx from "clsx";
 import { useAppStore } from "../store/appStore";
 
@@ -30,6 +30,13 @@ export function Sidebar() {
         >
           <Settings size={16} />
           设置
+        </button>
+        <button
+          className={clsx("nav-item", { active: view === "about" })}
+          onClick={() => setView("about")}
+        >
+          <Info size={16} />
+          关于
         </button>
       </nav>
     </aside>

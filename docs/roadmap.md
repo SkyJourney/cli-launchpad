@@ -13,7 +13,7 @@
 
 ## 阶段 2：全局 CLI 状态与卡片主页
 
-- Rust 层实现 CLI 检测 service，得出 available / path_not_visible / missing。
+- Rust 层实现 CLI 检测 service，得出 available / missing（启动走全路径，不区分 PATH 可见性）。
 - 前端引入全局状态库，持有全局 CLI 状态和视图状态。
 - View A 项目主页：卡片网格、状态徽章、添加目录、排序、搜索、置顶。
 - 卡片徽章直接启动，缺失工具灰色禁用。

@@ -21,6 +21,8 @@ export interface Tool {
   enabled: boolean;
 }
 
+export type ShellKind = "wt-pwsh" | "pwsh" | "cmd";
+
 export interface ShellProfile {
   id: number;
   name: string;
@@ -29,6 +31,7 @@ export interface ShellProfile {
   shellArgs: string;
   initScript: string;
   isDefault: boolean;
+  kind: ShellKind;
 }
 
 export interface DirectoryToolArgs {
@@ -66,7 +69,7 @@ export interface LatestVersion {
   latest: string | null;
 }
 
-export type CliAvailability = "available" | "path_not_visible" | "missing";
+export type CliAvailability = "available" | "missing";
 
 export interface CliStatus {
   toolKey: ToolKey;
@@ -75,7 +78,6 @@ export interface CliStatus {
   resolvedCommand: string | null;
   version: string | null;
   latestVersion: string | null;
-  pathVisible: boolean;
 }
 
 // Directories
@@ -108,18 +110,22 @@ export function listTools() {
   return invoke<Tool[]>("list_tools");
 }
 
+export function saveToolGlobalArgs(toolKey: ToolKey, args: string) {
+  return invoke<void>("save_tool_global_args", { toolKey, args });
+}
+
 // CLI detection
 export function detectCliStatus() {
   return invoke<CliStatus[]>("detect_cli_status");
 }
 
-// Config backup
-export function exportConfig() {
-  return invoke<string>("export_config");
+// Config backup (file-based)
+export function exportConfigToPath(path: string) {
+  return invoke<void>("export_config_to_path", { path });
 }
 
-export function importConfig(json: string) {
-  return invoke<void>("import_config", { json });
+export function importConfigFromPath(path: string) {
+  return invoke<void>("import_config_from_path", { path });
 }
 
 // Version & install/update
@@ -142,6 +148,10 @@ export function getShellProfiles() {
 
 export function saveShellProfile(profile: ShellProfile) {
   return invoke<void>("save_shell_profile", { profile });
+}
+
+export function setShellKind(kind: ShellKind) {
+  return invoke<void>("set_shell_kind", { kind });
 }
 
 // Directory-level tool arguments

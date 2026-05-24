@@ -1,35 +1,51 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, Download, RefreshCw, Upload } from "lucide-react";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { Download, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
-import { copyText } from "../lib/clipboard";
 import { hasUpdate } from "../lib/format";
 import { TOOLS } from "../lib/tools";
 import {
-  exportConfig,
+  exportConfigToPath,
   fetchLatestVersions,
   getInstallPlan,
-  importConfig,
+  getShellProfiles,
+  importConfigFromPath,
+  listTools,
   runInstall,
+  saveToolGlobalArgs,
+  setShellKind,
   type CliAvailability,
   type InstallKind,
   type InstallOutcome,
   type InstallPlan,
+  type ShellKind,
   type ToolKey,
 } from "../lib/tauri";
-import { useAppStore } from "../store/appStore";
+
+const SHELL_OPTIONS: { kind: ShellKind; label: string }[] = [
+  { kind: "wt-pwsh", label: "Windows Terminal + PowerShell" },
+  { kind: "pwsh", label: "PowerShell 窗口" },
+  { kind: "cmd", label: "CMD 窗口" },
+];
 
 const STATUS_LABEL: Record<CliAvailability, string> = {
-  available: "已安装 · PATH 可见",
-  path_not_visible: "已安装 · PATH 不可见",
+  available: "已安装",
   missing: "未检测到",
 };
 
 const STATUS_CLASS: Record<CliAvailability, string> = {
   available: "badge-available",
-  path_not_visible: "badge-warn",
   missing: "badge-missing",
+};
+
+type GlobalArgsMap = Record<ToolKey, string>;
+
+const EMPTY_GLOBAL_ARGS: GlobalArgsMap = {
+  claude: "",
+  codex: "",
+  antigravity: "",
 };
 
 interface PendingAction {
@@ -39,7 +55,6 @@ interface PendingAction {
 }
 
 export function SettingsView() {
-  const setView = useAppStore((state) => state.setView);
   const queryClient = useQueryClient();
   const cliStatus = useCliStatus();
   const statusByTool = indexByTool(cliStatus.data);
@@ -53,24 +68,83 @@ export function SettingsView() {
     latest.data?.map((entry) => [entry.toolKey, entry.latest]),
   );
 
+  const shellProfiles = useQuery({
+    queryKey: ["shell-profiles"],
+    queryFn: getShellProfiles,
+  });
+  const currentShellKind: ShellKind =
+    shellProfiles.data?.[0]?.kind ?? "wt-pwsh";
+  const shellKindMutation = useMutation({
+    mutationFn: (kind: ShellKind) => setShellKind(kind),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["shell-profiles"] }),
+  });
+
+  // Global tool args (apply to every project; project-level args override them).
+  const tools = useQuery({ queryKey: ["tools"], queryFn: listTools });
+  const [globalArgs, setGlobalArgs] =
+    useState<GlobalArgsMap>(EMPTY_GLOBAL_ARGS);
+  const seededGlobalArgs = useRef(false);
+  useEffect(() => {
+    if (!tools.data || seededGlobalArgs.current) {
+      return;
+    }
+    seededGlobalArgs.current = true;
+    const next = { ...EMPTY_GLOBAL_ARGS };
+    for (const tool of tools.data) {
+      next[tool.key] = tool.globalArgs;
+    }
+    setGlobalArgs(next);
+  }, [tools.data]);
+
+  const saveGlobalArgsMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(
+        TOOLS.map((tool) =>
+          saveToolGlobalArgs(tool.key, globalArgs[tool.key].trim()),
+        ),
+      );
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tools"] }),
+  });
+
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [outcome, setOutcome] = useState<InstallOutcome | null>(null);
 
-  const [exportText, setExportText] = useState("");
-  const [importText, setImportText] = useState("");
-
   const exportMutation = useMutation({
-    mutationFn: exportConfig,
-    onSuccess: (json) => setExportText(json),
+    mutationFn: async () => {
+      const path = await save({
+        defaultPath: "cli-launchpad-config.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) {
+        return false;
+      }
+      await exportConfigToPath(path);
+      return true;
+    },
   });
 
   const importMutation = useMutation({
-    mutationFn: (json: string) => importConfig(json),
-    onSuccess: () => {
-      setImportText("");
+    mutationFn: async () => {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof selected !== "string") {
+        return false;
+      }
+      await importConfigFromPath(selected);
+      return true;
+    },
+    onSuccess: (didImport) => {
+      if (!didImport) {
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["directories"] });
       queryClient.invalidateQueries({ queryKey: ["tools"] });
       queryClient.invalidateQueries({ queryKey: ["directory-tool-args"] });
+      seededGlobalArgs.current = false; // reseed global args from imported values
     },
   });
 
@@ -86,7 +160,6 @@ export function SettingsView() {
     onSuccess: (result) => {
       setOutcome(result);
       setPending(null);
-      // Re-detect status and latest versions after install/update.
       queryClient.invalidateQueries({ queryKey: ["cli-status"] });
       queryClient.invalidateQueries({ queryKey: ["latest-versions"] });
     },
@@ -94,11 +167,6 @@ export function SettingsView() {
 
   return (
     <div className="settings-view">
-      <button className="ghost-button" onClick={() => setView("projects")}>
-        <ArrowLeft size={15} />
-        返回
-      </button>
-
       <header className="detail-head settings-head">
         <h1>设置</h1>
         <button
@@ -178,8 +246,66 @@ export function SettingsView() {
         })}
       </section>
 
+      <section className="shell-config">
+        <div className="section-heading">启动方式</div>
+        <p className="muted">选择在哪个终端 / Shell 中打开 CLI：</p>
+        <div className="model-presets">
+          {SHELL_OPTIONS.map((option) => (
+            <button
+              key={option.kind}
+              className={clsx("preset-button", {
+                active: currentShellKind === option.kind,
+              })}
+              disabled={shellKindMutation.isPending}
+              onClick={() => shellKindMutation.mutate(option.kind)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="shell-config">
+        <div className="section-heading">工具全局参数</div>
+        <p className="muted">对所有项目生效；项目级参数会覆盖同名参数。</p>
+        {TOOLS.map((tool) => (
+          <div className="global-arg-row" key={tool.key}>
+            <label className="global-arg-label">
+              <tool.icon size={16} />
+              {tool.label}
+            </label>
+            <input
+              value={globalArgs[tool.key]}
+              placeholder="例如 --dangerously-skip-permissions"
+              onChange={(event) =>
+                setGlobalArgs((prev) => ({
+                  ...prev,
+                  [tool.key]: event.target.value,
+                }))
+              }
+            />
+          </div>
+        ))}
+        <div className="config-actions">
+          <button
+            className="primary-button"
+            disabled={saveGlobalArgsMutation.isPending}
+            onClick={() => saveGlobalArgsMutation.mutate()}
+          >
+            <Save size={15} />
+            保存全局参数
+          </button>
+          {saveGlobalArgsMutation.isSuccess && (
+            <span className="muted">已保存。</span>
+          )}
+        </div>
+      </section>
+
       <section className="config-backup">
         <div className="section-heading">配置备份</div>
+        <p className="muted">
+          导出/导入目录、工具参数到文件（导入按路径合并，不重复添加目录）。
+        </p>
         <div className="config-actions">
           <button
             className="ghost-button"
@@ -187,45 +313,29 @@ export function SettingsView() {
             disabled={exportMutation.isPending}
           >
             <Download size={15} />
-            导出配置
+            导出到文件
           </button>
-          {exportText && (
-            <button
-              className="ghost-button"
-              onClick={() => void copyText(exportText)}
-            >
-              <Copy size={14} />
-              复制
-            </button>
-          )}
-        </div>
-        {exportText && (
-          <textarea className="config-text" readOnly value={exportText} />
-        )}
-
-        <p className="muted">
-          粘贴配置 JSON 后导入（按路径合并，不会重复添加目录）：
-        </p>
-        <textarea
-          className="config-text"
-          placeholder="在此粘贴导出的配置 JSON"
-          value={importText}
-          onChange={(event) => setImportText(event.target.value)}
-        />
-        <div className="config-actions">
           <button
-            className="primary-button"
-            disabled={!importText.trim() || importMutation.isPending}
-            onClick={() => importMutation.mutate(importText)}
+            className="ghost-button"
+            onClick={() => importMutation.mutate()}
+            disabled={importMutation.isPending}
           >
             <Upload size={15} />
-            导入配置
+            从文件导入
           </button>
         </div>
+        {exportMutation.isSuccess && exportMutation.data && (
+          <p className="muted">已导出。</p>
+        )}
+        {exportMutation.isError && (
+          <p className="error">导出失败：{String(exportMutation.error)}</p>
+        )}
+        {importMutation.isSuccess && importMutation.data && (
+          <p className="muted">导入成功。</p>
+        )}
         {importMutation.isError && (
           <p className="error">导入失败：{String(importMutation.error)}</p>
         )}
-        {importMutation.isSuccess && <p className="muted">导入成功。</p>}
       </section>
 
       {pending && (

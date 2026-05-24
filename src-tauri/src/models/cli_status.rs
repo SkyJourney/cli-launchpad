@@ -5,10 +5,8 @@ use super::tool::ToolKey;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CliAvailability {
-    /// Installed and resolvable on the current PATH.
+    /// Found on disk (PATH or a known install dir); launchable by full path.
     Available,
-    /// Found in a known install directory but not on the current PATH.
-    PathNotVisible,
     /// Not found anywhere we checked.
     Missing,
 }
@@ -18,13 +16,12 @@ pub enum CliAvailability {
 pub struct CliStatus {
     pub tool_key: ToolKey,
     pub status: CliAvailability,
-    /// Resolved executable path, when known.
+    /// Resolved full executable path, when found.
     pub path: Option<String>,
     /// Command that resolved the tool (e.g. `agy` vs the `antigravity` probe).
     pub resolved_command: Option<String>,
     /// Raw `--version` output, when obtainable.
     pub version: Option<String>,
-    /// Latest available version; populated in a later milestone.
+    /// Latest available version; populated by the version service.
     pub latest_version: Option<String>,
-    pub path_visible: bool,
 }

@@ -27,12 +27,12 @@ Platform helpers
 
 ```text
 cli_status
-  claude:  { installed, path, version, latest_version, path_visible }
-  codex:   { installed, path, version, latest_version, path_visible }
-  agy:     { installed, path, version, latest_version, path_visible }
+  claude:  { status, path, version, latest_version, resolved_command }
+  codex:   { status, path, version, latest_version, resolved_command }
+  agy:     { status, path, version, latest_version, resolved_command }
 ```
 
-状态映射到 UI：available（绿色，可启动可编辑）、path_not_visible（黄色，默认启动禁用）、missing（灰色，启动和编辑禁用）。详见 `docs/ui-design.md`。
+状态只有两种：available（绿色，可启动可编辑）、missing（灰色，禁用）。由于启动一律走解析出的完整路径，"PATH 是否可见"不再单独建模——在 PATH 或已知目录找到全路径即为 available。详见 `docs/ui-design.md`。
 
 ## Tauri commands 清单
 
@@ -44,20 +44,24 @@ cli_status
 启动
   preview_launch / launch_tool / resume_session
 
+工具与全局参数
+  list_tools / save_tool_global_args
+
 CLI 状态与版本
-  detect_cli_status            检测三个 CLI 的安装、路径、当前版本
-  fetch_latest_versions        查询最新可用版本
-  update_cli / install_cli     执行更新或安装（结构化参数，输出日志）
+  detect_cli_status            检测三个 CLI 的安装、全路径、当前版本
+  fetch_latest_versions        查询最新可用版本（npm registry）
+  get_install_plan             返回结构化安装/更新命令（仅预览，不执行）
+  run_install                  执行安装/更新并捕获日志
 
 会话历史
-  list_sessions                按目录和工具列出会话索引
-  refresh_session_index        重建会话索引缓存
+  list_sessions                按目录和工具读取会话（按需实时读取，无缓存表）
+  resume_session               按工具恢复指定会话
 
 Shell 配置
-  get_shell_profiles / save_shell_profile
+  get_shell_profiles / save_shell_profile / set_shell_kind
 
 配置备份
-  export_config / import_config   导出/导入目录、参数、工具全局参数（JSON）
+  export_config_to_path / import_config_from_path   读写 JSON 文件（配合文件对话框）
 ```
 
 commands 保持小而清晰，业务组合放在 services。
@@ -66,7 +70,8 @@ commands 保持小而清晰，业务组合放在 services。
 
 - 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主窗口/退出"，左键点击托盘显示窗口。
 - 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置。
-- 打包：Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`），避免 WiX 依赖。
+- 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
+- 打包：Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`），避免 WiX 依赖。`tauri build` 同时产出 NSIS 安装包与裸 exe。
 
 ## 目标 CLI 范围
 
@@ -85,37 +90,41 @@ commands 保持小而清晰，业务组合放在 services。
 启动输入按以下顺序组合：
 
 ```text
-shell profile
-+ shell init script
+launch mode (kind)
 + selected directory
-+ tool executable
-+ tool global args
-+ directory-specific tool args
++ resolved full path of shell / terminal
++ resolved full path of tool（候选命令解析，agy 优先于 antigravity）
++ tool global args ⊕ directory-specific tool args（项目级覆盖同名 flag）
 ```
 
-Windows 首版优先使用 Windows Terminal + PowerShell：
+**全路径解析**：工具、shell、终端都用 `where` 同步解析为完整路径再执行（带 `CREATE_NO_WINDOW`），不依赖被启动进程的 PATH。`where` 命中多条时优先可执行扩展名（`.exe`/`.cmd`/`.bat`/`.com`/`.ps1`），跳过 npm 的无扩展名 POSIX shim。`pwsh.exe` 缺失时回退到 `powershell.exe`。
 
-```powershell
-wt.exe new-tab -d "<directory>" powershell.exe -NoLogo -NoExit -Command "<script>"
+**三种启动方式（shell profile `kind`）**：
+
+```text
+wt-pwsh  Windows Terminal + PowerShell
+         wt new-tab -d <dir> <pwsh-full-path> -NoExit -EncodedCommand <base64>
+         脚本用 -EncodedCommand(UTF-16LE Base64) 传递，避免 ; 被 wt 当作多 tab 分隔符
+pwsh     独立 PowerShell 窗口（CREATE_NEW_CONSOLE + current_dir，; 由 PowerShell 解析）
+cmd      独立 CMD 窗口（cmd /K "chcp 65001 & <tool> <args>"）
 ```
 
-PowerShell 脚本应包含 UTF-8 初始化、目录切换和结构化参数调用：
+PowerShell 脚本含 UTF-8 初始化、目录切换和结构化调用：
 
 ```powershell
-[Console]::InputEncoding=[System.Text.UTF8Encoding]::new()
-[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new()
-$OutputEncoding=[System.Text.UTF8Encoding]::new()
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=...
 Set-Location -LiteralPath '<directory>'
-& <tool> <args>
+& '<tool-full-path>' <args>
 ```
+
+恢复会话通过 `resume_session`，按工具拼装恢复参数后复用同一组合逻辑（Claude `--resume <id>`、Codex `resume <id>`、Antigravity `--conversation=<id>`）。
 
 ## CLI 检测与安装
 
-CLI 检测应区分三种状态：
+CLI 检测区分两种状态（启动走全路径，不再区分 PATH 可见性）：
 
-- 已安装且当前 PATH 可见。
-- 已安装但当前 PATH 不可见，例如 `~/.cargo/bin` 或 IDE/开发者命令行专属路径。
-- 未安装或无法确认。
+- available：在当前 PATH 或已知安装目录解析到完整路径（含 `agy` → `antigravity` 兼容探测）。
+- missing：未找到。
 
 安装能力不做自动静默执行。UI 必须先展示将要执行的安装命令、来源、权限影响和预计结果，由用户确认后再执行。
 
@@ -173,7 +182,7 @@ Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl   可列出
 Antigravity  官方未公开本地路径   不可列出，仅支持按 conversation id 恢复
 ```
 
-读取逻辑放在 service，解析出标题、时间、session id。结果可缓存到 SQLite 的 sessions 缓存表，缓存可随时删除重建，事实来源始终是各 CLI 的本地文件。Antigravity 不读历史，只提供直接启动。
+读取逻辑放在 service，解析出标题、时间、session id。当前实现为**按需实时读取**（只读首条用户消息和文件 mtime，开销小且永远最新），未建缓存表；事实来源始终是各 CLI 的本地文件。Antigravity 不读历史，只提供直接启动。
 
 恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume`/`resume --last`。恢复参数与普通启动共用命令组合与转义逻辑。
 

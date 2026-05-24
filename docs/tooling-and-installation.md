@@ -55,15 +55,14 @@ install_hint: 手动安装说明或安装命令候选
 检测结果：
 
 ```text
-status: available | missing | path_not_visible | unknown
-resolved_command: 实际命令
-resolved_path: 可执行文件路径
+status: available | missing
+resolved_command: 实际命中的候选命令（agy 优先于 antigravity）
+path: 解析出的完整可执行文件路径
 version: 当前版本输出
 latest_version: 最新可用版本（可选，网络查询失败时为空）
-message: 给用户看的说明
 ```
 
-检测结果作为全局 CLI 状态贯穿所有视图，详见 `docs/ui-design.md`。
+启动一律走解析出的完整路径，不再区分 PATH 可见性，因此只有 available / missing 两态。检测结果作为全局 CLI 状态贯穿所有视图，详见 `docs/ui-design.md`。
 
 Antigravity 的候选命令顺序：
 

@@ -7,8 +7,7 @@ const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Resolve a command on the current PATH using Windows `where.exe`.
-/// Returns the first resolved path when found. Bounded by a timeout; the child
-/// is killed on drop so a hung probe cannot leak.
+/// Bounded by a timeout; the child is killed on drop so a hung probe cannot leak.
 pub async fn which(command: &str) -> Option<PathBuf> {
     let future = Command::new("where")
         .arg(command)
@@ -21,12 +20,44 @@ pub async fn which(command: &str) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+    pick_executable(&String::from_utf8_lossy(&output.stdout)).map(PathBuf::from)
+}
+
+/// Synchronous PATH resolution to a full executable path, used on the
+/// (synchronous) launch path so commands run by absolute path rather than
+/// relying on the child process's PATH. Runs `where` with no console window.
+pub fn which_path_sync(command: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new("where");
+    cmd.arg(command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    pick_executable(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Choose the best match from `where` output. `where` lists every match (e.g.
+/// npm installs both a `.cmd` shim and an extensionless POSIX shell shim that
+/// PowerShell cannot run); prefer a directly-executable Windows extension.
+fn pick_executable(stdout: &str) -> Option<String> {
+    let lines: Vec<&str> = stdout
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(PathBuf::from)
+        .filter(|line| !line.is_empty())
+        .collect();
+    const PREFERRED: [&str; 5] = [".exe", ".cmd", ".bat", ".com", ".ps1"];
+    for ext in PREFERRED {
+        if let Some(found) = lines.iter().find(|line| line.to_lowercase().ends_with(ext)) {
+            return Some((*found).to_string());
+        }
+    }
+    lines.first().map(|line| (*line).to_string())
 }
 
 /// Look for an executable in known per-user install directories that may be
@@ -90,7 +121,25 @@ fn parse_version_output(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_version_output;
+    use super::{parse_version_output, pick_executable};
+
+    #[test]
+    fn prefers_cmd_over_extensionless_shim() {
+        // npm lists both; the extensionless one is a POSIX shell script.
+        let stdout = "C:\\nvm4w\\nodejs\\codex\nC:\\nvm4w\\nodejs\\codex.cmd\n";
+        assert_eq!(
+            pick_executable(stdout).as_deref(),
+            Some("C:\\nvm4w\\nodejs\\codex.cmd")
+        );
+    }
+
+    #[test]
+    fn picks_single_exe() {
+        assert_eq!(
+            pick_executable("C:\\Users\\me\\.local\\bin\\claude.exe\n").as_deref(),
+            Some("C:\\Users\\me\\.local\\bin\\claude.exe")
+        );
+    }
 
     #[test]
     fn takes_first_non_empty_line() {

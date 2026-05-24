@@ -3,6 +3,7 @@ import { ProjectsView } from "./views/ProjectsView";
 import { ProjectDetailView } from "./views/ProjectDetailView";
 import { ProjectEditView } from "./views/ProjectEditView";
 import { SettingsView } from "./views/SettingsView";
+import { AboutView } from "./views/AboutView";
 import { useAppStore } from "./store/appStore";
 
 export function App() {
@@ -16,6 +17,7 @@ export function App() {
         {view === "detail" && <ProjectDetailView />}
         {view === "edit" && <ProjectEditView />}
         {view === "settings" && <SettingsView />}
+        {view === "about" && <AboutView />}
       </section>
     </main>
   );

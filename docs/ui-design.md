@@ -14,19 +14,18 @@ CLI Launchpad 的界面设计参考 cc-switch 的卡片式项目管理思路：�
 应用在 Tauri 启动时检测三个 CLI，并把结果作为全局状态贯穿所有视图。该状态可手动刷新（设置页"重新检测"）。
 
 ```text
-AppState.cli_status
-  claude:  { installed, path, version, latest_version, path_visible }
-  codex:   { installed, path, version, latest_version, path_visible }
-  agy:     { installed, path, version, latest_version, path_visible }
+cli_status
+  claude:  { status, path, version, latest_version, resolved_command }
+  codex:   { status, path, version, latest_version, resolved_command }
+  agy:     { status, path, version, latest_version, resolved_command }
 ```
 
-状态对应的 UI 表现：
+状态对应的 UI 表现（启动一律走解析出的**完整路径**，因此不再区分 PATH 是否可见）：
 
-| 状态             | 徽章 | 含义                   | UI 行为                                      |
-| ---------------- | ---- | ---------------------- | -------------------------------------------- |
-| available        | 绿色 | 已安装且当前 PATH 可见 | 启动按钮可用，参数可编辑                     |
-| path_not_visible | 黄色 | 已安装但 PATH 不可见   | 默认启动禁用，提示刷新环境或手动指定路径     |
-| missing          | 灰色 | 未检测到               | 启动按钮和参数编辑器禁用，引导前往设置页安装 |
+| 状态      | 徽章 | 含义                         | UI 行为                                      |
+| --------- | ---- | ---------------------------- | -------------------------------------------- |
+| available | 绿色 | 在 PATH 或已知目录找到全路径 | 启动按钮可用，参数可编辑                     |
+| missing   | 灰色 | 未检测到                     | 启动按钮和参数编辑器禁用，引导前往设置页安装 |
 
 ## 视图结构
 
@@ -38,8 +37,11 @@ AppState.cli_status
 View A  项目主页（默认，卡片网格）
 View B  项目详情（会话历史 Tab + 直接启动）
 View C  项目参数编辑
-View D  设置（CLI 状态、版本更新、Shell 配置）
+View D  设置（CLI 状态/版本更新、启动方式、工具全局参数、配置备份）
+View E  关于（软件信息与版本）
 ```
+
+侧边栏导航：项目 / 设置 / 关于。设置、关于为顶层视图（无需顶部返回，靠侧边栏切换）；详情、编辑为项目上下文内的层级，保留返回。整卡片可点击进入详情，徽章和操作按钮除外。
 
 ## View A：项目主页
 
@@ -111,44 +113,55 @@ Tab 行为：
 
 - missing 的 CLI 分区整体灰色禁用。
 - 项目级参数保存到 SQLite `directory_tool_args`。
-- 全局参数与项目级参数分离：全局参数在设置页或工具配置中维护，项目级参数只在此覆盖/追加。
+- Claude 模型支持快捷选择和**手动输入**（兼容第三方模型），与"附加参数"中的 `--model` 是同一字符串的两个视图。
+- 全局参数与项目级参数分离：全局参数在设置页维护（只读展示于此），项目级在此覆盖/追加。
+- 启动时合并参数：项目级出现的 flag 会覆盖全局同名 flag（连同其值），避免重复参数导致启动失败。
 
 ## View D：设置
 
-两个区块：CLI 状态与版本更新、Shell 配置。
+四个区块：CLI 状态与版本更新、启动方式、工具全局参数、配置备份。
 
 ```text
 CLI 状态                              [🔄 重新检测]
 ─────────────────────────────────────────────
-🤖 Claude Code
-✅ PATH 可见   路径: C:\...\claude.cmd
-当前: 1.7.0   最新: 1.8.2   ⚠ 有更新
-[查看更新说明]            [▶ 更新至 1.8.2]
+🤖 Claude Code   [已安装]  路径: C:\...\claude.exe
+当前: 1.7.0   最新: 1.8.2   有更新   [▶ 更新]
 
-🧩 Codex
-✅ PATH 可见   当前: 0.1.0   最新: 0.1.0   ✓ 最新版
+🧩 Codex         [已安装]  当前: 0.1.0   最新: 0.1.0
 
-🚀 Antigravity (agy)
-❌ PATH 不可见
-[查看安装说明]            [▶ 一键安装 agy]
+🚀 Antigravity   [未检测到]                 [▶ 一键安装]
 
-Shell 配置
-终端: [wt.exe ▼]    Shell: [pwsh.exe ▼]
+启动方式
+( ) Windows Terminal + PowerShell   ( ) PowerShell 窗口   ( ) CMD 窗口
+
+工具全局参数
+Claude:  [____________________]
+Codex:   [____________________]
+Antigravity: [________________]            [保存全局参数]
+
+配置备份
+[导出到文件]   [从文件导入]
 ```
 
 - 已安装且有新版：显示"更新"按钮，执行对应 CLI 的官方更新命令。
 - 未安装：显示"一键安装"按钮，复用安装流程（见 tooling-and-installation.md）。
 - 更新和安装都遵循同一原则：先预览命令、用户确认、输出日志、完成后重新检测。
+- 启动方式决定终端/Shell（详见 architecture.md 的启动组合）。
+- 配置备份通过系统文件对话框导出/导入 JSON（plugin-dialog），导入按目录路径合并。
+
+## View E：关于
+
+展示软件名、版本（Tauri `getVersion`）、技术栈、支持的 CLI 与命令。
 
 ## 会话历史数据源
 
 会话历史从各 CLI 的本地存储读取，按公开资料核验后的路径如下：
 
-| CLI         | 会话存储路径                                   | 是否可列出历史 | 恢复命令                         |
-| ----------- | ---------------------------------------------- | -------------- | -------------------------------- |
-| Claude Code | `~/.claude/projects/<slug>/<uuid>.jsonl`       | 可以           | `claude --resume <session-id>`   |
-| Codex       | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | 可以           | `codex resume --last` 或交互选择 |
-| Antigravity | 官方未公开磁盘路径                             | 不可以         | `agy --conversation=<uuid>`      |
+| CLI         | 会话存储路径                                   | 是否可列出历史 | 恢复命令                       |
+| ----------- | ---------------------------------------------- | -------------- | ------------------------------ |
+| Claude Code | `~/.claude/projects/<slug>/<uuid>.jsonl`       | 可以           | `claude --resume <session-id>` |
+| Codex       | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | 可以           | `codex resume <session-id>`    |
+| Antigravity | 官方未公开磁盘路径                             | 不可以         | `agy --conversation=<uuid>`    |
 
 说明：
 
@@ -156,7 +169,7 @@ Shell 配置
 - Codex：rollout 文件按日期分层存储，文件内含 session 信息。可解析出标题、时间。
 - Antigravity：官方文档未公开本地会话文件路径，只提供"按 conversation id 恢复"。因此 Agy 的会话 Tab 不展示历史列表，只显示"暂不支持历史列表，可直接启动新会话"，并保留一键启动。
 
-会话索引可缓存到 SQLite（见 architecture.md 的 sessions 缓存表），缓存可随时删除重建，不作为事实来源。
+当前实现为按需实时读取（只读首条消息与文件 mtime），未建缓存表；事实来源始终是各 CLI 的本地文件。
 
 ## 状态管理
 

@@ -15,3 +15,10 @@ pub fn save_shell_profile(state: State<'_, Db>, profile: ShellProfile) -> Result
     let conn = state.lock().map_err(|error| error.to_string())?;
     shell_profile_repo::save(&conn, &profile).map_err(|error| error.to_string())
 }
+
+/// Set the launch mode of the default shell profile ("wt-pwsh" | "pwsh" | "cmd").
+#[tauri::command]
+pub fn set_shell_kind(state: State<'_, Db>, kind: String) -> Result<(), String> {
+    let conn = state.lock().map_err(|error| error.to_string())?;
+    shell_profile_repo::set_default_kind(&conn, &kind).map_err(|error| error.to_string())
+}

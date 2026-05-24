@@ -5,7 +5,14 @@ use rusqlite::Connection;
 /// Ordered migrations. Each entry is (target user_version, sql).
 /// New migrations append to this list; the runner applies any whose
 /// version exceeds the database's current `user_version`.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../../migrations/0001_initial.sql")),
+    (2, include_str!("../../migrations/0002_shell_kind.sql")),
+    (
+        3,
+        include_str!("../../migrations/0003_fix_antigravity_command.sql"),
+    ),
+];
 
 pub fn open_database(path: &Path) -> rusqlite::Result<Connection> {
     let connection = Connection::open(path)?;
@@ -56,7 +63,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("read user_version");
-        assert_eq!(version, 1);
+        assert_eq!(version, MIGRATIONS.last().unwrap().0);
     }
 
     #[test]
