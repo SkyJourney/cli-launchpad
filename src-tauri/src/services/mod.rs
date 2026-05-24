@@ -1,3 +1,5 @@
 pub mod cli_detect_service;
+pub mod install_service;
 pub mod launch_service;
 pub mod session_service;
+pub mod version_service;

@@ -45,6 +45,27 @@ export interface SessionInfo {
   sourcePath: string;
 }
 
+export type InstallKind = "install" | "update";
+
+export interface InstallPlan {
+  toolKey: ToolKey;
+  kind: InstallKind;
+  program: string;
+  args: string[];
+  source: string;
+  preview: string;
+}
+
+export interface InstallOutcome {
+  success: boolean;
+  log: string;
+}
+
+export interface LatestVersion {
+  toolKey: ToolKey;
+  latest: string | null;
+}
+
 export type CliAvailability = "available" | "path_not_visible" | "missing";
 
 export interface CliStatus {
@@ -90,6 +111,19 @@ export function listTools() {
 // CLI detection
 export function detectCliStatus() {
   return invoke<CliStatus[]>("detect_cli_status");
+}
+
+// Version & install/update
+export function fetchLatestVersions() {
+  return invoke<LatestVersion[]>("fetch_latest_versions");
+}
+
+export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
+  return invoke<InstallPlan>("get_install_plan", { toolKey, kind });
+}
+
+export function runInstall(toolKey: ToolKey, kind: InstallKind) {
+  return invoke<InstallOutcome>("run_install", { toolKey, kind });
 }
 
 // Shell profiles

@@ -22,6 +22,44 @@ export function formatRelativeMs(ms: number | null): string {
   return relativeFrom(ms);
 }
 
+/// Extract a semver-like `x.y.z` from a noisy version string (e.g.
+/// "2.1.150 (Claude Code)" or "codex-cli 0.133.0").
+export function extractSemver(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/\d+\.\d+\.\d+/);
+  return match ? match[0] : null;
+}
+
+/// Compare two `x.y.z` strings numerically. Returns >0 if a is newer than b.
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+/// Decide whether an update is available given the current and latest strings.
+/// Returns null when it cannot be determined (missing data). Only reports true
+/// when latest is strictly newer, so a local pre-release is not "downgraded".
+export function hasUpdate(
+  current: string | null,
+  latest: string | null,
+): boolean | null {
+  const latestSemver = extractSemver(latest);
+  const currentSemver = extractSemver(current);
+  if (!latestSemver || !currentSemver) {
+    return null;
+  }
+  return compareSemver(latestSemver, currentSemver) > 0;
+}
+
 function relativeFrom(then: number): string {
   const diffSeconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (diffSeconds < 60) {
