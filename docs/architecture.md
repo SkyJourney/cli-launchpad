@@ -71,7 +71,15 @@ commands 保持小而清晰，业务组合放在 services。
 - 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主窗口/退出"，左键点击托盘显示窗口。
 - 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置。
 - 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
-- 打包：Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`），避免 WiX 依赖。`tauri build` 同时产出 NSIS 安装包与裸 exe。
+
+## 打包与运行依赖
+
+- NSIS 单一格式：`bundle.targets = ["nsis"]`，避免 WiX 依赖；`tauri build` 同时产出 NSIS 安装包与裸 exe。
+- **VC++ 运行库**：`src-tauri/.cargo/config.toml` 用 `+crt-static` 静态链接 MSVC CRT，目标机无需安装 Visual C++ Redistributable。
+- **WebView2 两种策略**：
+  - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时按需联网下载。
+  - 离线版（`src-tauri/tauri.offline.conf.json` 覆盖 `webviewInstallMode=offlineInstaller`）：内嵌完整 WebView2，离线可装。
+- 多版本命名：`scripts/build-installers.ps1` 依次构建在线/离线两版，复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀并追加 `online`/`offline`（架构自动继承），归档到 `dist-installers/`。标准维度（版本/架构/格式）由 Tauri 自动命名，非标准维度（WebView2 模式）由脚本补名。
 
 ## 目标 CLI 范围
 

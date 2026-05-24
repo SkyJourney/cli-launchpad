@@ -63,9 +63,24 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## 打包说明
 
-项目设计目标包括编译为公司内部使用的 Windows 安装包。正式打包前需要补齐 Tauri 图标资源，例如 `src-tauri/icons/icon.ico`。
+Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`，避免 WiX 依赖）。打包命令：
 
-当前 `src-tauri/tauri.conf.json` 中启用了 bundle，后续可根据内部分发策略选择 MSI 或 EXE 安装器，并按 Tauri Windows 打包要求补齐 WiX、NSIS 或相关工具链。
+```powershell
+pnpm tauri:build            # 在线版安装包（默认）
+pnpm tauri:build:offline    # 离线版安装包（内嵌 WebView2）
+pnpm build:installers       # 一次构建在线 + 离线两版，归档到 dist-installers/
+```
+
+产物位置与运行依赖：
+
+- NSIS 安装包：`src-tauri/target/release/bundle/nsis/`；裸 exe：`src-tauri/target/release/`。
+- **VC++ 运行库**：通过静态链接 CRT（`src-tauri/.cargo/config.toml` 的 `+crt-static`）编入 exe，目标机无需安装 Visual C++ Redistributable。
+- **WebView2**：
+  - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时检测缺失则联网下载。
+  - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
+- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.1.0_x64-online-setup.exe`。
+
+正式打包前确保 Tauri 图标资源就位，例如 `src-tauri/icons/icon.ico`。
 
 ## 项目结构
 
