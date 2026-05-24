@@ -354,6 +354,145 @@ h1 {
   gap: 4px;
 }
 
+.detail-head-row {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  grid-auto-flow: column;
+  justify-content: space-between;
+}
+
+/* CLI tabs */
+.tab-row {
+  border-bottom: 1px solid #e4e8f0;
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #475467;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  padding: 10px 14px;
+}
+
+.tab:hover:not(:disabled) {
+  color: #2251d1;
+}
+
+.tab.active {
+  border-bottom-color: #2251d1;
+  color: #18212f;
+  font-weight: 600;
+}
+
+.tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.tab-dot {
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.dot-available {
+  background: #14823b;
+}
+
+.dot-path_not_visible {
+  background: #d99b25;
+}
+
+.dot-missing {
+  background: #c0c6d1;
+}
+
+/* Launch bar */
+.launch-bar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+/* Session list */
+.session-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-row {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.session-meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Command preview */
+.command-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.preview-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #475467;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 600;
+  gap: 6px;
+  justify-self: start;
+  padding: 0;
+}
+
+.preview-body {
+  display: grid;
+  gap: 10px;
+}
+
+.preview-body code {
+  background: #111827;
+  border-radius: 8px;
+  color: #e5e7eb;
+  display: block;
+  line-height: 1.6;
+  overflow-x: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.preview-body .ghost-button {
+  justify-self: start;
+}
+
 .settings-head {
   align-items: center;
   display: flex;

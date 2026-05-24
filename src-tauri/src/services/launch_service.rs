@@ -21,6 +21,43 @@ pub fn launch(conn: &Connection, directory_id: i64, tool_key: ToolKey) -> Result
     Ok(())
 }
 
+pub fn resume(
+    conn: &Connection,
+    directory_id: i64,
+    tool_key: ToolKey,
+    session_id: &str,
+) -> Result<()> {
+    let mut request = resolve_request(conn, directory_id, tool_key)?;
+    apply_resume(&mut request, tool_key, session_id);
+    let command = compose_windows_terminal_command(&request);
+
+    Command::new(&command.program).args(&command.args).spawn()?;
+    directory_repo::touch_last_used(conn, directory_id)?;
+    Ok(())
+}
+
+/// Rewrite tool arguments to resume an existing session. Each CLI uses a
+/// different shape; for Codex `resume` is a subcommand and must lead.
+fn apply_resume(request: &mut LaunchRequest, tool_key: ToolKey, session_id: &str) {
+    match tool_key {
+        ToolKey::Claude => {
+            request.tool_args.push("--resume".to_string());
+            request.tool_args.push(session_id.to_string());
+        }
+        ToolKey::Codex => {
+            // `resume <id>` must lead, but keep configured options after it.
+            let mut args = vec!["resume".to_string(), session_id.to_string()];
+            args.extend(std::mem::take(&mut request.tool_args));
+            request.tool_args = args;
+        }
+        ToolKey::Antigravity => {
+            request
+                .tool_args
+                .push(format!("--conversation={session_id}"));
+        }
+    }
+}
+
 fn resolve_request(
     conn: &Connection,
     directory_id: i64,

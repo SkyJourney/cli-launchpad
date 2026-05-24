@@ -11,7 +11,18 @@ export function formatRelative(value: string | null): string {
   if (Number.isNaN(then)) {
     return value;
   }
+  return relativeFrom(then);
+}
 
+/// Format a Unix epoch milliseconds value as a relative Chinese label.
+export function formatRelativeMs(ms: number | null): string {
+  if (ms == null) {
+    return "未知时间";
+  }
+  return relativeFrom(ms);
+}
+
+function relativeFrom(then: number): string {
   const diffSeconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (diffSeconds < 60) {
     return "刚刚";
@@ -28,5 +39,5 @@ export function formatRelative(value: string | null): string {
   if (diffDays < 30) {
     return `${diffDays}天前`;
   }
-  return new Date(normalized).toLocaleDateString("zh-CN");
+  return new Date(then).toLocaleDateString("zh-CN");
 }

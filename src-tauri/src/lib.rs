@@ -25,6 +25,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::launch::preview_launch,
             commands::launch::launch_tool,
+            commands::session::list_sessions,
+            commands::session::resume_session,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,

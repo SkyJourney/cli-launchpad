@@ -37,6 +37,14 @@ export interface DirectoryToolArgs {
   args: string;
 }
 
+export interface SessionInfo {
+  toolKey: ToolKey;
+  sessionId: string;
+  title: string;
+  lastActiveMs: number | null;
+  sourcePath: string;
+}
+
 export type CliAvailability = "available" | "path_not_visible" | "missing";
 
 export interface CliStatus {
@@ -119,4 +127,17 @@ export function previewLaunch(directoryId: number, toolKey: ToolKey) {
 
 export function launchTool(directoryId: number, toolKey: ToolKey) {
   return invoke<void>("launch_tool", { directoryId, toolKey });
+}
+
+// Sessions
+export function listSessions(directoryId: number, toolKey: ToolKey) {
+  return invoke<SessionInfo[]>("list_sessions", { directoryId, toolKey });
+}
+
+export function resumeSession(
+  directoryId: number,
+  toolKey: ToolKey,
+  sessionId: string,
+) {
+  return invoke<void>("resume_session", { directoryId, toolKey, sessionId });
 }
