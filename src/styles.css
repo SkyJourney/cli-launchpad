@@ -362,6 +362,87 @@ h1 {
   justify-content: space-between;
 }
 
+/* Parameter editor */
+.edit-section {
+  background: #ffffff;
+  border: 1px solid #d8dee9;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.edit-section.disabled {
+  opacity: 0.55;
+}
+
+.edit-section-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.edit-field {
+  display: grid;
+  gap: 6px;
+}
+
+.edit-field input {
+  border: 1px solid #d8dee9;
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+.edit-field input:disabled {
+  background: #f1f3f7;
+  cursor: not-allowed;
+}
+
+.readonly-args {
+  background: #f1f3f7;
+  border-radius: 8px;
+  color: #475467;
+  display: block;
+  padding: 9px 11px;
+  word-break: break-all;
+}
+
+.model-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-button {
+  background: #ffffff;
+  border: 1px solid #d8dee9;
+  border-radius: 999px;
+  cursor: pointer;
+  padding: 6px 14px;
+}
+
+.preset-button:hover:not(:disabled) {
+  border-color: #4077ff;
+}
+
+.preset-button.active {
+  background: #e0eaff;
+  border-color: #2251d1;
+  color: #2251d1;
+  font-weight: 600;
+}
+
+.preset-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 /* CLI tabs */
 .tab-row {
   border-bottom: 1px solid #e4e8f0;
