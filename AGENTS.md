@@ -5,12 +5,14 @@
 > 新会话或上下文压缩后，必须先读记忆目录的 `MEMORY.md` 索引，再按需加载文件。代码事实与项目记忆冲突时，以代码事实为准并更新项目记忆。
 
 ### 读取流程
+
 1. 读取 `.codex/memory/MEMORY.md` 获取文件清单、类型和引用计数。
 2. **必读锚点**：`decisions.md`、`feedback.md`、`project_overview.md`、`project_progress.md`。
 3. **选读锚点**：`reference.md`、`lint_report.md`。
 4. 若仓库使用 `.claude/memory/`，直接读取该目录；不要复制到 `.codex/memory/`。
 
 ### 权威优先级
+
 1. 当前代码、配置、测试和真实文件状态。
 2. 仓库内项目记忆：`AGENTS.md`、`CLAUDE.md`、`.claude/memory/` 或 `.codex/memory/`。
 3. Codex 原生 Memories（个人本地召回层，仅作辅助上下文）。
@@ -44,9 +46,10 @@
 2. `AGENTS.md`：协作规则、当前状态、架构边界和执行约束。
 3. `docs/product-requirements.md`：产品目标、MVP、三项 CLI 范围、非目标。
 4. `docs/adr-0001-technology-stack.md`：技术栈选择及其原因。
-5. `docs/architecture.md`：分层结构、启动组合、CLI 检测与安装边界。
-6. `docs/tooling-and-installation.md`：`claude`、`codex`、`agy` 的检测和安装设计。
-7. `docs/roadmap.md`：阶段计划和后续演进顺序。
+5. `docs/architecture.md`：分层结构、启动组合、全局 CLI 状态、会话读取、检测安装边界。
+6. `docs/ui-design.md`：cc-switch 风格多视图设计、全局 CLI 状态映射、会话历史数据源。
+7. `docs/tooling-and-installation.md`：`claude`、`codex`、`agy` 的检测、安装和更新设计。
+8. `docs/roadmap.md`：阶段计划和后续演进顺序。
 
 文档之间的关系：
 
@@ -55,7 +58,8 @@
 - `product-requirements.md` 定义做什么和不做什么。
 - `adr-0001-technology-stack.md` 解释为什么选择当前技术栈。
 - `architecture.md` 解释模块边界和关键技术路径。
-- `tooling-and-installation.md` 细化三项 CLI 的检测、安装和 UI 状态设计。
+- `ui-design.md` 定义界面形态、视图结构和全局 CLI 状态映射。
+- `tooling-and-installation.md` 细化三项 CLI 的检测、安装、更新和 UI 状态设计。
 - `roadmap.md` 记录实现优先级，不覆盖需求和架构文档。
 
 ## 执行顺序

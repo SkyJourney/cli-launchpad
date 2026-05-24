@@ -16,17 +16,17 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 
 当前环境检查结果：
 
-| 项目 | 状态 |
-| --- | --- |
-| `claude` | 可用，版本 `2.1.150 (Claude Code)` |
-| `codex` | 可用，版本 `codex-cli 0.133.0` |
-| `agy` | 未发现 |
-| `antigravity` | 未发现，仅作为保守兼容探测 |
-| `pnpm` | 可用，版本 `10.29.2` |
-| `node` | 可用，版本 `v24.12.0` |
-| `winget` | 可用，版本 `v1.28.240` |
-| Rust 工具链 | 已安装，但当前普通 PowerShell PATH 未直接暴露 `rustup`、`rustc`、`cargo` |
-| VS Build Tools 2022 | 已安装，MSVC `14.44.35207` |
+| 项目                | 状态                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `claude`            | 可用，版本 `2.1.150 (Claude Code)`                                       |
+| `codex`             | 可用，版本 `codex-cli 0.133.0`                                           |
+| `agy`               | 未发现                                                                   |
+| `antigravity`       | 未发现，仅作为保守兼容探测                                               |
+| `pnpm`              | 可用，版本 `10.29.2`                                                     |
+| `node`              | 可用，版本 `v24.12.0`                                                    |
+| `winget`            | 可用，版本 `v1.28.240`                                                   |
+| Rust 工具链         | 已安装，但当前普通 PowerShell PATH 未直接暴露 `rustup`、`rustc`、`cargo` |
+| VS Build Tools 2022 | 已安装，MSVC `14.44.35207`                                               |
 
 `pnpm`、`node`、`winget`、Rust 和 VS 工具链是开发与打包依赖，不属于应用内面向用户的一键安装范围。应用内检测和安装只面向 `claude`、`codex`、`agy`。
 
@@ -58,9 +58,12 @@ install_hint: 手动安装说明或安装命令候选
 status: available | missing | path_not_visible | unknown
 resolved_command: 实际命令
 resolved_path: 可执行文件路径
-version: 版本输出
+version: 当前版本输出
+latest_version: 最新可用版本（可选，网络查询失败时为空）
 message: 给用户看的说明
 ```
+
+检测结果作为全局 CLI 状态贯穿所有视图，详见 `docs/ui-design.md`。
 
 Antigravity 的候选命令顺序：
 
@@ -116,11 +119,11 @@ args:
 
 三个目标 CLI 的初始安装清单：
 
-| 工具 | 首选安装方式 | 命令模型 |
-| --- | --- | --- |
-| Claude Code | `winget` 官方包 | `winget install --id Anthropic.ClaudeCode --exact --accept-package-agreements --accept-source-agreements` |
-| Codex | npm 官方包 | `npm i -g @openai/codex` |
-| Antigravity | 官方 PowerShell installer | `irm https://antigravity.google/cli/install.ps1 | iex` |
+| 工具        | 首选安装方式              | 命令模型                                                                                                  |
+| ----------- | ------------------------- | --------------------------------------------------------------------------------------------------------- | ---- |
+| Claude Code | `winget` 官方包           | `winget install --id Anthropic.ClaudeCode --exact --accept-package-agreements --accept-source-agreements` |
+| Codex       | npm 官方包                | `npm i -g @openai/codex`                                                                                  |
+| Antigravity | 官方 PowerShell installer | `irm https://antigravity.google/cli/install.ps1                                                           | iex` |
 
 如果某个 CLI 没有稳定的官方包或官方安装命令，不应伪造安装命令。此时只展示官方手动安装说明。
 
@@ -128,15 +131,39 @@ args:
 
 安装来源必须绑定到内置三工具清单，不允许用户把任意 CLI 或任意包名加入一键安装流程。
 
+## 更新模型
+
+对已安装的 CLI，设置页提供应用内更新。更新与安装共用同一确认流程：预览命令、用户确认、输出日志、完成后重新检测。
+
+最新版本查询：
+
+| 工具        | 最新版本来源                                      |
+| ----------- | ------------------------------------------------- |
+| Claude Code | 官方包或 npm registry `@anthropic-ai/claude-code` |
+| Codex       | npm registry `@openai/codex`                      |
+| Antigravity | 官方渠道（官方 installer 或发布信息）             |
+
+最新版本查询涉及网络，失败时降级为"无法获取最新版本"，仍展示当前版本，不阻塞界面。
+
+更新命令清单：
+
+| 工具        | 更新命令                                                            |
+| ----------- | ------------------------------------------------------------------- | ---- |
+| Claude Code | `claude update` 或官方包更新                                        |
+| Codex       | `npm i -g @openai/codex@latest`                                     |
+| Antigravity | 重跑官方 installer：`irm https://antigravity.google/cli/install.ps1 | iex` |
+
+更新命令同样用结构化参数建模，不在业务层拼接自由字符串。
+
 ## UI 建议
 
 设置页可增加一个 **CLI 状态** 区块：
 
-| 工具 | 状态 | 版本 | 路径 | 操作 |
-| --- | --- | --- | --- | --- |
-| Claude Code | 已安装 | `2.1.150` | `...` | 重新检测 |
-| Codex | 已安装 | `0.133.0` | `...` | 重新检测 |
-| Antigravity | 未安装 | - | - | 查看官方安装命令 |
+| 工具        | 状态   | 版本      | 路径  | 操作             |
+| ----------- | ------ | --------- | ----- | ---------------- |
+| Claude Code | 已安装 | `2.1.150` | `...` | 重新检测         |
+| Codex       | 已安装 | `0.133.0` | `...` | 重新检测         |
+| Antigravity | 未安装 | -         | -     | 查看官方安装命令 |
 
 启动按钮应根据状态调整：
 

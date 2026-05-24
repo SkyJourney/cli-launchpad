@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKey {
     Antigravity,
@@ -8,7 +8,27 @@ pub enum ToolKey {
     Claude,
 }
 
+impl ToolKey {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolKey::Antigravity => "antigravity",
+            ToolKey::Codex => "codex",
+            ToolKey::Claude => "claude",
+        }
+    }
+
+    pub fn from_key(value: &str) -> Option<Self> {
+        match value {
+            "antigravity" => Some(ToolKey::Antigravity),
+            "codex" => Some(ToolKey::Codex),
+            "claude" => Some(ToolKey::Claude),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub id: i64,
     pub key: ToolKey,
@@ -17,4 +37,3 @@ pub struct Tool {
     pub global_args: String,
     pub enabled: bool,
 }
-

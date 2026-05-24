@@ -2,7 +2,12 @@
   color: #18212f;
   background: #f5f7fb;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
 }
 
@@ -67,6 +72,21 @@ button {
 .directory-item:hover {
   background: #eef4ff;
   border-color: #c7d7fe;
+}
+
+.directory-item.active {
+  background: #e0eaff;
+  border-color: #4077ff;
+}
+
+.muted {
+  color: #667085;
+  font-size: 13px;
+}
+
+.error {
+  color: #b42318;
+  font-size: 13px;
 }
 
 .directory-item span {
@@ -157,4 +177,3 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
-

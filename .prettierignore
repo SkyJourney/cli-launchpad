@@ -1,0 +1,7 @@
+# 工具与生成产物，不参与格式化
+.codex/
+.serena/
+dist/
+pnpm-lock.yaml
+src-tauri/target/
+src-tauri/gen/

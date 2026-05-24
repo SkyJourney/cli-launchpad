@@ -3,6 +3,7 @@ create table if not exists directories (
   name text not null,
   path text not null unique,
   sort_order integer not null default 0,
+  pinned integer not null default 0,
   last_used_at text,
   note text
 );

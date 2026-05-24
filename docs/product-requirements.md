@@ -31,6 +31,43 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 展示即将执行的命令预览。
 - 在选定目录中打开对应 CLI 的 PowerShell 窗口。
 
+## 界面形态
+
+界面参考 cc-switch 的卡片式项目管理，采用多视图结构（项目主页、项目详情、参数编辑、设置），不使用弹窗承载主要操作。完整设计见 `docs/ui-design.md`。
+
+核心特性：
+
+- 卡片式项目管理：项目主页以卡片网格展示常用目录。
+- 直接启动为常态：点击工具即在该目录启动，命令预览作为可折叠的辅助能力。
+- 全局 CLI 状态：应用启动时检测三个 CLI，统一下发到所有视图，缺失的工具在任何位置都灰色禁用。
+
+## 会话历史
+
+应用应能读取并展示已有的 CLI 会话历史，支持快速恢复之前的会话：
+
+- 在项目详情中按 CLI 分 Tab 展示历史会话，不混在同一列表。
+- Claude Code 从 `~/.claude/projects/` 读取，Codex 从 `~/.codex/sessions/` 读取，均可列出历史并恢复指定会话。
+- Antigravity 官方未公开本地会话文件路径，只支持按 conversation id 恢复，因此不展示历史列表，只提供直接启动。
+- 会话索引可缓存到 SQLite，缓存可随时删除重建。
+
+## 项目级参数编辑
+
+提供项目参数编辑视图，按 CLI 分区配置该项目的工具参数：
+
+- 项目级附加参数与全局参数分离，项目级只覆盖或追加。
+- Claude 区提供模型快捷选择（如指定 `--model`）。
+- 未安装的 CLI 分区灰色禁用。
+- 项目级参数保存到 SQLite。
+
+## 版本检测与更新
+
+设置页提供 CLI 版本管理能力：
+
+- 检测三个 CLI 的当前版本和最新可用版本。
+- 对有新版的 CLI 提供应用内更新入口，执行对应官方更新命令。
+- 更新与安装遵循同一原则：先预览命令、用户确认、输出日志、完成后重新检测。
+- 更新来源必须来自官方：Claude 使用 `claude update` 或官方包，Codex 使用 `npm i -g @openai/codex@latest`，Antigravity 重跑官方 installer。
+
 ## 依赖检测
 
 应用应提供启动前或设置页中的依赖检测能力：
@@ -74,6 +111,7 @@ SQLite 是功能配置的事实来源：
 - per-directory tool arguments
 - launch history
 - CLI detection cache
+- session index cache（会话索引缓存，事实来源仍是各 CLI 的本地存储，可随时删除重建）
 
 本地 UI 偏好后续可使用 JSON 或 Tauri store：
 
