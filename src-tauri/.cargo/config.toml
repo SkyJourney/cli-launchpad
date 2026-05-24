@@ -1,0 +1,4 @@
+# Statically link the MSVC C runtime so the packaged app does not require the
+# Visual C++ Redistributable (VCRUNTIME140.dll) on target machines.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
