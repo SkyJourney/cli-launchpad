@@ -31,6 +31,7 @@ pub fn run() {
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
             commands::tool::list_tools,
+            commands::cli_status::detect_cli_status,
             commands::shell::get_shell_profiles,
             commands::shell::save_shell_profile,
             commands::tool_args::get_directory_tool_args,

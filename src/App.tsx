@@ -1,19 +1,21 @@
-import { Terminal } from "lucide-react";
-import { DirectoryList } from "./components/DirectoryList";
-import { ToolLauncherPanel } from "./components/ToolLauncherPanel";
+import { Sidebar } from "./components/Sidebar";
+import { ProjectsView } from "./views/ProjectsView";
+import { ProjectDetailView } from "./views/ProjectDetailView";
+import { ProjectEditView } from "./views/ProjectEditView";
+import { SettingsView } from "./views/SettingsView";
+import { useAppStore } from "./store/appStore";
 
 export function App() {
+  const view = useAppStore((state) => state.view);
+
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <Terminal size={20} />
-          <span>CLI Launchpad</span>
-        </div>
-        <DirectoryList />
-      </aside>
+      <Sidebar />
       <section className="workspace">
-        <ToolLauncherPanel />
+        {view === "projects" && <ProjectsView />}
+        {view === "detail" && <ProjectDetailView />}
+        {view === "edit" && <ProjectEditView />}
+        {view === "settings" && <SettingsView />}
       </section>
     </main>
   );

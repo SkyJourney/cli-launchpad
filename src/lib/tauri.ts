@@ -37,6 +37,18 @@ export interface DirectoryToolArgs {
   args: string;
 }
 
+export type CliAvailability = "available" | "path_not_visible" | "missing";
+
+export interface CliStatus {
+  toolKey: ToolKey;
+  status: CliAvailability;
+  path: string | null;
+  resolvedCommand: string | null;
+  version: string | null;
+  latestVersion: string | null;
+  pathVisible: boolean;
+}
+
 // Directories
 export function listDirectories() {
   return invoke<Directory[]>("list_directories");
@@ -65,6 +77,11 @@ export function setDirectoryPinned(id: number, pinned: boolean) {
 // Tools
 export function listTools() {
   return invoke<Tool[]>("list_tools");
+}
+
+// CLI detection
+export function detectCliStatus() {
+  return invoke<CliStatus[]>("detect_cli_status");
 }
 
 // Shell profiles
