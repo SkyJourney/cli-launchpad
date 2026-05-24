@@ -10,6 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:offline": "tauri build --config src-tauri/tauri.offline.conf.json",
+    "build:installers": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installers.ps1",
     "format": "prettier --write ."
   },
   "dependencies": {

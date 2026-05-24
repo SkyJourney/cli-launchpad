@@ -10,3 +10,4 @@ src-tauri/target/
 *.sqlite
 *.sqlite3
 src-tauri/gen/
+dist-installers/
