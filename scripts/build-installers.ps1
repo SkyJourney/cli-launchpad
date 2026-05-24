@@ -7,7 +7,6 @@ $ErrorActionPreference = "Stop"
 $root = (Get-Location).Path
 $nsisDir = Join-Path $root "src-tauri/target/release/bundle/nsis"
 $outDir = Join-Path $root "dist-installers"
-$version = (Get-Content (Join-Path $root "src-tauri/tauri.conf.json") -Raw | ConvertFrom-Json).version
 
 function Invoke-Build([string[]]$extra) {
   Write-Host "`n=== pnpm tauri build $($extra -join ' ') ===" -ForegroundColor Cyan
@@ -21,7 +20,10 @@ function Copy-Installer([string]$label) {
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
   if (-not $exe) { throw "No *-setup.exe found in $nsisDir" }
-  $dest = Join-Path $outDir "CLI-Launchpad-$version-$label-setup.exe"
+  # Insert the variant label before "-setup.exe", keeping Tauri's
+  # {productName}_{version}_{arch} prefix so the architecture is auto-included.
+  $base = $exe.Name -replace '-setup\.exe$', ''
+  $dest = Join-Path $outDir "$base-$label-setup.exe"
   Copy-Item $exe.FullName $dest -Force
   Write-Host "-> $dest" -ForegroundColor Green
 }
