@@ -56,8 +56,9 @@ pub fn run() {
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            services::diagnostics_service::cleanup_logs(&paths)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            if let Err(error) = services::diagnostics_service::cleanup_logs(&paths) {
+                eprintln!("unable to prune diagnostic logs: {error}");
+            }
             app.handle().plugin(
                 tauri_plugin_log::Builder::new()
                     .clear_targets()
@@ -78,6 +79,8 @@ pub fn run() {
             let existing_database = paths.database_path.is_file();
             let connection = db::connection::open_database(&paths.database_path)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            db::connection::ensure_supported_schema(&connection)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             if existing_database && db::connection::has_pending_migrations(&connection)? {
                 services::backup_service::create(
                     &connection,
@@ -93,8 +96,14 @@ pub fn run() {
                 db::connection::schema_version(&connection)?
             );
             app.manage(Db(Mutex::new(connection)));
-            let cache = db::cache_connection::init_cache(&paths.cache_dir.join("cache.db"))
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
+                Ok(cache) => cache,
+                Err(error) => {
+                    log::warn!("persistent cache unavailable; using memory cache error={error}");
+                    db::cache_connection::init_ephemeral_cache()
+                        .map_err(|fallback| anyhow::anyhow!(fallback.to_string()))?
+                }
+            };
             app.manage(CacheDb(Mutex::new(cache)));
             app.manage(paths);
 

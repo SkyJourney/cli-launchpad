@@ -2,6 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use rusqlite::{Connection, DatabaseName, OpenFlags};
 use tauri::{AppHandle, Manager};
 
 const LEGACY_IDENTIFIER: &str = "dev.local.cli-launchpad";
@@ -60,11 +61,7 @@ pub fn prepare(app: &AppHandle) -> Result<StoragePaths> {
     paths.create_directories()?;
 
     let legacy_data_dir = app.path().data_dir()?.join(LEGACY_IDENTIFIER);
-    migrate_if_missing(
-        &legacy_data_dir.join(DB_FILENAME),
-        &paths.database_path,
-        "旧数据库",
-    )?;
+    migrate_database_if_missing(&legacy_data_dir.join(DB_FILENAME), &paths.database_path)?;
 
     // Window-state is owned by the Tauri plugin and remains under app_config_dir.
     // Copy it before registering the plugin so the first run under the stable
@@ -99,6 +96,30 @@ fn migrate_if_missing(source: &Path, target: &Path, label: &str) -> Result<bool>
             target.display()
         )
     })?;
+    OpenOptions::new()
+        .write(true)
+        .open(&temporary)?
+        .sync_all()?;
+    fs::rename(&temporary, target)?;
+    Ok(true)
+}
+
+fn migrate_database_if_missing(source: &Path, target: &Path) -> Result<bool> {
+    if target.exists() || !source.is_file() {
+        return Ok(false);
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = target.with_extension("migrating");
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
+    let source_connection = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("无法打开旧数据库 {}", source.display()))?;
+    source_connection
+        .backup(DatabaseName::Main, &temporary, None)
+        .context("无法创建旧数据库一致性迁移副本")?;
     OpenOptions::new()
         .write(true)
         .open(&temporary)?
@@ -147,5 +168,23 @@ mod tests {
         assert!(migrate_if_missing(&source, &target, "test").unwrap());
         assert_eq!(fs::read(&target).unwrap(), b"legacy");
         assert_eq!(fs::read(&source).unwrap(), b"legacy");
+    }
+
+    #[test]
+    fn database_migration_uses_readable_sqlite_snapshot() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.db");
+        let target = dir.path().join("nested").join("target.db");
+        let connection = Connection::open(&source).unwrap();
+        connection
+            .execute_batch("create table data (value text); insert into data values ('kept');")
+            .unwrap();
+
+        assert!(migrate_database_if_missing(&source, &target).unwrap());
+        let copied = Connection::open(target).unwrap();
+        let value: String = copied
+            .query_row("select value from data", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "kept");
     }
 }

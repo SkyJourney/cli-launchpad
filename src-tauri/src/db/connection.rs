@@ -48,6 +48,17 @@ pub fn has_pending_migrations(connection: &Connection) -> rusqlite::Result<bool>
     Ok(schema_version(connection)? < latest_schema_version())
 }
 
+pub fn ensure_supported_schema(connection: &Connection) -> Result<()> {
+    let version = schema_version(connection)?;
+    if version > latest_schema_version() {
+        bail!(
+            "数据库来自更新版本的应用（schema {version}），当前版本仅支持到 schema {}",
+            latest_schema_version()
+        );
+    }
+    Ok(())
+}
+
 pub fn latest_schema_version() -> i64 {
     MIGRATIONS.last().map_or(0, |migration| migration.0)
 }
@@ -126,5 +137,14 @@ mod tests {
         std::fs::write(&path, b"not a sqlite database").unwrap();
 
         assert!(init_database(&path).is_err());
+    }
+
+    #[test]
+    fn database_from_future_version_is_rejected() {
+        let connection = memory_db();
+        connection
+            .pragma_update(None, "user_version", latest_schema_version() + 1)
+            .unwrap();
+        assert!(ensure_supported_schema(&connection).is_err());
     }
 }

@@ -26,6 +26,12 @@ pub fn init_cache(path: &Path) -> Result<Connection> {
     }
 }
 
+pub fn init_ephemeral_cache() -> Result<Connection> {
+    let connection = Connection::open_in_memory()?;
+    connection.execute_batch(SCHEMA)?;
+    Ok(connection)
+}
+
 fn remove_sqlite_sidecars(path: &Path) {
     for suffix in ["-wal", "-shm"] {
         let sidecar = path.with_file_name(format!(
@@ -39,6 +45,8 @@ fn remove_sqlite_sidecars(path: &Path) {
 fn open_and_init(path: &Path) -> Result<Connection> {
     let connection = Connection::open(path)?;
     connection.execute_batch(SCHEMA)?;
+    let result: String = connection.query_row("pragma quick_check", [], |row| row.get(0))?;
+    anyhow::ensure!(result == "ok", "缓存数据库完整性检查失败：{result}");
     Ok(connection)
 }
 
