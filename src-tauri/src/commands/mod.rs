@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod cache;
 pub mod cli_status;
 pub mod config;
 pub mod diagnostics;

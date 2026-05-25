@@ -771,6 +771,19 @@ h1 {
   padding-top: 14px;
 }
 
+.heading-actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.cache-summary {
+  color: #667085;
+  display: flex;
+  gap: 18px;
+  font-size: 13px;
+}
+
 .spinning {
   animation: spin 0.9s linear infinite;
 }

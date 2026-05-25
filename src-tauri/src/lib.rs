@@ -15,8 +15,10 @@ use tauri_plugin_log::{Target, TargetKind};
 
 pub use error::AppError;
 
-/// Shared SQLite connection guarded by a mutex, stored in Tauri managed state.
-pub type Db = Mutex<Connection>;
+/// Business and cache databases are distinct managed-state types so commands
+/// cannot accidentally read cache rows through the configuration connection.
+pub struct Db(pub Mutex<Connection>);
+pub struct CacheDb(pub Mutex<Connection>);
 
 /// Lock the shared connection and run `f` with it, mapping lock poisoning to an
 /// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
@@ -25,9 +27,21 @@ pub fn with_conn<T>(
     f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let mut conn = state
+        .0
         .lock()
         .map_err(|_| AppError::msg("数据库连接锁中毒"))?;
     f(&mut conn)
+}
+
+pub fn with_cache<T>(
+    state: &State<'_, CacheDb>,
+    f: impl FnOnce(&Connection) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let connection = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("缓存数据库连接锁中毒"))?;
+    f(&connection)
 }
 
 pub fn run() {
@@ -78,7 +92,10 @@ pub fn run() {
                 "database initialized schema_version={}",
                 db::connection::schema_version(&connection)?
             );
-            app.manage(Mutex::new(connection));
+            app.manage(Db(Mutex::new(connection)));
+            let cache = db::cache_connection::init_cache(&paths.cache_dir.join("cache.db"))
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            app.manage(CacheDb(Mutex::new(cache)));
             app.manage(paths);
 
             setup_tray(app.handle())?;
@@ -88,6 +105,8 @@ pub fn run() {
             commands::backup::list_backups,
             commands::backup::create_backup,
             commands::backup::restore_backup,
+            commands::cache::get_cache_stats,
+            commands::cache::clear_cache,
             commands::diagnostics::export_diagnostics_to_path,
             commands::launch::preview_launch,
             commands::launch::launch_tool,

@@ -6,6 +6,7 @@ import {
   Copy,
   Pencil,
   Play,
+  RefreshCw,
   RotateCcw,
 } from "lucide-react";
 import clsx from "clsx";
@@ -53,7 +54,7 @@ export function ProjectDetailView() {
 
   const sessions = useQuery({
     queryKey: qk.sessions(directoryId, activeTool),
-    queryFn: () => listSessions(directoryId as number, activeTool),
+    queryFn: () => listSessions(directoryId as number, activeTool, false),
     enabled: directoryId != null,
   });
 
@@ -166,7 +167,28 @@ export function ProjectDetailView() {
       {launchError && <p className="error">启动失败：{launchError}</p>}
 
       <section>
-        <div className="section-heading">历史会话</div>
+        <div className="section-heading heading-actions">
+          <span>历史会话</span>
+          {supportsHistory && (
+            <button
+              className="icon-button"
+              title="刷新会话"
+              disabled={sessions.isFetching}
+              onClick={() =>
+                void queryClient.fetchQuery({
+                  queryKey: qk.sessions(directoryId, activeTool),
+                  queryFn: () =>
+                    listSessions(directoryId as number, activeTool, true),
+                })
+              }
+            >
+              <RefreshCw
+                size={14}
+                className={sessions.isFetching ? "spinning" : undefined}
+              />
+            </button>
+          )}
+        </div>
         {!supportsHistory ? (
           <p className="muted">
             Antigravity 暂不支持历史列表，可直接启动新会话。

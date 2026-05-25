@@ -110,8 +110,8 @@ SQLite 是功能配置的事实来源：
 - shell profiles
 - per-directory tool arguments
 - launch history
-- CLI detection cache
-- session index cache（会话索引缓存，事实来源仍是各 CLI 的本地存储，可随时删除重建）
+- CLI detection cache（存放在独立可删除的 `cache/cache.db`）
+- session index cache（存放在独立缓存库；事实来源仍是各 CLI 的本地存储，可随时删除重建）
 
 本地 UI 偏好后续可使用 JSON 或 Tauri store：
 

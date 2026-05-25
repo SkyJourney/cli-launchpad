@@ -9,6 +9,7 @@ export const qk = {
   latestVersions: () => ["latest-versions"],
   backups: () => ["backups"],
   launchHistory: () => ["launch-history"],
+  cacheStats: () => ["cache-stats"],
   shellProfiles: () => ["shell-profiles"],
   appVersion: () => ["app-version"],
   directoryToolArgs: (directoryId?: number | null) =>

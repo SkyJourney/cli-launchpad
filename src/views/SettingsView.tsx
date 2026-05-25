@@ -14,11 +14,14 @@ import { hasUpdate } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
+  clearCache,
   clearLaunchHistory,
   createBackup,
+  detectCliStatus,
   exportConfigToPath,
   exportDiagnosticsToPath,
   fetchLatestVersions,
+  getCacheStats,
   getInstallPlan,
   getShellProfiles,
   importConfigFromPath,
@@ -67,7 +70,7 @@ export function SettingsView() {
 
   const latest = useQuery({
     queryKey: qk.latestVersions(),
-    queryFn: fetchLatestVersions,
+    queryFn: () => fetchLatestVersions(false),
     staleTime: 1000 * 60 * 30,
   });
   const latestByTool = new Map(
@@ -136,6 +139,32 @@ export function SettingsView() {
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: qk.launchHistory() }),
   });
+  const cacheStats = useQuery({
+    queryKey: qk.cacheStats(),
+    queryFn: getCacheStats,
+  });
+  const clearCacheMutation = useMutation({
+    mutationFn: clearCache,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: qk.cacheStats() });
+      queryClient.invalidateQueries({ queryKey: qk.cliStatus() });
+      queryClient.invalidateQueries({ queryKey: qk.latestVersions() });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+  const refreshDetectedVersions = async () => {
+    await Promise.all([
+      queryClient.fetchQuery({
+        queryKey: qk.cliStatus(),
+        queryFn: () => detectCliStatus(true),
+      }),
+      queryClient.fetchQuery({
+        queryKey: qk.latestVersions(),
+        queryFn: () => fetchLatestVersions(true),
+      }),
+    ]);
+    await queryClient.invalidateQueries({ queryKey: qk.cacheStats() });
+  };
 
   const exportMutation = useMutation({
     mutationFn: async () => {
@@ -205,8 +234,7 @@ export function SettingsView() {
     onSuccess: (result) => {
       setOutcome(result);
       setPending(null);
-      queryClient.invalidateQueries({ queryKey: qk.cliStatus() });
-      queryClient.invalidateQueries({ queryKey: qk.latestVersions() });
+      void refreshDetectedVersions();
     },
   });
 
@@ -218,8 +246,7 @@ export function SettingsView() {
           className="icon-button"
           title="重新检测"
           onClick={() => {
-            void cliStatus.refetch();
-            void latest.refetch();
+            void refreshDetectedVersions();
           }}
           disabled={cliStatus.isFetching}
         >
@@ -433,6 +460,30 @@ export function SettingsView() {
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="config-backup">
+        <div className="section-heading">缓存</div>
+        <div className="cache-summary">
+          <span>条目：{cacheStats.data?.entryCount ?? 0}</span>
+          <span>会话索引：{cacheStats.data?.sessionEntryCount ?? 0}</span>
+          <span>大小：{formatBytes(cacheStats.data?.sizeBytes ?? 0)}</span>
+          <span>
+            最近写入：
+            {cacheStats.data?.newestEntryAtMs
+              ? new Date(cacheStats.data.newestEntryAtMs).toLocaleString()
+              : "无"}
+          </span>
+        </div>
+        <div className="config-actions">
+          <button
+            className="ghost-button"
+            disabled={clearCacheMutation.isPending}
+            onClick={() => clearCacheMutation.mutate()}
+          >
+            清除缓存
+          </button>
         </div>
       </section>
 

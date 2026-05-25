@@ -94,6 +94,13 @@ export interface LaunchHistoryEntry {
   launchedAt: string;
 }
 
+export interface CacheStats {
+  sizeBytes: number;
+  entryCount: number;
+  sessionEntryCount: number;
+  newestEntryAtMs: number | null;
+}
+
 export type CliAvailability = "available" | "missing";
 
 export interface CliStatus {
@@ -140,8 +147,8 @@ export function saveToolGlobalArgs(toolKey: ToolKey, args: string) {
 }
 
 // CLI detection
-export function detectCliStatus() {
-  return invoke<CliStatus[]>("detect_cli_status");
+export function detectCliStatus(force = false) {
+  return invoke<CliStatus[]>("detect_cli_status", { force });
 }
 
 // Config backup (file-based)
@@ -178,8 +185,8 @@ export function clearLaunchHistory() {
 }
 
 // Version & install/update
-export function fetchLatestVersions() {
-  return invoke<LatestVersion[]>("fetch_latest_versions");
+export function fetchLatestVersions(force = false) {
+  return invoke<LatestVersion[]>("fetch_latest_versions", { force });
 }
 
 export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
@@ -232,8 +239,16 @@ export function launchTool(directoryId: number, toolKey: ToolKey) {
 }
 
 // Sessions
-export function listSessions(directoryId: number, toolKey: ToolKey) {
-  return invoke<SessionInfo[]>("list_sessions", { directoryId, toolKey });
+export function listSessions(
+  directoryId: number,
+  toolKey: ToolKey,
+  force = false,
+) {
+  return invoke<SessionInfo[]>("list_sessions", {
+    directoryId,
+    toolKey,
+    force,
+  });
 }
 
 export function resumeSession(
@@ -242,4 +257,12 @@ export function resumeSession(
   sessionId: string,
 ) {
   return invoke<void>("resume_session", { directoryId, toolKey, sessionId });
+}
+
+export function getCacheStats() {
+  return invoke<CacheStats>("get_cache_stats");
+}
+
+export function clearCache() {
+  return invoke<void>("clear_cache");
 }

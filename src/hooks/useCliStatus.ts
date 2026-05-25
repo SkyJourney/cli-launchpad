@@ -10,7 +10,7 @@ import {
 export function useCliStatus() {
   return useQuery({
     queryKey: qk.cliStatus(),
-    queryFn: detectCliStatus,
+    queryFn: () => detectCliStatus(false),
     // CLI detection runs subprocesses; refresh is user-driven (the settings /
     // projects "重新检测" buttons) and after install/update invalidation.
     staleTime: Infinity,

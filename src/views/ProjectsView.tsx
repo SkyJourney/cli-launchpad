@@ -8,6 +8,7 @@ import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { qk } from "../lib/queryKeys";
 import {
   addDirectory,
+  detectCliStatus,
   launchTool,
   removeDirectory,
   setDirectoryPinned,
@@ -143,7 +144,12 @@ export function ProjectsView() {
           <button
             className="icon-button"
             title="重新检测 CLI"
-            onClick={() => void cliStatus.refetch()}
+            onClick={() =>
+              void queryClient.fetchQuery({
+                queryKey: qk.cliStatus(),
+                queryFn: () => detectCliStatus(true),
+              })
+            }
             disabled={cliStatus.isFetching}
           >
             <RefreshCw

@@ -54,7 +54,7 @@ CLI 状态与版本
   run_install                  执行安装/更新并捕获日志
 
 会话历史
-  list_sessions                按目录和工具读取会话（按需实时读取，无缓存表）
+  list_sessions                按目录和工具读取会话（可使用可删除短期缓存）
   resume_session               按工具恢复指定会话
 
 Shell 配置
@@ -129,6 +129,15 @@ schema 版本与日志内容，用于本地排障。
 `launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
 类别，不持久化最终命令或参数文本。添加目录和实际发起启动时，Rust
 服务层均验证项目路径存在且为目录，失效路径会保留配置并返回修正提示。
+
+## 可删除缓存
+
+缓存数据库固定为 `~/.cli-launchpad/cache/cache.db`，与业务数据库隔离。
+缓存内容包括 CLI 状态短期快照、npm 最新版本查询结果和 Claude/Codex
+会话列表摘要。CLI 状态使用 30 秒 TTL，最新版本使用 30 分钟 TTL，会话
+摘要使用 60 秒 TTL；手动刷新强制绕过缓存。网络查询失败时可回退到已
+存在的最新版本缓存。删除或损坏缓存库后应用自动重建，实际启动仍实时
+解析工具路径，不以缓存决定执行目标。
 
 ## 打包与运行依赖
 
@@ -248,7 +257,9 @@ Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl   可列出
 Antigravity  官方未公开本地路径   不可列出，仅支持按 conversation id 恢复
 ```
 
-读取逻辑放在 service，解析出标题、时间、session id。当前实现为**按需实时读取**（只读首条用户消息和文件 mtime，开销小且永远最新），未建缓存表；事实来源始终是各 CLI 的本地文件。Antigravity 不读历史，只提供直接启动。
+读取逻辑放在 service，解析出标题、时间、session id。结果可短期缓存到
+`~/.cli-launchpad/cache/cache.db`，用户可在设置页随时清除；事实来源始终
+是各 CLI 的本地文件。Antigravity 不读历史，只提供直接启动。
 
 恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume`/`resume --last`。恢复参数与普通启动共用命令组合与转义逻辑。
 
