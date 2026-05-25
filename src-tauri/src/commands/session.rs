@@ -13,7 +13,14 @@ pub async fn list_sessions(
     tool_key: ToolKey,
     force: Option<bool>,
 ) -> Result<Vec<SessionInfo>, AppError> {
-    let cache_key = format!("sessions:{directory_id}:{}", tool_key.as_str());
+    let path = with_conn(&state, |conn| {
+        Ok(session_service::directory_path(conn, directory_id)?)
+    })?;
+    let cache_key = format!(
+        "sessions:{}:{}",
+        tool_key.as_str(),
+        session_service::cache_identity(&path)
+    );
     if !force.unwrap_or(false) {
         if let Some(cached) = with_cache(&cache, |connection| {
             Ok(cache_service::get_fresh(connection, &cache_key, 60_000)?)
@@ -21,17 +28,11 @@ pub async fn list_sessions(
             return Ok(cached);
         }
     }
-    // Resolve the directory path under the lock, then release it before the
-    // (potentially disk-heavy) scan runs on a blocking thread.
-    let path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
-
     let sessions = tauri::async_runtime::spawn_blocking(move || {
         session_service::list_sessions(tool_key, &path)
     })
     .await
-    .map_err(|error| AppError::msg(error.to_string()))?;
+    .map_err(|error| AppError::msg(error.to_string()))??;
     with_cache(&cache, |connection| {
         cache_service::put(connection, &cache_key, &sessions)?;
         Ok(())
@@ -47,6 +48,10 @@ pub fn resume_session(
     session_id: String,
 ) -> Result<(), AppError> {
     with_conn(&state, |conn| {
+        let path = session_service::directory_path(conn, directory_id)?;
+        if !session_service::session_belongs_to_directory(tool_key, &path, &session_id)? {
+            return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
+        }
         Ok(launch_service::resume(
             conn,
             directory_id,

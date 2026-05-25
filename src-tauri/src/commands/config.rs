@@ -3,7 +3,7 @@ use tauri::State;
 use crate::models::backup::BackupReason;
 use crate::services::config_service;
 use crate::services::{backup_service, storage_service::StoragePaths};
-use crate::{with_conn, AppError, Db};
+use crate::{with_cache, with_conn, AppError, CacheDb, Db};
 
 #[tauri::command]
 pub fn export_config_to_path(state: State<'_, Db>, path: String) -> Result<(), AppError> {
@@ -24,6 +24,7 @@ pub fn export_config_to_path(state: State<'_, Db>, path: String) -> Result<(), A
 #[tauri::command]
 pub fn import_config_from_path(
     state: State<'_, Db>,
+    cache: State<'_, CacheDb>,
     storage: State<'_, StoragePaths>,
     path: String,
 ) -> Result<(), AppError> {
@@ -40,5 +41,9 @@ pub fn import_config_from_path(
                 Err(error.into())
             }
         }
+    })?;
+    with_cache(&cache, |connection| {
+        crate::services::cache_service::remove_prefix(connection, "sessions:")?;
+        Ok(())
     })
 }

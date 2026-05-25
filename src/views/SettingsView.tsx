@@ -124,9 +124,16 @@ export function SettingsView() {
   });
   const restoreBackupMutation = useMutation({
     mutationFn: (backupId: string) => restoreBackup(backupId),
-    onSuccess: () => {
+    onSuccess: async () => {
       setPendingRestore(null);
-      queryClient.invalidateQueries();
+      queryClient.removeQueries({ queryKey: qk.directoryToolArgs() });
+      queryClient.removeQueries({ queryKey: ["sessions"] });
+      await queryClient.invalidateQueries();
+      const fresh = await queryClient.fetchQuery({
+        queryKey: qk.tools(),
+        queryFn: listTools,
+      });
+      setGlobalArgs(toolsToGlobalArgs(fresh));
     },
   });
   const launchHistory = useQuery({
@@ -196,7 +203,8 @@ export function SettingsView() {
         return;
       }
       queryClient.invalidateQueries({ queryKey: qk.directories() });
-      queryClient.invalidateQueries({ queryKey: qk.directoryToolArgs() });
+      queryClient.removeQueries({ queryKey: qk.directoryToolArgs() });
+      queryClient.removeQueries({ queryKey: ["sessions"] });
       // Re-seed the global-args editor from the freshly imported tools (await
       // the fetch so we don't seed from stale data).
       const fresh = await queryClient.fetchQuery({

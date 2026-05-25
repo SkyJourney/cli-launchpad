@@ -20,19 +20,21 @@ pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))
 }
 
-pub fn list_sessions(tool_key: ToolKey, directory_path: &str) -> Vec<SessionInfo> {
+pub fn list_sessions(tool_key: ToolKey, directory_path: &str) -> Result<Vec<SessionInfo>> {
     let mut sessions = match tool_key {
-        ToolKey::Claude => list_claude_sessions(directory_path),
-        ToolKey::Codex => list_codex_sessions(directory_path),
+        ToolKey::Claude => list_claude_sessions(directory_path)?,
+        ToolKey::Codex => list_codex_sessions(directory_path)?,
         // Antigravity does not expose an on-disk session listing.
         ToolKey::Antigravity => Vec::new(),
     };
     sessions.sort_by(|a, b| b.last_active_ms.cmp(&a.last_active_ms));
-    sessions
+    Ok(sessions)
 }
 
-fn home_dir() -> Option<PathBuf> {
-    std::env::var("USERPROFILE").ok().map(PathBuf::from)
+fn home_dir() -> Result<PathBuf> {
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .map_err(|_| anyhow!("无法确定用户主目录，不能读取会话历史"))
 }
 
 /// Claude Code stores sessions under `~/.claude/projects/<slug>/`, where the
@@ -44,16 +46,16 @@ fn claude_slug(path: &str) -> String {
         .collect()
 }
 
-fn list_claude_sessions(directory_path: &str) -> Vec<SessionInfo> {
-    let Some(home) = home_dir() else {
-        return Vec::new();
-    };
+fn list_claude_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
+    let home = home_dir()?;
     let dir = home
         .join(".claude")
         .join("projects")
         .join(claude_slug(directory_path));
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
     };
 
     let mut sessions = Vec::new();
@@ -73,7 +75,7 @@ fn list_claude_sessions(directory_path: &str) -> Vec<SessionInfo> {
             source_path: path.display().to_string(),
         });
     }
-    sessions
+    Ok(sessions)
 }
 
 fn claude_title(path: &Path) -> Option<String> {
@@ -125,13 +127,11 @@ fn extract_text_content(content: &Value) -> Option<String> {
     None
 }
 
-fn list_codex_sessions(directory_path: &str) -> Vec<SessionInfo> {
-    let Some(home) = home_dir() else {
-        return Vec::new();
-    };
+fn list_codex_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
+    let home = home_dir()?;
     let root = home.join(".codex").join("sessions");
     let mut files = Vec::new();
-    collect_rollout_files(&root, &mut files, 0);
+    collect_rollout_files(&root, &mut files, 0)?;
 
     let mut sessions = Vec::new();
     for path in files {
@@ -139,22 +139,24 @@ fn list_codex_sessions(directory_path: &str) -> Vec<SessionInfo> {
             sessions.push(session);
         }
     }
-    sessions
+    Ok(sessions)
 }
 
 /// Recursively collect `rollout-*.jsonl` files. Depth-bounded since Codex lays
 /// sessions out as `YYYY/MM/DD/rollout-*.jsonl`.
-fn collect_rollout_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+fn collect_rollout_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> Result<()> {
     if depth > 5 {
-        return;
+        return Ok(());
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_rollout_files(&path, out, depth + 1);
+            collect_rollout_files(&path, out, depth + 1)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.starts_with("rollout-") {
@@ -162,6 +164,24 @@ fn collect_rollout_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
             }
         }
     }
+    Ok(())
+}
+
+pub fn cache_identity(directory_path: &str) -> String {
+    normalize_path(directory_path)
+}
+
+pub fn session_belongs_to_directory(
+    tool_key: ToolKey,
+    directory_path: &str,
+    session_id: &str,
+) -> Result<bool> {
+    if tool_key == ToolKey::Antigravity {
+        return Ok(false);
+    }
+    Ok(list_sessions(tool_key, directory_path)?
+        .iter()
+        .any(|session| session.session_id == session_id))
 }
 
 /// Scan at most this many lines for session metadata; Codex writes the session

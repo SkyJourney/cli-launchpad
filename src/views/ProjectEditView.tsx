@@ -185,7 +185,9 @@ export function ProjectEditView() {
         </button>
         <button
           className="primary-button"
-          disabled={saveMutation.isPending}
+          disabled={
+            saveMutation.isPending || savedArgs.isLoading || !savedArgs.data
+          }
           onClick={() => saveMutation.mutate()}
         >
           保存

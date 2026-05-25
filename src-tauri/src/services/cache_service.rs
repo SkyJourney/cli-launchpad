@@ -50,6 +50,14 @@ pub fn clear(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+pub fn remove_prefix(connection: &Connection, prefix: &str) -> Result<()> {
+    connection.execute(
+        "delete from cache_entries where key like ?1",
+        params![format!("{prefix}%")],
+    )?;
+    Ok(())
+}
+
 pub fn stats(connection: &Connection, database_path: &Path) -> Result<CacheStats> {
     let (entry_count, session_entry_count, newest_entry_at_ms) = connection.query_row(
         "select count(*), sum(case when key like 'sessions:%' then 1 else 0 end), max(created_at_ms) from cache_entries",

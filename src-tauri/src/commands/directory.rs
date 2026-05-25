@@ -2,8 +2,9 @@ use tauri::State;
 
 use crate::db::directory_repo;
 use crate::models::directory::Directory;
+use crate::services::cache_service;
 use crate::services::directory_service;
-use crate::{with_conn, AppError, Db};
+use crate::{with_cache, with_conn, AppError, CacheDb, Db};
 
 #[tauri::command]
 pub fn list_directories(state: State<'_, Db>) -> Result<Vec<Directory>, AppError> {
@@ -36,8 +37,16 @@ pub fn update_directory(
 }
 
 #[tauri::command]
-pub fn remove_directory(state: State<'_, Db>, id: i64) -> Result<(), AppError> {
-    with_conn(&state, |conn| Ok(directory_repo::remove(conn, id)?))
+pub fn remove_directory(
+    state: State<'_, Db>,
+    cache: State<'_, CacheDb>,
+    id: i64,
+) -> Result<(), AppError> {
+    with_conn(&state, |conn| Ok(directory_repo::remove(conn, id)?))?;
+    with_cache(&cache, |connection| {
+        cache_service::remove_prefix(connection, "sessions:")?;
+        Ok(())
+    })
 }
 
 #[tauri::command]
