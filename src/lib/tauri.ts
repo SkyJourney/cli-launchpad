@@ -69,6 +69,21 @@ export interface LatestVersion {
   latest: string | null;
 }
 
+export type BackupReason =
+  | "manual"
+  | "pre_import"
+  | "pre_restore"
+  | "pre_migration";
+
+export interface BackupManifest {
+  id: string;
+  createdAtMs: number;
+  reason: BackupReason;
+  schemaVersion: number;
+  databaseFilename: string;
+  sizeBytes: number;
+}
+
 export type CliAvailability = "available" | "missing";
 
 export interface CliStatus {
@@ -126,6 +141,18 @@ export function exportConfigToPath(path: string) {
 
 export function importConfigFromPath(path: string) {
   return invoke<void>("import_config_from_path", { path });
+}
+
+export function listBackups() {
+  return invoke<BackupManifest[]>("list_backups");
+}
+
+export function createBackup() {
+  return invoke<BackupManifest>("create_backup");
+}
+
+export function restoreBackup(backupId: string) {
+  return invoke<BackupManifest>("restore_backup", { backupId });
 }
 
 // Version & install/update

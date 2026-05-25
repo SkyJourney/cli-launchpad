@@ -94,6 +94,21 @@ commands 保持小而清晰，业务组合放在 services。
 能力，应用更换稳定 `identifier` 时仅迁移其 `.window-state.json`，不将
 该运行时文件混入业务数据库目录。
 
+## 数据备份与恢复
+
+`backups/` 保存 SQLite 一致性恢复点，不等同于面向迁移的 JSON 配置导出：
+
+```text
+~/.cli-launchpad/backups/
+├─ database/    cli-launchpad-<timestamp>-<reason>.db
+└─ manifests/   cli-launchpad-<timestamp>-<reason>.json
+```
+
+备份使用 SQLite Online Backup API 生成，支持手动创建，并在配置导入、
+数据库 schema 迁移和恢复覆盖前自动创建保护恢复点。恢复时先校验备份
+完整性，拒绝来自更新 schema 的文件；恢复较旧 schema 后重新执行当前
+migrations。自动备份保留最近 10 个，手动恢复点保留最近 5 个。
+
 ## 打包与运行依赖
 
 - NSIS 单一格式：`bundle.targets = ["nsis"]`，避免 WiX 依赖；`tauri build` 同时产出 NSIS 安装包与裸 exe。

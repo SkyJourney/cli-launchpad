@@ -1,3 +1,4 @@
+pub mod backup_service;
 pub mod cli_detect_service;
 pub mod config_service;
 pub mod install_service;

@@ -743,6 +743,34 @@ h1 {
   color: #fca5a5;
 }
 
+.backup-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.backup-row {
+  align-items: center;
+  border: 1px solid #d8dee9;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.backup-row div {
+  display: grid;
+  gap: 4px;
+}
+
+.restore-confirm {
+  border-top: 1px solid #d8dee9;
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+}
+
 .spinning {
   animation: spin 0.9s linear infinite;
 }

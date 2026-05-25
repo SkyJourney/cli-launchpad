@@ -29,10 +29,23 @@ pub fn open_database(path: &Path) -> Result<Connection> {
 }
 
 /// Open the database at `path` and apply any pending migrations.
+#[cfg(test)]
 pub fn init_database(path: &Path) -> Result<Connection> {
     let connection = open_database(path)?;
     apply_migrations(&connection)?;
     Ok(connection)
+}
+
+pub fn schema_version(connection: &Connection) -> rusqlite::Result<i64> {
+    connection.pragma_query_value(None, "user_version", |row| row.get(0))
+}
+
+pub fn has_pending_migrations(connection: &Connection) -> rusqlite::Result<bool> {
+    Ok(schema_version(connection)? < latest_schema_version())
+}
+
+pub fn latest_schema_version() -> i64 {
+    MIGRATIONS.last().map_or(0, |migration| migration.0)
 }
 
 pub fn ensure_integrity(connection: &Connection) -> Result<()> {
@@ -44,7 +57,7 @@ pub fn ensure_integrity(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
-    let current: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let current = schema_version(connection)?;
 
     for (version, sql) in MIGRATIONS {
         if *version > current {

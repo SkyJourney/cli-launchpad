@@ -21,12 +21,12 @@ pub type Db = Mutex<Connection>;
 /// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
 pub fn with_conn<T>(
     state: &State<'_, Db>,
-    f: impl FnOnce(&Connection) -> Result<T, AppError>,
+    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let conn = state
+    let mut conn = state
         .lock()
         .map_err(|_| AppError::msg("数据库连接锁中毒"))?;
-    f(&conn)
+    f(&mut conn)
 }
 
 pub fn run() {
@@ -47,8 +47,18 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_window_state::Builder::default().build())?;
 
-            let connection = db::connection::init_database(&paths.database_path)
+            let existing_database = paths.database_path.is_file();
+            let connection = db::connection::open_database(&paths.database_path)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            if existing_database && db::connection::has_pending_migrations(&connection)? {
+                services::backup_service::create(
+                    &connection,
+                    &paths,
+                    models::backup::BackupReason::PreMigration,
+                )
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
+            db::connection::apply_migrations(&connection)?;
             app.manage(Mutex::new(connection));
             app.manage(paths);
 
@@ -56,6 +66,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::backup::list_backups,
+            commands::backup::create_backup,
+            commands::backup::restore_backup,
             commands::launch::preview_launch,
             commands::launch::launch_tool,
             commands::session::list_sessions,

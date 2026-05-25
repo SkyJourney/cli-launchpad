@@ -20,8 +20,7 @@ pub struct StoragePaths {
 }
 
 impl StoragePaths {
-    fn new(home_dir: &Path) -> Self {
-        let root = home_dir.join(".cli-launchpad");
+    pub(crate) fn from_root(root: PathBuf) -> Self {
         let data_dir = root.join("data");
         let cache_dir = root.join("cache");
         let logs_dir = root.join("logs");
@@ -40,7 +39,7 @@ impl StoragePaths {
         }
     }
 
-    fn create_directories(&self) -> Result<()> {
+    pub(crate) fn create_directories(&self) -> Result<()> {
         for directory in [
             &self.root,
             &self.data_dir,
@@ -57,7 +56,7 @@ impl StoragePaths {
 }
 
 pub fn prepare(app: &AppHandle) -> Result<StoragePaths> {
-    let paths = StoragePaths::new(&app.path().home_dir()?);
+    let paths = StoragePaths::from_root(app.path().home_dir()?.join(".cli-launchpad"));
     paths.create_directories()?;
 
     let legacy_data_dir = app.path().data_dir()?.join(LEGACY_IDENTIFIER);
@@ -116,7 +115,7 @@ mod tests {
     #[test]
     fn storage_paths_create_required_layout() {
         let home = tempdir().unwrap();
-        let paths = StoragePaths::new(home.path());
+        let paths = StoragePaths::from_root(home.path().join(".cli-launchpad"));
         paths.create_directories().unwrap();
 
         assert!(paths.data_dir.is_dir());

@@ -19,13 +19,17 @@ import {
   getInstallPlan,
   getShellProfiles,
   importConfigFromPath,
+  listBackups,
   listTools,
   runInstall,
+  createBackup,
+  restoreBackup,
   saveToolGlobalArgs,
   setShellKind,
   type InstallKind,
   type InstallOutcome,
   type InstallPlan,
+  type BackupManifest,
   type ShellKind,
   type Tool,
   type ToolKey,
@@ -101,6 +105,25 @@ export function SettingsView() {
 
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [outcome, setOutcome] = useState<InstallOutcome | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
+    null,
+  );
+
+  const backups = useQuery({
+    queryKey: qk.backups(),
+    queryFn: listBackups,
+  });
+  const createBackupMutation = useMutation({
+    mutationFn: createBackup,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.backups() }),
+  });
+  const restoreBackupMutation = useMutation({
+    mutationFn: (backupId: string) => restoreBackup(backupId),
+    onSuccess: () => {
+      setPendingRestore(null);
+      queryClient.invalidateQueries();
+    },
+  });
 
   const exportMutation = useMutation({
     mutationFn: async () => {
@@ -141,6 +164,7 @@ export function SettingsView() {
         queryFn: listTools,
       });
       setGlobalArgs(toolsToGlobalArgs(fresh));
+      queryClient.invalidateQueries({ queryKey: qk.backups() });
     },
   });
 
@@ -342,6 +366,76 @@ export function SettingsView() {
         )}
       </section>
 
+      <section className="config-backup">
+        <div className="section-heading">数据恢复</div>
+        <p className="muted">
+          自动恢复点会在导入配置和恢复操作前创建；手动恢复点保存当前全部业务数据。
+        </p>
+        <div className="config-actions">
+          <button
+            className="primary-button"
+            disabled={createBackupMutation.isPending}
+            onClick={() => createBackupMutation.mutate()}
+          >
+            <Save size={15} />
+            创建恢复点
+          </button>
+        </div>
+        {backups.isError && (
+          <p className="error">读取恢复点失败：{String(backups.error)}</p>
+        )}
+        <div className="backup-list">
+          {backups.data?.map((backup) => (
+            <div className="backup-row" key={backup.id}>
+              <div>
+                <strong>{backupReasonLabel(backup.reason)}</strong>
+                <span className="muted">
+                  {new Date(backup.createdAtMs).toLocaleString()} ·{" "}
+                  {formatBytes(backup.sizeBytes)}
+                </span>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={restoreBackupMutation.isPending}
+                onClick={() => setPendingRestore(backup)}
+              >
+                恢复
+              </button>
+            </div>
+          ))}
+        </div>
+        {pendingRestore && (
+          <div className="restore-confirm">
+            <div className="section-heading">确认恢复数据</div>
+            <p className="muted">
+              将恢复到 {new Date(pendingRestore.createdAtMs).toLocaleString()}{" "}
+              的数据状态；执行前会自动保存当前状态。
+            </p>
+            <div className="edit-actions">
+              <button
+                className="ghost-button"
+                onClick={() => setPendingRestore(null)}
+                disabled={restoreBackupMutation.isPending}
+              >
+                取消
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => restoreBackupMutation.mutate(pendingRestore.id)}
+                disabled={restoreBackupMutation.isPending}
+              >
+                确认恢复
+              </button>
+            </div>
+          </div>
+        )}
+        {restoreBackupMutation.isError && (
+          <p className="error">
+            恢复失败：{String(restoreBackupMutation.error)}
+          </p>
+        )}
+      </section>
+
       {pending && (
         <section className="confirm-panel">
           <div className="section-heading">
@@ -383,4 +477,18 @@ export function SettingsView() {
       )}
     </div>
   );
+}
+
+function backupReasonLabel(reason: BackupManifest["reason"]) {
+  const labels = {
+    manual: "手动恢复点",
+    pre_import: "导入前自动备份",
+    pre_restore: "恢复前保护备份",
+    pre_migration: "升级前自动备份",
+  };
+  return labels[reason];
+}
+
+function formatBytes(bytes: number) {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
