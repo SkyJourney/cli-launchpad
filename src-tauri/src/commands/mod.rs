@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod cli_status;
 pub mod config;
+pub mod diagnostics;
 pub mod directory;
 pub mod install;
 pub mod launch;

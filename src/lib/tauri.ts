@@ -143,6 +143,10 @@ export function importConfigFromPath(path: string) {
   return invoke<void>("import_config_from_path", { path });
 }
 
+export function exportDiagnosticsToPath(path: string) {
+  return invoke<void>("export_diagnostics_to_path", { path });
+}
+
 export function listBackups() {
   return invoke<BackupManifest[]>("list_backups");
 }

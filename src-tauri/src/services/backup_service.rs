@@ -63,6 +63,7 @@ pub fn create(
     };
     write_manifest(paths, &manifest)?;
     prune(paths)?;
+    log::info!("database backup created reason={}", reason.as_str());
     Ok(manifest)
 }
 
@@ -90,6 +91,7 @@ pub fn restore(
     drop(restore);
     connection::apply_migrations(destination)?;
     connection::ensure_integrity(destination)?;
+    log::info!("database backup restored backup_id={}", manifest.id);
     Ok(manifest)
 }
 

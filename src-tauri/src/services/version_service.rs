@@ -46,7 +46,23 @@ pub fn fetch_latest(tool_key: ToolKey) -> Option<String> {
         .timeout_read(REGISTRY_TIMEOUT)
         .build();
 
-    let body = agent.get(&url).call().ok()?.into_string().ok()?;
+    let response = match agent.get(&url).call() {
+        Ok(response) => response,
+        Err(_) => {
+            log::warn!("latest version query failed tool={}", tool_key.as_str());
+            return None;
+        }
+    };
+    let body = match response.into_string() {
+        Ok(body) => body,
+        Err(_) => {
+            log::warn!(
+                "latest version response unreadable tool={}",
+                tool_key.as_str()
+            );
+            return None;
+        }
+    };
     let value: serde_json::Value = serde_json::from_str(&body).ok()?;
     value
         .get("version")

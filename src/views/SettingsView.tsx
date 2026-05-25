@@ -15,6 +15,7 @@ import { qk } from "../lib/queryKeys";
 import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
   exportConfigToPath,
+  exportDiagnosticsToPath,
   fetchLatestVersions,
   getInstallPlan,
   getShellProfiles,
@@ -165,6 +166,19 @@ export function SettingsView() {
       });
       setGlobalArgs(toolsToGlobalArgs(fresh));
       queryClient.invalidateQueries({ queryKey: qk.backups() });
+    },
+  });
+  const diagnosticsMutation = useMutation({
+    mutationFn: async () => {
+      const path = await save({
+        defaultPath: "cli-launchpad-diagnostics.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) {
+        return false;
+      }
+      await exportDiagnosticsToPath(path);
+      return true;
     },
   });
 
@@ -363,6 +377,23 @@ export function SettingsView() {
         )}
         {importMutation.isError && (
           <p className="error">导入失败：{String(importMutation.error)}</p>
+        )}
+      </section>
+
+      <section className="config-backup">
+        <div className="section-heading">诊断</div>
+        <div className="config-actions">
+          <button
+            className="ghost-button"
+            disabled={diagnosticsMutation.isPending}
+            onClick={() => diagnosticsMutation.mutate()}
+          >
+            <Download size={15} />
+            导出诊断报告
+          </button>
+        </div>
+        {diagnosticsMutation.isError && (
+          <p className="error">导出失败：{String(diagnosticsMutation.error)}</p>
         )}
       </section>
 

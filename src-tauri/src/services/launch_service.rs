@@ -18,10 +18,13 @@ pub fn preview(conn: &Connection, directory_id: i64, tool_key: ToolKey) -> Resul
 }
 
 pub fn launch(conn: &Connection, directory_id: i64, tool_key: ToolKey) -> Result<()> {
-    let request = resolve_request(conn, directory_id, tool_key)?;
-    spawn(compose_launch(&request))?;
-    directory_repo::touch_last_used(conn, directory_id)?;
-    Ok(())
+    let result = (|| {
+        let request = resolve_request(conn, directory_id, tool_key)?;
+        spawn(compose_launch(&request))?;
+        directory_repo::touch_last_used(conn, directory_id)?;
+        Ok(())
+    })();
+    log_launch_result(result, "launch", directory_id, tool_key)
 }
 
 pub fn resume(
@@ -30,11 +33,38 @@ pub fn resume(
     tool_key: ToolKey,
     session_id: &str,
 ) -> Result<()> {
-    let mut request = resolve_request(conn, directory_id, tool_key)?;
-    apply_resume(&mut request, tool_key, session_id);
-    spawn(compose_launch(&request))?;
-    directory_repo::touch_last_used(conn, directory_id)?;
-    Ok(())
+    let result = (|| {
+        let mut request = resolve_request(conn, directory_id, tool_key)?;
+        apply_resume(&mut request, tool_key, session_id);
+        spawn(compose_launch(&request))?;
+        directory_repo::touch_last_used(conn, directory_id)?;
+        Ok(())
+    })();
+    log_launch_result(result, "resume", directory_id, tool_key)
+}
+
+fn log_launch_result(
+    result: Result<()>,
+    action: &str,
+    directory_id: i64,
+    tool_key: ToolKey,
+) -> Result<()> {
+    match result {
+        Ok(()) => {
+            log::info!(
+                "cli action completed action={action} directory_id={directory_id} tool={}",
+                tool_key.as_str()
+            );
+            Ok(())
+        }
+        Err(error) => {
+            log::error!(
+                "cli action failed action={action} directory_id={directory_id} tool={}",
+                tool_key.as_str()
+            );
+            Err(error)
+        }
+    }
 }
 
 fn spawn(command: ComposedCommand) -> Result<()> {

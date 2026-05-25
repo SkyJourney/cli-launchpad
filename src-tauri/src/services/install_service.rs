@@ -97,19 +97,39 @@ pub async fn run(plan: &InstallPlan) -> InstallOutcome {
                 }
                 log.push_str(&stderr);
             }
+            log::info!(
+                "install action completed tool={} kind={:?} success={}",
+                plan.tool_key.as_str(),
+                plan.kind,
+                result.status.success()
+            );
             InstallOutcome {
                 success: result.status.success(),
                 log: log.trim().to_string(),
             }
         }
-        Ok(Err(error)) => InstallOutcome {
-            success: false,
-            log: format!("无法启动命令 `{}`：{error}", plan.program),
-        },
-        Err(_) => InstallOutcome {
-            success: false,
-            log: "命令执行超时（超过 10 分钟），已终止。".to_string(),
-        },
+        Ok(Err(error)) => {
+            log::error!(
+                "install action spawn failed tool={} kind={:?}",
+                plan.tool_key.as_str(),
+                plan.kind
+            );
+            InstallOutcome {
+                success: false,
+                log: format!("无法启动命令 `{}`：{error}", plan.program),
+            }
+        }
+        Err(_) => {
+            log::error!(
+                "install action timed out tool={} kind={:?}",
+                plan.tool_key.as_str(),
+                plan.kind
+            );
+            InstallOutcome {
+                success: false,
+                log: "命令执行超时（超过 10 分钟），已终止。".to_string(),
+            }
+        }
     }
 }
 

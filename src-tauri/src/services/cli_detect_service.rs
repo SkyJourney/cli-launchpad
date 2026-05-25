@@ -3,10 +3,15 @@ use crate::models::tool::ToolKey;
 use crate::platform::detect;
 
 pub async fn detect_all() -> Vec<CliStatus> {
+    let started = std::time::Instant::now();
     let mut statuses = Vec::new();
     for tool_key in ToolKey::ALL {
         statuses.push(detect_tool(tool_key).await);
     }
+    log::info!(
+        "cli detection completed elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     statuses
 }
 
@@ -14,6 +19,7 @@ async fn detect_tool(tool_key: ToolKey) -> CliStatus {
     // 1) Resolvable on the current PATH.
     for command in tool_key.command_candidates() {
         if let Some(path) = detect::which(command).await {
+            log::info!("cli available tool={}", tool_key.as_str());
             return CliStatus {
                 tool_key,
                 status: CliAvailability::Available,
@@ -29,6 +35,7 @@ async fn detect_tool(tool_key: ToolKey) -> CliStatus {
     //    because launches use the full path.
     for command in tool_key.command_candidates() {
         if let Some(path) = detect::find_in_known_dirs(command) {
+            log::info!("cli available outside path tool={}", tool_key.as_str());
             return CliStatus {
                 tool_key,
                 status: CliAvailability::Available,
@@ -41,6 +48,7 @@ async fn detect_tool(tool_key: ToolKey) -> CliStatus {
     }
 
     // 3) Not found.
+    log::info!("cli missing tool={}", tool_key.as_str());
     CliStatus {
         tool_key,
         status: CliAvailability::Missing,

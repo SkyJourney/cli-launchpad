@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, State, WebviewWindow};
+use tauri_plugin_log::{Target, TargetKind};
 
 pub use error::AppError;
 
@@ -41,6 +42,19 @@ pub fn run() {
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            services::diagnostics_service::cleanup_logs(&paths)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            app.handle().plugin(
+                tauri_plugin_log::Builder::new()
+                    .clear_targets()
+                    .target(Target::new(TargetKind::Folder {
+                        path: paths.logs_dir.clone(),
+                        file_name: Some("cli-launchpad".to_string()),
+                    }))
+                    .max_file_size(2_000_000)
+                    .build(),
+            )?;
+            log::info!("application startup storage_root={}", paths.root.display());
 
             // Register after storage migration so prior window state is available
             // on the first launch under the stable Tauri identifier.
@@ -57,8 +71,13 @@ pub fn run() {
                     models::backup::BackupReason::PreMigration,
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                log::info!("database pre-migration backup created");
             }
             db::connection::apply_migrations(&connection)?;
+            log::info!(
+                "database initialized schema_version={}",
+                db::connection::schema_version(&connection)?
+            );
             app.manage(Mutex::new(connection));
             app.manage(paths);
 
@@ -69,6 +88,7 @@ pub fn run() {
             commands::backup::list_backups,
             commands::backup::create_backup,
             commands::backup::restore_backup,
+            commands::diagnostics::export_diagnostics_to_path,
             commands::launch::preview_launch,
             commands::launch::launch_tool,
             commands::session::list_sessions,
