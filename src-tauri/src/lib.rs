@@ -91,6 +91,8 @@ pub fn run() {
             commands::diagnostics::export_diagnostics_to_path,
             commands::launch::preview_launch,
             commands::launch::launch_tool,
+            commands::launch_history::list_launch_history,
+            commands::launch_history::clear_launch_history,
             commands::session::list_sessions,
             commands::session::resume_session,
             commands::directory::list_directories,

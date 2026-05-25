@@ -84,6 +84,16 @@ export interface BackupManifest {
   sizeBytes: number;
 }
 
+export interface LaunchHistoryEntry {
+  id: number;
+  directoryName: string;
+  toolKey: ToolKey;
+  action: "launch" | "resume";
+  success: boolean;
+  errorCategory: string | null;
+  launchedAt: string;
+}
+
 export type CliAvailability = "available" | "missing";
 
 export interface CliStatus {
@@ -157,6 +167,14 @@ export function createBackup() {
 
 export function restoreBackup(backupId: string) {
   return invoke<BackupManifest>("restore_backup", { backupId });
+}
+
+export function listLaunchHistory() {
+  return invoke<LaunchHistoryEntry[]>("list_launch_history");
+}
+
+export function clearLaunchHistory() {
+  return invoke<void>("clear_launch_history");
 }
 
 // Version & install/update

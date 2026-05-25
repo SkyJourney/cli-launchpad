@@ -8,6 +8,7 @@ export const qk = {
   cliStatus: () => ["cli-status"],
   latestVersions: () => ["latest-versions"],
   backups: () => ["backups"],
+  launchHistory: () => ["launch-history"],
   shellProfiles: () => ["shell-profiles"],
   appVersion: () => ["app-version"],
   directoryToolArgs: (directoryId?: number | null) =>

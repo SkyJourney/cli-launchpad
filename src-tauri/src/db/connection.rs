@@ -14,6 +14,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         3,
         include_str!("../../migrations/0003_fix_antigravity_command.sql"),
     ),
+    (
+        4,
+        include_str!("../../migrations/0004_safe_launch_history.sql"),
+    ),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {

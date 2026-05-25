@@ -3,7 +3,10 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 
-use crate::db::{directory_repo, directory_tool_args_repo, shell_profile_repo, tool_repo};
+use crate::db::{
+    directory_repo, directory_tool_args_repo, launch_history_repo, shell_profile_repo, tool_repo,
+};
+use crate::models::launch_history::LaunchAction;
 use crate::models::tool::ToolKey;
 use crate::platform::detect;
 use crate::platform::powershell::{compose_launch, ComposedCommand, LaunchRequest};
@@ -24,7 +27,7 @@ pub fn launch(conn: &Connection, directory_id: i64, tool_key: ToolKey) -> Result
         directory_repo::touch_last_used(conn, directory_id)?;
         Ok(())
     })();
-    log_launch_result(result, "launch", directory_id, tool_key)
+    record_and_log_result(conn, result, LaunchAction::Launch, directory_id, tool_key)
 }
 
 pub fn resume(
@@ -40,26 +43,42 @@ pub fn resume(
         directory_repo::touch_last_used(conn, directory_id)?;
         Ok(())
     })();
-    log_launch_result(result, "resume", directory_id, tool_key)
+    record_and_log_result(conn, result, LaunchAction::Resume, directory_id, tool_key)
 }
 
-fn log_launch_result(
+fn record_and_log_result(
+    connection: &Connection,
     result: Result<()>,
-    action: &str,
+    action: LaunchAction,
     directory_id: i64,
     tool_key: ToolKey,
 ) -> Result<()> {
+    let error_category = result.as_ref().err().map(|_| "launch_failed");
+    if launch_history_repo::record(
+        connection,
+        directory_id,
+        tool_key,
+        action,
+        result.is_ok(),
+        error_category,
+    )
+    .is_err()
+    {
+        log::warn!("unable to record launch history");
+    }
     match result {
         Ok(()) => {
             log::info!(
-                "cli action completed action={action} directory_id={directory_id} tool={}",
+                "cli action completed action={} directory_id={directory_id} tool={}",
+                action.as_str(),
                 tool_key.as_str()
             );
             Ok(())
         }
         Err(error) => {
             log::error!(
-                "cli action failed action={action} directory_id={directory_id} tool={}",
+                "cli action failed action={} directory_id={directory_id} tool={}",
+                action.as_str(),
                 tool_key.as_str()
             );
             Err(error)
@@ -111,6 +130,7 @@ fn resolve_request(
 ) -> Result<LaunchRequest> {
     let directory = directory_repo::get(conn, directory_id)?
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))?;
+    crate::services::directory_service::validate_path(&directory.path)?;
     let tool = tool_repo::get_by_key(conn, tool_key)?
         .ok_or_else(|| anyhow!("tool {} is not configured", tool_key.as_str()))?;
     let profile = shell_profile_repo::get_default(conn)?

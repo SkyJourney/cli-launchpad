@@ -1,10 +1,12 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::{directory_repo, directory_tool_args_repo, tool_repo};
+use crate::db::{directory_repo, directory_tool_args_repo, shell_profile_repo, tool_repo};
 use crate::models::config_bundle::{
-    ConfigBundle, ExportedDirectory, ExportedTool, ExportedToolArgs, CONFIG_BUNDLE_VERSION,
+    ConfigBundle, ExportedDirectory, ExportedShellProfile, ExportedTool, ExportedToolArgs,
+    CONFIG_BUNDLE_VERSION,
 };
+use crate::models::shell_profile::ShellProfile;
 
 /// Snapshot directories (with per-tool args) and tool global args into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
@@ -33,11 +35,24 @@ pub fn export(conn: &Connection) -> Result<ConfigBundle> {
             global_args: tool.global_args,
         })
         .collect();
+    let shell_profiles = shell_profile_repo::list(conn)?
+        .into_iter()
+        .map(|profile| ExportedShellProfile {
+            name: profile.name,
+            terminal_exe: profile.terminal_exe,
+            shell_exe: profile.shell_exe,
+            shell_args: profile.shell_args,
+            init_script: profile.init_script,
+            is_default: profile.is_default,
+            kind: profile.kind,
+        })
+        .collect();
 
     Ok(ConfigBundle {
         version: CONFIG_BUNDLE_VERSION,
         directories,
         tools,
+        shell_profiles,
     })
 }
 
@@ -60,6 +75,9 @@ pub fn import_from_path(conn: &Connection, path: &str) -> Result<()> {
 /// Merge a bundle into the database within a transaction, so a mid-way failure
 /// rolls back rather than leaving a half-imported state.
 pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
+    if bundle.version > CONFIG_BUNDLE_VERSION {
+        anyhow::bail!("配置文件来自更新版本的应用，当前版本无法安全导入");
+    }
     conn.execute_batch("BEGIN")?;
     match import_inner(conn, bundle) {
         Ok(()) => {
@@ -109,6 +127,29 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
         for entry in &directory.tool_args {
             directory_tool_args_repo::save(conn, id, entry.tool_key, &entry.args)?;
         }
+    }
+
+    if let (Some(imported), Some(current)) = (
+        bundle
+            .shell_profiles
+            .iter()
+            .find(|profile| profile.is_default)
+            .or_else(|| bundle.shell_profiles.first()),
+        shell_profile_repo::get_default(conn)?,
+    ) {
+        shell_profile_repo::save(
+            conn,
+            &ShellProfile {
+                id: current.id,
+                name: imported.name.clone(),
+                terminal_exe: imported.terminal_exe.clone(),
+                shell_exe: imported.shell_exe.clone(),
+                shell_args: imported.shell_args.clone(),
+                init_script: imported.init_script.clone(),
+                is_default: true,
+                kind: imported.kind.clone(),
+            },
+        )?;
     }
 
     Ok(())
@@ -163,5 +204,16 @@ mod tests {
 
         // Still a single directory, not duplicated.
         assert_eq!(directory_repo::list(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn version_one_bundle_without_shell_profiles_remains_importable() {
+        let db = seeded_db();
+        let json = r#"{"version":1,"directories":[],"tools":[]}"#;
+        import_json(&db, json).unwrap();
+        assert_eq!(
+            shell_profile_repo::get_default(&db).unwrap().unwrap().kind,
+            "wt-pwsh"
+        );
     }
 }

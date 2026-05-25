@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::db::directory_repo;
 use crate::models::directory::Directory;
+use crate::services::directory_service;
 use crate::{with_conn, AppError, Db};
 
 #[tauri::command]
@@ -16,6 +17,7 @@ pub fn add_directory(
     path: String,
     note: Option<String>,
 ) -> Result<Directory, AppError> {
+    directory_service::validate_path(&path)?;
     with_conn(&state, |conn| {
         Ok(directory_repo::add(conn, &name, &path, note.as_deref())?)
     })

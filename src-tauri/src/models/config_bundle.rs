@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::tool::ToolKey;
 
-pub const CONFIG_BUNDLE_VERSION: u32 = 1;
+pub const CONFIG_BUNDLE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,4 +34,18 @@ pub struct ConfigBundle {
     pub version: u32,
     pub directories: Vec<ExportedDirectory>,
     pub tools: Vec<ExportedTool>,
+    #[serde(default)]
+    pub shell_profiles: Vec<ExportedShellProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedShellProfile {
+    pub name: String,
+    pub terminal_exe: String,
+    pub shell_exe: String,
+    pub shell_args: String,
+    pub init_script: String,
+    pub is_default: bool,
+    pub kind: String,
 }

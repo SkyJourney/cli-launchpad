@@ -4,6 +4,7 @@ pub mod config_bundle;
 pub mod directory;
 pub mod directory_tool_args;
 pub mod install;
+pub mod launch_history;
 pub mod session;
 pub mod shell_profile;
 pub mod tool;

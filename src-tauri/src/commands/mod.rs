@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod directory;
 pub mod install;
 pub mod launch;
+pub mod launch_history;
 pub mod session;
 pub mod shell;
 pub mod tool;

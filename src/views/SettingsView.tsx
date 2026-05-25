@@ -14,6 +14,8 @@ import { hasUpdate } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
+  clearLaunchHistory,
+  createBackup,
   exportConfigToPath,
   exportDiagnosticsToPath,
   fetchLatestVersions,
@@ -21,9 +23,9 @@ import {
   getShellProfiles,
   importConfigFromPath,
   listBackups,
+  listLaunchHistory,
   listTools,
   runInstall,
-  createBackup,
   restoreBackup,
   saveToolGlobalArgs,
   setShellKind,
@@ -124,6 +126,15 @@ export function SettingsView() {
       setPendingRestore(null);
       queryClient.invalidateQueries();
     },
+  });
+  const launchHistory = useQuery({
+    queryKey: qk.launchHistory(),
+    queryFn: listLaunchHistory,
+  });
+  const clearHistoryMutation = useMutation({
+    mutationFn: clearLaunchHistory,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.launchHistory() }),
   });
 
   const exportMutation = useMutation({
@@ -395,6 +406,34 @@ export function SettingsView() {
         {diagnosticsMutation.isError && (
           <p className="error">导出失败：{String(diagnosticsMutation.error)}</p>
         )}
+      </section>
+
+      <section className="config-backup">
+        <div className="section-heading">最近启动</div>
+        <div className="config-actions">
+          <button
+            className="ghost-button"
+            disabled={clearHistoryMutation.isPending}
+            onClick={() => clearHistoryMutation.mutate()}
+          >
+            清除历史
+          </button>
+        </div>
+        <div className="backup-list">
+          {launchHistory.data?.map((event) => (
+            <div className="backup-row" key={event.id}>
+              <div>
+                <strong>
+                  {event.directoryName} · {event.toolKey}
+                </strong>
+                <span className="muted">
+                  {event.action === "resume" ? "恢复会话" : "新建会话"} ·{" "}
+                  {event.success ? "成功" : "失败"} · {event.launchedAt}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="config-backup">
