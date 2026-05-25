@@ -27,9 +27,10 @@ pub fn import_config_from_path(
     storage: State<'_, StoragePaths>,
     path: String,
 ) -> Result<(), AppError> {
+    let bundle = config_service::read_bundle_from_path(&path)?;
     with_conn(&state, |conn| {
         backup_service::create(conn, &storage, BackupReason::PreImport)?;
-        match config_service::import_from_path(conn, &path) {
+        match config_service::import(conn, &bundle) {
             Ok(()) => {
                 log::info!("configuration import completed");
                 Ok(())

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
-use rusqlite::{backup::Backup, Connection, DatabaseName};
+use rusqlite::{backup::Backup, Connection, DatabaseName, OpenFlags};
 
 use crate::db::connection;
 use crate::models::backup::{BackupManifest, BackupReason};
@@ -22,6 +22,10 @@ pub fn list(paths: &StoragePaths) -> Result<Vec<BackupManifest>> {
         }
         let json = fs::read_to_string(&path)?;
         if let Ok(manifest) = serde_json::from_str::<BackupManifest>(&json) {
+            if !valid_manifest(&manifest) {
+                log::warn!("invalid backup manifest ignored");
+                continue;
+            }
             if backup_path(paths, &manifest).is_file() {
                 manifests.push(manifest);
             }
@@ -35,6 +39,15 @@ pub fn create(
     connection: &Connection,
     paths: &StoragePaths,
     reason: BackupReason,
+) -> Result<BackupManifest> {
+    create_protecting(connection, paths, reason, None)
+}
+
+fn create_protecting(
+    connection: &Connection,
+    paths: &StoragePaths,
+    reason: BackupReason,
+    protected_id: Option<&str>,
 ) -> Result<BackupManifest> {
     let (created_at_ms, unique_timestamp) = timestamps()?;
     let id = format!("{unique_timestamp}-{}", reason.as_str());
@@ -62,7 +75,7 @@ pub fn create(
         size_bytes: fs::metadata(&database_path)?.len(),
     };
     write_manifest(paths, &manifest)?;
-    prune(paths)?;
+    prune(paths, protected_id)?;
     log::info!("database backup created reason={}", reason.as_str());
     Ok(manifest)
 }
@@ -82,26 +95,72 @@ pub fn restore(
         return Err(anyhow!("备份来自更新版本的应用，当前版本不能安全恢复"));
     }
 
-    create(destination, paths, BackupReason::PreRestore)?;
-
-    let source = Connection::open(&database_path)?;
+    let guard = create_protecting(
+        destination,
+        paths,
+        BackupReason::PreRestore,
+        Some(&manifest.id),
+    )?;
+    if !database_path.is_file() {
+        return Err(anyhow!("待恢复备份已不存在"));
+    }
+    let source = open_read_only(&database_path)?;
     connection::ensure_integrity(&source)?;
-    let restore = Backup::new(&source, destination)?;
-    restore.run_to_completion(64, Duration::from_millis(10), None)?;
-    drop(restore);
-    connection::apply_migrations(destination)?;
-    connection::ensure_integrity(destination)?;
+    let source_schema = connection::schema_version(&source)?;
+    if source_schema > connection::latest_schema_version() {
+        return Err(anyhow!(
+            "备份数据库来自更新版本的应用，当前版本不能安全恢复"
+        ));
+    }
+    let result = (|| -> Result<()> {
+        copy_database(&source, destination)?;
+        connection::apply_migrations(destination)?;
+        connection::ensure_integrity(destination)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let guard_source = open_read_only(&backup_path(paths, &guard))?;
+        copy_database(&guard_source, destination).context("恢复失败且无法还原保护备份")?;
+        return Err(error.context("恢复数据未完成，已还原恢复前状态"));
+    }
     log::info!("database backup restored backup_id={}", manifest.id);
     Ok(manifest)
 }
 
 fn validate_database(path: &Path) -> Result<()> {
-    let connection = Connection::open(path)?;
+    let connection = open_read_only(path)?;
     connection::ensure_integrity(&connection)
+}
+
+fn open_read_only(path: &Path) -> Result<Connection> {
+    Ok(Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?)
+}
+
+fn copy_database(source: &Connection, destination: &mut Connection) -> Result<()> {
+    let restore = Backup::new(source, destination)?;
+    restore.run_to_completion(64, Duration::from_millis(10), None)?;
+    drop(restore);
+    Ok(())
 }
 
 fn backup_path(paths: &StoragePaths, manifest: &BackupManifest) -> PathBuf {
     paths.backup_database_dir.join(&manifest.database_filename)
+}
+
+fn valid_manifest(manifest: &BackupManifest) -> bool {
+    let valid_id = !manifest.id.is_empty()
+        && manifest
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    valid_id
+        && manifest.database_filename == format!("cli-launchpad-{}.db", manifest.id)
+        && Path::new(&manifest.database_filename)
+            .file_name()
+            .is_some_and(|name| name == manifest.database_filename.as_str())
 }
 
 fn write_manifest(paths: &StoragePaths, manifest: &BackupManifest) -> Result<()> {
@@ -125,11 +184,14 @@ fn timestamps() -> Result<(i64, u128)> {
     Ok((i64::try_from(elapsed.as_millis())?, elapsed.as_nanos()))
 }
 
-fn prune(paths: &StoragePaths) -> Result<()> {
+fn prune(paths: &StoragePaths, protected_id: Option<&str>) -> Result<()> {
     let manifests = list(paths)?;
     let mut manual = 0;
     let mut automatic = 0;
     for manifest in manifests {
+        if protected_id == Some(manifest.id.as_str()) {
+            continue;
+        }
         let should_delete = match manifest.reason {
             BackupReason::Manual => {
                 manual += 1;
@@ -203,5 +265,47 @@ mod tests {
 
         let error = restore(&mut connection, &paths, &backup.id).unwrap_err();
         assert!(error.to_string().contains("更新版本"));
+    }
+
+    #[test]
+    fn restoring_oldest_automatic_backup_does_not_prune_selected_source() {
+        let (_directory, paths, mut connection) = setup();
+        directory_repo::add(&connection, "oldest", "C:\\oldest", None).unwrap();
+        let selected = create(&connection, &paths, BackupReason::PreImport).unwrap();
+        for index in 0..9 {
+            directory_repo::add(
+                &connection,
+                &format!("extra-{index}"),
+                &format!("C:\\{index}"),
+                None,
+            )
+            .unwrap();
+            create(&connection, &paths, BackupReason::PreImport).unwrap();
+        }
+        restore(&mut connection, &paths, &selected.id).unwrap();
+        assert_eq!(directory_repo::list(&connection).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn invalid_manifest_path_is_not_listed_or_deleted() {
+        let (_directory, paths, connection) = setup();
+        let victim = paths.root.join("victim.db");
+        fs::write(&victim, "keep").unwrap();
+        let manifest = BackupManifest {
+            id: "evil".to_string(),
+            created_at_ms: 1,
+            reason: BackupReason::PreImport,
+            schema_version: connection::latest_schema_version(),
+            database_filename: "..\\victim.db".to_string(),
+            size_bytes: 4,
+        };
+        fs::write(
+            paths.backup_manifests_dir.join("evil.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(list(&paths).unwrap().is_empty());
+        create(&connection, &paths, BackupReason::Manual).unwrap();
+        assert!(victim.exists());
     }
 }

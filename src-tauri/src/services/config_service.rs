@@ -52,9 +52,13 @@ pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
 }
 
 /// Import a config bundle from a JSON file path.
-pub fn import_from_path(conn: &Connection, path: &str) -> Result<()> {
+pub fn read_bundle_from_path(path: &str) -> Result<ConfigBundle> {
     let json = std::fs::read_to_string(path)?;
-    import_json(conn, &json)
+    let bundle: ConfigBundle = serde_json::from_str(&json)?;
+    if bundle.version > CONFIG_BUNDLE_VERSION {
+        anyhow::bail!("配置文件来自更新版本的应用，当前版本无法安全导入");
+    }
+    Ok(bundle)
 }
 
 /// Merge a bundle into the database within a transaction, so a mid-way failure
@@ -117,6 +121,7 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn import_json(conn: &Connection, json: &str) -> Result<()> {
     let bundle: ConfigBundle = serde_json::from_str(json)?;
     import(conn, &bundle)
