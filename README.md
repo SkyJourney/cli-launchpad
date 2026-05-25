@@ -9,6 +9,10 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - SQLite 作为目录、工具、Shell 配置和目录级参数的单一数据源。
 - 设备本地 UI 偏好后续可以放在 JSON 或 Tauri store 中。
 
+正式运行的数据根目录为 `~/.cli-launchpad/`，当前业务数据库位于
+`~/.cli-launchpad/data/cli-launchpad.db`。从早期版本升级时，应用会从
+旧的 `%APPDATA%\dev.local.cli-launchpad\` 复制已有数据库并保留旧文件。
+
 ## 目标
 
 - 将常用目录缓存在 SQLite 中。

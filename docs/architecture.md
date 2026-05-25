@@ -71,6 +71,28 @@ commands 保持小而清晰，业务组合放在 services。
 - 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主窗口/退出"，左键点击托盘显示窗口。
 - 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置。
 - 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
+- 单实例：`tauri-plugin-single-instance` 阻止多个 GUI 进程并行写入同一业务数据库，二次启动改为聚焦现有主窗口。
+
+## 本地存储根目录
+
+业务数据使用稳定且与 Tauri 打包身份解耦的用户目录：
+
+```text
+~/.cli-launchpad/
+├─ data/       cli-launchpad.db（事实数据）
+├─ cache/      后续可重建缓存
+├─ logs/       后续诊断日志
+└─ backups/    后续一致性恢复点
+```
+
+应用启动时若新数据库不存在而旧
+`%APPDATA%\dev.local.cli-launchpad\cli-launchpad.db` 存在，则复制到新
+`data/` 目录；旧文件不自动删除。数据库连接启用外键、忙等待与 WAL，
+并在打开既有数据库时运行 `quick_check`，避免在损坏数据库上继续写入。
+
+窗口状态由官方插件保存在 Tauri 配置目录。由于插件不公开自定义根目录
+能力，应用更换稳定 `identifier` 时仅迁移其 `.window-state.json`，不将
+该运行时文件混入业务数据库目录。
 
 ## 打包与运行依赖
 

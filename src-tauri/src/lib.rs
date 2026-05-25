@@ -31,16 +31,26 @@ pub fn with_conn<T>(
 
 pub fn run() {
     tauri::Builder::default()
-        // Restore and persist window size/position across launches.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                show_main_window(&window);
+            }
+        }))
         // Native file/folder picker for the add-directory flow.
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
-            let db_path = data_dir.join("cli-launchpad.db");
-            let connection = db::connection::init_database(&db_path)?;
+            let paths = services::storage_service::prepare(app.handle())
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+            // Register after storage migration so prior window state is available
+            // on the first launch under the stable Tauri identifier.
+            app.handle()
+                .plugin(tauri_plugin_window_state::Builder::default().build())?;
+
+            let connection = db::connection::init_database(&paths.database_path)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             app.manage(Mutex::new(connection));
+            app.manage(paths);
 
             setup_tray(app.handle())?;
             Ok(())
