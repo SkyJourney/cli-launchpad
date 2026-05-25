@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use super::app_setting::CloseBehavior;
 use super::tool::ToolKey;
 
-pub const CONFIG_BUNDLE_VERSION: u32 = 2;
+pub const CONFIG_BUNDLE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +37,8 @@ pub struct ConfigBundle {
     pub tools: Vec<ExportedTool>,
     #[serde(default)]
     pub shell_profiles: Vec<ExportedShellProfile>,
+    #[serde(default)]
+    pub close_behavior: Option<CloseBehavior>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

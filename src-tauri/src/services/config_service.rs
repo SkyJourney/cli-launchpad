@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::{directory_repo, directory_tool_args_repo, tool_repo};
+use crate::db::{app_setting_repo, directory_repo, directory_tool_args_repo, tool_repo};
 use crate::models::config_bundle::{
     ConfigBundle, ExportedDirectory, ExportedTool, ExportedToolArgs, CONFIG_BUNDLE_VERSION,
 };
@@ -38,6 +38,7 @@ pub fn export(conn: &Connection) -> Result<ConfigBundle> {
         directories,
         tools,
         shell_profiles: Vec::new(),
+        close_behavior: Some(app_setting_repo::get_close_behavior(conn)?),
     })
 }
 
@@ -83,6 +84,10 @@ pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
 /// path), and apply their per-tool args. Existing directories keep their
 /// identity; pinned/note are refreshed.
 fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
+    if let Some(close_behavior) = bundle.close_behavior {
+        app_setting_repo::set_close_behavior(conn, close_behavior)?;
+    }
+
     for tool in &bundle.tools {
         tool_repo::update_global_args(conn, tool.key, &tool.global_args)?;
     }
@@ -127,6 +132,7 @@ pub fn import_json(conn: &Connection, json: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::db::connection;
+    use crate::models::app_setting::CloseBehavior;
     use crate::models::tool::ToolKey;
 
     fn seeded_db() -> Connection {
@@ -145,6 +151,7 @@ mod tests {
         directory_tool_args_repo::save(&source, directory.id, ToolKey::Claude, "--model x")
             .unwrap();
         tool_repo::update_global_args(&source, ToolKey::Codex, "--global").unwrap();
+        app_setting_repo::set_close_behavior(&source, CloseBehavior::Quit).unwrap();
 
         let json = export_json(&source).unwrap();
 
@@ -174,6 +181,10 @@ mod tests {
         let db = seeded_db();
         let json = r#"{"version":1,"directories":[],"tools":[]}"#;
         import_json(&db, json).unwrap();
+        assert_eq!(
+            app_setting_repo::get_close_behavior(&db).unwrap(),
+            CloseBehavior::MinimizeToTray
+        );
     }
 
     #[test]
@@ -183,6 +194,17 @@ mod tests {
         import_json(&db, json).unwrap();
         let exported = export_json(&db).unwrap();
         assert!(exported.contains("\"shellProfiles\": []"));
+    }
+
+    #[test]
+    fn imports_exported_close_behavior() {
+        let db = seeded_db();
+        let json = r#"{"version":3,"directories":[],"tools":[],"shellProfiles":[],"closeBehavior":"quit"}"#;
+        import_json(&db, json).unwrap();
+        assert_eq!(
+            app_setting_repo::get_close_behavior(&db).unwrap(),
+            CloseBehavior::Quit
+        );
     }
 
     #[test]

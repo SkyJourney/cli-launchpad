@@ -11,6 +11,7 @@ export const qk = {
   launchHistory: () => ["launch-history"],
   cacheStats: () => ["cache-stats"],
   shellProfiles: () => ["shell-profiles"],
+  closeBehavior: () => ["close-behavior"],
   appVersion: () => ["app-version"],
   directoryToolArgs: (directoryId?: number | null) =>
     directoryId == null

@@ -22,6 +22,7 @@ export interface Tool {
 }
 
 export type ShellKind = "wt-pwsh" | "pwsh";
+export type CloseBehavior = "minimize_to_tray" | "quit";
 
 export interface ShellProfile {
   id: number;
@@ -208,6 +209,14 @@ export function getShellProfiles() {
 
 export function setShellKind(kind: ShellKind) {
   return invoke<void>("set_shell_kind", { kind });
+}
+
+export function getCloseBehavior() {
+  return invoke<CloseBehavior>("get_close_behavior");
+}
+
+export function setCloseBehavior(closeBehavior: CloseBehavior) {
+  return invoke<void>("set_close_behavior", { closeBehavior });
 }
 
 // Directory-level tool arguments

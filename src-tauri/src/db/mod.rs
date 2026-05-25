@@ -1,3 +1,4 @@
+pub mod app_setting_repo;
 pub mod cache_connection;
 pub mod connection;
 pub mod directory_repo;

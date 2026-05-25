@@ -7,7 +7,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - React + TypeScript 负责桌面 UI。
 - Rust/Tauri commands 负责文件系统访问、SQLite 读写和进程启动。
 - SQLite 作为目录、工具、Shell 配置和目录级参数的单一数据源。
-- 设备本地 UI 偏好后续可以放在 JSON 或 Tauri store 中。
+- 系统托盘提供常驻入口；默认关闭主窗口时隐藏到托盘，可在设置中切换为退出应用。
 
 正式运行的数据根目录为 `~/.cli-launchpad/`，当前业务数据库位于
 `~/.cli-launchpad/data/cli-launchpad.db`。从早期版本升级时，应用会从
@@ -20,6 +20,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - 将 Shell 参数、全局 CLI 参数和目录专属 CLI 参数解耦。
 - 保持桌面应用体积轻量，不引入 Electron 或服务端运行时。
 - 在真正启动前，让用户可以预览最终命令。
+- 通过托盘快速重新显示主界面，或显式退出应用。
 
 ## 技术栈
 

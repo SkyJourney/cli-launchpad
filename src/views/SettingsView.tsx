@@ -22,6 +22,7 @@ import {
   exportDiagnosticsToPath,
   fetchLatestVersions,
   getCacheStats,
+  getCloseBehavior,
   getInstallPlan,
   getShellProfiles,
   importConfigFromPath,
@@ -31,11 +32,13 @@ import {
   runInstall,
   restoreBackup,
   saveToolGlobalArgsBatch,
+  setCloseBehavior,
   setShellKind,
   type InstallKind,
   type InstallOutcome,
   type InstallPlan,
   type BackupManifest,
+  type CloseBehavior,
   type ShellKind,
   type Tool,
   type ToolKey,
@@ -44,6 +47,11 @@ import {
 const SHELL_OPTIONS: { kind: ShellKind; label: string }[] = [
   { kind: "wt-pwsh", label: "Windows Terminal + PowerShell" },
   { kind: "pwsh", label: "PowerShell 窗口" },
+];
+
+const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
+  { value: "minimize_to_tray", label: "最小化到托盘" },
+  { value: "quit", label: "退出应用" },
 ];
 
 type GlobalArgsMap = Record<ToolKey, string>;
@@ -86,6 +94,16 @@ export function SettingsView() {
     mutationFn: (kind: ShellKind) => setShellKind(kind),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: qk.shellProfiles() }),
+  });
+
+  const closeBehavior = useQuery({
+    queryKey: qk.closeBehavior(),
+    queryFn: getCloseBehavior,
+  });
+  const closeBehaviorMutation = useMutation({
+    mutationFn: (value: CloseBehavior) => setCloseBehavior(value),
+    onSuccess: (_, value) =>
+      queryClient.setQueryData(qk.closeBehavior(), value),
   });
 
   // Global tool args (apply to every project; project-level args override them).
@@ -206,6 +224,7 @@ export function SettingsView() {
       queryClient.invalidateQueries({ queryKey: qk.directories() });
       queryClient.removeQueries({ queryKey: qk.directoryToolArgs() });
       queryClient.removeQueries({ queryKey: ["sessions"] });
+      queryClient.invalidateQueries({ queryKey: qk.closeBehavior() });
       // Re-seed the global-args editor from the freshly imported tools (await
       // the fetch so we don't seed from stale data).
       const fresh = await queryClient.fetchQuery({
@@ -351,6 +370,34 @@ export function SettingsView() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="shell-config">
+        <div className="section-heading">关闭窗口行为</div>
+        <p className="muted">
+          默认关闭后保留在系统托盘；双击托盘图标可重新显示主界面。
+        </p>
+        <div className="model-presets">
+          {CLOSE_BEHAVIOR_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              className={clsx("preset-button", {
+                active: closeBehavior.data === option.value,
+              })}
+              disabled={
+                closeBehavior.isLoading || closeBehaviorMutation.isPending
+              }
+              onClick={() => closeBehaviorMutation.mutate(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {closeBehaviorMutation.isError && (
+          <p className="error">
+            保存失败：{String(closeBehaviorMutation.error)}
+          </p>
+        )}
       </section>
 
       <section className="shell-config">

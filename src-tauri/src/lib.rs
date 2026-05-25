@@ -10,15 +10,30 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_window_state::StateFlags;
 
 pub use error::AppError;
+use models::app_setting::CloseBehavior;
 
 /// Business and cache databases are distinct managed-state types so commands
 /// cannot accidentally read cache rows through the configuration connection.
 pub struct Db(pub Mutex<Connection>);
 pub struct CacheDb(pub Mutex<Connection>);
+pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
+
+pub fn update_close_behavior_state(
+    state: &State<'_, CloseBehaviorState>,
+    close_behavior: CloseBehavior,
+) -> Result<(), AppError> {
+    let mut current = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("关闭行为状态锁中毒"))?;
+    *current = close_behavior;
+    Ok(())
+}
 
 /// Lock the shared connection and run `f` with it, mapping lock poisoning to an
 /// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
@@ -72,9 +87,13 @@ pub fn run() {
             log::info!("application startup storage_root={}", paths.root.display());
 
             // Register after storage migration so prior window state is available
-            // on the first launch under the stable Tauri identifier.
-            app.handle()
-                .plugin(tauri_plugin_window_state::Builder::default().build())?;
+            // on the first launch under the stable Tauri identifier. Visibility
+            // is deliberately excluded: closing to tray must not hide the next launch.
+            app.handle().plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(StateFlags::all().difference(StateFlags::VISIBLE))
+                    .build(),
+            )?;
 
             let existing_database = paths.database_path.is_file();
             let connection = db::connection::open_database(&paths.database_path)
@@ -95,7 +114,9 @@ pub fn run() {
                 "database initialized schema_version={}",
                 db::connection::schema_version(&connection)?
             );
+            let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
             app.manage(Db(Mutex::new(connection)));
+            app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
                 Ok(cache) => cache,
                 Err(error) => {
@@ -142,7 +163,26 @@ pub fn run() {
             commands::tool_args::save_directory_tool_args_batch,
             commands::config::export_config_to_path,
             commands::config::import_config_from_path,
+            commands::app_setting::get_close_behavior,
+            commands::app_setting::set_close_behavior,
         ])
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let close_behavior = window
+                    .state::<CloseBehaviorState>()
+                    .0
+                    .lock()
+                    .map(|behavior| *behavior)
+                    .unwrap_or_default();
+                if close_behavior == CloseBehavior::MinimizeToTray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("failed to run CLI Launchpad");
 }
@@ -154,7 +194,7 @@ fn show_main_window(window: &WebviewWindow) {
 }
 
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
@@ -177,7 +217,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
+            if let TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
                 ..
             } = event

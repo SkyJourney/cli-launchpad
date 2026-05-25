@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-05-25
-commit: 3ad8ce1
+last_updated: 2026-05-26
+commit: cef5f60
 ---
 
 # 项目决策
@@ -70,3 +70,10 @@ commit: 3ad8ce1
 **Why：** 会话标题可能包含工作内容，且缓存身份失配会导致错误项目展示或恢复风险；性能收益不足以抵消隐私与正确性成本。
 **How to apply：** 持久缓存只保存 CLI 状态和版本查询等可重建信息；恢复会话前重新验证 session 与当前目录的归属关系；升级时清理历史会话缓存条目。
 **See Also：** [[project_overview.md#会话与配置数据]] [[project_progress.md#可靠性治理完成]]
+
+## 关闭窗口策略由 Rust 执行并持久化为业务配置
+
+**结论：** 主窗口默认关闭到系统托盘，可在设置中切换为退出应用；关闭策略保存在 SQLite 并由 Rust 窗口事件直接执行。
+**Why：** 应用需要常驻托盘且在窗口关闭前即可可靠判断行为；仅保存在 React 状态或窗口状态文件中无法覆盖启动、配置导入和数据库恢复后的统一行为。
+**How to apply：** 托盘菜单固定提供显示主界面和退出，左键双击显示主界面；配置导入或数据库恢复后同步刷新运行时策略。
+**See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#已完成功能]]

@@ -2,8 +2,8 @@
 name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
-last_updated: 2026-05-25
-commit: 3ad8ce1
+last_updated: 2026-05-26
+commit: cef5f60
 ---
 
 # 项目概览
@@ -48,6 +48,7 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 
 - Claude Code 与 Codex 的历史会话按需读取本地文件并支持恢复；Antigravity 未公开可列出历史的数据源，只提供直接启动。
 - 配置交换以 JSON 文件导入导出，导入在事务中按绝对目录身份合并，并忽略外部文件中的 Shell 执行字段。
+- 关闭窗口策略保存在业务库中，并随版本化 JSON 配置交换；配置导入或数据恢复后同步更新当前进程策略。
 - SQLite 是应用配置来源，不保存密钥；应用缓存不持久保存 CLI 会话标题或源路径。
 
 **See Also：** [[decisions.md#会话历史按需读取本地事实来源]]
@@ -63,11 +64,12 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 
 ## 桌面体验与分发
 
-- 桌面集成包括系统托盘、窗口尺寸/位置持久化和原生文件/目录选择对话框。
+- 桌面集成包括系统托盘、窗口尺寸/位置持久化和原生文件/目录选择对话框；默认关闭主窗口时隐藏到托盘，用户可切换为退出应用；窗口状态持久化不保存可见性，避免托盘隐藏影响下次启动。
+- 托盘右键菜单提供显示主界面和退出，左键双击托盘图标显示并聚焦主界面。
 - Windows 分发使用 NSIS；支持在线/离线 WebView2 两类安装包，并静态链接 MSVC CRT。
 - 图标资源已生成，Windows 打包使用 `src-tauri/icons/icon.ico`。
 
-**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]]
+**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]]
 
 ## See Also
 

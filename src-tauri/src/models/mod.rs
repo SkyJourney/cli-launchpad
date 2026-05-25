@@ -1,3 +1,4 @@
+pub mod app_setting;
 pub mod backup;
 pub mod cache;
 pub mod cli_status;

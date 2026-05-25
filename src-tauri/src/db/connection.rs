@@ -18,6 +18,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         4,
         include_str!("../../migrations/0004_safe_launch_history.sql"),
     ),
+    (
+        5,
+        include_str!("../../migrations/0005_application_settings.sql"),
+    ),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -118,6 +122,19 @@ mod tests {
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn migrations_seed_default_close_behavior() {
+        let connection = memory_db();
+        let value: String = connection
+            .query_row(
+                "select value from application_settings where key = 'close_behavior'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read close behavior");
+        assert_eq!(value, "minimize_to_tray");
     }
 
     #[test]

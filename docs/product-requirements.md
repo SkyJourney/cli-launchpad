@@ -40,6 +40,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 卡片式项目管理：项目主页以卡片网格展示常用目录。
 - 直接启动为常态：点击工具即在该目录启动，命令预览作为可折叠的辅助能力。
 - 全局 CLI 状态：应用启动时检测三个 CLI，统一下发到所有视图，缺失的工具在任何位置都灰色禁用。
+- 桌面常驻：默认关闭主窗口时最小化到系统托盘，托盘菜单可显示主界面或退出，双击托盘图标显示主界面；设置页可改为关闭即退出。
 
 ## 会话历史
 
@@ -109,6 +110,7 @@ SQLite 是功能配置的事实来源：
 - shell profiles
 - per-directory tool arguments
 - launch history
+- application settings（包括关闭窗口行为）
 - CLI detection cache（存放在独立可删除的 `cache/cache.db`）
 
 会话标题和源文件路径不属于应用持久缓存数据；展示时从各 CLI 的本地存储实时读取。

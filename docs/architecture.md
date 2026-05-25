@@ -60,6 +60,9 @@ CLI 状态与版本
 Shell 配置
   get_shell_profiles / set_shell_kind
 
+桌面行为配置
+  get_close_behavior / set_close_behavior
+
 配置备份
   export_config_to_path / import_config_from_path   读写 JSON 文件（配合文件对话框）
 ```
@@ -68,8 +71,9 @@ commands 保持小而清晰，业务组合放在 services。
 
 ## 桌面集成
 
-- 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主窗口/退出"，左键点击托盘显示窗口。
-- 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置。
+- 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主界面/退出"，左键双击托盘显示并聚焦窗口。
+- 关闭窗口行为：设置页可选"最小化到托盘"或"退出应用"，默认关闭到托盘；策略持久化到 SQLite，Rust 窗口事件直接执行该策略。
+- 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置，并排除可见性状态，避免关闭到托盘导致下次启动隐藏。
 - 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
 - 单实例：`tauri-plugin-single-instance` 阻止多个 GUI 进程并行写入同一业务数据库，二次启动改为聚焦现有主窗口。
 
@@ -95,6 +99,10 @@ schema，避免在损坏或未来版本数据库上继续写入。
 窗口状态由官方插件保存在 Tauri 配置目录。由于插件不公开自定义根目录
 能力，应用更换稳定 `identifier` 时仅迁移其 `.window-state.json`，不将
 该运行时文件混入业务数据库目录。
+
+关闭窗口策略属于应用行为配置，保存在业务库 `application_settings` 中，
+并包含在版本化 JSON 配置导入导出中。配置导入或数据库恢复完成后，Rust
+运行时同步刷新当前策略，保证本次进程内的关闭行为与持久化数据一致。
 
 ## 数据备份与恢复
 
