@@ -2,31 +2,43 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-05-23
-commit: b99a354
+last_updated: 2026-05-25
+commit: 3ad8ce1
 ---
 
 # 项目进度
 
-## 当前状态
+## 已完成功能
 
 - 默认分支已改为 `main`。
-- Node/pnpm 依赖已安装，`pnpm-lock.yaml` 已生成。
-- Rust/Cargo 和 VS Build Tools 2022 环境已检查，Tauri/Rust 构建基础可用。
-- 图标透明化、裁切、多尺寸 PNG 和 ICO 已完成。
-- `README.md` 和 `AGENTS.md` 已中文化。
-- `docs/` 已更新为中文，并围绕 `claude`、`codex`、`agy` 收窄产品范围。
-- 官方资料已同步到文档：Claude、Codex、Antigravity 的命令和安装来源。
-- 文档与记忆初始化已提交到 `main`，当前记忆同步以 `b99a354` 作为 Base commit。
+- 可启动 MVP 已完成：SQLite migrations、目录/工具/Shell/项目参数读写、命令预览与两种安全 PowerShell 启动方式均已落地。
+- 卡片式多视图 UI 已完成：项目主页、详情、参数编辑、设置、关于，以及全局 CLI 状态驱动的禁用/启动交互。
+- 会话能力已完成：Claude Code 与 Codex 可读取并恢复历史会话；Antigravity 按产品边界只直接启动。
+- CLI 管理能力已完成：检测、最新版本查询、安装/更新计划预览、确认执行与结果日志。
+- 桌面能力已完成：系统托盘、窗口状态持久化、文件/目录选择对话框和 JSON 配置导入导出。
+- Windows 分发配置已完成：NSIS、静态 CRT、在线/离线 WebView2 两种安装包及归档脚本。
+- 相关架构、产品、UI、安装与里程碑文档均已补齐；后续事实应以当前实现和最新文档为准。
+
+**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[project_overview.md#桌面体验与分发]]
+
+## 可靠性治理完成
+
+- 稳定数据根目录、单实例、防黑框启动与无闪窗探测已落地。
+- 启动执行边界已收紧：停用 CMD、参数字面化、配置导入不接受 Shell 执行字段、被动检测不执行候选程序。
+- 一致性备份、恢复回滚、manifest 路径校验、未来 schema 拒绝和缓存损坏降级已落地。
+- 日志与诊断导出、事务化参数保存、原子文件导出及会话隐私缓存治理已落地。
+- 五阶段修复已完成并通过 Rust 测试、编译检查、前端生产构建与 Windows NSIS release 构建。
+
+**See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话摘要不进入应用持久缓存]]
 
 ## 近期待办
 
-- 修正 `src-tauri/tauri.conf.json` 中仍使用 `npm run dev/build` 的配置，改为 pnpm。
-- 验证 `bundle.icon` 配置是否需要指向已生成的 Tauri 图标。
-- 设计并实现三项 CLI 的检测 service 和 UI 状态面板。
-- 后续再实现一键安装，且必须先有命令预览和用户确认。
+- 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
+- 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。
+- 视后续需求评估实时安装日志、关闭到托盘以及跨平台启动辅助；这些均不扩大三项 CLI 产品范围。
 
 ## See Also
 
-- [[decisions.md#只聚焦三项核心-cli]]
-- [[reference.md#官方-cli-资料]]
+- [[decisions.md#只聚焦三项核心-CLI]]
+- [[decisions.md#启动必须使用解析后的完整可执行路径]]
+- [[reference.md#官方-CLI-资料]]

@@ -2,8 +2,8 @@
 name: 协作反馈
 description: 用户协作偏好、范围纠正和执行约束
 type: feedback
-last_updated: 2026-05-23
-commit: b99a354
+last_updated: 2026-05-25
+commit: 3ad8ce1
 ---
 
 # 协作反馈
@@ -25,14 +25,14 @@ commit: b99a354
 **结论：** 项目只围绕 `claude`、`codex`、`agy`，不要检测、安装或启动其他 CLI。
 **Why：** 用户明确纠正过范围，核心功能是快速打开这三个 CLI 的 PowerShell 窗口。
 **How to apply：** 不主动加入 Gemini、Qwen、GitHub CLI、uv 等工具的检测或安装逻辑。
-**See Also：** [[decisions.md#只聚焦三项核心-cli]]
+**See Also：** [[decisions.md#只聚焦三项核心-CLI]]
 
 ## 不再关注 Gemini CLI
 
 **结论：** Antigravity 是 Google 新品牌下的目标 CLI，本项目不再关注 Gemini CLI。
 **Why：** 用户明确说明 Google 准备将 Gemini CLI 迁移到 Antigravity，新项目应只看 Antigravity。
 **How to apply：** Gemini CLI 只可作为迁移背景提及，不进入功能范围。
-**See Also：** [[decisions.md#antigravity-使用-agy-作为官方主命令]]
+**See Also：** [[decisions.md#Antigravity-使用-agy-作为官方主命令]]
 
 ## 修改前说明和确认
 
