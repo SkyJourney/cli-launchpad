@@ -104,6 +104,8 @@ pub fn run() {
                         .map_err(|fallback| anyhow::anyhow!(fallback.to_string()))?
                 }
             };
+            services::cache_service::remove_prefix(&cache, "sessions:")
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             app.manage(CacheDb(Mutex::new(cache)));
             app.manage(paths);
 
@@ -129,7 +131,7 @@ pub fn run() {
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
             commands::tool::list_tools,
-            commands::tool::save_tool_global_args,
+            commands::tool::save_tool_global_args_batch,
             commands::cli_status::detect_cli_status,
             commands::install::fetch_latest_versions,
             commands::install::get_install_plan,
@@ -137,7 +139,7 @@ pub fn run() {
             commands::shell::get_shell_profiles,
             commands::shell::set_shell_kind,
             commands::tool_args::get_directory_tool_args,
-            commands::tool_args::save_directory_tool_args,
+            commands::tool_args::save_directory_tool_args_batch,
             commands::config::export_config_to_path,
             commands::config::import_config_from_path,
         ])

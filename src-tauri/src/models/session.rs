@@ -10,5 +10,4 @@ pub struct SessionInfo {
     pub title: String,
     /// Last activity as Unix epoch milliseconds (file mtime), when available.
     pub last_active_ms: Option<i64>,
-    pub source_path: String,
 }

@@ -18,7 +18,7 @@ pub fn add_directory(
     path: String,
     note: Option<String>,
 ) -> Result<Directory, AppError> {
-    directory_service::validate_path(&path)?;
+    let path = directory_service::normalized_existing_path(&path)?;
     with_conn(&state, |conn| {
         Ok(directory_repo::add(conn, &name, &path, note.as_deref())?)
     })

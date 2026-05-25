@@ -51,3 +51,10 @@ pub struct Tool {
     pub global_args: String,
     pub enabled: bool,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolArgsUpdate {
+    pub tool_key: ToolKey,
+    pub args: String,
+}

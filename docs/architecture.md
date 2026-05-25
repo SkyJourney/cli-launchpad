@@ -12,7 +12,7 @@ Commands
   处理 IPC 边界，转换请求和响应类型
 
 Services
-  负责目录管理、工具配置、依赖检测、命令预览、启动流程、会话索引、版本检测与更新
+  负责目录管理、工具配置、依赖检测、命令预览、启动流程、会话读取、版本检测与更新
 
 DB repositories
   负责 SQLite 查询和迁移
@@ -39,13 +39,13 @@ cli_status
 ```text
 目录与参数
   list_directories / add_directory / update_directory / remove_directory / set_directory_pinned
-  get_directory_tool_args / save_directory_tool_args
+  get_directory_tool_args / save_directory_tool_args_batch
 
 启动
   preview_launch / launch_tool / resume_session
 
 工具与全局参数
-  list_tools / save_tool_global_args
+  list_tools / save_tool_global_args_batch
 
 CLI 状态与版本
   detect_cli_status            被动检测三个 CLI 的安装与全路径，不执行候选程序
@@ -54,7 +54,7 @@ CLI 状态与版本
   run_install                  执行安装/更新并捕获日志
 
 会话历史
-  list_sessions                按目录和工具读取会话（可使用可删除短期缓存）
+  list_sessions                按目录和工具实时读取会话
   resume_session               按工具恢复指定会话
 
 Shell 配置
@@ -126,7 +126,7 @@ schema 版本与日志内容，用于本地排障。
 ## 配置交换与启动历史
 
 可移植 JSON 配置 bundle 当前版本为 v2，覆盖目录及全局/项目级工具参数；
-为避免导入文件改变执行链，不再导入或导出 Shell 程序与初始化脚本。仍兼容 v1 文件。配置导出不
+为避免导入文件改变执行链，不再导入或导出 Shell 程序与初始化脚本。仍兼容 v1 文件。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不
 包含日志、缓存、备份、窗口位置或外部 CLI 会话正文。
 
 `launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
@@ -136,10 +136,10 @@ schema 版本与日志内容，用于本地排障。
 ## 可删除缓存
 
 缓存数据库固定为 `~/.cli-launchpad/cache/cache.db`，与业务数据库隔离。
-缓存内容包括 CLI 状态短期快照、npm 最新版本查询结果和 Claude/Codex
-会话列表摘要。CLI 状态使用 30 秒 TTL，最新版本使用 30 分钟 TTL，会话
-摘要使用 60 秒 TTL，并以规范化目录身份而非可复用行号作为键；目录删除、
-配置导入和数据库恢复会清除此类缓存；手动刷新强制绕过缓存。网络查询失败时可回退到已
+缓存内容只包括 CLI 状态短期快照和 npm 最新版本查询结果；会话标题及
+来源路径不会写入持久缓存。CLI 状态使用 30 秒 TTL，最新版本使用 30 分钟
+TTL；目录删除、配置导入和数据库恢复会清除旧版本遗留的会话缓存；手动
+刷新强制绕过缓存。网络查询失败时可回退到已
 存在的最新版本缓存。删除或损坏缓存库后应用自动重建；持久缓存不可用时
 退化为当前进程的内存缓存，不阻断业务数据库和恢复功能启动。实际启动仍
 实时解析工具路径，不以缓存决定执行目标。
@@ -261,9 +261,9 @@ Antigravity  官方未公开本地路径   不可列出，仅支持按 conversat
 ```
 
 读取逻辑放在 service，解析出标题、时间、session id。读取故障会明确返回
-错误而不是伪装为空列表；恢复前会验证 session 仍归属于当前目录。结果可短期缓存到
-`~/.cli-launchpad/cache/cache.db`，用户可在设置页随时清除；事实来源始终
-是各 CLI 的本地文件。Antigravity 不读历史，只提供直接启动。
+错误而不是伪装为空列表；恢复前会验证 session 仍归属于当前目录。会话列表
+实时读取各 CLI 的本地文件，不将标题摘要或源文件路径持久化到缓存数据库。
+Antigravity 不读历史，只提供直接启动。
 
 恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume`/`resume --last`。恢复参数与普通启动共用命令组合与转义逻辑。
 

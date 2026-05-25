@@ -54,7 +54,7 @@ export function ProjectDetailView() {
 
   const sessions = useQuery({
     queryKey: qk.sessions(directoryId, activeTool),
-    queryFn: () => listSessions(directoryId as number, activeTool, false),
+    queryFn: () => listSessions(directoryId as number, activeTool),
     enabled: directoryId != null,
   });
 
@@ -178,7 +178,7 @@ export function ProjectDetailView() {
                 void queryClient.fetchQuery({
                   queryKey: qk.sessions(directoryId, activeTool),
                   queryFn: () =>
-                    listSessions(directoryId as number, activeTool, true),
+                    listSessions(directoryId as number, activeTool),
                 })
               }
             >

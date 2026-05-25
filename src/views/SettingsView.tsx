@@ -10,7 +10,7 @@ import {
   useCliStatus,
 } from "../hooks/useCliStatus";
 import { useSeededState } from "../hooks/useSeededState";
-import { hasUpdate } from "../lib/format";
+import { formatUtcDateTime, hasUpdate } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
@@ -30,7 +30,7 @@ import {
   listTools,
   runInstall,
   restoreBackup,
-  saveToolGlobalArgs,
+  saveToolGlobalArgsBatch,
   setShellKind,
   type InstallKind,
   type InstallOutcome,
@@ -99,10 +99,11 @@ export function SettingsView() {
 
   const saveGlobalArgsMutation = useMutation({
     mutationFn: async () => {
-      await Promise.all(
-        TOOLS.map((tool) =>
-          saveToolGlobalArgs(tool.key, globalArgs[tool.key].trim()),
-        ),
+      await saveToolGlobalArgsBatch(
+        TOOLS.map((tool) => ({
+          toolKey: tool.key,
+          args: globalArgs[tool.key].trim(),
+        })),
       );
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.tools() }),
@@ -462,7 +463,8 @@ export function SettingsView() {
                 </strong>
                 <span className="muted">
                   {event.action === "resume" ? "恢复会话" : "新建会话"} ·{" "}
-                  {event.success ? "成功" : "失败"} · {event.launchedAt}
+                  {event.success ? "成功" : "失败"} ·{" "}
+                  {formatUtcDateTime(event.launchedAt)}
                 </span>
               </div>
             </div>
@@ -474,7 +476,6 @@ export function SettingsView() {
         <div className="section-heading">缓存</div>
         <div className="cache-summary">
           <span>条目：{cacheStats.data?.entryCount ?? 0}</span>
-          <span>会话索引：{cacheStats.data?.sessionEntryCount ?? 0}</span>
           <span>大小：{formatBytes(cacheStats.data?.sizeBytes ?? 0)}</span>
           <span>
             最近写入：

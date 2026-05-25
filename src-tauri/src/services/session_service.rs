@@ -72,7 +72,6 @@ fn list_claude_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
             session_id: session_id.to_string(),
             title: claude_title(&path).unwrap_or_else(|| "(无标题会话)".to_string()),
             last_active_ms: mtime_ms(&path),
-            source_path: path.display().to_string(),
         });
     }
     Ok(sessions)
@@ -167,10 +166,6 @@ fn collect_rollout_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> Re
     Ok(())
 }
 
-pub fn cache_identity(directory_path: &str) -> String {
-    normalize_path(directory_path)
-}
-
 pub fn session_belongs_to_directory(
     tool_key: ToolKey,
     directory_path: &str,
@@ -238,7 +233,6 @@ fn parse_codex_rollout(path: &Path, directory_path: &str) -> Option<SessionInfo>
             .map(|t| truncate_chars(&t, TITLE_MAX_CHARS))
             .unwrap_or_else(|| "(Codex 会话)".to_string()),
         last_active_ms: mtime_ms(path),
-        source_path: path.display().to_string(),
     })
 }
 

@@ -71,8 +71,7 @@ pub fn export_to_path(
         schema_version: connection::schema_version(connection)?,
         logs,
     };
-    fs::write(destination, serde_json::to_vec_pretty(&report)?)?;
-    Ok(())
+    super::file_service::replace_file(Path::new(destination), &serde_json::to_vec_pretty(&report)?)
 }
 
 fn log_paths(paths: &StoragePaths) -> Result<Vec<std::path::PathBuf>> {

@@ -48,7 +48,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 在项目详情中按 CLI 分 Tab 展示历史会话，不混在同一列表。
 - Claude Code 从 `~/.claude/projects/` 读取，Codex 从 `~/.codex/sessions/` 读取，均可列出历史并恢复指定会话。
 - Antigravity 官方未公开本地会话文件路径，只支持按 conversation id 恢复，因此不展示历史列表，只提供直接启动。
-- 会话索引可缓存到 SQLite，缓存可随时删除重建。
+- 会话历史实时读取事实来源，不将标题摘要或源文件路径持久写入应用缓存。
 
 ## 项目级参数编辑
 
@@ -74,9 +74,8 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 
 - 检测 `claude`、`codex`、`agy` 是否可用。
 - Antigravity 以 `agy` 为主；`antigravity` 只作为保守兼容探测，不作为推荐启动命令。
-- 区分已安装、未安装、当前 PATH 不可见三类状态。
-- 展示检测命令、实际路径和版本信息。
-- 对 PATH 不可见的情况给出修复建议，而不是直接判定未安装。
+- 在 PATH 或可信已知安装目录解析到完整路径时判定为可用，否则判定为未安装。
+- 展示实际解析路径；被动检测不执行候选程序获取版本。
 
 ## 一键安装
 
@@ -111,7 +110,8 @@ SQLite 是功能配置的事实来源：
 - per-directory tool arguments
 - launch history
 - CLI detection cache（存放在独立可删除的 `cache/cache.db`）
-- session index cache（存放在独立缓存库；事实来源仍是各 CLI 的本地存储，可随时删除重建）
+
+会话标题和源文件路径不属于应用持久缓存数据；展示时从各 CLI 的本地存储实时读取。
 
 本地 UI 偏好后续可使用 JSON 或 Tauri store：
 

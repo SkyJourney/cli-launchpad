@@ -9,7 +9,7 @@ import { qk } from "../lib/queryKeys";
 import { CLAUDE_MODEL_PRESETS, emptyToolMap, TOOLS } from "../lib/tools";
 import {
   getDirectoryToolArgs,
-  saveDirectoryToolArgs,
+  saveDirectoryToolArgsBatch,
   type DirectoryToolArgs,
   type ToolKey,
 } from "../lib/tauri";
@@ -58,10 +58,12 @@ export function ProjectEditView() {
       const editable = TOOLS.filter(
         (tool) => (statusByTool[tool.key]?.status ?? "missing") !== "missing",
       );
-      await Promise.all(
-        editable.map((tool) =>
-          saveDirectoryToolArgs(id, tool.key, args[tool.key].trim()),
-        ),
+      await saveDirectoryToolArgsBatch(
+        id,
+        editable.map((tool) => ({
+          toolKey: tool.key,
+          args: args[tool.key].trim(),
+        })),
       );
     },
     onSuccess: () => {

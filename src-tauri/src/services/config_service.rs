@@ -47,8 +47,7 @@ pub fn export_json(conn: &Connection) -> Result<String> {
 
 /// Export the config bundle as JSON to a file path.
 pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
-    std::fs::write(path, export_json(conn)?)?;
-    Ok(())
+    super::file_service::replace_file(std::path::Path::new(path), export_json(conn)?.as_bytes())
 }
 
 /// Import a config bundle from a JSON file path.
@@ -89,7 +88,8 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     }
 
     for directory in &bundle.directories {
-        let id = match directory_repo::get_by_path(conn, &directory.path)? {
+        let path = super::directory_service::normalized_configured_path(&directory.path)?;
+        let id = match directory_repo::get_by_path(conn, &path)? {
             Some(existing) => {
                 directory_repo::set_pinned_and_note(
                     conn,
@@ -100,12 +100,8 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
                 existing.id
             }
             None => {
-                let added = directory_repo::add(
-                    conn,
-                    &directory.name,
-                    &directory.path,
-                    directory.note.as_deref(),
-                )?;
+                let added =
+                    directory_repo::add(conn, &directory.name, &path, directory.note.as_deref())?;
                 if directory.pinned {
                     directory_repo::set_pinned(conn, added.id, true)?;
                 }
@@ -187,5 +183,13 @@ mod tests {
         import_json(&db, json).unwrap();
         let exported = export_json(&db).unwrap();
         assert!(exported.contains("\"shellProfiles\": []"));
+    }
+
+    #[test]
+    fn import_rejects_relative_directory_identity() {
+        let db = seeded_db();
+        let json = r#"{"version":2,"directories":[{"name":"bad","path":"relative/path","pinned":false,"note":null,"toolArgs":[]}],"tools":[],"shellProfiles":[]}"#;
+        assert!(import_json(&db, json).is_err());
+        assert!(directory_repo::list(&db).unwrap().is_empty());
     }
 }

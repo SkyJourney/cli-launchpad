@@ -22,6 +22,15 @@ export function formatRelativeMs(ms: number | null): string {
   return relativeFrom(ms);
 }
 
+/// Format a SQLite UTC timestamp in the current user's local timezone.
+export function formatUtcDateTime(value: string): string {
+  const normalized = value.includes("T")
+    ? value
+    : value.replace(" ", "T") + "Z";
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
+}
+
 /// Extract a semver-like `x.y.z` from a noisy version string (e.g.
 /// "2.1.150 (Claude Code)" or "codex-cli 0.133.0").
 export function extractSemver(value: string | null): string | null {

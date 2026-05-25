@@ -2,41 +2,23 @@ use tauri::State;
 
 use crate::models::session::SessionInfo;
 use crate::models::tool::ToolKey;
-use crate::services::{cache_service, launch_service, session_service};
-use crate::{with_cache, with_conn, AppError, CacheDb, Db};
+use crate::services::{launch_service, session_service};
+use crate::{with_conn, AppError, Db};
 
 #[tauri::command]
 pub async fn list_sessions(
     state: State<'_, Db>,
-    cache: State<'_, CacheDb>,
     directory_id: i64,
     tool_key: ToolKey,
-    force: Option<bool>,
 ) -> Result<Vec<SessionInfo>, AppError> {
     let path = with_conn(&state, |conn| {
         Ok(session_service::directory_path(conn, directory_id)?)
     })?;
-    let cache_key = format!(
-        "sessions:{}:{}",
-        tool_key.as_str(),
-        session_service::cache_identity(&path)
-    );
-    if !force.unwrap_or(false) {
-        if let Some(cached) = with_cache(&cache, |connection| {
-            Ok(cache_service::get_fresh(connection, &cache_key, 60_000)?)
-        })? {
-            return Ok(cached);
-        }
-    }
     let sessions = tauri::async_runtime::spawn_blocking(move || {
         session_service::list_sessions(tool_key, &path)
     })
     .await
     .map_err(|error| AppError::msg(error.to_string()))??;
-    with_cache(&cache, |connection| {
-        cache_service::put(connection, &cache_key, &sessions)?;
-        Ok(())
-    })?;
     Ok(sessions)
 }
 

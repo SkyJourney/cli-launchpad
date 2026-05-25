@@ -40,12 +40,16 @@ export interface DirectoryToolArgs {
   args: string;
 }
 
+export interface ToolArgsUpdate {
+  toolKey: ToolKey;
+  args: string;
+}
+
 export interface SessionInfo {
   toolKey: ToolKey;
   sessionId: string;
   title: string;
   lastActiveMs: number | null;
-  sourcePath: string;
 }
 
 export type InstallKind = "install" | "update";
@@ -142,8 +146,8 @@ export function listTools() {
   return invoke<Tool[]>("list_tools");
 }
 
-export function saveToolGlobalArgs(toolKey: ToolKey, args: string) {
-  return invoke<void>("save_tool_global_args", { toolKey, args });
+export function saveToolGlobalArgsBatch(updates: ToolArgsUpdate[]) {
+  return invoke<void>("save_tool_global_args_batch", { updates });
 }
 
 // CLI detection
@@ -213,15 +217,13 @@ export function getDirectoryToolArgs(directoryId: number) {
   });
 }
 
-export function saveDirectoryToolArgs(
+export function saveDirectoryToolArgsBatch(
   directoryId: number,
-  toolKey: ToolKey,
-  args: string,
+  updates: ToolArgsUpdate[],
 ) {
-  return invoke<void>("save_directory_tool_args", {
+  return invoke<void>("save_directory_tool_args_batch", {
     directoryId,
-    toolKey,
-    args,
+    updates,
   });
 }
 
@@ -235,15 +237,10 @@ export function launchTool(directoryId: number, toolKey: ToolKey) {
 }
 
 // Sessions
-export function listSessions(
-  directoryId: number,
-  toolKey: ToolKey,
-  force = false,
-) {
+export function listSessions(directoryId: number, toolKey: ToolKey) {
   return invoke<SessionInfo[]>("list_sessions", {
     directoryId,
     toolKey,
-    force,
   });
 }
 
