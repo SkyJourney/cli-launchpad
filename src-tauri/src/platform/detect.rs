@@ -4,7 +4,6 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
-const VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -126,37 +125,9 @@ fn candidate_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Run `<command> --version` through `cmd /C` so PATH shims (.cmd/.ps1) resolve
-/// the same way an interactive shell would. Bounded by a timeout with the child
-/// killed on drop. Falls back to stderr because some CLIs print the version
-/// there, and the exit status is not required to be zero.
-pub async fn run_version(command: &str) -> Option<String> {
-    let mut process = Command::new(system32("cmd.exe"));
-    process
-        .args(["/C", command, "--version"])
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    process.creation_flags(CREATE_NO_WINDOW);
-    let future = process.output();
-    let output = tokio::time::timeout(VERSION_TIMEOUT, future)
-        .await
-        .ok()?
-        .ok()?;
-    parse_version_output(&String::from_utf8_lossy(&output.stdout))
-        .or_else(|| parse_version_output(&String::from_utf8_lossy(&output.stderr)))
-}
-
-/// Extract a concise version string from raw `--version` output.
-fn parse_version_output(raw: &str) -> Option<String> {
-    raw.lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{parse_version_output, pick_executable};
+    use super::pick_executable;
 
     #[test]
     fn prefers_cmd_over_extensionless_shim() {
@@ -174,18 +145,5 @@ mod tests {
             pick_executable("C:\\Users\\me\\.local\\bin\\claude.exe\n").as_deref(),
             Some("C:\\Users\\me\\.local\\bin\\claude.exe")
         );
-    }
-
-    #[test]
-    fn takes_first_non_empty_line() {
-        assert_eq!(
-            parse_version_output("\n  2.1.150 (Claude Code)\nextra\n").as_deref(),
-            Some("2.1.150 (Claude Code)")
-        );
-    }
-
-    #[test]
-    fn empty_output_is_none() {
-        assert_eq!(parse_version_output("   \n\n"), None);
     }
 }

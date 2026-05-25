@@ -11,6 +11,8 @@ use crate::models::tool::ToolKey;
 use crate::platform::detect;
 use crate::platform::powershell::{compose_launch, ComposedCommand, LaunchRequest};
 
+const FIXED_INIT_SCRIPT: &str = "[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[System.Text.UTF8Encoding]::new()";
+
 /// Spawn a fresh console window for direct (non-wt) shell launches.
 #[cfg(windows)]
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
@@ -139,17 +141,47 @@ fn resolve_request(
         directory_tool_args_repo::get(conn, directory_id, tool_key)?.unwrap_or_default();
 
     let tool_args = merge_args(split_args(&tool.global_args), split_args(&directory_args));
+    let (terminal_exe, shell_exe, shell_args) = safe_shell_runtime(&profile.kind)?;
 
     Ok(LaunchRequest {
         kind: profile.kind,
         directory: directory.path,
-        terminal_exe: full_path_or(&profile.terminal_exe),
-        shell_exe: resolve_shell_exe(&profile.shell_exe),
-        shell_args: split_args(&profile.shell_args),
-        init_script: profile.init_script,
+        terminal_exe,
+        shell_exe,
+        shell_args,
+        init_script: FIXED_INIT_SCRIPT.to_string(),
         tool_executable: resolve_tool_executable(tool_key)?,
         tool_args,
     })
+}
+
+fn safe_shell_runtime(kind: &str) -> Result<(String, String, Vec<String>)> {
+    let powershell = detect::system32("WindowsPowerShell\\v1.0\\powershell.exe");
+    let args = vec!["-NoLogo".to_string(), "-NoExit".to_string()];
+    match kind {
+        "wt-pwsh" => Ok((trusted_windows_terminal()?, powershell, args)),
+        "pwsh" => Ok((powershell.clone(), powershell, args)),
+        "cmd" => Err(anyhow!(
+            "CMD 启动方式已因安全风险停用，请在设置中切换到 PowerShell"
+        )),
+        _ => Err(anyhow!("不支持的启动方式，请在设置中重新选择")),
+    }
+}
+
+fn trusted_windows_terminal() -> Result<String> {
+    let local = std::env::var("LOCALAPPDATA")
+        .map_err(|_| anyhow!("无法定位 Windows Terminal，请切换到 PowerShell 窗口"))?;
+    let path = std::path::Path::new(&local)
+        .join("Microsoft")
+        .join("WindowsApps")
+        .join("wt.exe");
+    if path.is_file() {
+        Ok(path.display().to_string())
+    } else {
+        Err(anyhow!(
+            "未找到受信任的 Windows Terminal，请切换到 PowerShell 窗口"
+        ))
+    }
 }
 
 /// Resolve the tool to a full executable path via its command candidates
@@ -160,26 +192,6 @@ fn resolve_request(
 fn resolve_tool_executable(tool_key: ToolKey) -> Result<String> {
     detect::resolve_executable_path(tool_key.command_candidates())
         .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))
-}
-
-/// Resolve the shell to a full path. PowerShell 7 (`pwsh.exe`) is optional, so
-/// fall back to the always-present Windows PowerShell when it is missing.
-fn resolve_shell_exe(requested: &str) -> String {
-    if requested.eq_ignore_ascii_case("pwsh.exe") {
-        if let Some(path) = detect::which_path_sync("pwsh.exe") {
-            return path;
-        }
-        if let Some(path) = detect::which_path_sync("powershell.exe") {
-            return path;
-        }
-        return "powershell.exe".to_string();
-    }
-    full_path_or(requested)
-}
-
-/// Resolve a program to its full path, falling back to the bare name.
-fn full_path_or(name: &str) -> String {
-    detect::which_path_sync(name).unwrap_or_else(|| name.to_string())
 }
 
 /// Merge global and project-level args so a flag set at both levels is not

@@ -32,24 +32,6 @@ pub fn get_default(conn: &Connection) -> rusqlite::Result<Option<ShellProfile>> 
     .optional()
 }
 
-pub fn save(conn: &Connection, profile: &ShellProfile) -> rusqlite::Result<()> {
-    conn.execute(
-        "update shell_profiles set name = ?2, terminal_exe = ?3, shell_exe = ?4, \
-         shell_args = ?5, init_script = ?6, is_default = ?7, kind = ?8 where id = ?1",
-        params![
-            profile.id,
-            profile.name,
-            profile.terminal_exe,
-            profile.shell_exe,
-            profile.shell_args,
-            profile.init_script,
-            i64::from(profile.is_default),
-            profile.kind,
-        ],
-    )?;
-    Ok(())
-}
-
 /// Update only the launch mode of the default profile.
 pub fn set_default_kind(conn: &Connection, kind: &str) -> rusqlite::Result<()> {
     conn.execute(

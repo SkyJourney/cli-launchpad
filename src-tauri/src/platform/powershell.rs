@@ -2,7 +2,7 @@ use base64::Engine;
 
 #[derive(Debug, Clone)]
 pub struct LaunchRequest {
-    /// Launch mode: "wt-pwsh" | "pwsh" | "cmd".
+    /// Launch mode: "wt-pwsh" | "pwsh".
     pub kind: String,
     pub directory: String,
     pub terminal_exe: String,
@@ -29,7 +29,6 @@ pub struct ComposedCommand {
 pub fn compose_launch(request: &LaunchRequest) -> ComposedCommand {
     match request.kind.as_str() {
         "pwsh" => compose_direct_powershell(request),
-        "cmd" => compose_direct_cmd(request),
         // Default: Windows Terminal + PowerShell.
         _ => compose_wt_powershell(request),
     }
@@ -100,25 +99,6 @@ fn compose_direct_powershell(request: &LaunchRequest) -> ComposedCommand {
     }
 }
 
-/// A standalone Command Prompt window via `cmd /K` (runs and stays open).
-fn compose_direct_cmd(request: &LaunchRequest) -> ComposedCommand {
-    let command_line = compose_cmd_command_line(request);
-    let args = vec!["/K".to_string(), command_line];
-    let preview = format!(
-        "{}  (cwd: {})",
-        display_command("cmd.exe", &args),
-        request.directory
-    );
-
-    ComposedCommand {
-        program: "cmd.exe".to_string(),
-        args,
-        preview,
-        working_dir: Some(request.directory.clone()),
-        new_console: true,
-    }
-}
-
 /// Render a program + argv into a readable, faithfully-quoted command string so
 /// the UI preview matches what is actually executed.
 fn display_command(program: &str, args: &[String]) -> String {
@@ -157,17 +137,6 @@ fn compose_powershell_script(request: &LaunchRequest) -> String {
     parts.join("; ")
 }
 
-fn compose_cmd_command_line(request: &LaunchRequest) -> String {
-    // `chcp 65001` switches the code page to UTF-8 for the session.
-    let mut line = String::from("chcp 65001>nul & ");
-    line.push_str(&quote_cmd_arg(&request.tool_executable));
-    for arg in &request.tool_args {
-        line.push(' ');
-        line.push_str(&quote_cmd_arg(arg));
-    }
-    line
-}
-
 /// Encode a PowerShell script for `-EncodedCommand`: UTF-16LE then Base64.
 fn encode_powershell_command(script: &str) -> String {
     let bytes: Vec<u8> = script
@@ -181,34 +150,8 @@ fn escape_single_quoted_powershell(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// Wrap an argument in single quotes when it contains characters the shell
-/// would otherwise interpret. Tokens like `--model` or `claude-opus-4-7` pass
-/// through unquoted.
 fn quote_powershell_arg(value: &str) -> String {
-    let needs_quote = value.is_empty()
-        || value
-            .chars()
-            .any(|ch| ch.is_whitespace() || matches!(ch, ';' | '&' | '|' | '\'' | '"' | '`'));
-    if needs_quote {
-        format!("'{}'", escape_single_quoted_powershell(value))
-    } else {
-        value.to_string()
-    }
-}
-
-fn quote_cmd_arg(value: &str) -> String {
-    // Quote when empty, contains whitespace, or contains cmd metacharacters
-    // (inside double quotes cmd treats &, |, <, >, ^ literally); escape any
-    // embedded double quote.
-    let needs_quote = value.is_empty()
-        || value.chars().any(|ch| {
-            ch.is_whitespace() || matches!(ch, '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')')
-        });
-    if needs_quote {
-        format!("\"{}\"", value.replace('"', "\\\""))
-    } else {
-        value.to_string()
-    }
+    format!("'{}'", escape_single_quoted_powershell(value))
 }
 
 #[cfg(test)]
@@ -255,7 +198,7 @@ mod tests {
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         let decoded = String::from_utf16(&units).unwrap();
-        assert!(decoded.contains("& claude"));
+        assert!(decoded.contains("& 'claude'"));
         assert!(decoded.contains("Set-Location -LiteralPath 'C:\\Projects\\demo'"));
     }
 
@@ -269,19 +212,19 @@ mod tests {
     }
 
     #[test]
-    fn direct_cmd_uses_slash_k_and_chcp() {
-        let composed = compose_launch(&request("cmd", vec![]));
-        assert_eq!(composed.program, "cmd.exe");
-        assert_eq!(composed.args[0], "/K");
-        assert!(composed.args[1].contains("chcp 65001"));
-        assert!(composed.args[1].contains("claude"));
-        assert!(composed.new_console);
+    fn args_join_into_single_invocation() {
+        let script = compose_powershell_script(&request("wt-pwsh", vec!["--model", "opus"]));
+        assert!(script.contains("& 'claude' '--model' 'opus'"));
+        assert!(!script.contains("& 'claude'; '--model'"));
     }
 
     #[test]
-    fn args_join_into_single_invocation() {
-        let script = compose_powershell_script(&request("wt-pwsh", vec!["--model", "opus"]));
-        assert!(script.contains("& claude --model opus"));
-        assert!(!script.contains("& claude; --model"));
+    fn powershell_arguments_are_always_literal_values() {
+        let script = compose_powershell_script(&request(
+            "pwsh",
+            vec!["$([Console]::WriteLine(424242))", "a'b"],
+        ));
+        assert!(script.contains("'$([Console]::WriteLine(424242))'"));
+        assert!(script.contains("'a''b'"));
     }
 }

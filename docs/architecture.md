@@ -48,7 +48,7 @@ cli_status
   list_tools / save_tool_global_args
 
 CLI 状态与版本
-  detect_cli_status            检测三个 CLI 的安装、全路径、当前版本
+  detect_cli_status            被动检测三个 CLI 的安装与全路径，不执行候选程序
   fetch_latest_versions        查询最新可用版本（npm registry）
   get_install_plan             返回结构化安装/更新命令（仅预览，不执行）
   run_install                  执行安装/更新并捕获日志
@@ -58,7 +58,7 @@ CLI 状态与版本
   resume_session               按工具恢复指定会话
 
 Shell 配置
-  get_shell_profiles / save_shell_profile / set_shell_kind
+  get_shell_profiles / set_shell_kind
 
 配置备份
   export_config_to_path / import_config_from_path   读写 JSON 文件（配合文件对话框）
@@ -122,8 +122,8 @@ schema 版本与日志内容，用于本地排障。
 
 ## 配置交换与启动历史
 
-可移植 JSON 配置 bundle 当前版本为 v2，覆盖目录、全局/项目级工具参数
-以及 Shell profile；仍兼容不包含 Shell profile 的 v1 文件。配置导出不
+可移植 JSON 配置 bundle 当前版本为 v2，覆盖目录及全局/项目级工具参数；
+为避免导入文件改变执行链，不再导入或导出 Shell 程序与初始化脚本。仍兼容 v1 文件。配置导出不
 包含日志、缓存、备份、窗口位置或外部 CLI 会话正文。
 
 `launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
@@ -172,16 +172,16 @@ launch mode (kind)
 + tool global args ⊕ directory-specific tool args（项目级覆盖同名 flag）
 ```
 
-**全路径解析**：工具、shell、终端都用 `where` 同步解析为完整路径再执行（带 `CREATE_NO_WINDOW`），不依赖被启动进程的 PATH。`where` 命中多条时优先可执行扩展名（`.exe`/`.cmd`/`.bat`/`.com`/`.ps1`），跳过 npm 的无扩展名 POSIX shim。`pwsh.exe` 缺失时回退到 `powershell.exe`。
+**执行边界**：工具在启动或版本探测前解析为完整路径；安装计划在用户确认前解析实际目标，并按该目标执行。Shell 固定使用系统 PowerShell，初始化脚本固定在程序内；用户参数始终以 PowerShell 字面值传递。
 
-**三种启动方式（shell profile `kind`）**：
+**启动方式（shell profile `kind`）**：
 
 ```text
 wt-pwsh  Windows Terminal + PowerShell
          wt new-tab -d <dir> <pwsh-full-path> -NoExit -EncodedCommand <base64>
          脚本用 -EncodedCommand(UTF-16LE Base64) 传递，避免 ; 被 wt 当作多 tab 分隔符
 pwsh     独立 PowerShell 窗口（CREATE_NEW_CONSOLE + current_dir，; 由 PowerShell 解析）
-cmd      独立 CMD 窗口（cmd /K "chcp 65001 & <tool> <args>"）
+cmd      已停用；旧配置会提示切换到 PowerShell
 ```
 
 PowerShell 脚本含 UTF-8 初始化、目录切换和结构化调用：
@@ -228,12 +228,10 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
 
 ## 版本检测与更新
 
-设置页需要展示每个 CLI 的当前版本和最新版本，并提供应用内更新入口。
+设置页提供最新版本查询与应用内更新入口。为避免应用启动时执行 PATH
+中的第三方程序，被动检测不再自动调用 CLI 的 `--version`。
 
 ```text
-当前版本
-  claude --version / codex --version / agy --version
-
 最新版本
   Claude：官方包或 npm registry @anthropic-ai/claude-code
   Codex：npm registry @openai/codex

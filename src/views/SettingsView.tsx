@@ -44,7 +44,6 @@ import {
 const SHELL_OPTIONS: { kind: ShellKind; label: string }[] = [
   { kind: "wt-pwsh", label: "Windows Terminal + PowerShell" },
   { kind: "pwsh", label: "PowerShell 窗口" },
-  { kind: "cmd", label: "CMD 窗口" },
 ];
 
 type GlobalArgsMap = Record<ToolKey, string>;

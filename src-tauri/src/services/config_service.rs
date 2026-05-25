@@ -1,12 +1,10 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::{directory_repo, directory_tool_args_repo, shell_profile_repo, tool_repo};
+use crate::db::{directory_repo, directory_tool_args_repo, tool_repo};
 use crate::models::config_bundle::{
-    ConfigBundle, ExportedDirectory, ExportedShellProfile, ExportedTool, ExportedToolArgs,
-    CONFIG_BUNDLE_VERSION,
+    ConfigBundle, ExportedDirectory, ExportedTool, ExportedToolArgs, CONFIG_BUNDLE_VERSION,
 };
-use crate::models::shell_profile::ShellProfile;
 
 /// Snapshot directories (with per-tool args) and tool global args into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
@@ -35,24 +33,11 @@ pub fn export(conn: &Connection) -> Result<ConfigBundle> {
             global_args: tool.global_args,
         })
         .collect();
-    let shell_profiles = shell_profile_repo::list(conn)?
-        .into_iter()
-        .map(|profile| ExportedShellProfile {
-            name: profile.name,
-            terminal_exe: profile.terminal_exe,
-            shell_exe: profile.shell_exe,
-            shell_args: profile.shell_args,
-            init_script: profile.init_script,
-            is_default: profile.is_default,
-            kind: profile.kind,
-        })
-        .collect();
-
     Ok(ConfigBundle {
         version: CONFIG_BUNDLE_VERSION,
         directories,
         tools,
-        shell_profiles,
+        shell_profiles: Vec::new(),
     })
 }
 
@@ -129,29 +114,6 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
         }
     }
 
-    if let (Some(imported), Some(current)) = (
-        bundle
-            .shell_profiles
-            .iter()
-            .find(|profile| profile.is_default)
-            .or_else(|| bundle.shell_profiles.first()),
-        shell_profile_repo::get_default(conn)?,
-    ) {
-        shell_profile_repo::save(
-            conn,
-            &ShellProfile {
-                id: current.id,
-                name: imported.name.clone(),
-                terminal_exe: imported.terminal_exe.clone(),
-                shell_exe: imported.shell_exe.clone(),
-                shell_args: imported.shell_args.clone(),
-                init_script: imported.init_script.clone(),
-                is_default: true,
-                kind: imported.kind.clone(),
-            },
-        )?;
-    }
-
     Ok(())
 }
 
@@ -211,9 +173,14 @@ mod tests {
         let db = seeded_db();
         let json = r#"{"version":1,"directories":[],"tools":[]}"#;
         import_json(&db, json).unwrap();
-        assert_eq!(
-            shell_profile_repo::get_default(&db).unwrap().unwrap().kind,
-            "wt-pwsh"
-        );
+    }
+
+    #[test]
+    fn imported_shell_execution_fields_are_ignored() {
+        let db = seeded_db();
+        let json = r#"{"version":2,"directories":[],"tools":[],"shellProfiles":[{"name":"bad","terminalExe":"evil.exe","shellExe":"evil.exe","shellArgs":"-Command bad","initScript":"Start-Process calc","isDefault":true,"kind":"cmd"}]}"#;
+        import_json(&db, json).unwrap();
+        let exported = export_json(&db).unwrap();
+        assert!(exported.contains("\"shellProfiles\": []"));
     }
 }

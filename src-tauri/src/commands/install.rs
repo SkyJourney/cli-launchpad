@@ -38,12 +38,12 @@ pub async fn fetch_latest_versions(
 
 /// Return the structured command without executing it, for UI preview/confirm.
 #[tauri::command]
-pub fn get_install_plan(tool_key: ToolKey, kind: InstallKind) -> InstallPlan {
-    install_service::plan(tool_key, kind)
+pub fn get_install_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan, AppError> {
+    Ok(install_service::plan(tool_key, kind)?)
 }
 
 #[tauri::command]
 pub async fn run_install(tool_key: ToolKey, kind: InstallKind) -> Result<InstallOutcome, AppError> {
-    let plan = install_service::plan(tool_key, kind);
+    let plan = install_service::plan(tool_key, kind)?;
     Ok(install_service::run(&plan).await)
 }

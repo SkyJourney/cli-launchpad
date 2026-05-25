@@ -54,7 +54,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 
 提供项目参数编辑视图，按 CLI 分区配置该项目的工具参数：
 
-- 项目级附加参数与全局参数分离，项目级只覆盖或追加。
+- 项目级附加参数与全局参数分离，项目级只覆盖或追加；参数作为字面值传入 CLI，不被 Shell 求值执行。
 - Claude 区提供模型快捷选择（如指定 `--model`）。
 - 未安装的 CLI 分区灰色禁用。
 - 项目级参数保存到 SQLite。
@@ -63,7 +63,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 
 设置页提供 CLI 版本管理能力：
 
-- 检测三个 CLI 的当前版本和最新可用版本。
+- 检测三个 CLI 的可用路径和最新可用版本；被动检测不自动执行候选程序获取当前版本。
 - 对有新版的 CLI 提供应用内更新入口，执行对应官方更新命令。
 - 更新与安装遵循同一原则：先预览命令、用户确认、输出日志、完成后重新检测。
 - 更新来源必须来自官方：Claude 使用 `claude update` 或官方包，Codex 使用 `npm i -g @openai/codex@latest`，Antigravity 重跑官方 installer。

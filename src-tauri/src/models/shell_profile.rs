@@ -10,6 +10,6 @@ pub struct ShellProfile {
     pub shell_args: String,
     pub init_script: String,
     pub is_default: bool,
-    /// Launch mode: "wt-pwsh" | "pwsh" | "cmd".
+    /// Launch mode: "wt-pwsh" | "pwsh". Legacy "cmd" values are rejected at launch.
     pub kind: String,
 }

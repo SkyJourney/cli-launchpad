@@ -21,7 +21,7 @@ export interface Tool {
   enabled: boolean;
 }
 
-export type ShellKind = "wt-pwsh" | "pwsh" | "cmd";
+export type ShellKind = "wt-pwsh" | "pwsh";
 
 export interface ShellProfile {
   id: number;
@@ -200,10 +200,6 @@ export function runInstall(toolKey: ToolKey, kind: InstallKind) {
 // Shell profiles
 export function getShellProfiles() {
   return invoke<ShellProfile[]>("get_shell_profiles");
-}
-
-export function saveShellProfile(profile: ShellProfile) {
-  return invoke<void>("save_shell_profile", { profile });
 }
 
 export function setShellKind(kind: ShellKind) {

@@ -25,7 +25,8 @@ async fn detect_tool(tool_key: ToolKey) -> CliStatus {
                 status: CliAvailability::Available,
                 path: Some(path.display().to_string()),
                 resolved_command: Some((*command).to_string()),
-                version: detect::run_version(command).await,
+                // Do not execute PATH-resolved third-party binaries during passive detection.
+                version: None,
                 latest_version: None,
             };
         }

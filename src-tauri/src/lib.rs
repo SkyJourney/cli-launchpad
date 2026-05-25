@@ -126,7 +126,6 @@ pub fn run() {
             commands::install::get_install_plan,
             commands::install::run_install,
             commands::shell::get_shell_profiles,
-            commands::shell::save_shell_profile,
             commands::shell::set_shell_kind,
             commands::tool_args::get_directory_tool_args,
             commands::tool_args::save_directory_tool_args,
