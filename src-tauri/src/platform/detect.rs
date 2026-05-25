@@ -6,6 +6,9 @@ use tokio::process::Command;
 const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Resolve a trusted Windows system binary to its full `System32` path so we do
 /// not rely on PATH/CWD for system tools. Falls back to the bare name.
 pub fn system32(relative: &str) -> String {
@@ -21,10 +24,11 @@ pub fn system32(relative: &str) -> String {
 /// Resolve a command on the current PATH using Windows `where.exe`.
 /// Bounded by a timeout; the child is killed on drop so a hung probe cannot leak.
 pub async fn which(command: &str) -> Option<PathBuf> {
-    let future = Command::new(system32("where.exe"))
-        .arg(command)
-        .kill_on_drop(true)
-        .output();
+    let mut process = Command::new(system32("where.exe"));
+    process.arg(command).kill_on_drop(true);
+    #[cfg(windows)]
+    process.creation_flags(CREATE_NO_WINDOW);
+    let future = process.output();
     let output = tokio::time::timeout(WHERE_TIMEOUT, future)
         .await
         .ok()?
@@ -44,7 +48,6 @@ pub fn which_path_sync(command: &str) -> Option<String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     let output = cmd.output().ok()?;
@@ -128,10 +131,13 @@ fn candidate_dirs() -> Vec<PathBuf> {
 /// killed on drop. Falls back to stderr because some CLIs print the version
 /// there, and the exit status is not required to be zero.
 pub async fn run_version(command: &str) -> Option<String> {
-    let future = Command::new(system32("cmd.exe"))
+    let mut process = Command::new(system32("cmd.exe"));
+    process
         .args(["/C", command, "--version"])
-        .kill_on_drop(true)
-        .output();
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    process.creation_flags(CREATE_NO_WINDOW);
+    let future = process.output();
     let output = tokio::time::timeout(VERSION_TIMEOUT, future)
         .await
         .ok()?

@@ -10,6 +10,9 @@ use crate::platform::detect;
 /// interactive prompt must not hang forever; kill_on_drop enforces the bound.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
 pub fn plan(tool_key: ToolKey, kind: InstallKind) -> InstallPlan {
@@ -64,7 +67,7 @@ pub fn plan(tool_key: ToolKey, kind: InstallKind) -> InstallPlan {
 /// must run directly so its `| iex` pipe is interpreted by PowerShell rather
 /// than by cmd.
 fn build_command(plan: &InstallPlan) -> Command {
-    if plan.program.eq_ignore_ascii_case("powershell") {
+    let mut command = if plan.program.eq_ignore_ascii_case("powershell") {
         let mut command = Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
         command.args(&plan.args);
         command
@@ -72,7 +75,10 @@ fn build_command(plan: &InstallPlan) -> Command {
         let mut command = Command::new(detect::system32("cmd.exe"));
         command.arg("/C").arg(&plan.program).args(&plan.args);
         command
-    }
+    };
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 /// Execute the plan, capturing combined stdout+stderr as the log. Bounded by a
