@@ -46,6 +46,18 @@ export const TOOLS: ToolMeta[] = [
   },
 ];
 
+/// An empty `Record<ToolKey, string>` derived from TOOLS, so the per-tool arg
+/// maps stay in sync with the tool list.
+export function emptyToolMap(): Record<ToolKey, string> {
+  return TOOLS.reduce(
+    (acc, tool) => {
+      acc[tool.key] = "";
+      return acc;
+    },
+    {} as Record<ToolKey, string>,
+  );
+}
+
 /// Quick-select presets for Claude's `--model` flag.
 export interface ModelPreset {
   label: string;

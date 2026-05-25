@@ -1,71 +1,60 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useDirectory, useTools } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
+import { useSeededState } from "../hooks/useSeededState";
 import { getFlagValue, setFlagValue } from "../lib/args";
-import { CLAUDE_MODEL_PRESETS, TOOLS } from "../lib/tools";
+import { qk } from "../lib/queryKeys";
+import { CLAUDE_MODEL_PRESETS, emptyToolMap, TOOLS } from "../lib/tools";
 import {
   getDirectoryToolArgs,
-  listDirectories,
-  listTools,
   saveDirectoryToolArgs,
+  type DirectoryToolArgs,
   type ToolKey,
 } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
 
 type ArgsMap = Record<ToolKey, string>;
 
-const EMPTY_ARGS: ArgsMap = { claude: "", codex: "", antigravity: "" };
+function argsFromEntries(entries: DirectoryToolArgs[]): ArgsMap {
+  const next = emptyToolMap();
+  for (const entry of entries) {
+    next[entry.toolKey] = entry.args;
+  }
+  return next;
+}
 
 export function ProjectEditView() {
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const setView = useAppStore((state) => state.setView);
   const queryClient = useQueryClient();
 
-  const { data: directories } = useQuery({
-    queryKey: ["directories"],
-    queryFn: listDirectories,
-  });
-  const directory =
-    directories?.find((d) => d.id === selectedDirectoryId) ?? null;
+  const directory = useDirectory(selectedDirectoryId);
   const directoryId = directory?.id ?? null;
-
-  const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: listTools });
+  const { data: tools } = useTools();
   const statusByTool = indexByTool(useCliStatus().data);
 
   const savedArgs = useQuery({
-    queryKey: ["directory-tool-args", directoryId],
+    queryKey: qk.directoryToolArgs(directoryId),
     queryFn: () => getDirectoryToolArgs(directoryId as number),
     enabled: directoryId != null,
   });
 
-  const [args, setArgs] = useState<ArgsMap>(EMPTY_ARGS);
-  const seededFor = useRef<number | null>(null);
-
-  // Seed the editable state once per directory. Guarding on the directory id
-  // prevents a background refetch (e.g. on window focus) from overwriting edits.
-  useEffect(() => {
-    if (
-      !savedArgs.data ||
-      directoryId == null ||
-      seededFor.current === directoryId
-    ) {
-      return;
-    }
-    seededFor.current = directoryId;
-    const next = { ...EMPTY_ARGS };
-    for (const entry of savedArgs.data) {
-      next[entry.toolKey] = entry.args;
-    }
-    setArgs(next);
-  }, [savedArgs.data, directoryId]);
+  // Seed editable args from the saved values, re-seeding when the directory
+  // changes; a background refetch won't clobber in-progress edits.
+  const [args, setArgs] = useSeededState<DirectoryToolArgs[], ArgsMap>(
+    savedArgs.data,
+    argsFromEntries,
+    emptyToolMap(),
+    directoryId,
+  );
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const id = directoryId as number;
-      // Skip missing tools: their fields are disabled and unseeded, so writing
-      // would wipe any args they already have in the database.
+      // Skip missing tools: they are read-only in the UI; their existing DB
+      // rows are preserved by not writing them.
       const editable = TOOLS.filter(
         (tool) => (statusByTool[tool.key]?.status ?? "missing") !== "missing",
       );
@@ -77,7 +66,7 @@ export function ProjectEditView() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ["directory-tool-args", directoryId],
+        queryKey: qk.directoryToolArgs(directoryId),
       });
       setView("detail");
     },
@@ -161,9 +150,9 @@ export function ProjectEditView() {
                 <input
                   value={claudeModel ?? ""}
                   disabled={disabled}
-                  placeholder="或手动输入模型名（支持第三方模型）"
+                  placeholder="或手动输入模型名（支持第三方模型，不含空格）"
                   onChange={(event) => {
-                    const value = event.target.value.trim();
+                    const value = event.target.value.replace(/\s+/g, "");
                     updateArgs(
                       "claude",
                       setFlagValue(

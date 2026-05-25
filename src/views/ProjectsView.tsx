@@ -1,13 +1,14 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Plus, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ProjectCard } from "../components/ProjectCard";
+import { useDirectories } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
+import { qk } from "../lib/queryKeys";
 import {
   addDirectory,
   launchTool,
-  listDirectories,
   removeDirectory,
   setDirectoryPinned,
   type Directory,
@@ -23,10 +24,7 @@ export function ProjectsView() {
   const setView = useAppStore((state) => state.setView);
   const selectDirectory = useAppStore((state) => state.selectDirectory);
 
-  const { data: directories } = useQuery({
-    queryKey: ["directories"],
-    queryFn: listDirectories,
-  });
+  const { data: directories } = useDirectories();
   const cliStatus = useCliStatus();
   const statusByTool = indexByTool(cliStatus.data);
 
@@ -35,9 +33,10 @@ export function ProjectsView() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPath, setNewPath] = useState("");
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const invalidateDirectories = () =>
-    queryClient.invalidateQueries({ queryKey: ["directories"] });
+    queryClient.invalidateQueries({ queryKey: qk.directories() });
 
   const addMutation = useMutation({
     mutationFn: () => addDirectory(newName.trim(), newPath.trim()),
@@ -58,6 +57,14 @@ export function ProjectsView() {
   const removeMutation = useMutation({
     mutationFn: (id: number) => removeDirectory(id),
     onSuccess: invalidateDirectories,
+  });
+
+  // Launching updates lastUsedAt server-side, so refresh the list afterwards.
+  const launchMutation = useMutation({
+    mutationFn: ({ id, toolKey }: { id: number; toolKey: ToolKey }) =>
+      launchTool(id, toolKey),
+    onSuccess: invalidateDirectories,
+    onError: (error) => setLaunchError(String(error)),
   });
 
   const visible = useMemo(() => {
@@ -88,7 +95,6 @@ export function ProjectsView() {
     });
     if (typeof selected === "string") {
       setNewPath(selected);
-      // Auto-fill the name from the folder basename when it is still empty.
       if (!newName.trim()) {
         const base =
           selected
@@ -103,16 +109,13 @@ export function ProjectsView() {
   };
 
   const handleLaunch = (id: number, toolKey: ToolKey) => {
-    void launchTool(id, toolKey);
+    setLaunchError(null);
+    launchMutation.mutate({ id, toolKey });
   };
 
   const handleEdit = (id: number) => {
     selectDirectory(id);
     setView("edit");
-  };
-
-  const handleRemove = (directory: Directory) => {
-    removeMutation.mutate(directory.id);
   };
 
   const canSubmit = newName.trim().length > 0 && newPath.trim().length > 0;
@@ -189,6 +192,7 @@ export function ProjectsView() {
       {addMutation.isError && (
         <p className="error">添加失败：{String(addMutation.error)}</p>
       )}
+      {launchError && <p className="error">启动失败：{launchError}</p>}
 
       {visible.length === 0 ? (
         <p className="muted">没有匹配的目录。点击「添加目录」创建第一个。</p>
@@ -203,7 +207,7 @@ export function ProjectsView() {
               onLaunch={handleLaunch}
               onTogglePin={(d) => pinMutation.mutate(d)}
               onEdit={handleEdit}
-              onRemove={handleRemove}
+              onRemove={(d) => removeMutation.mutate(d.id)}
             />
           ))}
         </div>

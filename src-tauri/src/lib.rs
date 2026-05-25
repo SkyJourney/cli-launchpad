@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod error;
 mod models;
 mod platform;
 mod services;
@@ -9,10 +10,24 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WebviewWindow};
+use tauri::{Manager, State, WebviewWindow};
+
+pub use error::AppError;
 
 /// Shared SQLite connection guarded by a mutex, stored in Tauri managed state.
 pub type Db = Mutex<Connection>;
+
+/// Lock the shared connection and run `f` with it, mapping lock poisoning to an
+/// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
+pub fn with_conn<T>(
+    state: &State<'_, Db>,
+    f: impl FnOnce(&Connection) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let conn = state
+        .lock()
+        .map_err(|_| AppError::msg("数据库连接锁中毒"))?;
+    f(&conn)
+}
 
 pub fn run() {
     tauri::Builder::default()

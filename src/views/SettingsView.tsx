@@ -2,10 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
-import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
+import { useState } from "react";
+import { useTools } from "../hooks/queries";
+import {
+  CLI_STATUS_META,
+  indexByTool,
+  useCliStatus,
+} from "../hooks/useCliStatus";
+import { useSeededState } from "../hooks/useSeededState";
 import { hasUpdate } from "../lib/format";
-import { TOOLS } from "../lib/tools";
+import { qk } from "../lib/queryKeys";
+import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
   exportConfigToPath,
   fetchLatestVersions,
@@ -16,11 +23,11 @@ import {
   runInstall,
   saveToolGlobalArgs,
   setShellKind,
-  type CliAvailability,
   type InstallKind,
   type InstallOutcome,
   type InstallPlan,
   type ShellKind,
+  type Tool,
   type ToolKey,
 } from "../lib/tauri";
 
@@ -30,23 +37,15 @@ const SHELL_OPTIONS: { kind: ShellKind; label: string }[] = [
   { kind: "cmd", label: "CMD 窗口" },
 ];
 
-const STATUS_LABEL: Record<CliAvailability, string> = {
-  available: "已安装",
-  missing: "未检测到",
-};
-
-const STATUS_CLASS: Record<CliAvailability, string> = {
-  available: "badge-available",
-  missing: "badge-missing",
-};
-
 type GlobalArgsMap = Record<ToolKey, string>;
 
-const EMPTY_GLOBAL_ARGS: GlobalArgsMap = {
-  claude: "",
-  codex: "",
-  antigravity: "",
-};
+function toolsToGlobalArgs(tools: Tool[]): GlobalArgsMap {
+  const next = emptyToolMap();
+  for (const tool of tools) {
+    next[tool.key] = tool.globalArgs;
+  }
+  return next;
+}
 
 interface PendingAction {
   toolKey: ToolKey;
@@ -60,7 +59,7 @@ export function SettingsView() {
   const statusByTool = indexByTool(cliStatus.data);
 
   const latest = useQuery({
-    queryKey: ["latest-versions"],
+    queryKey: qk.latestVersions(),
     queryFn: fetchLatestVersions,
     staleTime: 1000 * 60 * 30,
   });
@@ -69,7 +68,7 @@ export function SettingsView() {
   );
 
   const shellProfiles = useQuery({
-    queryKey: ["shell-profiles"],
+    queryKey: qk.shellProfiles(),
     queryFn: getShellProfiles,
   });
   const currentShellKind: ShellKind =
@@ -77,25 +76,17 @@ export function SettingsView() {
   const shellKindMutation = useMutation({
     mutationFn: (kind: ShellKind) => setShellKind(kind),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["shell-profiles"] }),
+      queryClient.invalidateQueries({ queryKey: qk.shellProfiles() }),
   });
 
   // Global tool args (apply to every project; project-level args override them).
-  const tools = useQuery({ queryKey: ["tools"], queryFn: listTools });
-  const [globalArgs, setGlobalArgs] =
-    useState<GlobalArgsMap>(EMPTY_GLOBAL_ARGS);
-  const seededGlobalArgs = useRef(false);
-  useEffect(() => {
-    if (!tools.data || seededGlobalArgs.current) {
-      return;
-    }
-    seededGlobalArgs.current = true;
-    const next = { ...EMPTY_GLOBAL_ARGS };
-    for (const tool of tools.data) {
-      next[tool.key] = tool.globalArgs;
-    }
-    setGlobalArgs(next);
-  }, [tools.data]);
+  const tools = useTools();
+  const [globalArgs, setGlobalArgs] = useSeededState<Tool[], GlobalArgsMap>(
+    tools.data,
+    toolsToGlobalArgs,
+    emptyToolMap(),
+    "global",
+  );
 
   const saveGlobalArgsMutation = useMutation({
     mutationFn: async () => {
@@ -105,7 +96,7 @@ export function SettingsView() {
         ),
       );
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tools"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.tools() }),
   });
 
   const [pending, setPending] = useState<PendingAction | null>(null);
@@ -137,14 +128,19 @@ export function SettingsView() {
       await importConfigFromPath(selected);
       return true;
     },
-    onSuccess: (didImport) => {
+    onSuccess: async (didImport) => {
       if (!didImport) {
         return;
       }
-      queryClient.invalidateQueries({ queryKey: ["directories"] });
-      queryClient.invalidateQueries({ queryKey: ["tools"] });
-      queryClient.invalidateQueries({ queryKey: ["directory-tool-args"] });
-      seededGlobalArgs.current = false; // reseed global args from imported values
+      queryClient.invalidateQueries({ queryKey: qk.directories() });
+      queryClient.invalidateQueries({ queryKey: qk.directoryToolArgs() });
+      // Re-seed the global-args editor from the freshly imported tools (await
+      // the fetch so we don't seed from stale data).
+      const fresh = await queryClient.fetchQuery({
+        queryKey: qk.tools(),
+        queryFn: listTools,
+      });
+      setGlobalArgs(toolsToGlobalArgs(fresh));
     },
   });
 
@@ -160,8 +156,8 @@ export function SettingsView() {
     onSuccess: (result) => {
       setOutcome(result);
       setPending(null);
-      queryClient.invalidateQueries({ queryKey: ["cli-status"] });
-      queryClient.invalidateQueries({ queryKey: ["latest-versions"] });
+      queryClient.invalidateQueries({ queryKey: qk.cliStatus() });
+      queryClient.invalidateQueries({ queryKey: qk.latestVersions() });
     },
   });
 
@@ -187,6 +183,9 @@ export function SettingsView() {
 
       <section className="cli-status-list">
         <div className="section-heading">CLI 状态</div>
+        {cliStatus.isError && (
+          <p className="error">检测失败：{String(cliStatus.error)}</p>
+        )}
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key];
           const availability = status?.status ?? "missing";
@@ -199,8 +198,13 @@ export function SettingsView() {
               <div className="cli-status-name">
                 <tool.icon size={18} />
                 <strong>{tool.label}</strong>
-                <span className={clsx("cli-badge", STATUS_CLASS[availability])}>
-                  {STATUS_LABEL[availability]}
+                <span
+                  className={clsx(
+                    "cli-badge",
+                    CLI_STATUS_META[availability].badgeClass,
+                  )}
+                >
+                  {CLI_STATUS_META[availability].label}
                 </span>
                 {updatable === true && (
                   <span className="update-flag">有更新</span>

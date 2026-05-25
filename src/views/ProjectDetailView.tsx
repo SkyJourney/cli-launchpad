@@ -9,14 +9,15 @@ import {
   RotateCcw,
 } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { copyText } from "../lib/clipboard";
 import { formatRelativeMs } from "../lib/format";
+import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
 import {
   launchTool,
-  listDirectories,
   listSessions,
   previewLaunch,
   resumeSession,
@@ -30,61 +31,52 @@ export function ProjectDetailView() {
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const queryClient = useQueryClient();
 
-  const { data: directories } = useQuery({
-    queryKey: ["directories"],
-    queryFn: listDirectories,
-  });
-  const directory =
-    directories?.find((d) => d.id === selectedDirectoryId) ?? null;
+  const directory = useDirectory(selectedDirectoryId);
+  const statusByTool = indexByTool(useCliStatus().data);
 
-  const cliData = useCliStatus().data;
-  const statusByTool = indexByTool(cliData);
-  const [activeTool, setActiveTool] = useState<ToolKey>("claude");
+  // Manual tab selection wins when still available; otherwise default to the
+  // first available tool. Pure derivation — no effect, no stale closure.
+  const [manualTool, setManualTool] = useState<ToolKey | null>(null);
+  const firstAvailable = TOOLS.find(
+    (tool) => statusByTool[tool.key]?.status === "available",
+  )?.key;
+  const manualValid =
+    manualTool && statusByTool[manualTool]?.status === "available";
+  const activeTool: ToolKey =
+    (manualValid ? manualTool : firstAvailable) ?? TOOLS[0].key;
+
   const [showPreview, setShowPreview] = useState(false);
-
-  // When CLI status loads, if the active tab is unavailable, switch to the
-  // first available tool so the user does not land on a disabled tab.
-  useEffect(() => {
-    if (statusByTool[activeTool]?.status === "missing") {
-      const firstAvailable = TOOLS.find(
-        (tool) =>
-          statusByTool[tool.key] &&
-          statusByTool[tool.key]!.status !== "missing",
-      );
-      if (firstAvailable) {
-        setActiveTool(firstAvailable.key);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cliData]);
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const directoryId = directory?.id ?? null;
-  const activeStatus = statusByTool[activeTool]?.status ?? "missing";
-  const launchable = activeStatus === "available";
+  const launchable = statusByTool[activeTool]?.status === "available";
 
   const sessions = useQuery({
-    queryKey: ["sessions", directoryId, activeTool],
+    queryKey: qk.sessions(directoryId, activeTool),
     queryFn: () => listSessions(directoryId as number, activeTool),
     enabled: directoryId != null,
   });
 
   const preview = useQuery({
-    queryKey: ["preview", directoryId, activeTool],
+    queryKey: qk.preview(directoryId, activeTool),
     queryFn: () => previewLaunch(directoryId as number, activeTool),
     enabled: directoryId != null && showPreview,
   });
 
+  const invalidateDirectories = () =>
+    queryClient.invalidateQueries({ queryKey: qk.directories() });
+
   const launchMutation = useMutation({
     mutationFn: () => launchTool(directoryId as number, activeTool),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["directories"] }),
+    onSuccess: invalidateDirectories,
+    onError: (error) => setLaunchError(String(error)),
   });
 
   const resumeMutation = useMutation({
     mutationFn: (sessionId: string) =>
       resumeSession(directoryId as number, activeTool, sessionId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["directories"] }),
+    onSuccess: invalidateDirectories,
+    onError: (error) => setLaunchError(String(error)),
   });
 
   const anyPending = launchMutation.isPending || resumeMutation.isPending;
@@ -102,6 +94,14 @@ export function ProjectDetailView() {
   }
 
   const supportsHistory = activeTool !== "antigravity";
+  const runLaunch = () => {
+    setLaunchError(null);
+    launchMutation.mutate();
+  };
+  const runResume = (sessionId: string) => {
+    setLaunchError(null);
+    resumeMutation.mutate(sessionId);
+  };
 
   return (
     <div className="detail-view">
@@ -127,16 +127,18 @@ export function ProjectDetailView() {
         </button>
       </header>
 
-      <div className="tab-row">
+      <div className="tab-row" role="tablist">
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key]?.status ?? "missing";
           const disabled = status === "missing";
           return (
             <button
               key={tool.key}
+              role="tab"
+              aria-selected={tool.key === activeTool}
               className={clsx("tab", { active: tool.key === activeTool })}
               disabled={disabled}
-              onClick={() => setActiveTool(tool.key)}
+              onClick={() => setManualTool(tool.key)}
             >
               <tool.icon size={15} />
               {tool.label}
@@ -150,7 +152,7 @@ export function ProjectDetailView() {
         <button
           className="primary-button"
           disabled={!launchable || anyPending}
-          onClick={() => launchMutation.mutate()}
+          onClick={runLaunch}
         >
           <Play size={15} />
           启动 {TOOLS.find((t) => t.key === activeTool)?.label}
@@ -161,6 +163,7 @@ export function ProjectDetailView() {
           </span>
         )}
       </div>
+      {launchError && <p className="error">启动失败：{launchError}</p>}
 
       <section>
         <div className="section-heading">历史会话</div>
@@ -168,6 +171,8 @@ export function ProjectDetailView() {
           <p className="muted">
             Antigravity 暂不支持历史列表，可直接启动新会话。
           </p>
+        ) : sessions.isError ? (
+          <p className="error">读取会话失败：{String(sessions.error)}</p>
         ) : sessions.isLoading ? (
           <p className="muted">读取中…</p>
         ) : sessions.data && sessions.data.length > 0 ? (
@@ -183,7 +188,7 @@ export function ProjectDetailView() {
                 <button
                   className="ghost-button"
                   disabled={!launchable || anyPending}
-                  onClick={() => resumeMutation.mutate(session.sessionId)}
+                  onClick={() => runResume(session.sessionId)}
                 >
                   <RotateCcw size={14} />
                   恢复
@@ -206,7 +211,11 @@ export function ProjectDetailView() {
         </button>
         {showPreview && (
           <div className="preview-body">
-            <code>{preview.data ?? "生成中…"}</code>
+            <code>
+              {preview.isError
+                ? String(preview.error)
+                : (preview.data ?? "生成中…")}
+            </code>
             <button
               className="ghost-button"
               disabled={!preview.data}

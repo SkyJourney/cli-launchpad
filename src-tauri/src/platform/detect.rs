@@ -6,10 +6,22 @@ use tokio::process::Command;
 const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Resolve a trusted Windows system binary to its full `System32` path so we do
+/// not rely on PATH/CWD for system tools. Falls back to the bare name.
+pub fn system32(relative: &str) -> String {
+    if let Ok(root) = std::env::var("SystemRoot") {
+        let path = std::path::Path::new(&root).join("System32").join(relative);
+        if path.is_file() {
+            return path.display().to_string();
+        }
+    }
+    relative.to_string()
+}
+
 /// Resolve a command on the current PATH using Windows `where.exe`.
 /// Bounded by a timeout; the child is killed on drop so a hung probe cannot leak.
 pub async fn which(command: &str) -> Option<PathBuf> {
-    let future = Command::new("where")
+    let future = Command::new(system32("where.exe"))
         .arg(command)
         .kill_on_drop(true)
         .output();
@@ -27,7 +39,7 @@ pub async fn which(command: &str) -> Option<PathBuf> {
 /// (synchronous) launch path so commands run by absolute path rather than
 /// relying on the child process's PATH. Runs `where` with no console window.
 pub fn which_path_sync(command: &str) -> Option<String> {
-    let mut cmd = std::process::Command::new("where");
+    let mut cmd = std::process::Command::new(system32("where.exe"));
     cmd.arg(command);
     #[cfg(windows)]
     {
@@ -58,6 +70,23 @@ fn pick_executable(stdout: &str) -> Option<String> {
         }
     }
     lines.first().map(|line| (*line).to_string())
+}
+
+/// Resolve a tool's full executable path the same way detection does: try the
+/// PATH first, then known per-user install dirs. Shared by the launch path so
+/// "available in detection" and "launchable" stay consistent.
+pub fn resolve_executable_path(candidates: &[&str]) -> Option<String> {
+    for command in candidates {
+        if let Some(path) = which_path_sync(command) {
+            return Some(path);
+        }
+    }
+    for command in candidates {
+        if let Some(path) = find_in_known_dirs(command) {
+            return Some(path.display().to_string());
+        }
+    }
+    None
 }
 
 /// Look for an executable in known per-user install directories that may be
@@ -99,7 +128,7 @@ fn candidate_dirs() -> Vec<PathBuf> {
 /// killed on drop. Falls back to stderr because some CLIs print the version
 /// there, and the exit status is not required to be zero.
 pub async fn run_version(command: &str) -> Option<String> {
-    let future = Command::new("cmd")
+    let future = Command::new(system32("cmd.exe"))
         .args(["/C", command, "--version"])
         .kill_on_drop(true)
         .output();

@@ -16,13 +16,23 @@ fn npm_package(tool_key: ToolKey) -> Option<&'static str> {
 }
 
 pub fn fetch_all_latest() -> Vec<LatestVersion> {
-    [ToolKey::Claude, ToolKey::Codex, ToolKey::Antigravity]
-        .into_iter()
-        .map(|tool_key| LatestVersion {
-            tool_key,
-            latest: fetch_latest(tool_key),
-        })
-        .collect()
+    // Query the registries concurrently so the total wait is one request's
+    // timeout, not the sum of all of them.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = ToolKey::ALL
+            .into_iter()
+            .map(|tool_key| {
+                scope.spawn(move || LatestVersion {
+                    tool_key,
+                    latest: fetch_latest(tool_key),
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .collect()
+    })
 }
 
 /// Query the npm registry `latest` dist-tag. Network failures degrade to None

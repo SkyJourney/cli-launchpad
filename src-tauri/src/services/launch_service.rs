@@ -103,18 +103,13 @@ fn resolve_request(
 }
 
 /// Resolve the tool to a full executable path via its command candidates
-/// (e.g. Antigravity prefers `agy`, falling back to `antigravity`). Launching
-/// by full path avoids depending on the spawned shell's PATH.
+/// (e.g. Antigravity prefers `agy`, falling back to `antigravity`). Uses the
+/// same PATH + known-dir resolution as detection so an "available" tool is
+/// always launchable. Launching by full path avoids depending on the spawned
+/// shell's PATH.
 fn resolve_tool_executable(tool_key: ToolKey) -> Result<String> {
-    for command in tool_key.command_candidates() {
-        if let Some(path) = detect::which_path_sync(command) {
-            return Ok(path);
-        }
-    }
-    Err(anyhow!(
-        "未检测到 {}，请先在设置中安装后再启动",
-        tool_key.as_str()
-    ))
+    detect::resolve_executable_path(tool_key.command_candidates())
+        .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))
 }
 
 /// Resolve the shell to a full path. PowerShell 7 (`pwsh.exe`) is optional, so
@@ -143,19 +138,24 @@ fn full_path_or(name: &str) -> String {
 /// project args are appended.
 fn merge_args(global: Vec<String>, project: Vec<String>) -> Vec<String> {
     use std::collections::HashSet;
-    let project_flags: HashSet<&str> = project
+    // Compare by flag base name so `--model x` and `--model=x` are treated as
+    // the same flag.
+    let project_flag_bases: HashSet<&str> = project
         .iter()
         .filter(|token| token.starts_with('-'))
-        .map(String::as_str)
+        .map(|token| flag_base(token))
         .collect();
 
     let mut merged = Vec::new();
     let mut index = 0;
     while index < global.len() {
         let token = &global[index];
-        if token.starts_with('-') && project_flags.contains(token.as_str()) {
-            // Skip the overridden flag and its value (if the next token is one).
-            let has_value = index + 1 < global.len() && !global[index + 1].starts_with('-');
+        if token.starts_with('-') && project_flag_bases.contains(flag_base(token)) {
+            // Skip the overridden flag. A space-separated flag also owns the
+            // following value token; a `--flag=value` token is self-contained.
+            let has_value = !token.contains('=')
+                && index + 1 < global.len()
+                && !global[index + 1].starts_with('-');
             index += if has_value { 2 } else { 1 };
             continue;
         }
@@ -164,6 +164,14 @@ fn merge_args(global: Vec<String>, project: Vec<String>) -> Vec<String> {
     }
     merged.extend(project);
     merged
+}
+
+/// The flag name without any `=value` suffix (`--model=x` -> `--model`).
+fn flag_base(token: &str) -> &str {
+    match token.find('=') {
+        Some(idx) => &token[..idx],
+        None => token,
+    }
 }
 
 /// Split a stored argument string into tokens, honouring single and double
@@ -234,6 +242,19 @@ mod tests {
     fn disjoint_args_concatenate() {
         let merged = merge_args(vs(&["--global"]), vs(&["--proj"]));
         assert_eq!(merged, vs(&["--global", "--proj"]));
+    }
+
+    #[test]
+    fn equals_form_overrides_space_form() {
+        // Project uses --model=opus, global uses space form: no duplicate.
+        let merged = merge_args(vs(&["--model", "sonnet"]), vs(&["--model=opus"]));
+        assert_eq!(merged, vs(&["--model=opus"]));
+    }
+
+    #[test]
+    fn space_form_overrides_equals_form() {
+        let merged = merge_args(vs(&["--model=sonnet"]), vs(&["--model", "opus"]));
+        assert_eq!(merged, vs(&["--model", "opus"]));
     }
 
     #[test]

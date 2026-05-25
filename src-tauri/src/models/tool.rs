@@ -9,6 +9,10 @@ pub enum ToolKey {
 }
 
 impl ToolKey {
+    /// All tool keys, in display order. Single source for iteration so adding a
+    /// tool only requires touching this list (plus its arms).
+    pub const ALL: [ToolKey; 3] = [ToolKey::Claude, ToolKey::Codex, ToolKey::Antigravity];
+
     pub fn as_str(self) -> &'static str {
         match self {
             ToolKey::Antigravity => "antigravity",

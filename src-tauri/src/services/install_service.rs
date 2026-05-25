@@ -4,6 +4,7 @@ use tokio::process::Command;
 
 use crate::models::install::{InstallKind, InstallOutcome, InstallPlan};
 use crate::models::tool::ToolKey;
+use crate::platform::detect;
 
 /// Installs legitimately take a while (downloads), but a process stuck on an
 /// interactive prompt must not hang forever; kill_on_drop enforces the bound.
@@ -64,11 +65,11 @@ pub fn plan(tool_key: ToolKey, kind: InstallKind) -> InstallPlan {
 /// than by cmd.
 fn build_command(plan: &InstallPlan) -> Command {
     if plan.program.eq_ignore_ascii_case("powershell") {
-        let mut command = Command::new(&plan.program);
+        let mut command = Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
         command.args(&plan.args);
         command
     } else {
-        let mut command = Command::new("cmd");
+        let mut command = Command::new(detect::system32("cmd.exe"));
         command.arg("/C").arg(&plan.program).args(&plan.args);
         command
     }

@@ -3,12 +3,22 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use anyhow::{anyhow, Result};
+use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::db::directory_repo;
 use crate::models::session::SessionInfo;
 use crate::models::tool::ToolKey;
 
 const TITLE_MAX_CHARS: usize = 100;
+
+/// Resolve a directory id to its filesystem path (the input to session reading).
+pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
+    directory_repo::get(conn, directory_id)?
+        .map(|directory| directory.path)
+        .ok_or_else(|| anyhow!("directory {directory_id} not found"))
+}
 
 pub fn list_sessions(tool_key: ToolKey, directory_path: &str) -> Vec<SessionInfo> {
     let mut sessions = match tool_key {
@@ -88,10 +98,14 @@ fn claude_title(path: &Path) -> Option<String> {
     None
 }
 
-/// Extract user-authored text from a Claude entry's `message.content`, which is
-/// either a plain string or an array of typed blocks.
+/// Extract user-authored text from a Claude entry's `message.content`.
 fn message_text(entry: &Value) -> Option<String> {
-    let content = entry.get("message")?.get("content")?;
+    extract_text_content(entry.get("message")?.get("content")?)
+}
+
+/// Extract text from a `content` value that is either a plain string or an
+/// array of blocks (`{... "text": "..."}`). Shared by Claude and Codex parsing.
+fn extract_text_content(content: &Value) -> Option<String> {
     if let Some(text) = content.as_str() {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
@@ -100,12 +114,10 @@ fn message_text(entry: &Value) -> Option<String> {
     }
     if let Some(items) = content.as_array() {
         for item in items {
-            if item.get("type").and_then(Value::as_str) == Some("text") {
-                if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        return Some(trimmed.to_string());
-                    }
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
                 }
             }
         }
@@ -232,24 +244,7 @@ fn codex_user_text(value: &Value) -> Option<String> {
     if candidate.get("role").and_then(Value::as_str) != Some("user") {
         return None;
     }
-    let content = candidate.get("content")?;
-    if let Some(text) = content.as_str() {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    if let Some(items) = content.as_array() {
-        for item in items {
-            if let Some(text) = item.get("text").and_then(Value::as_str) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    extract_text_content(candidate.get("content")?)
 }
 
 /// Extract a UUID from a `rollout-<timestamp>-<uuid>` filename. The timestamp
@@ -288,7 +283,7 @@ fn normalize_path(path: &str) -> String {
 fn mtime_ms(path: &Path) -> Option<i64> {
     let modified = fs::metadata(path).ok()?.modified().ok()?;
     let duration = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(duration.as_millis() as i64)
+    i64::try_from(duration.as_millis()).ok()
 }
 
 fn truncate_chars(value: &str, max: usize) -> String {

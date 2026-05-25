@@ -4,7 +4,7 @@ use crate::platform::detect;
 
 pub async fn detect_all() -> Vec<CliStatus> {
     let mut statuses = Vec::new();
-    for tool_key in [ToolKey::Claude, ToolKey::Codex, ToolKey::Antigravity] {
+    for tool_key in ToolKey::ALL {
         statuses.push(detect_tool(tool_key).await);
     }
     statuses

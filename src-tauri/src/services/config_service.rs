@@ -45,6 +45,18 @@ pub fn export_json(conn: &Connection) -> Result<String> {
     Ok(serde_json::to_string_pretty(&export(conn)?)?)
 }
 
+/// Export the config bundle as JSON to a file path.
+pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
+    std::fs::write(path, export_json(conn)?)?;
+    Ok(())
+}
+
+/// Import a config bundle from a JSON file path.
+pub fn import_from_path(conn: &Connection, path: &str) -> Result<()> {
+    let json = std::fs::read_to_string(path)?;
+    import_json(conn, &json)
+}
+
 /// Merge a bundle into the database within a transaction, so a mid-way failure
 /// rolls back rather than leaving a half-imported state.
 pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {

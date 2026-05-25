@@ -53,14 +53,18 @@ fn compose_wt_powershell(request: &LaunchRequest) -> ComposedCommand {
     args.push("-EncodedCommand".to_string());
     args.push(encoded);
 
-    let preview = format!(
-        "{} new-tab -d \"{}\" {} {} -Command \"{}\"",
-        request.terminal_exe,
-        request.directory,
-        request.shell_exe,
-        request.shell_args.join(" "),
-        script
-    );
+    // Preview mirrors the real argv structurally, but shows the readable
+    // `-Command <script>` instead of the encoded blob (same script either way).
+    let mut preview_args = vec![
+        "new-tab".to_string(),
+        "-d".to_string(),
+        request.directory.clone(),
+        request.shell_exe.clone(),
+    ];
+    preview_args.extend(request.shell_args.clone());
+    preview_args.push("-Command".to_string());
+    preview_args.push(script);
+    let preview = display_command(&request.terminal_exe, &preview_args);
 
     ComposedCommand {
         program: request.terminal_exe.clone(),
@@ -79,13 +83,11 @@ fn compose_direct_powershell(request: &LaunchRequest) -> ComposedCommand {
 
     let mut args = request.shell_args.clone();
     args.push("-Command".to_string());
-    args.push(script.clone());
+    args.push(script);
 
     let preview = format!(
-        "{} {} -Command \"{}\"  (cwd: {})",
-        request.shell_exe,
-        request.shell_args.join(" "),
-        script,
+        "{}  (cwd: {})",
+        display_command(&request.shell_exe, &args),
         request.directory
     );
 
@@ -101,17 +103,38 @@ fn compose_direct_powershell(request: &LaunchRequest) -> ComposedCommand {
 /// A standalone Command Prompt window via `cmd /K` (runs and stays open).
 fn compose_direct_cmd(request: &LaunchRequest) -> ComposedCommand {
     let command_line = compose_cmd_command_line(request);
+    let args = vec!["/K".to_string(), command_line];
     let preview = format!(
-        "cmd.exe /K \"{}\"  (cwd: {})",
-        command_line, request.directory
+        "{}  (cwd: {})",
+        display_command("cmd.exe", &args),
+        request.directory
     );
 
     ComposedCommand {
         program: "cmd.exe".to_string(),
-        args: vec!["/K".to_string(), command_line],
+        args,
         preview,
         working_dir: Some(request.directory.clone()),
         new_console: true,
+    }
+}
+
+/// Render a program + argv into a readable, faithfully-quoted command string so
+/// the UI preview matches what is actually executed.
+fn display_command(program: &str, args: &[String]) -> String {
+    let mut out = String::from(program);
+    for arg in args {
+        out.push(' ');
+        out.push_str(&display_token(arg));
+    }
+    out
+}
+
+fn display_token(token: &str) -> String {
+    if token.is_empty() || token.chars().any(char::is_whitespace) {
+        format!("\"{}\"", token.replace('"', "\\\""))
+    } else {
+        token.to_string()
     }
 }
 
@@ -174,8 +197,15 @@ fn quote_powershell_arg(value: &str) -> String {
 }
 
 fn quote_cmd_arg(value: &str) -> String {
-    if value.is_empty() || value.contains(' ') {
-        format!("\"{value}\"")
+    // Quote when empty, contains whitespace, or contains cmd metacharacters
+    // (inside double quotes cmd treats &, |, <, >, ^ literally); escape any
+    // embedded double quote.
+    let needs_quote = value.is_empty()
+        || value.chars().any(|ch| {
+            ch.is_whitespace() || matches!(ch, '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')')
+        });
+    if needs_quote {
+        format!("\"{}\"", value.replace('"', "\\\""))
     } else {
         value.to_string()
     }

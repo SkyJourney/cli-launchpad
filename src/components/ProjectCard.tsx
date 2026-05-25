@@ -1,20 +1,10 @@
 import { Check, Pencil, Pin, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState } from "react";
-import type { CliStatusByTool } from "../hooks/useCliStatus";
+import { CLI_STATUS_META, type CliStatusByTool } from "../hooks/useCliStatus";
 import { formatRelative } from "../lib/format";
 import { TOOLS } from "../lib/tools";
-import type { CliAvailability, Directory, ToolKey } from "../lib/tauri";
-
-const STATUS_CLASS: Record<CliAvailability, string> = {
-  available: "badge-available",
-  missing: "badge-missing",
-};
-
-const STATUS_TITLE: Record<CliAvailability, string> = {
-  available: "已安装，可直接启动",
-  missing: "未检测到，前往设置安装",
-};
+import type { Directory, ToolKey } from "../lib/tauri";
 
 interface ProjectCardProps {
   directory: Directory;
@@ -51,9 +41,11 @@ export function ProjectCard({
       className="project-card"
       role="button"
       tabIndex={0}
+      aria-label={`打开 ${directory.name}`}
       onClick={() => onOpen(directory.id)}
       onKeyDown={(event) => {
-        if (event.key === "Enter") {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
           onOpen(directory.id);
         }
       }}
@@ -73,12 +65,13 @@ export function ProjectCard({
       <div className="badge-row" onClick={(event) => event.stopPropagation()}>
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key]?.status ?? "missing";
+          const meta = CLI_STATUS_META[status];
           const launchable = status === "available";
           return (
             <button
               key={tool.key}
-              className={clsx("cli-badge", STATUS_CLASS[status])}
-              title={`${tool.label} · ${STATUS_TITLE[status]}`}
+              className={clsx("cli-badge", meta.badgeClass)}
+              title={`${tool.label} · ${meta.title}`}
               disabled={!launchable}
               onClick={() => onLaunch(directory.id, tool.key)}
             >

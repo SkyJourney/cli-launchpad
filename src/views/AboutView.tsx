@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { Terminal } from "lucide-react";
+import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
 
 export function AboutView() {
-  const version = useQuery({ queryKey: ["app-version"], queryFn: getVersion });
+  const version = useQuery({ queryKey: qk.appVersion(), queryFn: getVersion });
 
   return (
     <div className="about-view">
