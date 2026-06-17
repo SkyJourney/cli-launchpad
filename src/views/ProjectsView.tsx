@@ -10,6 +10,7 @@ import {
   addDirectory,
   detectCliStatus,
   launchTool,
+  openProjectDirectory,
   removeDirectory,
   setDirectoryPinned,
   type Directory,
@@ -35,6 +36,7 @@ export function ProjectsView() {
   const [newName, setNewName] = useState("");
   const [newPath, setNewPath] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [openPathError, setOpenPathError] = useState<string | null>(null);
 
   const invalidateDirectories = () =>
     queryClient.invalidateQueries({ queryKey: qk.directories() });
@@ -66,6 +68,11 @@ export function ProjectsView() {
       launchTool(id, toolKey),
     onSuccess: invalidateDirectories,
     onError: (error) => setLaunchError(String(error)),
+  });
+
+  const openPathMutation = useMutation({
+    mutationFn: (id: number) => openProjectDirectory(id),
+    onError: (error) => setOpenPathError(String(error)),
   });
 
   const visible = useMemo(() => {
@@ -112,6 +119,11 @@ export function ProjectsView() {
   const handleLaunch = (id: number, toolKey: ToolKey) => {
     setLaunchError(null);
     launchMutation.mutate({ id, toolKey });
+  };
+
+  const handleOpenPath = (id: number) => {
+    setOpenPathError(null);
+    openPathMutation.mutate(id);
   };
 
   const handleEdit = (id: number) => {
@@ -199,6 +211,7 @@ export function ProjectsView() {
         <p className="error">添加失败：{String(addMutation.error)}</p>
       )}
       {launchError && <p className="error">启动失败：{launchError}</p>}
+      {openPathError && <p className="error">打开目录失败：{openPathError}</p>}
 
       {visible.length === 0 ? (
         <p className="muted">没有匹配的目录。点击「添加目录」创建第一个。</p>
@@ -211,6 +224,7 @@ export function ProjectsView() {
               statusByTool={statusByTool}
               onOpen={openDirectory}
               onLaunch={handleLaunch}
+              onOpenPath={handleOpenPath}
               onTogglePin={(d) => pinMutation.mutate(d)}
               onEdit={handleEdit}
               onRemove={(d) => removeMutation.mutate(d.id)}

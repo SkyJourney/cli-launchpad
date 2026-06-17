@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  FolderOpen,
   Pencil,
   Play,
   RefreshCw,
@@ -20,6 +21,7 @@ import { TOOLS } from "../lib/tools";
 import {
   launchTool,
   listSessions,
+  openProjectDirectory,
   previewLaunch,
   resumeSession,
   type ToolKey,
@@ -48,6 +50,7 @@ export function ProjectDetailView() {
 
   const [showPreview, setShowPreview] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [openPathError, setOpenPathError] = useState<string | null>(null);
 
   const directoryId = directory?.id ?? null;
   const launchable = statusByTool[activeTool]?.status === "available";
@@ -78,6 +81,11 @@ export function ProjectDetailView() {
       resumeSession(directoryId as number, activeTool, sessionId),
     onSuccess: invalidateDirectories,
     onError: (error) => setLaunchError(String(error)),
+  });
+
+  const openPathMutation = useMutation({
+    mutationFn: () => openProjectDirectory(directoryId as number),
+    onError: (error) => setOpenPathError(String(error)),
   });
 
   const anyPending = launchMutation.isPending || resumeMutation.isPending;
@@ -116,17 +124,31 @@ export function ProjectDetailView() {
           <h1>{directory.name}</h1>
           <p className="muted">{directory.path}</p>
         </div>
-        <button
-          className="ghost-button"
-          onClick={() => {
-            selectDirectory(directory.id);
-            setView("edit");
-          }}
-        >
-          <Pencil size={15} />
-          编辑参数
-        </button>
+        <div className="detail-actions">
+          <button
+            className="ghost-button"
+            disabled={openPathMutation.isPending}
+            onClick={() => {
+              setOpenPathError(null);
+              openPathMutation.mutate();
+            }}
+          >
+            <FolderOpen size={15} />
+            打开目录
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => {
+              selectDirectory(directory.id);
+              setView("edit");
+            }}
+          >
+            <Pencil size={15} />
+            编辑参数
+          </button>
+        </div>
       </header>
+      {openPathError && <p className="error">打开目录失败：{openPathError}</p>}
 
       <div className="tab-row" role="tablist">
         {TOOLS.map((tool) => {

@@ -1,4 +1,4 @@
-import { Check, Pencil, Pin, Trash2, X } from "lucide-react";
+import { Check, FolderOpen, Pencil, Pin, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState } from "react";
 import { CLI_STATUS_META, type CliStatusByTool } from "../hooks/useCliStatus";
@@ -11,6 +11,7 @@ interface ProjectCardProps {
   statusByTool: CliStatusByTool;
   onOpen: (id: number) => void;
   onLaunch: (id: number, toolKey: ToolKey) => void;
+  onOpenPath: (id: number) => void;
   onTogglePin: (directory: Directory) => void;
   onEdit: (id: number) => void;
   onRemove: (directory: Directory) => void;
@@ -21,6 +22,7 @@ export function ProjectCard({
   statusByTool,
   onOpen,
   onLaunch,
+  onOpenPath,
   onTogglePin,
   onEdit,
   onRemove,
@@ -91,6 +93,13 @@ export function ProjectCard({
           onClick={() => onTogglePin(directory)}
         >
           <Pin size={15} />
+        </button>
+        <button
+          className="icon-button"
+          title="打开项目目录"
+          onClick={() => onOpenPath(directory.id)}
+        >
+          <FolderOpen size={15} />
         </button>
         <button
           className="icon-button"

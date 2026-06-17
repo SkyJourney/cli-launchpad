@@ -26,9 +26,29 @@ pub fn normalized_configured_path(path: &str) -> Result<String> {
         bail!("项目目录必须使用绝对路径");
     }
     if directory.exists() {
-        Ok(std::fs::canonicalize(directory)?.display().to_string())
+        Ok(path_for_storage(&std::fs::canonicalize(directory)?))
     } else {
         Ok(directory.display().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn path_for_storage(path: &Path) -> String {
+    strip_windows_verbatim_prefix(&path.display().to_string())
+}
+
+#[cfg(not(windows))]
+fn path_for_storage(path: &Path) -> String {
+    path.display().to_string()
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path.to_string()
     }
 }
 
@@ -56,5 +76,29 @@ mod tests {
     fn rejects_relative_directory_paths() {
         assert!(normalized_existing_path(".").is_err());
         assert!(normalized_configured_path(".").is_err());
+    }
+
+    #[test]
+    fn strips_windows_verbatim_drive_prefix_for_storage() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\C:\Projects\demo"),
+            r"C:\Projects\demo"
+        );
+    }
+
+    #[test]
+    fn strips_windows_verbatim_unc_prefix_for_storage() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\server\share\demo"),
+            r"\\server\share\demo"
+        );
+    }
+
+    #[test]
+    fn keeps_regular_path_for_storage() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"C:\Projects\demo"),
+            r"C:\Projects\demo"
+        );
     }
 }

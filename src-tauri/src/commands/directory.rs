@@ -55,3 +55,14 @@ pub fn set_directory_pinned(state: State<'_, Db>, id: i64, pinned: bool) -> Resu
         Ok(directory_repo::set_pinned(conn, id, pinned)?)
     })
 }
+
+#[tauri::command]
+pub fn open_project_directory(state: State<'_, Db>, id: i64) -> Result<(), AppError> {
+    let directory = with_conn(&state, |conn| {
+        Ok(directory_repo::get(conn, id)?
+            .ok_or_else(|| AppError::msg(format!("项目目录 {id} 不存在")))?)
+    })?;
+    directory_service::validate_path(&directory.path)?;
+    crate::platform::opener::open_directory(&directory.path)?;
+    Ok(())
+}

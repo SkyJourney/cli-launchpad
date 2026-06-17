@@ -142,6 +142,10 @@ export function setDirectoryPinned(id: number, pinned: boolean) {
   return invoke<void>("set_directory_pinned", { id, pinned });
 }
 
+export function openProjectDirectory(id: number) {
+  return invoke<void>("open_project_directory", { id });
+}
+
 // Tools
 export function listTools() {
   return invoke<Tool[]>("list_tools");

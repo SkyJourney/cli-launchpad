@@ -151,6 +151,7 @@ pub fn run() {
             commands::directory::update_directory,
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
+            commands::directory::open_project_directory,
             commands::tool::list_tools,
             commands::tool::save_tool_global_args_batch,
             commands::cli_status::detect_cli_status,
