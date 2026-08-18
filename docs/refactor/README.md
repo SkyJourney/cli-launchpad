@@ -25,13 +25,13 @@ Tauri `identifier` 采用稳定发布标识 `app.cli-launchpad.desktop`。业务
 
 ## 实施阶段
 
-| 阶段 | 文档 | 目标 |
-| --- | --- | --- |
-| 1 | [stage-1-storage-and-startup.md](stage-1-storage-and-startup.md) | 稳定数据根目录、旧数据迁移、数据库启动防线、单实例 |
-| 2 | [stage-2-backup-and-recovery.md](stage-2-backup-and-recovery.md) | 一致性备份、恢复命令、恢复界面 |
-| 3 | [stage-3-logging-and-diagnostics.md](stage-3-logging-and-diagnostics.md) | 持久日志、脱敏诊断、诊断导出 |
-| 4 | [stage-4-config-and-history.md](stage-4-config-and-history.md) | 完整配置交换、操作历史、路径校验 |
-| 5 | [stage-5-cache-and-performance.md](stage-5-cache-and-performance.md) | 独立可删除缓存、TTL 策略、缓存治理界面 |
+| 阶段 | 文档                                                                     | 目标                                               |
+| ---- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| 1    | [stage-1-storage-and-startup.md](stage-1-storage-and-startup.md)         | 稳定数据根目录、旧数据迁移、数据库启动防线、单实例 |
+| 2    | [stage-2-backup-and-recovery.md](stage-2-backup-and-recovery.md)         | 一致性备份、恢复命令、恢复界面                     |
+| 3    | [stage-3-logging-and-diagnostics.md](stage-3-logging-and-diagnostics.md) | 持久日志、脱敏诊断、诊断导出                       |
+| 4    | [stage-4-config-and-history.md](stage-4-config-and-history.md)           | 完整配置交换、操作历史、路径校验                   |
+| 5    | [stage-5-cache-and-performance.md](stage-5-cache-and-performance.md)     | 独立可删除缓存、TTL 策略、缓存治理界面             |
 
 ## 全局约束
 

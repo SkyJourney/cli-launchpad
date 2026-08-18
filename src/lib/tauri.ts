@@ -21,18 +21,54 @@ export interface Tool {
   enabled: boolean;
 }
 
-export type ShellKind = "wt-pwsh" | "pwsh";
 export type CloseBehavior = "minimize_to_tray" | "quit";
 
-export interface ShellProfile {
-  id: number;
+export type TerminalDistribution =
+  | "stable"
+  | "preview"
+  | "canary"
+  | "unpackaged";
+export type ShellFamily = "pwsh" | "windows_power_shell" | "cmd" | "unknown";
+export type ProfilePreservation =
+  | "exact"
+  | "command_continuation"
+  | "appearance_only";
+
+export interface TerminalProfileTarget {
+  targetId: string;
   name: string;
-  terminalExe: string;
-  shellExe: string;
-  shellArgs: string;
-  initScript: string;
+  guid: string;
+  source: string | null;
   isDefault: boolean;
-  kind: ShellKind;
+  shellFamily: ShellFamily;
+  preservation: ProfilePreservation;
+  preservationReason: string;
+}
+
+export interface WindowsTerminalHost {
+  id: string;
+  distribution: TerminalDistribution;
+  displayName: string;
+  executablePath: string;
+  version: string | null;
+  supportsAppendCommandLine: boolean;
+  settingsPath: string | null;
+  profiles: TerminalProfileTarget[];
+}
+
+export interface DirectShellTarget {
+  targetId: string;
+  displayName: string;
+  shellFamily: ShellFamily;
+  executablePath: string;
+  priority: number;
+}
+
+export interface TerminalEnvironment {
+  windowsTerminalHosts: WindowsTerminalHost[];
+  directShells: DirectShellTarget[];
+  recommendedTargetId: string | null;
+  warnings: string[];
 }
 
 export interface DirectoryToolArgs {
@@ -50,7 +86,27 @@ export interface SessionInfo {
   toolKey: ToolKey;
   sessionId: string;
   title: string;
+  alias: string | null;
   lastActiveMs: number | null;
+}
+
+export interface SessionPage {
+  items: SessionInfo[];
+  nextCursor: string | null;
+}
+
+export interface ModelOption {
+  value: string;
+  label: string;
+  isDefault: boolean;
+}
+
+export interface ModelCatalog {
+  toolKey: ToolKey;
+  options: ModelOption[];
+  source: string;
+  fromCache: boolean;
+  warning: string | null;
 }
 
 export type InstallKind = "install" | "update";
@@ -64,14 +120,50 @@ export interface InstallPlan {
   preview: string;
 }
 
-export interface InstallOutcome {
-  success: boolean;
-  log: string;
+export type ExecutionStatus =
+  | "preparing"
+  | "running"
+  | "cancelling"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "timed_out"
+  | "interrupted";
+
+export type ExecutionStream = "stdout" | "stderr" | "system";
+
+export interface ExecutionTask {
+  id: string;
+  toolKey: ToolKey;
+  kind: InstallKind;
+  source: string;
+  preview: string;
+  status: ExecutionStatus;
+  startedAtMs: number;
+  finishedAtMs: number | null;
+  exitCode: number | null;
+  errorMessage: string | null;
+  logTruncated: boolean;
+}
+
+export interface ExecutionLogChunk {
+  taskId: string;
+  sequence: number;
+  stream: ExecutionStream;
+  content: string;
+  createdAtMs: number;
+}
+
+export interface ExecutionTaskDetail {
+  task: ExecutionTask;
+  logs: ExecutionLogChunk[];
 }
 
 export interface LatestVersion {
   toolKey: ToolKey;
   latest: string | null;
+  error: string | null;
+  fromCache: boolean;
 }
 
 export type BackupReason =
@@ -114,6 +206,7 @@ export interface CliStatus {
   path: string | null;
   resolvedCommand: string | null;
   version: string | null;
+  versionError: string | null;
   latestVersion: string | null;
 }
 
@@ -202,17 +295,41 @@ export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
   return invoke<InstallPlan>("get_install_plan", { toolKey, kind });
 }
 
-export function runInstall(toolKey: ToolKey, kind: InstallKind) {
-  return invoke<InstallOutcome>("run_install", { toolKey, kind });
+export function startExecutionTask(toolKey: ToolKey, kind: InstallKind) {
+  return invoke<ExecutionTask>("start_execution_task", { toolKey, kind });
 }
 
-// Shell profiles
-export function getShellProfiles() {
-  return invoke<ShellProfile[]>("get_shell_profiles");
+export function listExecutionTasks() {
+  return invoke<ExecutionTask[]>("list_execution_tasks");
 }
 
-export function setShellKind(kind: ShellKind) {
-  return invoke<void>("set_shell_kind", { kind });
+export function getExecutionTask(taskId: string) {
+  return invoke<ExecutionTaskDetail>("get_execution_task", { taskId });
+}
+
+export function cancelExecutionTask(taskId: string) {
+  return invoke<ExecutionTask>("cancel_execution_task", { taskId });
+}
+
+export function clearExecutionTask(taskId: string) {
+  return invoke<void>("clear_execution_task", { taskId });
+}
+
+export function clearExecutionHistory() {
+  return invoke<number>("clear_execution_history");
+}
+
+// Terminal environment and launch target
+export function detectTerminalEnvironment(force = false) {
+  return invoke<TerminalEnvironment>("detect_terminal_environment", { force });
+}
+
+export function getLaunchTarget() {
+  return invoke<string>("get_launch_target");
+}
+
+export function setLaunchTarget(targetId: string) {
+  return invoke<void>("set_launch_target", { targetId });
 }
 
 export function getCloseBehavior() {
@@ -250,10 +367,17 @@ export function launchTool(directoryId: number, toolKey: ToolKey) {
 }
 
 // Sessions
-export function listSessions(directoryId: number, toolKey: ToolKey) {
-  return invoke<SessionInfo[]>("list_sessions", {
+export function listSessionPage(
+  directoryId: number,
+  toolKey: ToolKey,
+  cursor: string | null = null,
+  limit = 10,
+) {
+  return invoke<SessionPage>("list_sessions", {
     directoryId,
     toolKey,
+    cursor,
+    limit,
   });
 }
 
@@ -263,6 +387,36 @@ export function resumeSession(
   sessionId: string,
 ) {
   return invoke<void>("resume_session", { directoryId, toolKey, sessionId });
+}
+
+export function setSessionAlias(
+  directoryId: number,
+  toolKey: ToolKey,
+  sessionId: string,
+  alias: string,
+) {
+  return invoke<void>("set_session_alias", {
+    directoryId,
+    toolKey,
+    sessionId,
+    alias,
+  });
+}
+
+export function deleteSessionAlias(
+  directoryId: number,
+  toolKey: ToolKey,
+  sessionId: string,
+) {
+  return invoke<void>("delete_session_alias", {
+    directoryId,
+    toolKey,
+    sessionId,
+  });
+}
+
+export function getModelCatalog(toolKey: ToolKey, force = false) {
+  return invoke<ModelCatalog>("get_model_catalog", { toolKey, force });
 }
 
 export function getCacheStats() {

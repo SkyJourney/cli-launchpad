@@ -1,48 +1,102 @@
-/// Helpers for manipulating a single whitespace-separated argument string,
-/// used by the parameter editor to drive the Claude model quick-select while
-/// keeping the freeform arguments field as the single source of truth.
+/// Tokenize the argument syntax shared with Rust's launch service. Whitespace
+/// separates tokens outside quotes; single/double quotes group values; inside
+/// double quotes a backslash escapes the next character.
+export function tokenizeArgs(args: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "single" | "double" | null = null;
+  let hasToken = false;
 
-function tokenize(args: string): string[] {
-  return args.split(/\s+/).filter(Boolean);
-}
-
-/// A flag has a value only if the next token exists and is not itself a flag.
-function hasFollowingValue(tokens: string[], index: number): boolean {
-  const next = tokens[index + 1];
-  return next !== undefined && !next.startsWith("-");
-}
-
-/// Read the value following a flag (e.g. the model after `--model`).
-export function getFlagValue(args: string, flag: string): string | null {
-  const tokens = tokenize(args);
-  const index = tokens.indexOf(flag);
-  if (index >= 0 && hasFollowingValue(tokens, index)) {
-    return tokens[index + 1];
+  const characters = Array.from(args);
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (character === "\\" && quote === "double") {
+      const next = characters[index + 1];
+      if (next === "\\" || next === '"') {
+        current += next;
+        index += 1;
+      } else {
+        current += "\\";
+      }
+      hasToken = true;
+      continue;
+    }
+    if (character === "'" && quote !== "double") {
+      quote = quote === "single" ? null : "single";
+      hasToken = true;
+      continue;
+    }
+    if (character === '"' && quote !== "single") {
+      quote = quote === "double" ? null : "double";
+      hasToken = true;
+      continue;
+    }
+    if (/\s/.test(character) && quote === null) {
+      if (hasToken) {
+        tokens.push(current);
+        current = "";
+        hasToken = false;
+      }
+      continue;
+    }
+    current += character;
+    hasToken = true;
   }
-  return null;
+
+  if (hasToken) tokens.push(current);
+  return tokens;
 }
 
-/// Set, replace, or (when value is null) remove a flag and its value.
+export function serializeArgs(tokens: string[]): string {
+  return tokens.map(serializeToken).join(" ");
+}
+
+function serializeToken(token: string): string {
+  if (token !== "" && !/[\s"']/.test(token)) return token;
+  return `"${token.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/// Read the last occurrence of a flag, accepting both `--flag value` and
+/// `--flag=value`, which matches common CLI last-value-wins behavior.
+export function getFlagValue(args: string, flag: string): string | null {
+  const tokens = tokenizeArgs(args);
+  let found: string | null = null;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === flag) {
+      const next = tokens[index + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        found = next;
+        index += 1;
+      }
+    } else if (token.startsWith(`${flag}=`)) {
+      found = token.slice(flag.length + 1);
+    }
+  }
+  return found;
+}
+
+/// Remove every previous occurrence, then append one canonical flag/value pair.
+/// Removing duplicates prevents stale model flags from competing at launch.
 export function setFlagValue(
   args: string,
   flag: string,
   value: string | null,
 ): string {
-  const tokens = tokenize(args);
-  const index = tokens.indexOf(flag);
+  const tokens = tokenizeArgs(args);
+  const kept: string[] = [];
 
-  if (index >= 0) {
-    const hasValue = hasFollowingValue(tokens, index);
-    if (value == null) {
-      tokens.splice(index, hasValue ? 2 : 1);
-    } else if (hasValue) {
-      tokens[index + 1] = value;
-    } else {
-      tokens.splice(index + 1, 0, value);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === flag) {
+      const next = tokens[index + 1];
+      if (next !== undefined && !next.startsWith("-")) index += 1;
+      continue;
     }
-  } else if (value != null) {
-    tokens.push(flag, value);
+    if (token.startsWith(`${flag}=`)) continue;
+    kept.push(token);
   }
 
-  return tokens.join(" ");
+  if (value != null) kept.push(flag, value);
+  return serializeArgs(kept);
 }

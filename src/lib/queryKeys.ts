@@ -10,15 +10,20 @@ export const qk = {
   backups: () => ["backups"],
   launchHistory: () => ["launch-history"],
   cacheStats: () => ["cache-stats"],
-  shellProfiles: () => ["shell-profiles"],
+  terminalEnvironment: () => ["terminal-environment"],
+  launchTarget: () => ["launch-target"],
   closeBehavior: () => ["close-behavior"],
   appVersion: () => ["app-version"],
+  executionTasks: () => ["execution-tasks", "list"],
+  executionTask: (taskId: string) => ["execution-tasks", "detail", taskId],
+  modelCatalog: (toolKey: ToolKey) => ["model-catalog", toolKey],
   directoryToolArgs: (directoryId?: number | null) =>
     directoryId == null
       ? ["directory-tool-args"]
       : ["directory-tool-args", directoryId],
   sessions: (directoryId: number | null, toolKey: ToolKey) => [
     "sessions",
+    "pages",
     directoryId,
     toolKey,
   ],

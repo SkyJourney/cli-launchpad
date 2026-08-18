@@ -1,6 +1,12 @@
 import { create } from "zustand";
 
-export type ViewName = "projects" | "detail" | "edit" | "settings" | "about";
+export type ViewName =
+  | "projects"
+  | "detail"
+  | "edit"
+  | "executions"
+  | "settings"
+  | "about";
 
 interface AppState {
   view: ViewName;

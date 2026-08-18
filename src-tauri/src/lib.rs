@@ -114,8 +114,17 @@ pub fn run() {
                 "database initialized schema_version={}",
                 db::connection::schema_version(&connection)?
             );
+            let interrupted = db::execution_task_repo::mark_unfinished_interrupted(
+                &connection,
+                services::execution_service::now_ms(),
+            )?;
+            if interrupted != 0 {
+                log::warn!("marked {interrupted} unfinished execution task(s) as interrupted");
+            }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
             app.manage(Db(Mutex::new(connection)));
+            app.manage(services::execution_service::ExecutionTaskManager::default());
+            app.manage(commands::terminal::TerminalEnvironmentCache::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
                 Ok(cache) => cache,
@@ -145,21 +154,30 @@ pub fn run() {
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
             commands::session::list_sessions,
+            commands::session::set_session_alias,
+            commands::session::delete_session_alias,
             commands::session::resume_session,
+            commands::model::get_model_catalog,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
             commands::directory::open_project_directory,
+            commands::execution::start_execution_task,
+            commands::execution::list_execution_tasks,
+            commands::execution::get_execution_task,
+            commands::execution::cancel_execution_task,
+            commands::execution::clear_execution_task,
+            commands::execution::clear_execution_history,
             commands::tool::list_tools,
             commands::tool::save_tool_global_args_batch,
             commands::cli_status::detect_cli_status,
             commands::install::fetch_latest_versions,
             commands::install::get_install_plan,
-            commands::install::run_install,
-            commands::shell::get_shell_profiles,
-            commands::shell::set_shell_kind,
+            commands::terminal::detect_terminal_environment,
+            commands::terminal::get_launch_target,
+            commands::terminal::set_launch_target,
             commands::tool_args::get_directory_tool_args,
             commands::tool_args::save_directory_tool_args_batch,
             commands::config::export_config_to_path,

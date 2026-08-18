@@ -1,4 +1,4 @@
-use crate::models::install::{InstallKind, InstallOutcome, InstallPlan, LatestVersion};
+use crate::models::install::{InstallKind, InstallPlan, LatestVersion};
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, install_service, version_service};
 use crate::{with_cache, AppError, CacheDb};
@@ -22,9 +22,22 @@ pub async fn fetch_latest_versions(
             connection, KEY,
         )?)
     })?;
-    let fetched = tauri::async_runtime::spawn_blocking(version_service::fetch_all_latest)
+    let mut fetched = tauri::async_runtime::spawn_blocking(version_service::fetch_all_latest)
         .await
         .map_err(|error| AppError::msg(error.to_string()))?;
+    if let Some(stale) = stale.as_deref() {
+        for entry in &mut fetched {
+            if entry.latest.is_none() {
+                if let Some(cached) = stale
+                    .iter()
+                    .find(|cached| cached.tool_key == entry.tool_key && cached.latest.is_some())
+                {
+                    entry.latest.clone_from(&cached.latest);
+                    entry.from_cache = true;
+                }
+            }
+        }
+    }
     if fetched.iter().any(|entry| entry.latest.is_some()) {
         with_cache(&cache, |connection| {
             cache_service::put(connection, KEY, &fetched)?;
@@ -32,7 +45,7 @@ pub async fn fetch_latest_versions(
         })?;
         Ok(fetched)
     } else {
-        Ok(stale.unwrap_or(fetched))
+        Ok(fetched)
     }
 }
 
@@ -40,10 +53,4 @@ pub async fn fetch_latest_versions(
 #[tauri::command]
 pub fn get_install_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan, AppError> {
     Ok(install_service::plan(tool_key, kind)?)
-}
-
-#[tauri::command]
-pub async fn run_install(tool_key: ToolKey, kind: InstallKind) -> Result<InstallOutcome, AppError> {
-    let plan = install_service::plan(tool_key, kind)?;
-    Ok(install_service::run(&plan).await)
 }

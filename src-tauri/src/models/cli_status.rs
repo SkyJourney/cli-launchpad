@@ -22,6 +22,9 @@ pub struct CliStatus {
     pub resolved_command: Option<String>,
     /// Raw `--version` output, when obtainable.
     pub version: Option<String>,
+    /// Version probe failure for an available CLI. Missing tools do not set it.
+    #[serde(default)]
+    pub version_error: Option<String>,
     /// Latest available version; populated by the version service.
     pub latest_version: Option<String>,
 }

@@ -9,6 +9,23 @@ pub enum InstallKind {
     Update,
 }
 
+impl InstallKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Update => "update",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "install" => Some(Self::Install),
+            "update" => Some(Self::Update),
+            _ => None,
+        }
+    }
+}
+
 /// A structured install/update command, modelled as program + args so the
 /// business layer never concatenates free-form shell strings.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -26,14 +43,11 @@ pub struct InstallPlan {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InstallOutcome {
-    pub success: bool,
-    pub log: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LatestVersion {
     pub tool_key: ToolKey,
     pub latest: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub from_cache: bool,
 }

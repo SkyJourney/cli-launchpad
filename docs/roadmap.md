@@ -6,10 +6,10 @@
 
 - 启动时应用 SQLite migrations。
 - 添加目录 CRUD。
-- 添加工具和 Shell profile CRUD。
+- 添加工具、终端探测和启动偏好持久化。
 - 内置 Claude Code、Codex、Antigravity 三个工具配置。
 - 实现命令预览。
-- 通过 Windows Terminal 和 PowerShell 打开指定目录下的目标 CLI。
+- 通过 Windows Terminal Profile 或可用 Shell 打开指定目录下的目标 CLI，并提供分层回退。
 
 ## 阶段 2：全局 CLI 状态与卡片主页
 
@@ -21,15 +21,16 @@
 ## 阶段 3：项目详情与会话历史
 
 - View B 项目详情：三个 CLI 会话历史 Tab、一键直接启动、可折叠命令预览和复制。
-- 读取 Claude Code（`~/.claude/projects/`）和 Codex（`~/.codex/sessions/`）的会话索引并展示。
-- Antigravity Tab 不展示历史，只提供直接启动。
+- 读取 Claude Code、Codex App Server 和 Antigravity 本地摘要库的会话索引并展示。
+- 每个 CLI 默认加载最新 10 条并支持独立懒加载。
+- 支持按会话 ID 设置稀疏本地别名和恢复原始标题。
 - 实现 `resume_session`，按工具恢复指定会话。
-- 会话索引缓存到 SQLite，可删除重建。
+- 原始会话保持按需读取，不缓存标题或源路径。
 
 ## 阶段 4：项目参数编辑
 
 - View C 参数编辑：按 CLI 分区配置项目级参数。
-- Claude 区提供模型快捷选择。
+- 三项 CLI 均提供动态或稳定模型目录选择，并支持手动模型/部署名。
 - 项目级参数与全局参数分离，保存到 SQLite。
 - 未安装的 CLI 分区灰色禁用。
 
@@ -49,4 +50,19 @@
 - 配置导入和导出。
 - Tauri Windows 打包，优先支持公司内部可分发安装包。
 - 明确 MSI/NSIS 选择、签名、版本号和升级策略。
-- 后续评估 macOS/Linux 启动辅助。
+- 0.2.0 发布前同步实现 macOS 启动辅助并完成真实设备测试；Linux 启动辅助后续评估。
+
+## 阶段 7：执行任务与历史日志
+
+- 新增“执行任务”顶层导航与运行中数量徽章。
+- 安装和更新改为后台任务，实时展示标准输出、错误输出与状态变化。
+- SQLite 持久化最近 50 个任务及日志，每个任务日志上限 1 MiB。
+- 支持查看历史、终止卡死任务和确认后清理历史。
+- Windows 使用 Job Object 终止完整任务进程树，应用重启时修正意外中断状态。
+
+## 阶段 8：Windows Profile 启动与 macOS 对齐
+
+- Windows 探测 Windows Terminal Stable、Preview、Canary 和非打包版本及其 Profiles。
+- 按完整追加、PowerShell 命令续接、保留外观、独立 Shell 建立启动候选，并在进程创建失败时自动回退。
+- 设置页展示自动推荐、Windows Terminal Profiles 和独立 Shell，命令预览展示保留级别及失败回退链。
+- 0.2.0 发布前在 macOS 同步实现终端/Shell 启动计划，并完成启动、参数、目录、恢复和回退的实机验证。

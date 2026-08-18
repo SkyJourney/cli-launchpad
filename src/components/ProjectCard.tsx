@@ -46,6 +46,9 @@ export function ProjectCard({
       aria-label={`打开 ${directory.name}`}
       onClick={() => onOpen(directory.id)}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen(directory.id);
@@ -63,8 +66,7 @@ export function ProjectCard({
         <span className="project-card-path">{directory.path}</span>
       </div>
 
-      {/* Stop propagation so launching a tool does not also open the detail view. */}
-      <div className="badge-row" onClick={(event) => event.stopPropagation()}>
+      <div className="badge-row">
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key]?.status ?? "missing";
           const meta = CLI_STATUS_META[status];
@@ -75,7 +77,10 @@ export function ProjectCard({
               className={clsx("cli-badge", meta.badgeClass)}
               title={`${tool.label} · ${meta.title}`}
               disabled={!launchable}
-              onClick={() => onLaunch(directory.id, tool.key)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onLaunch(directory.id, tool.key);
+              }}
             >
               <tool.icon size={16} />
             </button>
@@ -83,28 +88,34 @@ export function ProjectCard({
         })}
       </div>
 
-      <div
-        className="project-card-actions"
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="project-card-actions">
         <button
           className={clsx("icon-button", { active: directory.pinned })}
           title={directory.pinned ? "取消置顶" : "置顶"}
-          onClick={() => onTogglePin(directory)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePin(directory);
+          }}
         >
           <Pin size={15} />
         </button>
         <button
           className="icon-button"
           title="打开项目目录"
-          onClick={() => onOpenPath(directory.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenPath(directory.id);
+          }}
         >
           <FolderOpen size={15} />
         </button>
         <button
           className="icon-button"
           title="编辑参数"
-          onClick={() => onEdit(directory.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit(directory.id);
+          }}
         >
           <Pencil size={15} />
         </button>
@@ -114,7 +125,8 @@ export function ProjectCard({
             <button
               className="icon-button danger"
               title="确认移除（仅删除启动配置，不影响磁盘文件）"
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation();
                 setConfirmingRemove(false);
                 onRemove(directory);
               }}
@@ -124,7 +136,10 @@ export function ProjectCard({
             <button
               className="icon-button"
               title="取消"
-              onClick={() => setConfirmingRemove(false)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setConfirmingRemove(false);
+              }}
             >
               <X size={15} />
             </button>
@@ -133,7 +148,10 @@ export function ProjectCard({
           <button
             className="icon-button danger"
             title="移除目录"
-            onClick={() => setConfirmingRemove(true)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setConfirmingRemove(true);
+            }}
           >
             <Trash2 size={15} />
           </button>

@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-05-26
-commit: cef5f60
+last_updated: 2026-08-18
+commit: 68cd9b2
 ---
 
 # 项目决策
@@ -33,22 +33,36 @@ commit: cef5f60
 
 **结论：** 一键安装命令必须来自官方文档或官方推荐包，并在执行前展示来源和完整命令。
 **Why：** 安装 CLI 属于用户机器上的高影响操作，尤其是 PowerShell 网络脚本，需要明确来源和风险。
-**How to apply：** Claude 优先使用官方 winget 包或官方 PowerShell 脚本；Codex 使用官方 npm 包；Antigravity 使用官方 PowerShell installer。业务层使用结构化参数模型，不拼接自由字符串。
+**How to apply：** Claude 优先使用官方 winget 包或官方 PowerShell 脚本；Codex 在 Windows 优先使用官方 PowerShell 安装器，npm 只作为手动备选；Antigravity 使用官方 PowerShell installer。业务层使用结构化参数模型，不拼接自由字符串。
 **See Also：** [[reference.md#官方-CLI-资料]] [[feedback.md#修改前说明和确认]]
 
-## 启动必须使用解析后的完整可执行路径
+## 安装与更新使用持久化后台任务
 
-**结论：** CLI 在启动前解析为完整路径；Shell 固定使用系统 PowerShell；仅保留 Windows Terminal + PowerShell 与独立 PowerShell 两种模式，停用 CMD。
-**Why：** 桌面进程继承的 PATH 可能落后于用户安装状态；用户可导入的 Shell 路径、CMD 拼接和可求值 PowerShell 参数均会扩大执行注入面。
-**How to apply：** 被动检测不执行候选 CLI；安装计划确认前解析目标程序；启动参数按 PowerShell 字面值编码；配置导入不接受可执行 Shell 字段或初始化脚本。
+**结论：** 三项 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；Windows 使用 Job Object 管理完整进程树。
+**Why：** 缓冲式静默执行无法判断任务是否卡住，也无法可靠终止子进程或在重启后查看历史；安装和自更新同时运行还可能互相干扰。
+**How to apply：** 全局同时只运行一个任务；只接受内置工具清单生成的结构化计划，不开放自由命令或保存环境变量；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 使用“终止任务”表达强制结束进程树，并提示更新中断风险。
+**See Also：** [[project_overview.md#执行任务边界]] [[project_progress.md#0.2.0-工作进展]]
+
+## 启动使用完整 CLI 路径与平台分层候选
+
+**结论：** CLI 启动前解析为完整路径；Windows 优先保留 Windows Terminal Profile，并按 Profile 原生追加、PowerShell 命令续接、保留外观替换命令、PowerShell 7、Windows PowerShell、CMD 建立分层候选。
+**Why：** 桌面进程继承的 PATH 可能落后于用户安装状态；固定替换 Shell 会丢失用户 Profile 的参数、初始化和样式，而只依赖单一终端又无法覆盖未安装 Windows Terminal 或 Profile 命令不兼容的机器。
+**How to apply：** 终端探测与启动计划放在 Rust platform/services；设置页持久化 `auto`、指定 Profile 或直接 Shell 目标；启动参数先结构化建模，只在最终 Shell 边界编码；进程创建失败时继续尝试安全候选。CMD 只作为最终受控兜底，不直接拼接不可信字符串。配置导入不接受外部可执行 Shell 字段或初始化脚本。
 **See Also：** [[project_overview.md#启动与检测边界]]
 
 ## 会话历史按需读取本地事实来源
 
-**结论：** Claude Code 与 Codex 会话列表按查看时实时读取各自本地存储，不建立 SQLite 会话缓存；Antigravity 不展示历史列表。
-**Why：** 两项可读取的 CLI 会话文件是事实来源，按需读取成本可控且避免缓存过期；Antigravity 没有公开可依赖的本地列表格式。
-**How to apply：** SQLite 只保存应用配置；恢复会话沿用统一启动组合，Claude 使用 `--resume`，Codex 使用 `resume`，Antigravity 保留直接启动能力。
+**结论：** 三项 CLI 会话列表均按查看时读取各自本地事实来源，不建立原始会话缓存；每项 CLI 独立按 10 条分页。Claude 优先使用 sessions index，Codex 优先使用 App Server，Antigravity 只读本机摘要 SQLite 与 metadata。
+**Why：** CLI 自有索引和会话存储是标题、时间及项目归属的权威来源，按需读取可避免缓存陈旧；Antigravity 新版本已在本机暴露可按 workspace 匹配的摘要库。
+**How to apply：** 列表读取后仍要按项目目录或 workspace URI 过滤，恢复前重新验证归属；Claude 使用 `--resume`，Codex 使用 `resume`，Antigravity 使用 `--conversation`。原始标题与路径不进入应用缓存。
 **See Also：** [[project_overview.md#会话与配置数据]]
+
+## 会话本地别名使用稀疏关联
+
+**结论：** 用户手动重命名会话时，才以 `tool_key + session_id` 向业务 SQLite 写入别名；普通会话不入表，删除别名即恢复 CLI 原始标题。
+**Why：** 会话 ID 足以稳定关联用户命名，同时避免复制 CLI 会话索引、正文或源路径，也不会因为项目目录移动丢失别名。
+**How to apply：** 别名必须在写入或删除前验证 session 属于当前项目；列表先读取真实会话，再合并匹配别名，孤立记录不得生成虚假会话。配置 JSON 暂不交换别名，但数据库备份与恢复自然包含该表。
+**See Also：** [[decisions.md#会话摘要不进入应用持久缓存]] [[project_overview.md#会话与配置数据]]
 
 ## Windows 内部分发使用 NSIS 双安装包策略
 
@@ -66,10 +80,10 @@ commit: cef5f60
 
 ## 会话摘要不进入应用持久缓存
 
-**结论：** Claude Code 与 Codex 的会话列表实时读取外部事实来源；标题摘要和源文件路径不持久写入应用缓存。
+**结论：** 三项 CLI 的原始会话列表实时读取外部事实来源；原始标题摘要和源文件路径不持久写入应用缓存。只有用户显式设置的稀疏别名属于业务配置。
 **Why：** 会话标题可能包含工作内容，且缓存身份失配会导致错误项目展示或恢复风险；性能收益不足以抵消隐私与正确性成本。
-**How to apply：** 持久缓存只保存 CLI 状态和版本查询等可重建信息；恢复会话前重新验证 session 与当前目录的归属关系；升级时清理历史会话缓存条目。
-**See Also：** [[project_overview.md#会话与配置数据]] [[project_progress.md#可靠性治理完成]]
+**How to apply：** 持久缓存只保存 CLI 状态、版本和模型目录等可重建信息；恢复会话或修改别名前重新验证 session 与当前目录的归属关系；升级时清理历史会话缓存条目。
+**See Also：** [[decisions.md#会话本地别名使用稀疏关联]] [[project_overview.md#会话与配置数据]] [[project_progress.md#可靠性治理完成]]
 
 ## 关闭窗口策略由 Rust 执行并持久化为业务配置
 

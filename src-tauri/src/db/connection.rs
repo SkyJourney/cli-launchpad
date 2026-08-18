@@ -22,6 +22,9 @@ const MIGRATIONS: &[(i64, &str)] = &[
         5,
         include_str!("../../migrations/0005_application_settings.sql"),
     ),
+    (6, include_str!("../../migrations/0006_execution_tasks.sql")),
+    (7, include_str!("../../migrations/0007_launch_target.sql")),
+    (8, include_str!("../../migrations/0008_session_aliases.sql")),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -135,6 +138,41 @@ mod tests {
             )
             .expect("read close behavior");
         assert_eq!(value, "minimize_to_tray");
+    }
+
+    #[test]
+    fn migrations_create_execution_task_tables() {
+        let connection = memory_db();
+        let count: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name in ('execution_tasks', 'execution_task_logs')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count execution task tables");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn migrations_seed_automatic_launch_target() {
+        let connection = memory_db();
+        let value: String = connection
+            .query_row(
+                "select value from application_settings where key = 'launch_target'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read launch target");
+        assert_eq!(value, "auto");
+    }
+
+    #[test]
+    fn migrations_create_sparse_session_alias_table() {
+        let connection = memory_db();
+        let count: i64 = connection
+            .query_row("select count(*) from session_aliases", [], |row| row.get(0))
+            .expect("count session aliases");
+        assert_eq!(count, 0);
     }
 
     #[test]

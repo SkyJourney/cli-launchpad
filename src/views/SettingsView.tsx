@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTools } from "../hooks/queries";
 import {
   CLI_STATUS_META,
@@ -10,6 +10,11 @@ import {
   useCliStatus,
 } from "../hooks/useCliStatus";
 import { useSeededState } from "../hooks/useSeededState";
+import {
+  isExecutionActive,
+  upsertExecutionTask,
+  useExecutionTasks,
+} from "../hooks/useExecutionTasks";
 import { formatUtcDateTime, hasUpdate } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { emptyToolMap, TOOLS } from "../lib/tools";
@@ -18,36 +23,34 @@ import {
   clearLaunchHistory,
   createBackup,
   detectCliStatus,
+  detectTerminalEnvironment,
   exportConfigToPath,
   exportDiagnosticsToPath,
   fetchLatestVersions,
   getCacheStats,
   getCloseBehavior,
   getInstallPlan,
-  getShellProfiles,
+  getLaunchTarget,
   importConfigFromPath,
   listBackups,
   listLaunchHistory,
   listTools,
-  runInstall,
+  startExecutionTask,
   restoreBackup,
   saveToolGlobalArgsBatch,
   setCloseBehavior,
-  setShellKind,
+  setLaunchTarget,
   type InstallKind,
-  type InstallOutcome,
   type InstallPlan,
+  type ExecutionTask,
   type BackupManifest,
   type CloseBehavior,
-  type ShellKind,
+  type ProfilePreservation,
+  type ShellFamily,
   type Tool,
   type ToolKey,
 } from "../lib/tauri";
-
-const SHELL_OPTIONS: { kind: ShellKind; label: string }[] = [
-  { kind: "wt-pwsh", label: "Windows Terminal + PowerShell" },
-  { kind: "pwsh", label: "PowerShell 窗口" },
-];
+import { useAppStore } from "../store/appStore";
 
 const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
   { value: "minimize_to_tray", label: "最小化到托盘" },
@@ -70,9 +73,19 @@ interface PendingAction {
   plan: InstallPlan;
 }
 
+interface ActionError {
+  toolKey: ToolKey;
+  message: string;
+}
+
 export function SettingsView() {
   const queryClient = useQueryClient();
+  const setView = useAppStore((state) => state.setView);
   const cliStatus = useCliStatus();
+  const executionTasks = useExecutionTasks();
+  const activeTask = executionTasks.data?.find((task) =>
+    isExecutionActive(task.status),
+  );
   const statusByTool = indexByTool(cliStatus.data);
 
   const latest = useQuery({
@@ -81,20 +94,26 @@ export function SettingsView() {
     staleTime: 1000 * 60 * 30,
   });
   const latestByTool = new Map(
-    latest.data?.map((entry) => [entry.toolKey, entry.latest]),
+    latest.data?.map((entry) => [entry.toolKey, entry]),
   );
 
-  const shellProfiles = useQuery({
-    queryKey: qk.shellProfiles(),
-    queryFn: getShellProfiles,
+  const terminalEnvironment = useQuery({
+    queryKey: qk.terminalEnvironment(),
+    queryFn: () => detectTerminalEnvironment(false),
+    staleTime: 30_000,
   });
-  const currentShellKind: ShellKind =
-    shellProfiles.data?.[0]?.kind ?? "wt-pwsh";
-  const shellKindMutation = useMutation({
-    mutationFn: (kind: ShellKind) => setShellKind(kind),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: qk.shellProfiles() }),
+  const launchTarget = useQuery({
+    queryKey: qk.launchTarget(),
+    queryFn: getLaunchTarget,
   });
+  const launchTargetMutation = useMutation({
+    mutationFn: (targetId: string) => setLaunchTarget(targetId),
+    onSuccess: (_, targetId) => {
+      queryClient.setQueryData(qk.launchTarget(), targetId);
+      queryClient.invalidateQueries({ queryKey: ["preview"] });
+    },
+  });
+  const currentLaunchTarget = launchTarget.data ?? "auto";
 
   const closeBehavior = useQuery({
     queryKey: qk.closeBehavior(),
@@ -128,7 +147,9 @@ export function SettingsView() {
   });
 
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [outcome, setOutcome] = useState<InstallOutcome | null>(null);
+  const [planningToolKey, setPlanningToolKey] = useState<ToolKey | null>(null);
+  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const popoverContainerRef = useRef<HTMLDivElement | null>(null);
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
@@ -186,6 +207,10 @@ export function SettingsView() {
       queryClient.fetchQuery({
         queryKey: qk.latestVersions(),
         queryFn: () => fetchLatestVersions(true),
+      }),
+      queryClient.fetchQuery({
+        queryKey: qk.terminalEnvironment(),
+        queryFn: () => detectTerminalEnvironment(true),
       }),
     ]);
     await queryClient.invalidateQueries({ queryKey: qk.cacheStats() });
@@ -250,20 +275,63 @@ export function SettingsView() {
   });
 
   const startAction = async (toolKey: ToolKey, kind: InstallKind) => {
-    setOutcome(null);
-    const plan = await getInstallPlan(toolKey, kind);
-    setPending({ toolKey, kind, plan });
+    if (pending?.toolKey === toolKey && pending.kind === kind) {
+      setPending(null);
+      return;
+    }
+    setActionError(null);
+    setPlanningToolKey(toolKey);
+    try {
+      const plan = await getInstallPlan(toolKey, kind);
+      setPending({ toolKey, kind, plan });
+    } catch (error) {
+      setActionError({ toolKey, message: String(error) });
+    } finally {
+      setPlanningToolKey(null);
+    }
   };
 
   const runMutation = useMutation({
     mutationFn: (action: PendingAction) =>
-      runInstall(action.toolKey, action.kind),
-    onSuccess: (result) => {
-      setOutcome(result);
+      startExecutionTask(action.toolKey, action.kind),
+    onSuccess: (task) => {
+      queryClient.setQueryData<ExecutionTask[]>(
+        qk.executionTasks(),
+        (entries) => upsertExecutionTask(entries, task),
+      );
+      setActionError(null);
       setPending(null);
-      void refreshDetectedVersions();
+      setView("executions");
+    },
+    onError: (error, action) => {
+      setActionError({ toolKey: action.toolKey, message: String(error) });
     },
   });
+
+  useEffect(() => {
+    if (!pending || runMutation.isPending) {
+      return;
+    }
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (
+        popoverContainerRef.current &&
+        !popoverContainerRef.current.contains(event.target as Node)
+      ) {
+        setPending(null);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPending(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [pending, runMutation.isPending]);
 
   return (
     <div className="settings-view">
@@ -275,11 +343,13 @@ export function SettingsView() {
           onClick={() => {
             void refreshDetectedVersions();
           }}
-          disabled={cliStatus.isFetching}
+          disabled={cliStatus.isFetching || latest.isFetching}
         >
           <RefreshCw
             size={15}
-            className={clsx({ spinning: cliStatus.isFetching })}
+            className={clsx({
+              spinning: cliStatus.isFetching || latest.isFetching,
+            })}
           />
         </button>
       </header>
@@ -292,7 +362,8 @@ export function SettingsView() {
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key];
           const availability = status?.status ?? "missing";
-          const latestVersion = latestByTool.get(tool.key) ?? null;
+          const latestEntry = latestByTool.get(tool.key);
+          const latestVersion = latestEntry?.latest ?? null;
           const updatable = hasUpdate(status?.version ?? null, latestVersion);
           const isMissing = availability === "missing";
 
@@ -317,59 +388,235 @@ export function SettingsView() {
               <div className="cli-status-detail muted">
                 {status?.path && <span>路径：{status.path}</span>}
                 <span>
-                  当前：{status?.version ?? (isMissing ? "—" : "未知")}
+                  当前：
+                  {status?.version ??
+                    (isMissing
+                      ? "—"
+                      : status?.versionError
+                        ? `无法获取（${status.versionError}）`
+                        : "未知；点击右上角重新检测")}
                 </span>
                 <span>
                   最新：
                   {latest.isFetching
                     ? "查询中…"
-                    : (latestVersion ?? "无法获取")}
+                    : latestVersion
+                      ? `${latestVersion}${latestEntry?.fromCache ? "（缓存）" : ""}`
+                      : latestEntry?.error
+                        ? `无法获取（${latestEntry.error}）`
+                        : "无法获取"}
                 </span>
               </div>
 
               <div className="cli-status-actions">
-                {isMissing ? (
-                  <button
-                    className="primary-button"
-                    onClick={() => void startAction(tool.key, "install")}
+                {(isMissing || updatable === true) && (
+                  <div
+                    className="cli-action-anchor"
+                    ref={
+                      pending?.toolKey === tool.key
+                        ? popoverContainerRef
+                        : undefined
+                    }
                   >
-                    <Download size={15} />
-                    一键安装
-                  </button>
-                ) : (
-                  updatable === true && (
                     <button
                       className="primary-button"
-                      onClick={() => void startAction(tool.key, "update")}
+                      onClick={() =>
+                        void startAction(
+                          tool.key,
+                          isMissing ? "install" : "update",
+                        )
+                      }
+                      disabled={
+                        planningToolKey === tool.key ||
+                        runMutation.isPending ||
+                        activeTask != null
+                      }
+                      title={
+                        activeTask ? "已有安装或更新任务正在执行" : undefined
+                      }
                     >
                       <Download size={15} />
-                      更新
+                      {planningToolKey === tool.key
+                        ? "准备中…"
+                        : isMissing
+                          ? "一键安装"
+                          : "更新"}
                     </button>
-                  )
+                    {pending?.toolKey === tool.key && (
+                      <div
+                        className="cli-action-popover"
+                        role="dialog"
+                        aria-label={
+                          pending.kind === "install" ? "确认安装" : "确认更新"
+                        }
+                      >
+                        <div className="section-heading">
+                          {pending.kind === "install" ? "确认安装" : "确认更新"}
+                        </div>
+                        <p className="muted">来源：{pending.plan.source}</p>
+                        <code className="readonly-args">
+                          {pending.plan.preview}
+                        </code>
+                        <p className="muted">
+                          该命令将在你的机器上执行。确认后可在“执行任务”中查看实时日志。
+                        </p>
+                        {actionError?.toolKey === tool.key && (
+                          <p className="error">
+                            执行失败：{actionError.message}
+                          </p>
+                        )}
+                        <div className="edit-actions">
+                          <button
+                            className="ghost-button"
+                            onClick={() => setPending(null)}
+                            disabled={runMutation.isPending}
+                          >
+                            取消
+                          </button>
+                          <button
+                            className="primary-button"
+                            onClick={() => runMutation.mutate(pending)}
+                            disabled={runMutation.isPending}
+                          >
+                            {runMutation.isPending ? "创建任务中…" : "确认执行"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
+              {actionError?.toolKey === tool.key &&
+                pending?.toolKey !== tool.key && (
+                  <p className="error cli-action-message">
+                    操作准备失败：{actionError.message}
+                  </p>
+                )}
+              {activeTask && activeTask.toolKey === tool.key && (
+                <p className="muted cli-action-message">
+                  此工具当前有任务正在执行，可从左侧“执行任务”查看。
+                </p>
+              )}
             </div>
           );
         })}
       </section>
 
       <section className="shell-config">
-        <div className="section-heading">启动方式</div>
-        <p className="muted">选择在哪个终端 / Shell 中打开 CLI：</p>
-        <div className="model-presets">
-          {SHELL_OPTIONS.map((option) => (
-            <button
-              key={option.kind}
-              className={clsx("preset-button", {
-                active: currentShellKind === option.kind,
-              })}
-              disabled={shellKindMutation.isPending}
-              onClick={() => shellKindMutation.mutate(option.kind)}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div className="terminal-config-head">
+          <div>
+            <div className="section-heading">启动方式</div>
+            <p className="muted">
+              优先保留 Windows Terminal Profile；不可用时自动回退到独立 Shell。
+            </p>
+          </div>
+          <button
+            className="icon-button"
+            title="重新检测终端环境"
+            disabled={terminalEnvironment.isFetching}
+            onClick={() => {
+              void queryClient.fetchQuery({
+                queryKey: qk.terminalEnvironment(),
+                queryFn: () => detectTerminalEnvironment(true),
+              });
+            }}
+          >
+            <RefreshCw
+              size={15}
+              className={clsx({ spinning: terminalEnvironment.isFetching })}
+            />
+          </button>
         </div>
+
+        {terminalEnvironment.isLoading || launchTarget.isLoading ? (
+          <p className="muted">正在检测终端环境…</p>
+        ) : terminalEnvironment.isError || launchTarget.isError ? (
+          <p className="error">
+            读取启动方式失败：
+            {String(terminalEnvironment.error ?? launchTarget.error)}
+          </p>
+        ) : (
+          <div className="terminal-option-list">
+            <TerminalOption
+              targetId="auto"
+              title="自动选择"
+              description="优先使用 Windows Terminal 默认 Profile，再按 PowerShell 7、Windows PowerShell、CMD 回退。"
+              selected={currentLaunchTarget === "auto"}
+              disabled={launchTargetMutation.isPending}
+              badges={[{ label: "推荐", tone: "recommended" }]}
+              onSelect={launchTargetMutation.mutate}
+            />
+
+            {terminalEnvironment.data?.windowsTerminalHosts.map((host) => (
+              <div className="terminal-group" key={host.id}>
+                <div className="terminal-group-title">
+                  <strong>{host.displayName}</strong>
+                  <span>{host.version ? `v${host.version}` : "版本未知"}</span>
+                </div>
+                {host.profiles.length === 0 ? (
+                  <p className="muted terminal-empty">
+                    未发现可选择的 Profile，自动模式仍会尝试默认 Profile。
+                  </p>
+                ) : (
+                  host.profiles.map((profile) => (
+                    <TerminalOption
+                      key={profile.targetId}
+                      targetId={profile.targetId}
+                      title={profile.name}
+                      description={`${shellFamilyLabel(profile.shellFamily)} · ${profile.preservationReason}`}
+                      selected={currentLaunchTarget === profile.targetId}
+                      disabled={launchTargetMutation.isPending}
+                      badges={[
+                        ...(profile.isDefault
+                          ? [
+                              {
+                                label: "默认 Profile",
+                                tone: "default" as const,
+                              },
+                            ]
+                          : []),
+                        preservationBadge(profile.preservation),
+                      ]}
+                      onSelect={launchTargetMutation.mutate}
+                    />
+                  ))
+                )}
+              </div>
+            ))}
+
+            {(terminalEnvironment.data?.directShells.length ?? 0) > 0 && (
+              <div className="terminal-group">
+                <div className="terminal-group-title">
+                  <strong>独立控制台</strong>
+                  <span>不使用 Windows Terminal Profile</span>
+                </div>
+                {terminalEnvironment.data?.directShells.map((shell) => (
+                  <TerminalOption
+                    key={shell.targetId}
+                    targetId={shell.targetId}
+                    title={shell.displayName}
+                    description={`${shellFamilyLabel(shell.shellFamily)} · 回退优先级 ${shell.priority}`}
+                    selected={currentLaunchTarget === shell.targetId}
+                    disabled={launchTargetMutation.isPending}
+                    badges={[{ label: "独立窗口", tone: "standalone" }]}
+                    onSelect={launchTargetMutation.mutate}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {terminalEnvironment.data?.warnings.map((warning) => (
+          <p className="terminal-warning" key={warning}>
+            {warning}
+          </p>
+        ))}
+        {launchTargetMutation.isError && (
+          <p className="error">
+            保存启动方式失败：{String(launchTargetMutation.error)}
+          </p>
+        )}
       </section>
 
       <section className="shell-config">
@@ -611,46 +858,6 @@ export function SettingsView() {
           </p>
         )}
       </section>
-
-      {pending && (
-        <section className="confirm-panel">
-          <div className="section-heading">
-            {pending.kind === "install" ? "确认安装" : "确认更新"}
-          </div>
-          <p className="muted">来源：{pending.plan.source}</p>
-          <code className="readonly-args">{pending.plan.preview}</code>
-          <p className="muted">
-            该命令将在你的机器上执行，确认后开始并输出日志。
-          </p>
-          <div className="edit-actions">
-            <button
-              className="ghost-button"
-              onClick={() => setPending(null)}
-              disabled={runMutation.isPending}
-            >
-              取消
-            </button>
-            <button
-              className="primary-button"
-              onClick={() => runMutation.mutate(pending)}
-              disabled={runMutation.isPending}
-            >
-              {runMutation.isPending ? "执行中…" : "确认执行"}
-            </button>
-          </div>
-        </section>
-      )}
-
-      {outcome && (
-        <section className="install-log">
-          <div className="section-heading">
-            执行结果 · {outcome.success ? "成功" : "失败"}
-          </div>
-          <code className={clsx("log-output", { failed: !outcome.success })}>
-            {outcome.log || "（无输出）"}
-          </code>
-        </section>
-      )}
     </div>
   );
 }
@@ -663,6 +870,89 @@ function backupReasonLabel(reason: BackupManifest["reason"]) {
     pre_migration: "升级前自动备份",
   };
   return labels[reason];
+}
+
+type TerminalBadgeTone =
+  | "recommended"
+  | "default"
+  | "exact"
+  | "continuation"
+  | "appearance"
+  | "standalone";
+
+interface TerminalOptionProps {
+  targetId: string;
+  title: string;
+  description: string;
+  selected: boolean;
+  disabled: boolean;
+  badges: { label: string; tone: TerminalBadgeTone }[];
+  onSelect: (targetId: string) => void;
+}
+
+function TerminalOption({
+  targetId,
+  title,
+  description,
+  selected,
+  disabled,
+  badges,
+  onSelect,
+}: TerminalOptionProps) {
+  return (
+    <label className={clsx("terminal-option", { selected, disabled })}>
+      <input
+        type="radio"
+        name="terminal-launch-target"
+        value={targetId}
+        checked={selected}
+        disabled={disabled}
+        onChange={() => onSelect(targetId)}
+      />
+      <span className="terminal-option-main">
+        <span className="terminal-option-title">{title}</span>
+        <span className="terminal-option-description">{description}</span>
+      </span>
+      <span className="terminal-option-badges">
+        {badges.map((badge) => (
+          <span
+            className={clsx("terminal-option-badge", badge.tone)}
+            key={`${badge.tone}:${badge.label}`}
+          >
+            {badge.label}
+          </span>
+        ))}
+      </span>
+    </label>
+  );
+}
+
+function preservationBadge(preservation: ProfilePreservation): {
+  label: string;
+  tone: TerminalBadgeTone;
+} {
+  const badges = {
+    exact: { label: "完整保留", tone: "exact" as const },
+    command_continuation: {
+      label: "命令续接",
+      tone: "continuation" as const,
+    },
+    appearance_only: {
+      label: "仅保留外观",
+      tone: "appearance" as const,
+    },
+  };
+  return badges[preservation];
+}
+
+function shellFamilyLabel(family: ShellFamily) {
+  const labels: Record<ShellFamily, string> = {
+    pwsh: "PowerShell 7",
+    windows_power_shell: "Windows PowerShell",
+    cmd: "CMD",
+    unknown: "自定义 Shell",
+  };
+  return labels[family];
 }
 
 function formatBytes(bytes: number) {

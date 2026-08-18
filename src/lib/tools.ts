@@ -57,16 +57,3 @@ export function emptyToolMap(): Record<ToolKey, string> {
     {} as Record<ToolKey, string>,
   );
 }
-
-/// Quick-select presets for Claude's `--model` flag.
-export interface ModelPreset {
-  label: string;
-  value: string | null;
-}
-
-export const CLAUDE_MODEL_PRESETS: ModelPreset[] = [
-  { label: "默认", value: null },
-  { label: "Opus 4.7", value: "claude-opus-4-7" },
-  { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
-  { label: "Haiku 4.5", value: "claude-haiku-4-5" },
-];

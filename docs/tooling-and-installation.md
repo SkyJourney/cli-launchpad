@@ -35,7 +35,7 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 当前文档设计基于官方资料：
 
 - Claude Code CLI 官方命令为 `claude`。Windows 可使用 `winget install Anthropic.ClaudeCode`，也可使用官方 PowerShell 安装脚本。
-- Codex CLI 官方命令为 `codex`。官方安装方式为 `npm i -g @openai/codex`，升级命令为 `npm i -g @openai/codex@latest`。
+- Codex CLI 官方命令为 `codex`。Windows 当前优先使用官方 PowerShell 独立安装器，npm 是备选安装方式；当前 CLI 提供 `codex update`。
 - Antigravity CLI 官方命令为 `agy`。Windows 官方安装方式为 PowerShell：`irm https://antigravity.google/cli/install.ps1 | iex`。
 
 后续实现时，如果官方安装命令变化，应先更新本文档，再调整安装清单。
@@ -90,7 +90,13 @@ Get-Command antigravity
 %USERPROFILE%\.local\bin
 %APPDATA%\npm
 %LOCALAPPDATA%\Microsoft\WinGet\Links
+%LOCALAPPDATA%\agy\bin
+%LOCALAPPDATA%\Programs\OpenAI\Codex\bin
 ```
+
+被动检测只解析路径，不执行候选程序。用户点击重新检测或安装/更新完成后，
+应用对已解析的完整路径执行有超时限制的 `--version`；版本探测失败不影响
+`available` 状态，并单独展示失败原因。
 
 ## 安装模型
 
@@ -100,7 +106,7 @@ Get-Command antigravity
 2. 应用展示安装来源、命令和权限提示。
 3. 用户确认。
 4. Rust 层用结构化参数启动安装命令。
-5. UI 展示实时日志。
+5. 创建后台执行任务，在“执行任务”视图展示状态与实时日志。
 6. 安装完成后重新检测。
 
 安装命令结构示例：
@@ -119,10 +125,10 @@ args:
 三个目标 CLI 的初始安装清单：
 
 | 工具        | 首选安装方式              | 命令模型                                                                                                  |
-| ----------- | ------------------------- | --------------------------------------------------------------------------------------------------------- | ---- |
+| ----------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Claude Code | `winget` 官方包           | `winget install --id Anthropic.ClaudeCode --exact --accept-package-agreements --accept-source-agreements` |
-| Codex       | npm 官方包                | `npm i -g @openai/codex`                                                                                  |
-| Antigravity | 官方 PowerShell installer | `irm https://antigravity.google/cli/install.ps1                                                           | iex` |
+| Codex       | 官方 PowerShell installer | `irm https://chatgpt.com/codex/install.ps1 \| iex`                                                        |
+| Antigravity | 官方 PowerShell installer | `irm https://antigravity.google/cli/install.ps1 \| iex`                                                   |
 
 如果某个 CLI 没有稳定的官方包或官方安装命令，不应伪造安装命令。此时只展示官方手动安装说明。
 
@@ -138,21 +144,32 @@ args:
 
 | 工具        | 最新版本来源                                      |
 | ----------- | ------------------------------------------------- |
-| Claude Code | 官方包或 npm registry `@anthropic-ai/claude-code` |
-| Codex       | npm registry `@openai/codex`                      |
-| Antigravity | 官方渠道（官方 installer 或发布信息）             |
+| Claude Code | `downloads.claude.ai/claude-code-releases/latest` |
+| Codex       | `releases.openai.com/codex/channels/latest`       |
+| Antigravity | 官方安装器使用的当前平台 release manifest         |
 
 最新版本查询涉及网络，失败时降级为"无法获取最新版本"，仍展示当前版本，不阻塞界面。
 
 更新命令清单：
 
-| 工具        | 更新命令                                                            |
-| ----------- | ------------------------------------------------------------------- | ---- |
-| Claude Code | `claude update` 或官方包更新                                        |
-| Codex       | `npm i -g @openai/codex@latest`                                     |
-| Antigravity | 重跑官方 installer：`irm https://antigravity.google/cli/install.ps1 | iex` |
+| 工具        | 更新命令        |
+| ----------- | --------------- |
+| Claude Code | `claude update` |
+| Codex       | `codex update`  |
+| Antigravity | `agy update`    |
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。
+
+## 执行任务模型
+
+安装和更新共用持久化执行任务。全局同时只运行一个任务；确认浮层只负责展示
+来源和命令，确认后立即返回，由左侧“执行任务”视图持续展示状态与实时输出。
+
+- Rust 分别管道化读取 `stdout` 和 `stderr`，通过 Tauri event 增量通知前端并写入 SQLite。
+- Windows 使用 Job Object 持有完整进程树；用户选择“终止任务”时结束作业内所有进程。
+- 应用异常退出后，重启时把未结束记录标记为“意外中断”。
+- 每个任务最多保存 1 MiB 日志，默认保留最近 50 条任务，旧记录连同日志自动裁剪。
+- 任务历史只记录内置安装清单生成的结构化命令计划，不开放任意命令执行入口。
 
 ## UI 建议
 

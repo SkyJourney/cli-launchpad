@@ -2,11 +2,13 @@
 
 CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。
 
+版本变化与尚待验证的内容见 [CHANGELOG.md](CHANGELOG.md)。
+
 项目采用 Tauri 风格架构，参考 CC-Switch 的组织方式：
 
 - React + TypeScript 负责桌面 UI。
 - Rust/Tauri commands 负责文件系统访问、SQLite 读写和进程启动。
-- SQLite 作为目录、工具、Shell 配置和目录级参数的单一数据源。
+- SQLite 作为目录、工具、启动偏好和目录级参数的单一数据源。
 - 系统托盘提供常驻入口；默认关闭主窗口时隐藏到托盘，可在设置中切换为退出应用。
 
 正式运行的数据根目录为 `~/.cli-launchpad/`，当前业务数据库位于
@@ -17,7 +19,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 
 - 将常用目录缓存在 SQLite 中。
 - 在选中目录中一键启动配置好的 CLI 工具。
-- 将 Shell 参数、全局 CLI 参数和目录专属 CLI 参数解耦。
+- 将终端启动偏好、全局 CLI 参数和目录专属 CLI 参数解耦。
 - 保持桌面应用体积轻量，不引入 Electron 或服务端运行时。
 - 在真正启动前，让用户可以预览最终命令。
 - 通过托盘快速重新显示主界面，或显式退出应用。
@@ -30,7 +32,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - Vite
 - Rust
 - rusqlite
-- Windows Terminal / PowerShell 集成
+- Windows Terminal Profile / PowerShell / CMD 分层回退集成
 
 ## 本地依赖
 
@@ -83,7 +85,7 @@ pnpm build:installers       # 一次构建在线 + 离线两版，归档到 dist
 - **WebView2**：
   - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时检测缺失则联网下载。
   - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
-- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.1.0_x64-online-setup.exe`。
+- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.0_x64-online-setup.exe`。
 
 正式打包前确保 Tauri 图标资源就位，例如 `src-tauri/icons/icon.ico`。
 
@@ -104,6 +106,9 @@ src-tauri/src/platform/       平台相关启动逻辑
 
 - 目录增删改查。
 - Antigravity、Codex 和 Claude Code 的工具配置。
-- Shell profile 配置。
+- 终端与 Shell 自动探测、Profile 选择和分层回退。
 - 命令预览。
 - 一键启动终端会话。
+- 三项 CLI 的会话历史、每次 10 条懒加载与安全恢复。
+- 按会话 ID 设置本地别名，不同步普通会话到业务数据库。
+- 三项 CLI 的启动模型选择与手动模型/部署名。

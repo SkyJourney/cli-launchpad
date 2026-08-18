@@ -1,12 +1,15 @@
 pub mod backup_service;
 pub mod cache_service;
 pub mod cli_detect_service;
+pub mod codex_app_server;
 pub mod config_service;
 pub mod diagnostics_service;
 pub mod directory_service;
+pub mod execution_service;
 pub mod file_service;
 pub mod install_service;
 pub mod launch_service;
+pub mod model_service;
 pub mod session_service;
 pub mod storage_service;
 pub mod version_service;

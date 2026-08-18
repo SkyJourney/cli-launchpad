@@ -1,14 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import clsx from "clsx";
 import { useDirectory, useTools } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { useSeededState } from "../hooks/useSeededState";
 import { getFlagValue, setFlagValue } from "../lib/args";
 import { qk } from "../lib/queryKeys";
-import { CLAUDE_MODEL_PRESETS, emptyToolMap, TOOLS } from "../lib/tools";
+import { emptyToolMap, TOOLS } from "../lib/tools";
 import {
   getDirectoryToolArgs,
+  getModelCatalog,
   saveDirectoryToolArgsBatch,
   type DirectoryToolArgs,
   type ToolKey,
@@ -39,6 +45,15 @@ export function ProjectEditView() {
     queryKey: qk.directoryToolArgs(directoryId),
     queryFn: () => getDirectoryToolArgs(directoryId as number),
     enabled: directoryId != null,
+  });
+
+  const modelCatalogs = useQueries({
+    queries: TOOLS.map((tool) => ({
+      queryKey: qk.modelCatalog(tool.key),
+      queryFn: () => getModelCatalog(tool.key),
+      enabled: (statusByTool[tool.key]?.status ?? "missing") === "available",
+      staleTime: 10 * 60 * 1_000,
+    })),
   });
 
   // Seed editable args from the saved values, re-seeding when the directory
@@ -89,8 +104,6 @@ export function ProjectEditView() {
   const updateArgs = (toolKey: ToolKey, value: string) =>
     setArgs((prev) => ({ ...prev, [toolKey]: value }));
 
-  const claudeModel = getFlagValue(args.claude, "--model");
-
   return (
     <div className="edit-view">
       <button className="ghost-button" onClick={() => setView("detail")}>
@@ -103,11 +116,18 @@ export function ProjectEditView() {
         <p className="muted">{directory.path}</p>
       </header>
 
-      {TOOLS.map((tool) => {
+      {TOOLS.map((tool, toolIndex) => {
         const status = statusByTool[tool.key]?.status ?? "missing";
         const disabled = status === "missing";
         const globalArgs =
           tools?.find((t) => t.key === tool.key)?.globalArgs ?? "";
+        const globalModel = getFlagValue(globalArgs, "--model");
+        const selectedModel = getFlagValue(args[tool.key], "--model");
+        const modelCatalog = modelCatalogs[toolIndex];
+        const options = modelCatalog.data?.options ?? [];
+        const selectedIsKnown =
+          selectedModel == null ||
+          options.some((option) => option.value === selectedModel);
         return (
           <section
             key={tool.key}
@@ -126,47 +146,98 @@ export function ProjectEditView() {
               <code className="readonly-args">{globalArgs || "（无）"}</code>
             </div>
 
-            {tool.key === "claude" && (
-              <div className="edit-field">
-                <label className="muted">模型</label>
-                <div className="model-presets">
-                  {CLAUDE_MODEL_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      className={clsx("preset-button", {
-                        active:
-                          (preset.value ?? null) === (claudeModel ?? null),
-                      })}
-                      disabled={disabled}
-                      onClick={() =>
-                        updateArgs(
-                          "claude",
-                          setFlagValue(args.claude, "--model", preset.value),
-                        )
-                      }
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  value={claudeModel ?? ""}
-                  disabled={disabled}
-                  placeholder="或手动输入模型名（支持第三方模型，不含空格）"
-                  onChange={(event) => {
-                    const value = event.target.value.replace(/\s+/g, "");
+            <div className="edit-field">
+              <div className="model-field-heading">
+                <label className="muted">启动模型</label>
+                <button
+                  className="icon-button"
+                  title={`刷新 ${tool.label} 模型目录`}
+                  disabled={disabled || modelCatalog.isFetching}
+                  onClick={() =>
+                    void queryClient.fetchQuery({
+                      queryKey: qk.modelCatalog(tool.key),
+                      queryFn: () => getModelCatalog(tool.key, true),
+                    })
+                  }
+                >
+                  <RefreshCw
+                    size={14}
+                    className={modelCatalog.isFetching ? "spinning" : undefined}
+                  />
+                </button>
+              </div>
+              <div className="model-select-row">
+                <select
+                  value={selectedModel ?? ""}
+                  disabled={disabled || modelCatalog.isLoading}
+                  onChange={(event) =>
                     updateArgs(
-                      "claude",
+                      tool.key,
                       setFlagValue(
-                        args.claude,
+                        args[tool.key],
                         "--model",
-                        value === "" ? null : value,
+                        event.target.value || null,
+                      ),
+                    )
+                  }
+                >
+                  <option value="">
+                    {globalModel
+                      ? `沿用全局设置（${globalModel}）`
+                      : "默认（由 CLI 自动选择）"}
+                  </option>
+                  {!selectedIsKnown && selectedModel && (
+                    <option value={selectedModel}>
+                      自定义：{selectedModel}
+                    </option>
+                  )}
+                  {options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                      {option.isDefault ? "（CLI 推荐）" : ""}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={selectedModel ?? ""}
+                  disabled={disabled}
+                  placeholder="或手动输入模型名、部署名"
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    updateArgs(
+                      tool.key,
+                      setFlagValue(
+                        args[tool.key],
+                        "--model",
+                        value.trim() === "" ? null : value,
                       ),
                     );
                   }}
                 />
               </div>
-            )}
+              {modelCatalog.isError ? (
+                <span className="error model-catalog-note">
+                  读取模型目录失败，仍可手动输入：
+                  {String(modelCatalog.error)}
+                </span>
+              ) : modelCatalog.data ? (
+                <span className="muted model-catalog-note">
+                  来源：{modelCatalog.data.source}
+                  {modelCatalog.data.fromCache ? " · 缓存" : ""}
+                </span>
+              ) : (
+                !disabled && (
+                  <span className="muted model-catalog-note">
+                    正在读取模型目录…
+                  </span>
+                )
+              )}
+              {modelCatalog.data?.warning && (
+                <span className="terminal-warning model-catalog-note">
+                  {modelCatalog.data.warning}
+                </span>
+              )}
+            </div>
 
             <div className="edit-field">
               <label className="muted">项目级附加参数</label>

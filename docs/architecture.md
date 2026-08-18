@@ -18,7 +18,7 @@ DB repositories
   负责 SQLite 查询和迁移
 
 Platform helpers
-  负责 Windows Terminal、PowerShell、命令转义和未来 macOS/Linux 启动行为
+  负责 Windows Terminal Profile 探测、Shell 分层回退、命令转义和 macOS/Linux 启动行为
 ```
 
 ## 全局 CLI 状态
@@ -48,17 +48,22 @@ cli_status
   list_tools / save_tool_global_args_batch
 
 CLI 状态与版本
-  detect_cli_status            被动检测三个 CLI 的安装与全路径，不执行候选程序
-  fetch_latest_versions        查询最新可用版本（npm registry）
+  detect_cli_status            被动检测安装与全路径；显式刷新时才执行 --version
+  fetch_latest_versions        从三个 CLI 的官方发布元数据查询最新版本
   get_install_plan             返回结构化安装/更新命令（仅预览，不执行）
-  run_install                  执行安装/更新并捕获日志
+  start_execution_task         创建后台安装/更新任务
+  list/get/cancel/clear_execution_task(s)  查询、终止与清理任务
 
 会话历史
   list_sessions                按目录和工具实时读取会话
+  set/delete_session_alias     设置或删除匹配会话 ID 的本地别名
   resume_session               按工具恢复指定会话
 
-Shell 配置
-  get_shell_profiles / set_shell_kind
+模型目录
+  get_model_catalog            获取三项 CLI 的模型选项，支持强制刷新
+
+终端启动配置
+  detect_terminal_environment / get_launch_target / set_launch_target
 
 桌面行为配置
   get_close_behavior / set_close_behavior
@@ -144,10 +149,12 @@ schema 版本与日志内容，用于本地排障。
 ## 可删除缓存
 
 缓存数据库固定为 `~/.cli-launchpad/cache/cache.db`，与业务数据库隔离。
-缓存内容只包括 CLI 状态短期快照和 npm 最新版本查询结果；会话标题及
-来源路径不会写入持久缓存。CLI 状态使用 30 秒 TTL，最新版本使用 30 分钟
-TTL；目录删除、配置导入和数据库恢复会清除旧版本遗留的会话缓存；手动
-刷新强制绕过缓存。网络查询失败时可回退到已
+缓存内容只包括 CLI 状态短期快照、官方最新版本查询结果和动态模型目录；CLI 原始会话标题及
+来源路径不会写入持久缓存。用户手动设置的稀疏会话别名属于业务配置，单独保存在
+`session_aliases`，不属于会话缓存。CLI 状态使用 30 秒 TTL，最新版本使用 30 分钟
+TTL；过期后重新检测路径时，仅在可执行路径未变化的情况下保留上次主动
+探测到的当前版本；目录删除、配置导入和数据库恢复会清除旧版本遗留的
+会话缓存；手动刷新强制绕过缓存并执行有界 `--version` 探测。网络查询失败时可回退到已
 存在的最新版本缓存。删除或损坏缓存库后应用自动重建；持久缓存不可用时
 退化为当前进程的内存缓存，不阻断业务数据库和恢复功能启动。实际启动仍
 实时解析工具路径，不以缓存决定执行目标。
@@ -178,26 +185,31 @@ TTL；目录删除、配置导入和数据库恢复会清除旧版本遗留的�
 启动输入按以下顺序组合：
 
 ```text
-launch mode (kind)
+launch target（auto / Windows Terminal Profile / direct shell）
 + selected directory
 + resolved full path of shell / terminal
 + resolved full path of tool（候选命令解析，agy 优先于 antigravity）
 + tool global args ⊕ directory-specific tool args（项目级覆盖同名 flag）
 ```
 
-**执行边界**：工具在启动或版本探测前解析为完整路径；安装计划在用户确认前解析实际目标，并按该目标执行。Shell 固定使用系统 PowerShell，初始化脚本固定在程序内；用户参数始终以 PowerShell 字面值传递。
+**执行边界**：工具在启动或版本探测前解析为完整路径；安装计划在用户确认前解析实际目标，并按该目标执行。终端与 Shell 由平台探测结果生成结构化候选，用户参数始终作为字面值传递，只在最终 Shell 边界编码。
 
-**启动方式（shell profile `kind`）**：
+**Windows 启动策略**：
 
 ```text
-wt-pwsh  Windows Terminal + PowerShell
-         wt new-tab -d <dir> <pwsh-full-path> -NoExit -EncodedCommand <base64>
-         脚本用 -EncodedCommand(UTF-16LE Base64) 传递，避免 ; 被 wt 当作多 tab 分隔符
-pwsh     独立 PowerShell 窗口（CREATE_NEW_CONSOLE + current_dir，; 由 PowerShell 解析）
-cmd      已停用；旧配置会提示切换到 PowerShell
+自动推荐
+  → Windows Terminal 默认 Profile
+      A. Profile 原生命令追加（支持 appendCommandLine）
+      B. PowerShell Profile 命令续接
+      C. 保留 Profile 外观，替换为受控 Shell 命令
+  → PowerShell 7 独立窗口
+  → Windows PowerShell 独立窗口
+  → CMD 独立窗口
 ```
 
-PowerShell 脚本含 UTF-8 初始化、目录切换和结构化调用：
+Windows Terminal Stable、Preview、Canary 和非打包版本分别探测；读取其 `settings.json` 后解析默认 Profile、Profile 名称、命令行和来源。用户也可在设置中指定某个 Profile 或直接 Shell。显式目标启动失败时仍按安全候选继续回退，保证至少存在一种可用方式。
+
+PowerShell 命令使用 UTF-16LE Base64 传递受控脚本，避免参数被 Windows Terminal 或 PowerShell 再次拆分。CMD 兜底不直接拼接不可信字符串，而是通过固定系统 PowerShell 解码同一受控载荷。PowerShell 脚本包含目录切换和结构化调用：
 
 ```powershell
 [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=...
@@ -225,7 +237,7 @@ Windows 默认安装后端优先级：
 当前官方安装来源：
 
 - Claude Code：`winget install --id Anthropic.ClaudeCode --exact` 或官方 PowerShell 安装脚本。
-- Codex：`npm i -g @openai/codex`。
+- Codex：Windows 官方 PowerShell 独立安装器，npm 作为备选安装方式。
 - Antigravity：`irm https://antigravity.google/cli/install.ps1 | iex`。
 
 安装命令必须用结构化参数建模，例如：
@@ -242,44 +254,91 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
 ## 版本检测与更新
 
 设置页提供最新版本查询与应用内更新入口。为避免应用启动时执行 PATH
-中的第三方程序，被动检测不再自动调用 CLI 的 `--version`。
+中的第三方程序，被动检测不自动调用 CLI 的 `--version`；只有用户显式
+点击重新检测或安装/更新完成后的刷新才会对已解析的完整路径执行有界版本
+探测。版本命令固定为 `--version`，并以超时、无窗口方式捕获输出。
 
 ```text
 最新版本
-  Claude：官方包或 npm registry @anthropic-ai/claude-code
-  Codex：npm registry @openai/codex
-  Antigravity：官方渠道（如官方 installer 或发布信息）
+  Claude：downloads.claude.ai 原生发布 latest 端点
+  Codex：releases.openai.com Codex latest channel
+  Antigravity：官方安装器使用的平台 manifest
 
 更新命令（结构化参数，先预览后确认）
-  Claude：claude update 或官方包更新
-  Codex：npm i -g @openai/codex@latest
-  Antigravity：重跑官方 installer
+  Claude：claude update
+  Codex：codex update
+  Antigravity：agy update
 ```
 
-更新与安装走同一流程：预览命令、用户确认、输出日志、完成后重新检测并刷新全局 CLI 状态。最新版本查询涉及网络，失败时降级为"无法获取最新版本"，不阻塞当前版本展示。
+更新与安装走同一流程：预览命令、用户确认、输出日志、完成后主动探测当前
+版本并刷新全局 CLI 状态。当前版本和最新版本查询分别返回失败原因；网络
+查询失败时可使用已有缓存，不阻塞安装状态与路径展示。
+
+## 执行任务与日志
+
+安装和更新由 Rust 执行任务管理器统一调度，不在前端确认浮层或 React 组件中直接管理子进程：
+
+```text
+Settings / Execution View
+  -> Tauri command（创建、查询、终止、清理）
+  -> ExecutionTaskManager（单任务并发、状态机、进程句柄）
+  -> platform process runner（Windows Job Object）
+  -> SQLite execution_tasks / execution_task_logs
+  -> Tauri events（状态与 stdout/stderr 日志增量）
+```
+
+任务状态机为 `preparing -> running -> succeeded | failed`。用户终止时进入
+`cancelling -> cancelled`；超时进入 `timed_out`。应用启动时将数据库中遗留的
+`preparing`、`running`、`cancelling` 任务统一标记为 `interrupted`，避免把已不存在的
+进程继续显示为运行中。
+
+Windows 执行器将任务子进程加入独立 Job Object；终止时关闭整个作业进程树，
+防止 PowerShell、包管理器或自更新器留下子进程。该行为是强制终止而不是向
+终端发送字面 `Ctrl+C`，UI 统一使用“终止任务”并提示更新中断风险。
+
+任务创建时只接受内置三工具清单生成的 `InstallPlan`，持久化工具、类型、来源、
+程序、参数数组和预览，不保存环境变量或自由命令。全局同时最多运行一个安装/
+更新任务。日志按序号分别记录 `stdout`、`stderr`、`system`，通过 Tauri event 实时
+增量下发，同时写入 SQLite。每个任务日志上限 1 MiB，达到上限后写入截断标记；
+默认保留最近 50 个任务，裁剪时级联删除日志。执行中任务不可被历史清理。
 
 ## 会话历史读取
 
-会话历史从各 CLI 的本地存储读取，路径已按公开资料核验：
+会话历史按需读取各 CLI 的本地事实来源：
 
 ```text
-Claude Code  ~/.claude/projects/<slug>/<uuid>.jsonl   可列出，首条 user 消息作标题
-Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl   可列出
-Antigravity  官方未公开本地路径   不可列出，仅支持按 conversation id 恢复
+Claude Code  ~/.claude/projects/<slug>/sessions-index.json + <uuid>.jsonl
+Codex        App Server thread/list，失败时回退 ~/.codex/sessions/**/rollout-*.jsonl
+Antigravity  ~/.gemini/antigravity-cli/conversation_summaries.db + conversation metadata
 ```
 
-读取逻辑放在 service，解析出标题、时间、session id。读取故障会明确返回
-错误而不是伪装为空列表；恢复前会验证 session 仍归属于当前目录。会话列表
-实时读取各 CLI 的本地文件，不将标题摘要或源文件路径持久化到缓存数据库。
-Antigravity 不读历史，只提供直接启动。
+读取逻辑放在 service，解析出原始标题、时间、session id，并严格匹配当前项目目录或
+workspace URI。Claude 标题优先级为 `summary`、`firstPrompt`、首条用户消息；Codex 为
+`name`、`preview`、首条用户消息；Antigravity 为数据库 `title`、metadata `summary`、
+数据库 `preview`。读取故障会明确返回错误而不是伪装为空列表；恢复或修改别名前会再次
+验证 session 仍归属于当前目录。
 
-恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume`/`resume --last`。恢复参数与普通启动共用命令组合与转义逻辑。
+列表默认每页 10 条，Claude 与 Antigravity 使用有界 offset cursor，Codex 透传并封装
+App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更多”按 10 条追加。
+CLI 原始标题和源文件路径不进入应用持久缓存。
+
+用户手动重命名时才向 `session_aliases` 写入 `tool_key + session_id + alias`；普通会话不会
+批量入库。列表读取到真实会话后才合并匹配别名，因此孤立记录不会生成虚假会话。删除别名
+即恢复 CLI 原始标题。
+
+恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume <id>`，Antigravity 用 `--conversation=<id>`。恢复参数与普通启动共用命令组合与转义逻辑。
 
 ## 安全边界
 
 - 目录路径来自用户输入，启动前必须验证。
 - Windows 路径切换使用 `Set-Location -LiteralPath`。
 - 工具可执行文件和参数分开建模。
-- PowerShell 转义集中放在 `platform/powershell.rs`。
+- Windows 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`。
 - 启动和安装前都要在 UI 中提供命令预览。
 - 不在 SQLite 中保存密钥。如果未来需要凭据，使用操作系统凭据存储。
+
+## 跨平台发布约束
+
+- Windows 启动策略已经实现并完成本机受控探针与界面验收。
+- macOS 必须提供对应的终端/Shell 探测、结构化启动计划和安全参数边界，不允许简单复用 Windows 命令字符串。
+- 0.2.0 发布前必须在真实 macOS 设备完成直接启动、项目目录、参数传递、会话恢复和失败回退实测；完成前保持发布状态为 Unreleased。
