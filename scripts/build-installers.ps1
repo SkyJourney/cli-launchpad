@@ -28,13 +28,18 @@ function Copy-Installer([string]$label) {
   Write-Host "-> $dest" -ForegroundColor Green
 }
 
-# Online: default config (downloadBootstrapper) - small installer, fetches
-# WebView2 at install time if missing.
-Invoke-Build @()
+# Online: the Windows platform config uses downloadBootstrapper - small
+# installer, fetches WebView2 at install time if missing.
+Invoke-Build @("--bundles", "nsis")
 Copy-Installer "online"
 
 # Offline: bundles the full WebView2 installer - larger, works without internet.
-Invoke-Build @("--config", "src-tauri/tauri.offline.conf.json")
+Invoke-Build @(
+  "--bundles",
+  "nsis",
+  "--config",
+  "src-tauri/tauri.offline.conf.json"
+)
 Copy-Installer "offline"
 
 Write-Host "`nDone. Installers are in dist-installers/." -ForegroundColor Green

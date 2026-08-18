@@ -1,0 +1,71 @@
+@font-face {
+  font-family: "Maple Launchpad UI";
+  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Regular.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Maple Launchpad UI";
+  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Medium.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Maple Launchpad UI";
+  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-SemiBold.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 600;
+}
+
+@font-face {
+  font-family: "Maple Launchpad UI";
+  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Bold.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: "Maple Launchpad Mono";
+  src: url("./assets/fonts/maple/terminal/MapleMonoNL-NF-CN-Regular.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Maple Launchpad Mono";
+  src: url("./assets/fonts/maple/terminal/MapleMonoNL-NF-CN-Medium.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Maple Launchpad Mono";
+  src: url("./assets/fonts/maple/terminal/MapleMonoNL-NF-CN-SemiBold.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 600;
+}
+
+@font-face {
+  font-family: "Maple Launchpad Mono";
+  src: url("./assets/fonts/maple/terminal/MapleMonoNL-NF-CN-Bold.ttf")
+    format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}

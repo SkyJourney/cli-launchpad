@@ -33,6 +33,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - Rust
 - rusqlite
 - Windows Terminal Profile / PowerShell / CMD 分层回退集成
+- Maple Mono v7.9 内置 UI 与命令字体
 
 ## 本地依赖
 
@@ -41,10 +42,19 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - Node.js
 - pnpm
 - Rust stable 工具链，推荐通过 rustup 安装
+
+Windows 开发与打包还需要：
+
 - Visual Studio Build Tools 2022
 - MSVC C++ x64/x86 编译工具
 - Windows SDK
 - WebView2 Runtime
+
+macOS 开发与打包还需要：
+
+- Xcode 与 Xcode Command Line Tools
+- Apple Silicon target：`rustup target add aarch64-apple-darwin`
+- Intel target：`rustup target add x86_64-apple-darwin`
 
 当前项目使用 pnpm 作为 Node 包管理器。不要混用 npm、yarn 或其他锁文件。
 
@@ -70,15 +80,16 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## 打包说明
 
-Windows 内部分发使用 NSIS（`bundle.targets = ["nsis"]`，避免 WiX 依赖）。打包命令：
+Windows 内部分发使用 NSIS，平台配置位于
+`src-tauri/tauri.windows.conf.json`。打包命令：
 
 ```powershell
-pnpm tauri:build            # 在线版安装包（默认）
+pnpm tauri:build:windows    # 在线版安装包
 pnpm tauri:build:offline    # 离线版安装包（内嵌 WebView2）
 pnpm build:installers       # 一次构建在线 + 离线两版，归档到 dist-installers/
 ```
 
-产物位置与运行依赖：
+Windows 产物与运行依赖：
 
 - NSIS 安装包：`src-tauri/target/release/bundle/nsis/`；裸 exe：`src-tauri/target/release/`。
 - **VC++ 运行库**：通过静态链接 CRT（`src-tauri/.cargo/config.toml` 的 `+crt-static`）编入 exe，目标机无需安装 Visual C++ Redistributable。
@@ -87,7 +98,31 @@ pnpm build:installers       # 一次构建在线 + 离线两版，归档到 dist
   - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
 - `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.0_x64-online-setup.exe`。
 
-正式打包前确保 Tauri 图标资源就位，例如 `src-tauri/icons/icon.ico`。
+macOS 使用独立的 ARM64 与 Intel DMG，不生成 Universal 包：
+
+```zsh
+pnpm tauri:build:macos        # 当前机器原生架构，M 系列 Mac 上为 ARM64
+pnpm tauri:build:macos:arm64  # Apple Silicon DMG
+pnpm tauri:build:macos:x64    # Intel DMG
+```
+
+显式指定 target 后，DMG 分别输出到：
+
+- ARM64：`src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`
+- Intel：`src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/`
+
+正式打包前确保 Windows 的 `src-tauri/icons/icon.ico` 和 macOS 的
+`src-tauri/icons/icon.icns` 均已就位。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。
+
+## 内置字体
+
+应用不依赖系统安装字体，固定使用 Maple Font v7.9：
+
+- 全局 UI：Maple Mono NormalNL CN，使用 400、500、600、700 四个字重。
+- 命令、路径和日志：Maple Mono NL NF-CN，使用相同四个字重并关闭连字。
+- 字体文件随 Vite 前端产物进入 NSIS 与 DMG。
+- 字体采用 SIL Open Font License 1.1，来源和授权见
+  `src/assets/fonts/maple/README.md` 与 `src/assets/fonts/maple/LICENSE.txt`。
 
 ## 项目结构
 

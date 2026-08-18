@@ -161,12 +161,15 @@ TTL；过期后重新检测路径时，仅在可执行路径未变化的情况�
 
 ## 打包与运行依赖
 
-- NSIS 单一格式：`bundle.targets = ["nsis"]`，避免 WiX 依赖；`tauri build` 同时产出 NSIS 安装包与裸 exe。
+- 公共配置位于 `src-tauri/tauri.conf.json`，平台 target 通过 Tauri 标准平台配置自动合并。
+- Windows 配置位于 `src-tauri/tauri.windows.conf.json`，只生成 NSIS，避免 WiX 依赖；构建同时产出 NSIS 安装包与裸 exe。
 - **VC++ 运行库**：`src-tauri/.cargo/config.toml` 用 `+crt-static` 静态链接 MSVC CRT，目标机无需安装 Visual C++ Redistributable。
 - **WebView2 两种策略**：
   - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时按需联网下载。
   - 离线版（`src-tauri/tauri.offline.conf.json` 覆盖 `webviewInstallMode=offlineInstaller`）：内嵌完整 WebView2，离线可装。
 - 多版本命名：`scripts/build-installers.ps1` 依次构建在线/离线两版，复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀并追加 `online`/`offline`（架构自动继承），归档到 `dist-installers/`。标准维度（版本/架构/格式）由 Tauri 自动命名，非标准维度（WebView2 模式）由脚本补名。
+- macOS 配置位于 `src-tauri/tauri.macos.conf.json`，只生成 DMG。Apple Silicon 与 Intel 分别使用 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target 独立编译与测试，不生成 Universal 包。
+- UI 内置 Maple Mono NormalNL CN，命令、路径和日志内置 Maple Mono NL NF-CN；两套字体均固定为 v7.9 的 400、500、600、700 静态字重，通过 Vite 前端产物进入各平台安装包，不依赖系统字体安装。
 
 ## 目标 CLI 范围
 
@@ -341,4 +344,5 @@ CLI 原始标题和源文件路径不进入应用持久缓存。
 
 - Windows 启动策略已经实现并完成本机受控探针与界面验收。
 - macOS 必须提供对应的终端/Shell 探测、结构化启动计划和安全参数边界，不允许简单复用 Windows 命令字符串。
+- macOS 分别发布 Apple Silicon 与 Intel DMG，不发布 Universal DMG；两个架构均需独立完成构建和运行验证。
 - 0.2.0 发布前必须在真实 macOS 设备完成直接启动、项目目录、参数传递、会话恢复和失败回退实测；完成前保持发布状态为 Unreleased。

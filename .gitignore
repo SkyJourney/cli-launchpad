@@ -1,9 +1,11 @@
 node_modules/
+.pnpm-store/
 dist/
 dist-ssr/
 target/
 src-tauri/target/
 .vite/
+coverage/
 .idea/
 .DS_Store
 *.log
@@ -11,3 +13,13 @@ src-tauri/target/
 *.sqlite3
 src-tauri/gen/
 dist-installers/
+
+# Local environment files
+.conda_env
+.env
+.env.*
+!.env.example
+
+# Deprecated and intermediate design assets
+assets/icon/v2/
+assets/icon/v3/*-source-chroma.png
