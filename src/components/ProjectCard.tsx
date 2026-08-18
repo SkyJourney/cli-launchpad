@@ -47,7 +47,9 @@ export function ProjectCard({
       onClick={(event) => {
         if (
           event.target instanceof Element &&
-          event.target.closest("button, .project-card-actions, .badge-row")
+          event.target.closest(
+            "button, a, input, select, textarea, [data-card-interactive]",
+          )
         ) {
           return;
         }
@@ -128,7 +130,7 @@ export function ProjectCard({
           <Pencil size={15} />
         </button>
         {confirmingRemove ? (
-          <div className="confirm-remove">
+          <div className="confirm-remove" data-card-interactive>
             <span className="muted">确认移除？</span>
             <button
               className="icon-button danger"

@@ -332,6 +332,12 @@ h1 {
   box-shadow: 0 4px 14px rgba(34, 81, 209, 0.08);
 }
 
+.project-card:focus-visible {
+  border-color: #7aa2ff;
+  box-shadow: 0 0 0 3px rgba(59, 110, 246, 0.18);
+  outline: none;
+}
+
 .project-card-main {
   background: transparent;
   border: 0;

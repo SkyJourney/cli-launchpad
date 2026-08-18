@@ -1,12 +1,15 @@
 import { FolderKanban, Info, Settings, SquareTerminal } from "lucide-react";
 import clsx from "clsx";
 import GithubMono from "@lobehub/icons/es/Github/components/Mono";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   isExecutionActive,
   useExecutionTasks,
 } from "../hooks/useExecutionTasks";
 import { useAppStore } from "../store/appStore";
 import { AppLogo } from "./AppLogo";
+
+const REPOSITORY_URL = "https://github.com/SkyJourney/cli-launchpad";
 
 export function Sidebar() {
   const view = useAppStore((state) => state.view);
@@ -65,16 +68,20 @@ export function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <a
+        <button
+          type="button"
           className="icon-button sidebar-repository-button"
-          href="https://github.com/SkyJourney/cli-launchpad"
-          target="_blank"
-          rel="noreferrer"
           title="打开 GitHub 项目仓库"
           aria-label="打开 GitHub 项目仓库"
+          onClick={() => {
+            void openUrl(REPOSITORY_URL).catch((error: unknown) => {
+              console.error("无法打开 GitHub 项目仓库", error);
+              window.alert("无法使用系统默认浏览器打开 GitHub 项目仓库。");
+            });
+          }}
         >
           <GithubMono size={20} />
-        </a>
+        </button>
       </div>
     </aside>
   );

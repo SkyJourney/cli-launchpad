@@ -68,6 +68,8 @@ pub fn run() {
         }))
         // Native file/folder picker for the add-directory flow.
         .plugin(tauri_plugin_dialog::init())
+        // Open trusted external links with the operating system's default app.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
