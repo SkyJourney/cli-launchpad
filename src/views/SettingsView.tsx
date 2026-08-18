@@ -53,7 +53,7 @@ import {
 import { useAppStore } from "../store/appStore";
 
 const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
-  { value: "minimize_to_tray", label: "最小化到托盘" },
+  { value: "minimize_to_tray", label: "关闭后保持后台运行" },
   { value: "quit", label: "退出应用" },
 ];
 
@@ -114,6 +114,21 @@ export function SettingsView() {
     },
   });
   const currentLaunchTarget = launchTarget.data ?? "auto";
+  const detectedLaunchTargets = new Set([
+    "auto",
+    ...(terminalEnvironment.data?.windowsTerminalHosts.flatMap((host) =>
+      host.profiles.map((profile) => profile.targetId),
+    ) ?? []),
+    ...(terminalEnvironment.data?.directShells.map((shell) => shell.targetId) ??
+      []),
+    ...(terminalEnvironment.data?.macosTerminalHosts.map(
+      (host) => host.targetId,
+    ) ?? []),
+  ]);
+  const unavailableSavedTarget =
+    currentLaunchTarget !== "auto" &&
+    terminalEnvironment.data !== undefined &&
+    !detectedLaunchTargets.has(currentLaunchTarget);
 
   const closeBehavior = useQuery({
     queryKey: qk.closeBehavior(),
@@ -507,7 +522,11 @@ export function SettingsView() {
           <div>
             <div className="section-heading">启动方式</div>
             <p className="muted">
-              优先保留 Windows Terminal Profile；不可用时自动回退到独立 Shell。
+              {terminalEnvironment.data?.platform === "macos"
+                ? "自动模式固定使用 Terminal.app；第三方终端仅在明确选择后使用。"
+                : terminalEnvironment.data?.platform === "windows"
+                  ? "优先保留 Windows Terminal Profile；不可用时自动回退到独立 Shell。"
+                  : "根据当前平台检测可用的终端启动方式。"}
             </p>
           </div>
           <button
@@ -540,7 +559,11 @@ export function SettingsView() {
             <TerminalOption
               targetId="auto"
               title="自动选择"
-              description="优先使用 Windows Terminal 默认 Profile，再按 PowerShell 7、Windows PowerShell、CMD 回退。"
+              description={
+                terminalEnvironment.data?.platform === "macos"
+                  ? "固定使用系统 Terminal.app，安装第三方终端不会改变默认行为。"
+                  : "优先使用 Windows Terminal 默认 Profile，再按 PowerShell 7、Windows PowerShell、CMD 回退。"
+              }
               selected={currentLaunchTarget === "auto"}
               disabled={launchTargetMutation.isPending}
               badges={[{ label: "推荐", tone: "recommended" }]}
@@ -604,7 +627,57 @@ export function SettingsView() {
                 ))}
               </div>
             )}
+
+            {terminalEnvironment.data?.platform === "macos" && (
+              <div className="terminal-group">
+                <div className="terminal-group-title">
+                  <strong>macOS 终端</strong>
+                  <span>
+                    已检测 {terminalEnvironment.data.macosTerminalHosts.length}{" "}
+                    项
+                  </span>
+                </div>
+                {terminalEnvironment.data.macosTerminalHosts.length === 0 ? (
+                  <p className="muted terminal-empty">
+                    未检测到可用终端，自动启动暂不可用。
+                  </p>
+                ) : (
+                  terminalEnvironment.data.macosTerminalHosts.map((host) => (
+                    <TerminalOption
+                      key={host.targetId}
+                      targetId={host.targetId}
+                      title={host.displayName}
+                      description={macosTerminalDescription(host)}
+                      selected={currentLaunchTarget === host.targetId}
+                      disabled={launchTargetMutation.isPending}
+                      badges={[
+                        ...(host.targetId === "macos:terminal"
+                          ? [
+                              {
+                                label: "系统默认",
+                                tone: "default" as const,
+                              },
+                            ]
+                          : []),
+                        {
+                          label: "原生",
+                          tone: "native" as const,
+                        },
+                      ]}
+                      onSelect={launchTargetMutation.mutate}
+                    />
+                  ))
+                )}
+              </div>
+            )}
           </div>
+        )}
+
+        {unavailableSavedTarget && (
+          <p className="terminal-warning">
+            已保存的启动目标 {currentLaunchTarget}{" "}
+            在当前平台不可用；实际启动时将自动回退到推荐终端。请选择当前列表中的终端可更新此设置。
+          </p>
         )}
 
         {terminalEnvironment.data?.warnings.map((warning) => (
@@ -622,7 +695,9 @@ export function SettingsView() {
       <section className="shell-config">
         <div className="section-heading">关闭窗口行为</div>
         <p className="muted">
-          默认关闭后保留在系统托盘；双击托盘图标可重新显示主界面。
+          {terminalEnvironment.data?.platform === "macos"
+            ? "默认关闭后保持后台运行；点击 Dock 图标或菜单栏入口可重新显示主界面。"
+            : "默认关闭后保留在系统托盘；双击托盘图标可重新显示主界面。"}
         </p>
         <div className="model-presets">
           {CLOSE_BEHAVIOR_OPTIONS.map((option) => (
@@ -878,7 +953,8 @@ type TerminalBadgeTone =
   | "exact"
   | "continuation"
   | "appearance"
-  | "standalone";
+  | "standalone"
+  | "native";
 
 interface TerminalOptionProps {
   targetId: string;
@@ -953,6 +1029,25 @@ function shellFamilyLabel(family: ShellFamily) {
     unknown: "自定义 Shell",
   };
   return labels[family];
+}
+
+function macosTerminalDescription(
+  host: import("../lib/tauri").MacosTerminalHost,
+) {
+  const version = host.version ? `v${host.version} · ` : "";
+  const descriptions: Record<
+    import("../lib/tauri").MacosTerminalLaunchMode,
+    string
+  > = {
+    command_document: "通过 LaunchServices 打开一次性、自删除的 .command",
+    apple_script: "通过 AppleScript 创建 Ghostty 原生窗口并输入命令",
+    direct_arguments: "通过应用包内官方 CLI 传递结构化参数",
+  };
+  const launchDescription =
+    host.targetId === "macos:kitty"
+      ? `${descriptions.direct_arguments}，并保留命令退出后的窗口`
+      : descriptions[host.launchMode];
+  return `${version}${launchDescription} · ${host.applicationPath}`;
 }
 
 function formatBytes(bytes: number) {

@@ -4,9 +4,11 @@ use anyhow::{anyhow, Result};
 use base64::Engine;
 
 use crate::models::terminal::{
-    DirectShellTarget, ProfilePreservation, ShellFamily, TerminalEnvironment,
-    TerminalProfileTarget, WindowsTerminalHost,
+    DirectShellTarget, MacosTerminalHost, MacosTerminalLaunchMode, ProfilePreservation,
+    ShellFamily, TerminalEnvironment, TerminalPlatform, TerminalProfileTarget, WindowsTerminalHost,
 };
+
+pub const MACOS_COMMAND_DOCUMENT_PLACEHOLDER: &str = "<一次性启动载荷.command>";
 
 #[derive(Debug, Clone)]
 pub struct LaunchPayload {
@@ -20,6 +22,7 @@ pub struct ComposedCommand {
     pub program: String,
     pub args: Vec<String>,
     pub working_dir: Option<String>,
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub new_console: bool,
 }
 
@@ -30,16 +33,37 @@ pub struct LaunchCandidate {
     pub preservation: Option<ProfilePreservation>,
     pub reason: String,
     pub command: ComposedCommand,
+    pub requires_macos_command_document: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct LaunchPlan {
+    pub platform: TerminalPlatform,
     pub payload: LaunchPayload,
     pub candidates: Vec<LaunchCandidate>,
     pub selection_note: Option<String>,
 }
 
 pub fn build_launch_plan(
+    payload: LaunchPayload,
+    environment: &TerminalEnvironment,
+    preference: &str,
+) -> Result<LaunchPlan> {
+    build_launch_plan_internal(payload, environment, preference)
+}
+
+fn build_launch_plan_internal(
+    payload: LaunchPayload,
+    environment: &TerminalEnvironment,
+    preference: &str,
+) -> Result<LaunchPlan> {
+    if environment.platform == TerminalPlatform::Macos {
+        return build_macos_launch_plan(payload, environment, preference);
+    }
+    build_windows_launch_plan(payload, environment, preference)
+}
+
+fn build_windows_launch_plan(
     payload: LaunchPayload,
     environment: &TerminalEnvironment,
     preference: &str,
@@ -93,17 +117,189 @@ pub fn build_launch_plan(
     }
 
     Ok(LaunchPlan {
+        platform: environment.platform,
         payload,
         candidates,
         selection_note,
     })
 }
 
+fn build_macos_launch_plan(
+    payload: LaunchPayload,
+    environment: &TerminalEnvironment,
+    preference: &str,
+) -> Result<LaunchPlan> {
+    let system_terminal = environment
+        .macos_terminal_hosts
+        .iter()
+        .find(|host| host.target_id == "macos:terminal");
+    let selected = if preference == "auto" {
+        system_terminal
+    } else {
+        environment
+            .macos_terminal_hosts
+            .iter()
+            .find(|host| host.target_id == preference)
+    };
+    let mut selection_note = None;
+    let mut candidates = Vec::new();
+
+    if let Some(host) = selected {
+        candidates.push(compose_macos_candidate(&payload, host)?);
+    } else if preference != "auto" {
+        selection_note = Some(format!(
+            "保存的启动目标 {preference} 当前不可用，已回退到系统 Terminal.app"
+        ));
+    }
+
+    if selected.is_none_or(|host| host.target_id != "macos:terminal") {
+        if let Some(host) = system_terminal {
+            candidates.push(compose_macos_candidate(&payload, host)?);
+        }
+    }
+
+    deduplicate_commands(&mut candidates);
+    if candidates.is_empty() {
+        return Err(anyhow!("未找到可用的 macOS 终端启动方式"));
+    }
+    Ok(LaunchPlan {
+        platform: environment.platform,
+        payload,
+        candidates,
+        selection_note,
+    })
+}
+
+fn compose_macos_candidate(
+    payload: &LaunchPayload,
+    host: &MacosTerminalHost,
+) -> Result<LaunchCandidate> {
+    let (program, args, working_dir, reason, requires_macos_command_document) =
+        match host.launch_mode {
+            MacosTerminalLaunchMode::CommandDocument => (
+                "/usr/bin/open".to_string(),
+                vec![
+                    "-b".to_string(),
+                    host.bundle_identifier.clone(),
+                    MACOS_COMMAND_DOCUMENT_PLACEHOLDER.to_string(),
+                ],
+                None,
+                "通过 LaunchServices 打开一次性、自删除的 .command 载荷".to_string(),
+                true,
+            ),
+            MacosTerminalLaunchMode::AppleScript => {
+                if host.target_id != "macos:ghostty" {
+                    return Err(anyhow!("未知的 macOS AppleScript 终端：{}", host.target_id));
+                }
+                (
+                    "/usr/bin/osascript".to_string(),
+                    compose_ghostty_applescript_args(payload),
+                    None,
+                    "通过 Ghostty AppleScript 在普通 shell 窗口输入安全命令".to_string(),
+                    false,
+                )
+            }
+            MacosTerminalLaunchMode::DirectArguments => {
+                let executable = host
+                    .executable_path
+                    .clone()
+                    .ok_or_else(|| anyhow!("{} 缺少已验证的包内可执行文件", host.display_name))?;
+                let mut args = match host.target_id.as_str() {
+                    "macos:wezterm" => vec![
+                        "start".to_string(),
+                        "--cwd".to_string(),
+                        payload.directory.clone(),
+                        "--".to_string(),
+                        payload.tool_executable.clone(),
+                    ],
+                    "macos:kitty" => vec![
+                        "--hold".to_string(),
+                        "--directory".to_string(),
+                        payload.directory.clone(),
+                        payload.tool_executable.clone(),
+                    ],
+                    _ => return Err(anyhow!("未知的 macOS 直接参数终端：{}", host.target_id)),
+                };
+                args.extend(payload.tool_args.iter().cloned());
+                (
+                    executable,
+                    args,
+                    Some(payload.directory.clone()),
+                    "通过终端官方 CLI 的结构化参数直接执行目标 CLI".to_string(),
+                    false,
+                )
+            }
+        };
+
+    Ok(LaunchCandidate {
+        target_id: host.target_id.clone(),
+        label: host.display_name.clone(),
+        preservation: None,
+        reason,
+        command: ComposedCommand {
+            program,
+            args,
+            working_dir,
+            new_console: false,
+        },
+        requires_macos_command_document,
+    })
+}
+
+fn compose_shell_command(payload: &LaunchPayload) -> String {
+    let invocation = std::iter::once(payload.tool_executable.as_str())
+        .chain(payload.tool_args.iter().map(String::as_str))
+        .map(quote_posix)
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "builtin cd -- {} && {invocation}",
+        quote_posix(&payload.directory)
+    )
+}
+
+fn compose_ghostty_applescript_args(payload: &LaunchPayload) -> Vec<String> {
+    const LINES: [&str; 10] = [
+        "on run argv",
+        "tell application \"Ghostty\"",
+        "set launchWindow to new window",
+        "set launchTerminal to focused terminal of selected tab of launchWindow",
+        "input text (item 1 of argv) to launchTerminal",
+        "send key \"enter\" to launchTerminal",
+        "focus launchTerminal",
+        "return id of launchWindow",
+        "end tell",
+        "end run",
+    ];
+    let mut args = Vec::with_capacity(LINES.len() * 2 + 2);
+    for line in LINES {
+        args.push("-e".to_string());
+        args.push(line.to_string());
+    }
+    args.push("--".to_string());
+    args.push(compose_shell_command(payload));
+    args
+}
+
+fn quote_posix(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn preview_plan(plan: &LaunchPlan) -> String {
     let primary = &plan.candidates[0];
-    let mut lines = vec![
-        format!("启动方式：{}", primary.label),
-        format!("保留级别：{}", preservation_label(primary.preservation)),
+    let mut lines = vec![format!("启动方式：{}", primary.label)];
+    if plan.platform == TerminalPlatform::Macos {
+        lines.push(format!(
+            "启动接口：{}",
+            macos_launch_interface(&primary.target_id)
+        ));
+    } else {
+        lines.push(format!(
+            "保留级别：{}",
+            preservation_label(primary.preservation)
+        ));
+    }
+    lines.extend([
         format!("项目目录：{}", plan.payload.directory),
         format!(
             "执行命令：{}",
@@ -113,11 +309,8 @@ pub fn preview_plan(plan: &LaunchPlan) -> String {
                 false
             )
         ),
-        format!(
-            "终端命令：{}",
-            display_command(&primary.command.program, &primary.command.args, true)
-        ),
-    ];
+        format!("终端命令：{}", display_terminal_command(primary)),
+    ]);
     if let Some(note) = &plan.selection_note {
         lines.push(format!("选择说明：{note}"));
     }
@@ -134,6 +327,22 @@ pub fn preview_plan(plan: &LaunchPlan) -> String {
         ));
     }
     lines.join("\n")
+}
+
+fn macos_launch_interface(target_id: &str) -> &'static str {
+    match target_id {
+        "macos:terminal" | "macos:iterm2" => "LaunchServices + 一次性 .command",
+        "macos:ghostty" => "Ghostty AppleScript 原生窗口 + shell 输入",
+        "macos:wezterm" | "macos:kitty" => "终端官方 CLI 结构化参数",
+        _ => "macOS 终端安全启动载荷",
+    }
+}
+
+fn display_terminal_command(candidate: &LaunchCandidate) -> String {
+    if candidate.target_id == "macos:ghostty" {
+        return "/usr/bin/osascript <Ghostty 原生窗口脚本> -- <安全转义的 CLI 命令>".to_string();
+    }
+    display_command(&candidate.command.program, &candidate.command.args, true)
 }
 
 enum SelectedTarget<'a> {
@@ -279,6 +488,7 @@ fn compose_wt_exact(
             working_dir: None,
             new_console: false,
         },
+        requires_macos_command_document: false,
     }
 }
 
@@ -312,6 +522,7 @@ fn compose_wt_continuation(
             working_dir: None,
             new_console: false,
         },
+        requires_macos_command_document: false,
     }
 }
 
@@ -350,6 +561,7 @@ fn compose_wt_appearance(
             working_dir: None,
             new_console: false,
         },
+        requires_macos_command_document: false,
     }
 }
 
@@ -392,6 +604,7 @@ fn compose_direct(
             working_dir: Some(payload.directory.clone()),
             new_console: true,
         },
+        requires_macos_command_document: false,
     }
 }
 
@@ -507,7 +720,10 @@ fn deduplicate_commands(candidates: &mut Vec<LaunchCandidate>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::terminal::{TerminalDistribution, TerminalEnvironment};
+    use crate::models::terminal::{
+        MacosTerminalHost, MacosTerminalLaunchMode, TerminalDistribution, TerminalEnvironment,
+        TerminalPlatform,
+    };
 
     fn payload(args: Vec<&str>) -> LaunchPayload {
         LaunchPayload {
@@ -550,6 +766,7 @@ mod tests {
 
     fn environment(profile: TerminalProfileTarget) -> TerminalEnvironment {
         TerminalEnvironment {
+            platform: TerminalPlatform::Windows,
             windows_terminal_hosts: vec![WindowsTerminalHost {
                 id: "wt:stable".to_string(),
                 distribution: TerminalDistribution::Stable,
@@ -560,6 +777,7 @@ mod tests {
                 settings_path: None,
                 profiles: vec![profile],
             }],
+            macos_terminal_hosts: Vec::new(),
             direct_shells: vec![
                 shell("direct:pwsh", ShellFamily::Pwsh, 1),
                 shell(
@@ -617,7 +835,9 @@ mod tests {
     #[test]
     fn cmd_never_receives_user_arguments_as_plain_text() {
         let environment = TerminalEnvironment {
+            platform: TerminalPlatform::Windows,
             windows_terminal_hosts: Vec::new(),
+            macos_terminal_hosts: Vec::new(),
             direct_shells: vec![shell("direct:cmd", ShellFamily::Cmd, 3)],
             recommended_target_id: Some("direct:cmd".to_string()),
             warnings: Vec::new(),
@@ -653,5 +873,222 @@ mod tests {
         assert!(preview.contains("--model opus"));
         assert!(preview.contains("<已编码的 CLI 命令>"));
         assert!(preview.contains("失败回退："));
+    }
+
+    fn macos_payload(args: Vec<&str>) -> LaunchPayload {
+        LaunchPayload {
+            directory: "/workspace/demo".to_string(),
+            tool_executable: "/Users/test/.local/bin/claude".to_string(),
+            tool_args: args.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    fn macos_host(
+        target_id: &str,
+        display_name: &str,
+        bundle_identifier: &str,
+        executable_path: Option<&str>,
+        launch_mode: MacosTerminalLaunchMode,
+    ) -> MacosTerminalHost {
+        MacosTerminalHost {
+            target_id: target_id.to_string(),
+            display_name: display_name.to_string(),
+            application_path: format!("/Applications/{display_name}.app"),
+            bundle_identifier: bundle_identifier.to_string(),
+            executable_path: executable_path.map(str::to_string),
+            version: Some("1.0".to_string()),
+            launch_mode,
+        }
+    }
+
+    fn macos_environment() -> TerminalEnvironment {
+        TerminalEnvironment {
+            platform: TerminalPlatform::Macos,
+            windows_terminal_hosts: Vec::new(),
+            macos_terminal_hosts: vec![
+                macos_host(
+                    "macos:terminal",
+                    "Terminal.app",
+                    "com.apple.Terminal",
+                    None,
+                    MacosTerminalLaunchMode::CommandDocument,
+                ),
+                macos_host(
+                    "macos:iterm2",
+                    "iTerm2",
+                    "com.googlecode.iterm2",
+                    Some("/Applications/iTerm.app/Contents/MacOS/iTerm2"),
+                    MacosTerminalLaunchMode::CommandDocument,
+                ),
+                macos_host(
+                    "macos:ghostty",
+                    "Ghostty",
+                    "com.mitchellh.ghostty",
+                    Some("/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+                    MacosTerminalLaunchMode::AppleScript,
+                ),
+                macos_host(
+                    "macos:wezterm",
+                    "WezTerm",
+                    "com.github.wez.wezterm",
+                    Some("/Applications/WezTerm.app/Contents/MacOS/wezterm"),
+                    MacosTerminalLaunchMode::DirectArguments,
+                ),
+                macos_host(
+                    "macos:kitty",
+                    "kitty",
+                    "net.kovidgoyal.kitty",
+                    Some("/Applications/kitty.app/Contents/MacOS/kitty"),
+                    MacosTerminalLaunchMode::DirectArguments,
+                ),
+            ],
+            direct_shells: Vec::new(),
+            recommended_target_id: Some("macos:terminal".to_string()),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn macos_auto_always_selects_system_terminal() {
+        let plan = build_launch_plan(
+            macos_payload(vec!["--model", "opus"]),
+            &macos_environment(),
+            "auto",
+        )
+        .unwrap();
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].target_id, "macos:terminal");
+        assert_eq!(plan.candidates[0].command.program, "/usr/bin/open");
+        assert_eq!(
+            plan.candidates[0].command.args,
+            vec![
+                "-b",
+                "com.apple.Terminal",
+                MACOS_COMMAND_DOCUMENT_PLACEHOLDER,
+            ]
+        );
+        assert!(plan.candidates[0].requires_macos_command_document);
+        let preview = preview_plan(&plan);
+        assert!(preview.contains("启动接口：LaunchServices + 一次性 .command"));
+        assert!(!preview.contains("保留级别："));
+    }
+
+    #[test]
+    fn macos_explicit_terminal_adds_system_fallback() {
+        let plan = build_launch_plan(macos_payload(vec![]), &macos_environment(), "macos:ghostty")
+            .unwrap();
+        assert_eq!(
+            plan.candidates
+                .iter()
+                .map(|candidate| candidate.target_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["macos:ghostty", "macos:terminal"]
+        );
+    }
+
+    #[test]
+    fn macos_ghostty_uses_applescript_with_payload_only_in_argv() {
+        let plan = build_launch_plan(
+            macos_payload(vec!["--model", "quote's opus"]),
+            &macos_environment(),
+            "macos:ghostty",
+        )
+        .unwrap();
+        let command = &plan.candidates[0].command;
+        assert_eq!(command.program, "/usr/bin/osascript");
+        let separator = command.args.iter().position(|arg| arg == "--").unwrap();
+        let script_source = command.args[..separator].join("\n");
+        assert!(script_source.contains("new window"));
+        assert!(script_source.contains("input text (item 1 of argv)"));
+        assert!(script_source.contains("send key \"enter\""));
+        assert!(!script_source.contains("/workspace/demo"));
+        assert!(!script_source.contains("quote's opus"));
+        assert_eq!(
+            command.args.last().unwrap(),
+            "builtin cd -- '/workspace/demo' && '/Users/test/.local/bin/claude' '--model' 'quote'\\''s opus'"
+        );
+        assert!(!plan.candidates[0].requires_macos_command_document);
+        assert!(plan.candidates[1].requires_macos_command_document);
+        let preview = preview_plan(&plan);
+        assert!(preview.contains("Ghostty AppleScript 原生窗口 + shell 输入"));
+        assert!(preview.contains("<Ghostty 原生窗口脚本>"));
+    }
+
+    #[test]
+    fn macos_iterm_uses_self_deleting_command_document() {
+        let plan = build_launch_plan(
+            macos_payload(vec!["--model", "opus"]),
+            &macos_environment(),
+            "macos:iterm2",
+        )
+        .unwrap();
+        let command = &plan.candidates[0].command;
+        assert_eq!(command.program, "/usr/bin/open");
+        assert_eq!(
+            command.args,
+            vec![
+                "-b",
+                "com.googlecode.iterm2",
+                MACOS_COMMAND_DOCUMENT_PLACEHOLDER,
+            ]
+        );
+        assert!(plan.candidates[0].requires_macos_command_document);
+        assert!(preview_plan(&plan).contains("LaunchServices + 一次性 .command"));
+    }
+
+    #[test]
+    fn macos_direct_terminals_receive_tool_and_arguments_without_helper() {
+        let plan = build_launch_plan(
+            macos_payload(vec!["--model", "opus"]),
+            &macos_environment(),
+            "macos:wezterm",
+        )
+        .unwrap();
+        assert_eq!(
+            plan.candidates[0].command.args,
+            vec![
+                "start",
+                "--cwd",
+                "/workspace/demo",
+                "--",
+                "/Users/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+        assert!(!plan.candidates[0].requires_macos_command_document);
+        assert_eq!(plan.candidates[1].target_id, "macos:terminal");
+
+        let kitty = build_launch_plan(
+            macos_payload(vec!["--model", "opus"]),
+            &macos_environment(),
+            "macos:kitty",
+        )
+        .unwrap();
+        assert_eq!(
+            kitty.candidates[0].command.args,
+            vec![
+                "--hold",
+                "--directory",
+                "/workspace/demo",
+                "/Users/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+        assert!(!kitty.candidates[0].requires_macos_command_document);
+    }
+
+    #[test]
+    fn removed_macos_targets_fall_back_to_system_terminal() {
+        for target_id in ["macos:alacritty", "macos:warp"] {
+            let plan =
+                build_launch_plan(macos_payload(vec![]), &macos_environment(), target_id).unwrap();
+            assert_eq!(plan.candidates[0].target_id, "macos:terminal");
+            assert!(plan
+                .selection_note
+                .as_deref()
+                .is_some_and(|note| note.contains(target_id)));
+        }
     }
 }

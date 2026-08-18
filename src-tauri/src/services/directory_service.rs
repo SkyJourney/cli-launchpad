@@ -42,6 +42,7 @@ fn path_for_storage(path: &Path) -> String {
     path.display().to_string()
 }
 
+#[cfg(any(windows, test))]
 fn strip_windows_verbatim_prefix(path: &str) -> String {
     if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")

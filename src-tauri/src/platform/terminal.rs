@@ -1,21 +1,33 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(any(windows, test))]
 use serde::Deserialize;
 use tokio::process::Command;
 
+#[cfg(windows)]
+use crate::models::terminal::{DirectShellTarget, WindowsTerminalHost};
+#[cfg(target_os = "macos")]
+use crate::models::terminal::{MacosTerminalHost, MacosTerminalLaunchMode};
+#[cfg(any(windows, test))]
 use crate::models::terminal::{
-    DirectShellTarget, ProfilePreservation, ShellFamily, TerminalDistribution, TerminalEnvironment,
-    TerminalProfileTarget, WindowsTerminalHost,
+    ProfilePreservation, ShellFamily, TerminalDistribution, TerminalProfileTarget,
 };
+use crate::models::terminal::{TerminalEnvironment, TerminalPlatform};
 
+#[cfg(windows)]
 use super::detect;
 
+#[cfg(windows)]
 const PACKAGE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+#[cfg(windows)]
 #[derive(Debug, Clone)]
 struct InstalledPackage {
     name: String,
@@ -23,6 +35,7 @@ struct InstalledPackage {
     install_location: PathBuf,
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsFile {
@@ -31,12 +44,14 @@ struct SettingsFile {
     profiles: ProfileCollection,
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Default, Deserialize)]
 struct ProfileCollection {
     #[serde(default)]
     list: Vec<SettingsProfile>,
 }
 
+#[cfg(any(windows, test))]
 #[derive(Debug, Deserialize)]
 struct SettingsProfile {
     name: Option<String>,
@@ -48,6 +63,27 @@ struct SettingsProfile {
 }
 
 pub async fn detect_environment() -> TerminalEnvironment {
+    #[cfg(windows)]
+    {
+        return detect_windows_environment().await;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return detect_macos_environment().await;
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    TerminalEnvironment {
+        platform: TerminalPlatform::Other,
+        windows_terminal_hosts: Vec::new(),
+        macos_terminal_hosts: Vec::new(),
+        direct_shells: Vec::new(),
+        recommended_target_id: None,
+        warnings: vec!["当前平台尚未实现终端探测".to_string()],
+    }
+}
+
+#[cfg(windows)]
+async fn detect_windows_environment() -> TerminalEnvironment {
     let (packages, pwsh) = tokio::join!(detect_terminal_packages(), detect::which("pwsh.exe"));
     let mut warnings = Vec::new();
     let hosts = detect_windows_terminal_hosts(&packages, &mut warnings);
@@ -59,13 +95,206 @@ pub async fn detect_environment() -> TerminalEnvironment {
     }
 
     TerminalEnvironment {
+        platform: TerminalPlatform::Windows,
         windows_terminal_hosts: hosts,
+        macos_terminal_hosts: Vec::new(),
         direct_shells,
         recommended_target_id,
         warnings,
     }
 }
 
+#[cfg(target_os = "macos")]
+const MACOS_APP_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy)]
+struct MacosTerminalSpec {
+    target_id: &'static str,
+    display_name: &'static str,
+    bundle_identifier: &'static str,
+    application_names: &'static [&'static str],
+    fixed_paths: &'static [&'static str],
+    relative_executable: Option<&'static str>,
+    launch_mode: MacosTerminalLaunchMode,
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_TERMINAL_SPECS: &[MacosTerminalSpec] = &[
+    MacosTerminalSpec {
+        target_id: "macos:terminal",
+        display_name: "Terminal.app",
+        bundle_identifier: "com.apple.Terminal",
+        application_names: &["Terminal.app"],
+        fixed_paths: &[
+            "/System/Applications/Utilities/Terminal.app",
+            "/Applications/Utilities/Terminal.app",
+        ],
+        relative_executable: None,
+        launch_mode: MacosTerminalLaunchMode::CommandDocument,
+    },
+    MacosTerminalSpec {
+        target_id: "macos:iterm2",
+        display_name: "iTerm2",
+        bundle_identifier: "com.googlecode.iterm2",
+        application_names: &["iTerm.app", "iTerm2.app"],
+        fixed_paths: &[],
+        relative_executable: Some("Contents/MacOS/iTerm2"),
+        launch_mode: MacosTerminalLaunchMode::CommandDocument,
+    },
+    MacosTerminalSpec {
+        target_id: "macos:ghostty",
+        display_name: "Ghostty",
+        bundle_identifier: "com.mitchellh.ghostty",
+        application_names: &["Ghostty.app"],
+        fixed_paths: &[],
+        relative_executable: Some("Contents/MacOS/ghostty"),
+        launch_mode: MacosTerminalLaunchMode::AppleScript,
+    },
+    MacosTerminalSpec {
+        target_id: "macos:wezterm",
+        display_name: "WezTerm",
+        bundle_identifier: "com.github.wez.wezterm",
+        application_names: &["WezTerm.app"],
+        fixed_paths: &[],
+        relative_executable: Some("Contents/MacOS/wezterm"),
+        launch_mode: MacosTerminalLaunchMode::DirectArguments,
+    },
+    MacosTerminalSpec {
+        target_id: "macos:kitty",
+        display_name: "kitty",
+        bundle_identifier: "net.kovidgoyal.kitty",
+        application_names: &["kitty.app"],
+        fixed_paths: &[],
+        relative_executable: Some("Contents/MacOS/kitty"),
+        launch_mode: MacosTerminalLaunchMode::DirectArguments,
+    },
+];
+
+#[cfg(target_os = "macos")]
+async fn detect_macos_environment() -> TerminalEnvironment {
+    let spotlight_paths = detect_spotlight_applications().await;
+    let mut hosts = Vec::new();
+
+    for spec in MACOS_TERMINAL_SPECS {
+        let mut candidates = macos_standard_application_paths(spec);
+        candidates.extend(spotlight_paths.iter().cloned());
+        if let Some(host) = candidates
+            .into_iter()
+            .find_map(|path| inspect_macos_terminal_application(&path, spec))
+        {
+            hosts.push(host);
+        }
+    }
+
+    let has_terminal = hosts.iter().any(|host| host.target_id == "macos:terminal");
+    let warnings = if has_terminal {
+        Vec::new()
+    } else {
+        vec!["未检测到系统 Terminal.app，macOS 自动启动不可用".to_string()]
+    };
+
+    TerminalEnvironment {
+        platform: TerminalPlatform::Macos,
+        windows_terminal_hosts: Vec::new(),
+        macos_terminal_hosts: hosts,
+        direct_shells: Vec::new(),
+        recommended_target_id: has_terminal.then(|| "macos:terminal".to_string()),
+        warnings,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_standard_application_paths(spec: &MacosTerminalSpec) -> Vec<PathBuf> {
+    let mut paths = spec
+        .fixed_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    for name in spec.application_names {
+        paths.push(PathBuf::from("/Applications").join(name));
+        if let Some(home) = std::env::var_os("HOME") {
+            paths.push(PathBuf::from(home).join("Applications").join(name));
+        }
+    }
+    paths
+}
+
+#[cfg(target_os = "macos")]
+async fn detect_spotlight_applications() -> Vec<PathBuf> {
+    let query = MACOS_TERMINAL_SPECS
+        .iter()
+        .map(|spec| format!("kMDItemCFBundleIdentifier == '{}'", spec.bundle_identifier))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    let mut process = Command::new("/usr/bin/mdfind");
+    process.arg(query).kill_on_drop(true);
+    let Ok(Ok(output)) = tokio::time::timeout(MACOS_APP_PROBE_TIMEOUT, process.output()).await
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.ends_with(".app"))
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_macos_terminal_application(
+    application_path: &Path,
+    spec: &MacosTerminalSpec,
+) -> Option<MacosTerminalHost> {
+    if !application_path.is_dir() {
+        return None;
+    }
+    let plist = plist::Value::from_file(application_path.join("Contents/Info.plist")).ok()?;
+    let dictionary = plist.as_dictionary()?;
+    let bundle_identifier = dictionary.get("CFBundleIdentifier")?.as_string()?;
+    if bundle_identifier != spec.bundle_identifier {
+        return None;
+    }
+    let executable_path = spec
+        .relative_executable
+        .map(|relative| application_path.join(relative));
+    if executable_path
+        .as_ref()
+        .is_some_and(|path| !is_macos_executable_file(path))
+    {
+        return None;
+    }
+    let version = dictionary
+        .get("CFBundleShortVersionString")
+        .or_else(|| dictionary.get("CFBundleVersion"))
+        .and_then(plist::Value::as_string)
+        .map(str::to_string);
+    let application_path = application_path
+        .canonicalize()
+        .unwrap_or_else(|_| application_path.to_path_buf());
+
+    Some(MacosTerminalHost {
+        target_id: spec.target_id.to_string(),
+        display_name: spec.display_name.to_string(),
+        application_path: application_path.display().to_string(),
+        bundle_identifier: bundle_identifier.to_string(),
+        executable_path: executable_path.map(|path| path.display().to_string()),
+        version,
+        launch_mode: spec.launch_mode,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_executable_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_file() && metadata.permissions().mode() & 0o111 != 0
+    })
+}
+
+#[cfg(windows)]
 fn detect_windows_terminal_hosts(
     packages: &[InstalledPackage],
     warnings: &mut Vec<String>,
@@ -147,6 +376,7 @@ fn detect_windows_terminal_hosts(
     hosts
 }
 
+#[cfg(windows)]
 fn build_host(
     distribution: TerminalDistribution,
     display_name: &str,
@@ -186,6 +416,7 @@ fn build_host(
     }
 }
 
+#[cfg(windows)]
 fn parse_profiles(
     path: &Path,
     distribution: TerminalDistribution,
@@ -195,6 +426,7 @@ fn parse_profiles(
     parse_profiles_text(&content, distribution, supports_append_command_line)
 }
 
+#[cfg(any(windows, test))]
 fn parse_profiles_text(
     content: &str,
     distribution: TerminalDistribution,
@@ -235,6 +467,7 @@ fn parse_profiles_text(
         .collect())
 }
 
+#[cfg(any(windows, test))]
 fn classify_shell(commandline: Option<&str>, source: Option<&str>, guid: &str) -> ShellFamily {
     if let Some(program) = commandline.and_then(first_command_token) {
         let normalized = program.replace('/', "\\").to_ascii_lowercase();
@@ -258,6 +491,7 @@ fn classify_shell(commandline: Option<&str>, source: Option<&str>, guid: &str) -
     }
 }
 
+#[cfg(any(windows, test))]
 fn classify_preservation(
     supports_append_command_line: bool,
     shell_family: ShellFamily,
@@ -341,6 +575,7 @@ fn classify_preservation(
     }
 }
 
+#[cfg(windows)]
 fn detect_direct_shells(pwsh: Option<PathBuf>) -> Vec<DirectShellTarget> {
     let mut shells = Vec::new();
     if let Some(path) = pwsh.filter(|path| path.is_file()) {
@@ -378,6 +613,7 @@ fn detect_direct_shells(pwsh: Option<PathBuf>) -> Vec<DirectShellTarget> {
     shells
 }
 
+#[cfg(windows)]
 fn direct_shell(
     target_id: &str,
     display_name: &str,
@@ -394,6 +630,7 @@ fn direct_shell(
     }
 }
 
+#[cfg(windows)]
 fn recommend_target(
     hosts: &[WindowsTerminalHost],
     direct_shells: &[DirectShellTarget],
@@ -412,6 +649,7 @@ fn recommend_target(
         .or_else(|| direct_shells.first().map(|shell| shell.target_id.clone()))
 }
 
+#[cfg(windows)]
 async fn detect_terminal_packages() -> Vec<InstalledPackage> {
     let script = "Get-AppxPackage -Name 'Microsoft.WindowsTerminal*' | ForEach-Object { \"$($_.Name)`t$($_.Version.ToString())`t$($_.InstallLocation)\" }";
     let mut process = Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
@@ -447,6 +685,7 @@ async fn detect_terminal_packages() -> Vec<InstalledPackage> {
         .collect()
 }
 
+#[cfg(any(windows, test))]
 fn first_command_token(commandline: &str) -> Option<&str> {
     let value = commandline.trim_start();
     if value.is_empty() {
@@ -459,6 +698,7 @@ fn first_command_token(commandline: &str) -> Option<&str> {
     Some(value.split_whitespace().next()?)
 }
 
+#[cfg(any(windows, test))]
 fn command_switches(commandline: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -480,6 +720,7 @@ fn command_switches(commandline: &str) -> Vec<String> {
     tokens.into_iter().skip(1).collect()
 }
 
+#[cfg(any(windows, test))]
 fn normalize_guid(value: &str) -> String {
     value
         .trim()
@@ -488,6 +729,7 @@ fn normalize_guid(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
+#[cfg(any(windows, test))]
 fn parse_major_minor(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split('.');
     Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
@@ -586,5 +828,104 @@ mod tests {
             .is_some_and(|(major, minor)| major > 1 || (major == 1 && minor >= 19)));
         assert!(parse_major_minor("1.19.10302.0")
             .is_some_and(|(major, minor)| major > 1 || (major == 1 && minor >= 19)));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_test_application(
+        root: &Path,
+        spec: &MacosTerminalSpec,
+        bundle_identifier: &str,
+        executable_mode: Option<u32>,
+    ) -> PathBuf {
+        let application_path = root.join("Test.app");
+        std::fs::create_dir_all(application_path.join("Contents/MacOS")).unwrap();
+        let mut dictionary = plist::Dictionary::new();
+        dictionary.insert(
+            "CFBundleIdentifier".to_string(),
+            plist::Value::String(bundle_identifier.to_string()),
+        );
+        dictionary.insert(
+            "CFBundleShortVersionString".to_string(),
+            plist::Value::String("1.2.3".to_string()),
+        );
+        plist::Value::Dictionary(dictionary)
+            .to_file_xml(application_path.join("Contents/Info.plist"))
+            .unwrap();
+        if let Some(mode) = executable_mode {
+            if let Some(relative) = spec.relative_executable {
+                let executable_path = application_path.join(relative);
+                std::fs::write(&executable_path, b"test").unwrap();
+                let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+                permissions.set_mode(mode);
+                std::fs::set_permissions(executable_path, permissions).unwrap();
+            }
+        }
+        application_path
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn accepts_verified_third_party_terminal_executables() {
+        for target_id in [
+            "macos:iterm2",
+            "macos:ghostty",
+            "macos:wezterm",
+            "macos:kitty",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let spec = MACOS_TERMINAL_SPECS
+                .iter()
+                .find(|spec| spec.target_id == target_id)
+                .unwrap();
+            let path =
+                write_test_application(temp.path(), spec, spec.bundle_identifier, Some(0o755));
+            let host = inspect_macos_terminal_application(&path, spec).unwrap();
+            assert_eq!(host.target_id, target_id);
+            assert_eq!(host.version.as_deref(), Some("1.2.3"));
+            assert!(host.executable_path.is_some());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rejects_bundle_identifier_mismatch_and_missing_direct_executable() {
+        let spec = MACOS_TERMINAL_SPECS
+            .iter()
+            .find(|spec| spec.target_id == "macos:wezterm")
+            .unwrap();
+
+        let mismatch = tempfile::tempdir().unwrap();
+        let mismatch_path =
+            write_test_application(mismatch.path(), spec, "invalid.bundle", Some(0o755));
+        assert!(inspect_macos_terminal_application(&mismatch_path, spec).is_none());
+
+        let missing = tempfile::tempdir().unwrap();
+        let missing_path =
+            write_test_application(missing.path(), spec, spec.bundle_identifier, None);
+        assert!(inspect_macos_terminal_application(&missing_path, spec).is_none());
+
+        let non_executable = tempfile::tempdir().unwrap();
+        let non_executable_path = write_test_application(
+            non_executable.path(),
+            spec,
+            spec.bundle_identifier,
+            Some(0o644),
+        );
+        assert!(inspect_macos_terminal_application(&non_executable_path, spec).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn detects_system_terminal_as_macos_default() {
+        let environment = detect_macos_environment().await;
+        assert_eq!(environment.platform, TerminalPlatform::Macos);
+        assert_eq!(
+            environment.recommended_target_id.as_deref(),
+            Some("macos:terminal")
+        );
+        assert!(environment
+            .macos_terminal_hosts
+            .iter()
+            .any(|host| host.target_id == "macos:terminal"));
     }
 }

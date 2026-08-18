@@ -60,7 +60,7 @@ pub fn with_cache<T>(
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 show_main_window(&window);
@@ -71,6 +71,14 @@ pub fn run() {
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            #[cfg(target_os = "macos")]
+            match platform::macos_launch_artifacts::cleanup_stale(&paths.cache_dir) {
+                Ok(removed) if removed > 0 => {
+                    log::info!("removed {removed} stale macOS launch artifact(s)")
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!("unable to prune macOS launch artifacts: {error}"),
+            }
             if let Err(error) = services::diagnostics_service::cleanup_logs(&paths) {
                 eprintln!("unable to prune diagnostic logs: {error}");
             }
@@ -202,9 +210,22 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run CLI Launchpad");
+        .build(tauri::generate_context!())
+        .expect("failed to build CLI Launchpad");
+    app.run(handle_run_event);
 }
+
+#[cfg(target_os = "macos")]
+fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen { .. } = event {
+        if let Some(window) = app.get_webview_window("main") {
+            show_main_window(&window);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_run_event(_app: &tauri::AppHandle, _event: tauri::RunEvent) {}
 
 fn show_main_window(window: &WebviewWindow) {
     let _ = window.show();

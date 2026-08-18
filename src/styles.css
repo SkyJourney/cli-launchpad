@@ -1,6 +1,6 @@
 :root {
   --font-mono: "Maple Launchpad Mono", monospace;
-  --font-ui: "Maple Launchpad UI", sans-serif;
+  --font-ui: "IBM Plex Sans SC Launchpad", sans-serif;
   color: #18212f;
   background: #f5f7fb;
   font-family: var(--font-ui);
@@ -52,6 +52,8 @@ pre,
 .sidebar {
   border-right: 1px solid #d8dee9;
   background: #ffffff;
+  display: flex;
+  flex-direction: column;
   padding: 18px;
   min-height: 0;
   overflow-y: auto;
@@ -66,9 +68,24 @@ pre,
   margin-bottom: 24px;
 }
 
+.app-logo {
+  display: block;
+  flex: 0 0 auto;
+}
+
 .sidebar-nav {
   display: grid;
   gap: 6px;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.sidebar-repository-button {
+  color: #18212f;
+  text-decoration: none;
 }
 
 .nav-item {
@@ -250,21 +267,47 @@ h1 {
 }
 
 .add-form {
-  align-items: center;
   background: #ffffff;
   border: 1px solid #d8dee9;
   border-radius: 10px;
-  display: flex;
-  gap: 10px;
+  display: grid;
+  gap: 12px;
   margin-bottom: 18px;
   padding: 14px;
 }
 
-.add-form input {
+.add-form-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(320px, 1.3fr);
+}
+
+.add-form-fields input {
   border: 1px solid #d8dee9;
   border-radius: 8px;
-  flex: 1;
+  box-sizing: border-box;
+  min-width: 0;
   padding: 8px 10px;
+  width: 100%;
+}
+
+.add-form-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.add-form-actions button {
+  flex: 0 0 auto;
+  min-width: 76px;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .add-form-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Project cards */
@@ -698,8 +741,8 @@ h1 {
   border-radius: 12px;
   display: grid;
   gap: 16px;
-  max-width: 640px;
   padding: 22px;
+  width: 100%;
 }
 
 .about-brand {
@@ -741,6 +784,40 @@ h1 {
   align-items: center;
   display: inline-flex;
   gap: 6px;
+}
+
+.about-license-intro {
+  margin: 4px 0 0;
+}
+
+.about-license-list {
+  display: grid;
+  gap: 8px;
+}
+
+.license-details {
+  border: 1px solid #d8dee9;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.license-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 10px 12px;
+}
+
+.license-details pre {
+  background: #f5f7fb;
+  border-top: 1px solid #d8dee9;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
 }
 
 .detail-head {
@@ -1314,6 +1391,12 @@ h1 {
 
 .terminal-option-badge.standalone {
   background: #f2f4f7;
+}
+
+.terminal-option-badge.native {
+  background: #ecfdf3;
+  border-color: #86d7a8;
+  color: #176b3a;
 }
 
 .terminal-warning {

@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
-import { Terminal } from "lucide-react";
+import appLicense from "../../LICENSE?raw";
+import ibmPlexLicense from "../assets/fonts/ibm-plex-sans-sc/LICENSE.txt?raw";
+import mapleLicense from "../assets/fonts/maple/LICENSE.txt?raw";
+import { AppLogo } from "../components/AppLogo";
 import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
 
@@ -15,7 +18,7 @@ export function AboutView() {
 
       <section className="about-card">
         <div className="about-brand">
-          <Terminal size={28} />
+          <AppLogo size={48} />
           <div>
             <strong>CLI Launchpad</strong>
             <span className="muted">版本 {version.data ?? "…"}</span>
@@ -29,10 +32,6 @@ export function AboutView() {
 
         <div className="about-rows">
           <div className="about-row">
-            <span className="about-key">技术栈</span>
-            <span>Tauri 2 · React · TypeScript · Rust · SQLite</span>
-          </div>
-          <div className="about-row">
             <span className="about-key">支持的 CLI</span>
             <span className="about-tools">
               {TOOLS.map((tool) => (
@@ -43,12 +42,42 @@ export function AboutView() {
               ))}
             </span>
           </div>
-          <div className="about-row">
-            <span className="about-key">命令</span>
-            <span>claude · codex · agy</span>
-          </div>
+        </div>
+      </section>
+
+      <section className="about-card about-license-card">
+        <div>
+          <span className="about-key">开源许可</span>
+          <p className="muted about-license-intro">
+            CLI Launchpad 使用 MIT License；内置字体继续遵循各自的 SIL Open Font
+            License 1.1。
+          </p>
+        </div>
+
+        <div className="about-license-list">
+          <LicenseDetails
+            title="CLI Launchpad · MIT License"
+            text={appLicense}
+          />
+          <LicenseDetails
+            title="IBM Plex Sans SC · SIL OFL 1.1"
+            text={ibmPlexLicense}
+          />
+          <LicenseDetails
+            title="Maple Mono NF CN · SIL OFL 1.1"
+            text={mapleLicense}
+          />
         </div>
       </section>
     </div>
+  );
+}
+
+function LicenseDetails({ title, text }: { title: string; text: string }) {
+  return (
+    <details className="license-details">
+      <summary>{title}</summary>
+      <pre>{text}</pre>
+    </details>
   );
 }

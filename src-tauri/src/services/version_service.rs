@@ -115,9 +115,15 @@ fn normalize_semver(value: &str) -> Option<String> {
 }
 
 fn antigravity_platform() -> Result<&'static str, String> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
+    antigravity_platform_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn antigravity_platform_for(os: &str, arch: &str) -> Result<&'static str, String> {
+    match (os, arch) {
         ("windows", "x86_64") => Ok("windows_amd64"),
         ("windows", "aarch64") => Ok("windows_arm64"),
+        ("macos", "x86_64") => Ok("darwin_amd64"),
+        ("macos", "aarch64") => Ok("darwin_arm64"),
         _ => Err("当前平台尚未配置 Antigravity 官方版本查询".to_string()),
     }
 }
@@ -147,5 +153,22 @@ mod tests {
     fn rejects_non_semver_release_values() {
         assert!(normalize_semver("latest").is_none());
         assert!(parse_codex_latest(r#"{"tag_name":"unexpected"}"#).is_err());
+    }
+
+    #[test]
+    fn maps_antigravity_windows_and_macos_platforms() {
+        assert_eq!(
+            antigravity_platform_for("windows", "x86_64").unwrap(),
+            "windows_amd64"
+        );
+        assert_eq!(
+            antigravity_platform_for("macos", "aarch64").unwrap(),
+            "darwin_arm64"
+        );
+        assert_eq!(
+            antigravity_platform_for("macos", "x86_64").unwrap(),
+            "darwin_amd64"
+        );
+        assert!(antigravity_platform_for("linux", "x86_64").is_err());
     }
 }

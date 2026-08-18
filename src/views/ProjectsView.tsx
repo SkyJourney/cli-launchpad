@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Plus, RefreshCw, Search } from "lucide-react";
+import { FolderOpen, Plus, RefreshCw, Save, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ProjectCard } from "../components/ProjectCard";
 import { useDirectories } from "../hooks/queries";
@@ -181,30 +181,36 @@ export function ProjectsView() {
 
       {showAdd && (
         <div className="add-form">
-          <input
-            placeholder="名称"
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-          />
-          <input
-            placeholder="完整路径，或点击「浏览」选择"
-            value={newPath}
-            onChange={(event) => setNewPath(event.target.value)}
-          />
-          <button className="ghost-button" onClick={() => void pickFolder()}>
-            <FolderOpen size={15} />
-            浏览
-          </button>
-          <button
-            className="primary-button"
-            disabled={!canSubmit || addMutation.isPending}
-            onClick={() => addMutation.mutate()}
-          >
-            保存
-          </button>
-          <button className="ghost-button" onClick={() => setShowAdd(false)}>
-            取消
-          </button>
+          <div className="add-form-fields">
+            <input
+              placeholder="名称"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+            />
+            <input
+              placeholder="完整路径，或点击「浏览」选择"
+              value={newPath}
+              onChange={(event) => setNewPath(event.target.value)}
+            />
+          </div>
+          <div className="add-form-actions">
+            <button className="ghost-button" onClick={() => void pickFolder()}>
+              <FolderOpen size={15} />
+              浏览
+            </button>
+            <button
+              className="primary-button"
+              disabled={!canSubmit || addMutation.isPending}
+              onClick={() => addMutation.mutate()}
+            >
+              <Save size={15} />
+              保存
+            </button>
+            <button className="ghost-button" onClick={() => setShowAdd(false)}>
+              <X size={15} />
+              取消
+            </button>
+          </div>
         </div>
       )}
       {addMutation.isError && (

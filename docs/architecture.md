@@ -18,7 +18,7 @@ DB repositories
   负责 SQLite 查询和迁移
 
 Platform helpers
-  负责 Windows Terminal Profile 探测、Shell 分层回退、命令转义和 macOS/Linux 启动行为
+  按 Windows/macOS 分支负责 CLI 路径解析、终端探测、结构化启动计划、参数边界和进程树管理
 ```
 
 ## 全局 CLI 状态
@@ -81,6 +81,7 @@ commands 保持小而清晰，业务组合放在 services。
 - 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置，并排除可见性状态，避免关闭到托盘导致下次启动隐藏。
 - 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
 - 单实例：`tauri-plugin-single-instance` 阻止多个 GUI 进程并行写入同一业务数据库，二次启动改为聚焦现有主窗口。
+- macOS 生命周期：用户点击 Dock 图标重新激活应用时处理 `RunEvent::Reopen`，显示、取消最小化并聚焦主窗口；菜单栏状态项沿用“显示主界面/退出”入口，不依赖 Windows 双击语义。
 
 ## 本地存储根目录
 
@@ -169,7 +170,7 @@ TTL；过期后重新检测路径时，仅在可执行路径未变化的情况�
   - 离线版（`src-tauri/tauri.offline.conf.json` 覆盖 `webviewInstallMode=offlineInstaller`）：内嵌完整 WebView2，离线可装。
 - 多版本命名：`scripts/build-installers.ps1` 依次构建在线/离线两版，复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀并追加 `online`/`offline`（架构自动继承），归档到 `dist-installers/`。标准维度（版本/架构/格式）由 Tauri 自动命名，非标准维度（WebView2 模式）由脚本补名。
 - macOS 配置位于 `src-tauri/tauri.macos.conf.json`，只生成 DMG。Apple Silicon 与 Intel 分别使用 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target 独立编译与测试，不生成 Universal 包。
-- UI 内置 Maple Mono NormalNL CN，命令、路径和日志内置 Maple Mono NL NF-CN；两套字体均固定为 v7.9 的 400、500、600、700 静态字重，通过 Vite 前端产物进入各平台安装包，不依赖系统字体安装。
+- UI 内置 IBM Plex Sans SC 1.1.0 的 400、500、600、700 WOFF2 字重；命令、路径、参数和日志内置 Maple Mono NL NF-CN v7.9 的相同四个静态字重。两套字体通过 Vite 前端产物进入各平台安装包，不依赖系统字体安装，并在关于页内置各自的 SIL OFL 1.1 文本。
 
 ## 目标 CLI 范围
 
@@ -188,12 +189,19 @@ TTL；过期后重新检测路径时，仅在可执行路径未变化的情况�
 启动输入按以下顺序组合：
 
 ```text
-launch target（auto / Windows Terminal Profile / direct shell）
+launch target（auto / platform terminal host / Windows Terminal Profile / direct shell）
 + selected directory
 + resolved full path of shell / terminal
 + resolved full path of tool（候选命令解析，agy 优先于 antigravity）
 + tool global args ⊕ directory-specific tool args（项目级覆盖同名 flag）
 ```
+
+其中 launch target 使用跨平台稳定 ID：Windows 保留现有 `wt:*` 与
+`direct:*`；macOS 使用 `macos:terminal`、`macos:iterm2`、
+`macos:ghostty`、`macos:wezterm` 与 `macos:kitty`。终端环境响应包含
+`platform`、平台中立的 host 列表、Windows 专属 Profile 信息、Shell 信息、
+推荐目标和告警。旧数据库中的其他
+平台显式目标不会被执行，而是作为当前平台不可用目标进入自动回退。
 
 **执行边界**：工具在启动或版本探测前解析为完整路径；安装计划在用户确认前解析实际目标，并按该目标执行。终端与 Shell 由平台探测结果生成结构化候选，用户参数始终作为字面值传递，只在最终 Shell 边界编码。
 
@@ -220,6 +228,41 @@ Set-Location -LiteralPath '<directory>'
 & '<tool-full-path>' <args>
 ```
 
+**macOS 启动策略**：
+
+```text
+自动推荐
+  → Terminal.app（系统内置，默认）
+显式选择
+  → Terminal.app / iTerm2（一次性、自删除的 .command 文档）
+  → Ghostty（AppleScript 原生窗口 + 安全命令输入）
+  → WezTerm / kitty（应用包内原生 CLI 参数）
+显式目标不可用或启动失败
+  → Terminal.app
+  → 返回可操作错误，不在 GUI 进程中静默运行 CLI
+```
+
+macOS 不使用 Terminal.app 或 iTerm2 的 AppleScript `do script`，避免触发
+跨应用自动化权限。Ghostty 使用其官方 AppleScript 字典创建原生窗口，并将
+经过 POSIX 引用的完整命令作为 `osascript` argv 传入后，通过 `input text` 与
+`send key` 输入目标终端。自动模式固定选择系统 Terminal.app，不因安装第三方
+终端而改变；第三方终端仅在用户显式选择时使用。
+
+启动服务先在 `~/.cli-launchpad/cache/launch/` 原子创建权限为 `0700` 的临时
+`.command` 文件，供 Terminal.app 与 iTerm2 通过 LaunchServices 按已验证的
+Bundle ID 打开。载荷只包含应用生成的固定控制流程和经过 POSIX 单引号规则
+编码的目录、完整工具路径与参数，执行开始即删除自身，CLI 退出后回到用户
+登录 Shell。WezTerm 与 kitty 直接使用包内 CLI 的结构化参数，其中 kitty 使用
+`--hold` 保留命令退出后的窗口。应用启动时清理超过限定时长的残留载荷，启动
+失败也主动清理本次文件。所有 macOS 终端启动子进程都会移除调用方继承的
+`NO_COLOR`、`TERM`、`COLORTERM`、`CI` 与强制配色变量，让目标终端建立自己的
+交互环境。
+
+终端探测先检查 `/Applications` 与 `~/Applications` 中的标准应用路径，再使用
+`/usr/bin/mdfind` 按 Bundle ID 查找被用户移动的应用。所有候选必须读取
+`Info.plist` 复核 Bundle ID；需要直接启动的终端还要验证应用包内可执行文件，
+探测过程不执行候选应用。
+
 恢复会话通过 `resume_session`，按工具拼装恢复参数后复用同一组合逻辑（Claude `--resume <id>`、Codex `resume <id>`、Antigravity `--conversation=<id>`）。
 
 ## CLI 检测与安装
@@ -242,6 +285,17 @@ Windows 默认安装后端优先级：
 - Claude Code：`winget install --id Anthropic.ClaudeCode --exact` 或官方 PowerShell 安装脚本。
 - Codex：Windows 官方 PowerShell 独立安装器，npm 作为备选安装方式。
 - Antigravity：`irm https://antigravity.google/cli/install.ps1 | iex`。
+
+macOS 使用官方原生安装脚本：
+
+- Claude Code：`curl -fsSL https://claude.ai/install.sh | bash`。
+- Codex：`curl -fsSL https://chatgpt.com/codex/install.sh | sh`。
+- Antigravity：`curl -fsSL https://antigravity.google/cli/install.sh | bash`。
+
+这些管道字符串是内置清单中的固定常量，只允许由对应工具的安装计划生成，
+不拼接用户输入；执行程序固定解析为系统 `/bin/bash` 或 `/bin/sh`，参数数组
+固定使用 `-c` 和对应常量。UI 必须展示完整脚本来源和网络脚本风险。更新仍
+执行已解析完整路径上的 `claude update`、`codex update` 或 `agy update`。
 
 安装命令必须用结构化参数建模，例如：
 
@@ -285,7 +339,7 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
 Settings / Execution View
   -> Tauri command（创建、查询、终止、清理）
   -> ExecutionTaskManager（单任务并发、状态机、进程句柄）
-  -> platform process runner（Windows Job Object）
+  -> platform process runner（Windows Job Object / Unix process group）
   -> SQLite execution_tasks / execution_task_logs
   -> Tauri events（状态与 stdout/stderr 日志增量）
 ```
@@ -298,6 +352,11 @@ Settings / Execution View
 Windows 执行器将任务子进程加入独立 Job Object；终止时关闭整个作业进程树，
 防止 PowerShell、包管理器或自更新器留下子进程。该行为是强制终止而不是向
 终端发送字面 `Ctrl+C`，UI 统一使用“终止任务”并提示更新中断风险。
+
+macOS 执行器在 spawn 前把任务命令放入新的 Unix process group。终止或超时
+时先向整个进程组发送 `SIGTERM`，经过有界宽限期仍未退出时发送 `SIGKILL`，
+随后回收根子进程与输出管道。非 Windows 平台不得继续使用空实现，否则取消
+任务会在 `child.wait()` 上无限等待。
 
 任务创建时只接受内置三工具清单生成的 `InstallPlan`，持久化工具、类型、来源、
 程序、参数数组和预览，不保存环境变量或自由命令。全局同时最多运行一个安装/
@@ -321,6 +380,11 @@ workspace URI。Claude 标题优先级为 `summary`、`firstPrompt`、首条用�
 数据库 `preview`。读取故障会明确返回错误而不是伪装为空列表；恢复或修改别名前会再次
 验证 session 仍归属于当前目录。
 
+路径身份比较遵守平台语义：Windows 规范化分隔符并忽略大小写；macOS 对存在
+路径优先使用 `canonicalize` 后比较，不将路径统一转为小写，对暂时不存在的路径
+只做 POSIX 分隔符与尾部分隔符的词法规范化。CLI 状态缓存中的可执行路径比较
+使用同一规则，避免大小写敏感卷上的错误复用。
+
 列表默认每页 10 条，Claude 与 Antigravity 使用有界 offset cursor，Codex 透传并封装
 App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更多”按 10 条追加。
 CLI 原始标题和源文件路径不进入应用持久缓存。
@@ -335,14 +399,16 @@ CLI 原始标题和源文件路径不进入应用持久缓存。
 
 - 目录路径来自用户输入，启动前必须验证。
 - Windows 路径切换使用 `Set-Location -LiteralPath`。
+- macOS 路径和参数使用 POSIX 单引号字面值编码，单引号按关闭、转义、重新打开的规则处理，不允许未编码内容进入启动载荷。
 - 工具可执行文件和参数分开建模。
-- Windows 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`。
+- 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`，内部通过平台模块隔离 Windows 与 macOS 逻辑。
 - 启动和安装前都要在 UI 中提供命令预览。
 - 不在 SQLite 中保存密钥。如果未来需要凭据，使用操作系统凭据存储。
 
 ## 跨平台发布约束
 
 - Windows 启动策略已经实现并完成本机受控探针与界面验收。
-- macOS 必须提供对应的终端/Shell 探测、结构化启动计划和安全参数边界，不允许简单复用 Windows 命令字符串。
+- macOS 必须提供 CLI 路径检测、五款目标终端探测、一次性结构化启动载荷、Unix 进程组终止和平台路径语义，不允许简单复用 Windows 命令字符串。
 - macOS 分别发布 Apple Silicon 与 Intel DMG，不发布 Universal DMG；两个架构均需独立完成构建和运行验证。
-- 0.2.0 发布前必须在真实 macOS 设备完成直接启动、项目目录、参数传递、会话恢复和失败回退实测；完成前保持发布状态为 Unreleased。
+- macOS DMG 的 target 配置与功能实现分离；内部未签名测试包可以用于本机验证，正式跨设备分发仍需有效 Developer ID Application 身份、公证凭据和 stapling 验证。
+- 0.2.0 发布前必须在真实 macOS 设备完成 CLI 检测与版本、直接启动、项目目录、特殊字符参数、模型目录、会话恢复、安装更新任务、主动终止、Dock/菜单栏恢复和终端失败回退实测；完成前保持发布状态为 Unreleased。

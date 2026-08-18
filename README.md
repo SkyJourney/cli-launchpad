@@ -2,6 +2,9 @@
 
 CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。
 
+项目由 [SkyJourney](https://github.com/SkyJourney) 维护，源码仓库位于
+[github.com/SkyJourney/cli-launchpad](https://github.com/SkyJourney/cli-launchpad)。
+
 版本变化与尚待验证的内容见 [CHANGELOG.md](CHANGELOG.md)。
 
 项目采用 Tauri 风格架构，参考 CC-Switch 的组织方式：
@@ -33,7 +36,7 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 - Rust
 - rusqlite
 - Windows Terminal Profile / PowerShell / CMD 分层回退集成
-- Maple Mono v7.9 内置 UI 与命令字体
+- IBM Plex Sans SC 与 Maple Mono NF CN 内置字体
 
 ## 本地依赖
 
@@ -116,13 +119,24 @@ pnpm tauri:build:macos:x64    # Intel DMG
 
 ## 内置字体
 
-应用不依赖系统安装字体，固定使用 Maple Font v7.9：
+应用不依赖系统安装字体，按内容用途使用两套开源字体：
 
-- 全局 UI：Maple Mono NormalNL CN，使用 400、500、600、700 四个字重。
-- 命令、路径和日志：Maple Mono NL NF-CN，使用相同四个字重并关闭连字。
+- 全局 UI：IBM Plex Sans SC，使用 WOFF2 格式的 400、500、600、700 四个字重。
+- 命令、路径、参数和日志：Maple Mono NL NF-CN，使用相同四个字重并关闭连字。
 - 字体文件随 Vite 前端产物进入 NSIS 与 DMG。
-- 字体采用 SIL Open Font License 1.1，来源和授权见
-  `src/assets/fonts/maple/README.md` 与 `src/assets/fonts/maple/LICENSE.txt`。
+- 两套字体均采用 SIL Open Font License 1.1；来源和授权见
+  `src/assets/fonts/ibm-plex-sans-sc/`、`src/assets/fonts/maple/` 与
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 应用更新
+
+0.2.0 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
+GitHub Releases 增加显式的版本检查，并在获得用户确认后再进入下载或安装流程。
+
+## 许可证
+
+CLI Launchpad 由 SkyJourney 以 [MIT License](LICENSE) 开源。内置字体不受项目
+MIT License 覆盖，继续遵循各自的 SIL Open Font License 1.1。
 
 ## 项目结构
 

@@ -1,10 +1,15 @@
+#[cfg(not(windows))]
+use std::path::Path;
 use std::path::PathBuf;
+
+#[cfg(windows)]
 use std::time::Duration;
 
 use tokio::process::Command;
 
+#[cfg(windows)]
 const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
-const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -21,22 +26,28 @@ pub fn system32(relative: &str) -> String {
     relative.to_string()
 }
 
-/// Resolve a command on the current PATH using Windows `where.exe`.
-/// Bounded by a timeout; the child is killed on drop so a hung probe cannot leak.
+/// Resolve a command on the current platform PATH without running the candidate.
 pub async fn which(command: &str) -> Option<PathBuf> {
-    let mut process = Command::new(system32("where.exe"));
-    process.arg(command).kill_on_drop(true);
-    #[cfg(windows)]
-    process.creation_flags(CREATE_NO_WINDOW);
-    let future = process.output();
-    let output = tokio::time::timeout(WHERE_TIMEOUT, future)
-        .await
-        .ok()?
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    #[cfg(not(windows))]
+    {
+        return find_on_path(command);
     }
-    pick_executable(&String::from_utf8_lossy(&output.stdout)).map(PathBuf::from)
+
+    #[cfg(windows)]
+    {
+        let mut process = Command::new(system32("where.exe"));
+        process.arg(command).kill_on_drop(true);
+        process.creation_flags(CREATE_NO_WINDOW);
+        let future = process.output();
+        let output = tokio::time::timeout(WHERE_TIMEOUT, future)
+            .await
+            .ok()?
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        pick_executable(&String::from_utf8_lossy(&output.stdout)).map(PathBuf::from)
+    }
 }
 
 /// Run `--version` only after an explicit user refresh. The executable path is
@@ -103,27 +114,60 @@ fn first_output_line(bytes: &[u8]) -> Option<String> {
         .map(|line| line.chars().take(200).collect())
 }
 
-/// Synchronous PATH resolution to a full executable path, used on the
-/// (synchronous) launch path so commands run by absolute path rather than
-/// relying on the child process's PATH. Runs `where` with no console window.
+/// Synchronous PATH resolution to a full executable path, used on the launch
+/// path so commands run by absolute path rather than relying on child PATH.
 pub fn which_path_sync(command: &str) -> Option<String> {
-    let mut cmd = std::process::Command::new(system32("where.exe"));
-    cmd.arg(command);
+    #[cfg(not(windows))]
+    {
+        return find_on_path(command).map(|path| path.display().to_string());
+    }
+
     #[cfg(windows)]
     {
+        let mut cmd = std::process::Command::new(system32("where.exe"));
+        cmd.arg(command);
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
+        let output = cmd.output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        pick_executable(&String::from_utf8_lossy(&output.stdout))
     }
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
+}
+
+#[cfg(not(windows))]
+fn find_on_path(command: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| absolute_candidate(&directory, command))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+#[cfg(not(windows))]
+fn absolute_candidate(directory: &Path, command: &str) -> PathBuf {
+    let candidate = directory.join(command);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(&candidate))
+            .unwrap_or(candidate)
     }
-    pick_executable(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 /// Choose the best match from `where` output. `where` lists every match (e.g.
 /// npm installs both a `.cmd` shim and an extensionless POSIX shell shim that
 /// PowerShell cannot run); prefer a directly-executable Windows extension.
+#[cfg(any(windows, test))]
 fn pick_executable(stdout: &str) -> Option<String> {
     let lines: Vec<&str> = stdout
         .lines()
@@ -161,6 +205,14 @@ pub fn resolve_executable_path(candidates: &[&str]) -> Option<String> {
 /// Used only to distinguish "installed but not on PATH" from "missing".
 pub fn find_in_known_dirs(command: &str) -> Option<PathBuf> {
     for dir in candidate_dirs() {
+        #[cfg(not(windows))]
+        {
+            let candidate = dir.join(command);
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+        #[cfg(windows)]
         for ext in ["cmd", "exe", "bat", "ps1"] {
             let candidate = dir.join(format!("{command}.{ext}"));
             if candidate.is_file() {
@@ -173,28 +225,64 @@ pub fn find_in_known_dirs(command: &str) -> Option<PathBuf> {
 
 fn candidate_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        dirs.push(PathBuf::from(appdata).join("npm"));
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            dirs.push(PathBuf::from(appdata).join("npm"));
+        }
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(
+                PathBuf::from(&local)
+                    .join("Microsoft")
+                    .join("WinGet")
+                    .join("Links"),
+            );
+            dirs.push(PathBuf::from(&local).join("agy").join("bin"));
+            dirs.push(
+                PathBuf::from(&local)
+                    .join("Programs")
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+            );
+        }
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            dirs.push(PathBuf::from(profile).join(".local").join("bin"));
+        }
     }
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        dirs.push(
-            PathBuf::from(&local)
-                .join("Microsoft")
-                .join("WinGet")
-                .join("Links"),
-        );
-        dirs.push(PathBuf::from(&local).join("agy").join("bin"));
-        dirs.push(
-            PathBuf::from(&local)
-                .join("Programs")
-                .join("OpenAI")
-                .join("Codex")
-                .join("bin"),
-        );
+
+    #[cfg(not(windows))]
+    if let Some(home) = home_dir() {
+        dirs.push(home.join(".local/bin"));
+
+        #[cfg(target_os = "macos")]
+        {
+            dirs.push(PathBuf::from("/opt/homebrew/bin"));
+            dirs.push(PathBuf::from("/usr/local/bin"));
+            dirs.push(home.join(".volta/bin"));
+            dirs.extend(nvm_bin_dirs(&home));
+        }
     }
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        dirs.push(PathBuf::from(profile).join(".local").join("bin"));
-    }
+    dirs
+}
+
+#[cfg(not(windows))]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
+    let versions = home.join(".nvm/versions/node");
+    let Ok(entries) = std::fs::read_dir(versions) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("bin"))
+        .filter(|path| path.is_dir())
+        .collect();
+    dirs.sort_by(|left, right| right.cmp(left));
     dirs
 }
 
@@ -226,5 +314,24 @@ mod tests {
             first_output_line(b"\r\ncodex-cli 0.147.0\r\nextra\r\n").as_deref(),
             Some("codex-cli 0.147.0")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn known_directory_requires_executable_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let candidate = directory.path().join("codex");
+        std::fs::write(&candidate, "#!/bin/sh\n").unwrap();
+        let mut permissions = std::fs::metadata(&candidate).unwrap().permissions();
+        permissions.set_mode(0o644);
+        std::fs::set_permissions(&candidate, permissions).unwrap();
+        assert!(!super::is_executable_file(&candidate));
+
+        let mut permissions = std::fs::metadata(&candidate).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&candidate, permissions).unwrap();
+        assert!(super::is_executable_file(&candidate));
     }
 }

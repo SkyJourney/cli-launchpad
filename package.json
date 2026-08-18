@@ -1,6 +1,13 @@
 {
   "name": "cli-launchpad",
   "version": "0.2.0",
+  "author": "SkyJourney",
+  "license": "MIT",
+  "homepage": "https://github.com/SkyJourney/cli-launchpad",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SkyJourney/cli-launchpad.git"
+  },
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,9 +19,9 @@
     "tauri:build": "tauri build",
     "tauri:build:windows": "tauri build --bundles nsis",
     "tauri:build:offline": "tauri build --config src-tauri/tauri.offline.conf.json",
-    "tauri:build:macos": "tauri build --bundles dmg",
-    "tauri:build:macos:arm64": "tauri build --bundles dmg --target aarch64-apple-darwin",
-    "tauri:build:macos:x64": "tauri build --bundles dmg --target x86_64-apple-darwin",
+    "tauri:build:macos": "APPLE_SIGNING_IDENTITY=- tauri build --bundles dmg",
+    "tauri:build:macos:arm64": "APPLE_SIGNING_IDENTITY=- tauri build --bundles dmg --target aarch64-apple-darwin",
+    "tauri:build:macos:x64": "APPLE_SIGNING_IDENTITY=- tauri build --bundles dmg --target x86_64-apple-darwin",
     "build:installers": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installers.ps1",
     "format": "prettier --write ."
   },

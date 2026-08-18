@@ -142,11 +142,22 @@ mod tests {
         conn
     }
 
+    fn absolute_test_path(name: &str) -> String {
+        #[cfg(windows)]
+        {
+            format!(r"C:\Projects\{name}")
+        }
+        #[cfg(not(windows))]
+        {
+            format!("/cli-launchpad-tests/{name}")
+        }
+    }
+
     #[test]
     fn export_import_round_trips() {
         let source = seeded_db();
-        let directory =
-            directory_repo::add(&source, "demo", "C:\\Projects\\demo", Some("note")).unwrap();
+        let path = absolute_test_path("demo");
+        let directory = directory_repo::add(&source, "demo", &path, Some("note")).unwrap();
         directory_repo::set_pinned(&source, directory.id, true).unwrap();
         directory_tool_args_repo::save(&source, directory.id, ToolKey::Claude, "--model x")
             .unwrap();
@@ -166,7 +177,8 @@ mod tests {
     #[test]
     fn import_is_idempotent_on_existing_paths() {
         let db = seeded_db();
-        let directory = directory_repo::add(&db, "demo", "C:\\Projects\\demo", None).unwrap();
+        let path = absolute_test_path("demo");
+        let directory = directory_repo::add(&db, "demo", &path, None).unwrap();
         directory_tool_args_repo::save(&db, directory.id, ToolKey::Claude, "--model x").unwrap();
 
         let json = export_json(&db).unwrap();

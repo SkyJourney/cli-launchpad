@@ -64,8 +64,26 @@ export interface DirectShellTarget {
   priority: number;
 }
 
+export type TerminalPlatform = "windows" | "macos" | "other";
+export type MacosTerminalLaunchMode =
+  | "command_document"
+  | "apple_script"
+  | "direct_arguments";
+
+export interface MacosTerminalHost {
+  targetId: string;
+  displayName: string;
+  applicationPath: string;
+  bundleIdentifier: string;
+  executablePath: string | null;
+  version: string | null;
+  launchMode: MacosTerminalLaunchMode;
+}
+
 export interface TerminalEnvironment {
+  platform: TerminalPlatform;
   windowsTerminalHosts: WindowsTerminalHost[];
+  macosTerminalHosts: MacosTerminalHost[];
   directShells: DirectShellTarget[];
   recommendedTargetId: string | null;
   warnings: string[];

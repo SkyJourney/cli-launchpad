@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TerminalPlatform {
+    Windows,
+    Macos,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TerminalDistribution {
     Stable,
     Preview,
@@ -9,6 +17,7 @@ pub enum TerminalDistribution {
     Unpackaged,
 }
 
+#[cfg(any(windows, test))]
 impl TerminalDistribution {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -73,10 +82,32 @@ pub struct DirectShellTarget {
     pub priority: u8,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacosTerminalLaunchMode {
+    CommandDocument,
+    AppleScript,
+    DirectArguments,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacosTerminalHost {
+    pub target_id: String,
+    pub display_name: String,
+    pub application_path: String,
+    pub bundle_identifier: String,
+    pub executable_path: Option<String>,
+    pub version: Option<String>,
+    pub launch_mode: MacosTerminalLaunchMode,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalEnvironment {
+    pub platform: TerminalPlatform,
     pub windows_terminal_hosts: Vec<WindowsTerminalHost>,
+    pub macos_terminal_hosts: Vec<MacosTerminalHost>,
     pub direct_shells: Vec<DirectShellTarget>,
     pub recommended_target_id: Option<String>,
     pub warnings: Vec<String>,

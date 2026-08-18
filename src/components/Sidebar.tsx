@@ -1,16 +1,12 @@
-import {
-  FolderKanban,
-  Info,
-  Settings,
-  SquareTerminal,
-  Terminal,
-} from "lucide-react";
+import { FolderKanban, Info, Settings, SquareTerminal } from "lucide-react";
 import clsx from "clsx";
+import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import {
   isExecutionActive,
   useExecutionTasks,
 } from "../hooks/useExecutionTasks";
 import { useAppStore } from "../store/appStore";
+import { AppLogo } from "./AppLogo";
 
 export function Sidebar() {
   const view = useAppStore((state) => state.view);
@@ -25,7 +21,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <Terminal size={20} />
+        <AppLogo size={32} />
         <span>CLI Launchpad</span>
       </div>
 
@@ -67,6 +63,19 @@ export function Sidebar() {
           关于
         </button>
       </nav>
+
+      <div className="sidebar-footer">
+        <a
+          className="icon-button sidebar-repository-button"
+          href="https://github.com/SkyJourney/cli-launchpad"
+          target="_blank"
+          rel="noreferrer"
+          title="打开 GitHub 项目仓库"
+          aria-label="打开 GitHub 项目仓库"
+        >
+          <GithubMono size={20} />
+        </a>
+      </div>
     </aside>
   );
 }

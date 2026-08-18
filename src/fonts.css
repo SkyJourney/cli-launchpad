@@ -1,34 +1,34 @@
 @font-face {
-  font-family: "Maple Launchpad UI";
-  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Regular.ttf")
-    format("truetype");
+  font-family: "IBM Plex Sans SC Launchpad";
+  src: url("./assets/fonts/ibm-plex-sans-sc/IBMPlexSansSC-Regular.woff2")
+    format("woff2");
   font-display: swap;
   font-style: normal;
   font-weight: 400;
 }
 
 @font-face {
-  font-family: "Maple Launchpad UI";
-  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Medium.ttf")
-    format("truetype");
+  font-family: "IBM Plex Sans SC Launchpad";
+  src: url("./assets/fonts/ibm-plex-sans-sc/IBMPlexSansSC-Medium.woff2")
+    format("woff2");
   font-display: swap;
   font-style: normal;
   font-weight: 500;
 }
 
 @font-face {
-  font-family: "Maple Launchpad UI";
-  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-SemiBold.ttf")
-    format("truetype");
+  font-family: "IBM Plex Sans SC Launchpad";
+  src: url("./assets/fonts/ibm-plex-sans-sc/IBMPlexSansSC-SemiBold.woff2")
+    format("woff2");
   font-display: swap;
   font-style: normal;
   font-weight: 600;
 }
 
 @font-face {
-  font-family: "Maple Launchpad UI";
-  src: url("./assets/fonts/maple/ui/MapleMonoNormalNL-CN-Bold.ttf")
-    format("truetype");
+  font-family: "IBM Plex Sans SC Launchpad";
+  src: url("./assets/fonts/ibm-plex-sans-sc/IBMPlexSansSC-Bold.woff2")
+    format("woff2");
   font-display: swap;
   font-style: normal;
   font-weight: 700;

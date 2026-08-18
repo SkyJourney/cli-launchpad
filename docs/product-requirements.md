@@ -2,7 +2,7 @@
 
 ## 问题
 
-开发者在多个本地仓库之间工作时，经常需要先打开 PowerShell、切换目录，再启动 Claude Code、Codex 或 Antigravity CLI。这个流程重复且容易出错。
+开发者在多个本地仓库之间工作时，经常需要先打开系统终端、切换目录，再启动 Claude Code、Codex 或 Antigravity CLI。这个流程重复且容易出错。
 
 CLI Launchpad 的目标是把这个动作变成可视化选择和一键打开。
 
@@ -29,7 +29,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 终端启动偏好与工具参数分离。
 - 全局工具参数与目录级工具参数分离。
 - 展示即将执行的命令预览。
-- 在选定目录中通过系统可用的终端或 Shell 打开对应 CLI；Windows 优先保留 Windows Terminal Profile，无法使用时按 `pwsh`、Windows PowerShell、CMD 分层回退。
+- 在选定目录中通过系统可用的终端打开对应 CLI；Windows 优先保留 Windows Terminal Profile，macOS 覆盖已确认的五款主流终端，并在平台内提供安全回退。
 
 ## 界面形态
 
@@ -40,15 +40,20 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 卡片式项目管理：项目主页以卡片网格展示常用目录。
 - 直接启动为常态：点击工具即在该目录启动，命令预览作为可折叠的辅助能力。
 - 全局 CLI 状态：应用启动时检测三个 CLI，统一下发到所有视图，缺失的工具在任何位置都灰色禁用。
-- 桌面常驻：默认关闭主窗口时最小化到系统托盘，托盘菜单可显示主界面或退出，双击托盘图标显示主界面；设置页可改为关闭即退出。
+- 桌面常驻：默认关闭主窗口时隐藏到 Windows 系统托盘或 macOS 菜单栏状态项，菜单可显示主界面或退出；Windows 双击托盘图标、macOS 点击 Dock 图标时均可恢复主界面，设置页可改为关闭即退出。
 
 ## 启动方式
 
-- 默认使用自动推荐策略，优先选择 Windows Terminal 默认 Profile，并尽量保留该 Profile 的命令、参数、外观和初始化行为。
+- 启动目标由 Rust 返回平台中立的终端环境，设置值使用稳定 target ID；`auto` 在当前平台选择推荐目标，跨平台数据库中的不可用显式目标自动退回 `auto` 候选链。
+- Windows 自动模式优先选择 Windows Terminal 默认 Profile，并尽量保留该 Profile 的命令、参数、外观和初始化行为。
 - Windows Terminal Profile 按能力分为完整追加、PowerShell 命令续接和仅保留外观三种保留级别，设置页允许显式选择检测到的 Profile。
 - Windows Terminal 不可用或启动失败时，依次回退到 PowerShell 7、系统 Windows PowerShell 和 CMD；最终兜底允许牺牲 Profile 配置，但必须保证存在可用启动路径。
-- 启动前的命令预览必须展示实际选中的终端、Profile 保留级别和失败回退链。
-- 0.2.0 发布前必须在 macOS 完成同等启动能力的同步实现和实机验证；当前 Windows 实现不代表 macOS 已可发布。
+- macOS 自动模式固定使用系统内置 Terminal.app；检测到 iTerm2、Ghostty、WezTerm 或 kitty 时允许用户显式选择，不因安装第三方终端而自动改变行为。
+- Terminal.app、iTerm2、Ghostty、WezTerm 与 kitty 是当前完整支持的 macOS 终端目标。
+- macOS 的 Terminal.app 与 iTerm2 启动载荷必须位于应用缓存目录、权限限制为当前用户可执行、在开始执行后自删除，并在应用启动时清理超龄残留；Ghostty 使用原生 AppleScript 窗口接口，WezTerm 与 kitty 使用应用包内 CLI；目录、工具路径和参数只在最终 POSIX Shell 边界引用。
+- macOS 终端探测必须复核应用 Bundle ID 与所需包内可执行文件，不执行候选应用；显式目标不可用或启动失败时回退 Terminal.app。
+- 启动前的命令预览必须展示实际选中的终端、平台相关保留能力和失败回退链。
+- 0.2.0 发布前必须在 macOS 完成 CLI 检测、终端启动、安装更新、任务终止、会话路径匹配和桌面生命周期的同步实现与实机验证；当前 Windows 实现不代表 macOS 已可发布。
 
 ## 会话历史
 
@@ -87,7 +92,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 每个任务展示准备中、执行中、正在终止、执行成功、执行失败、已取消、已超时或意外中断状态。
 - 标准输出和错误输出实时追加到任务日志；应用重启后仍可查看历史任务和日志。
 - 同一时间全局只允许一个安装或更新任务运行，避免多个包管理器或自更新进程互相干扰。
-- 执行中的任务允许用户主动终止；Windows 必须终止完整进程树，并明确提示更新中断可能需要重新安装对应 CLI。
+- 执行中的任务允许用户主动终止；Windows 使用 Job Object，macOS 使用独立 Unix 进程组，两个平台都必须终止完整进程树，并明确提示更新中断可能需要重新安装对应 CLI。
 - 默认只保留最近 50 个任务，每个任务最多持久化 1 MiB 日志；超过上限时记录截断状态和提示。
 - 支持清理单个历史任务或全部历史任务，清理前必须再次确认；执行中的任务不能清理。
 - 仅持久化三个内置 CLI 已批准的结构化安装/更新计划，不接受自由命令，也不保存环境变量或密钥。
@@ -99,6 +104,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 检测 `claude`、`codex`、`agy` 是否可用。
 - Antigravity 以 `agy` 为主；`antigravity` 只作为保守兼容探测，不作为推荐启动命令。
 - 在 PATH 或可信已知安装目录解析到完整路径时判定为可用，否则判定为未安装。
+- macOS 不执行用户 Shell 启动脚本来补全 GUI 进程 PATH；除当前进程 PATH 外，只扫描 `~/.local/bin`、Homebrew、Volta、NVM 等限定的可信用户级安装位置。
 - 展示实际解析路径；当前版本或最新版本查询失败时保留安装状态，并显示独立失败原因。
 
 ## 一键安装
@@ -122,6 +128,7 @@ Antigravity 是 Google 新品牌下的目标 CLI。本项目不再关注 Gemini 
 - 第一版不做账号管理。
 - 第一版不做代理、模型路由或密钥管理。
 - 不做通用 CLI 工具管理器。
+- 0.2.0 不提供 CLI Launchpad 自身的自动更新或后台版本检查；后续可基于 GitHub Releases 单独设计。
 - 不检测或安装当前范围外的 CLI 工具。
 
 ## 数据归属

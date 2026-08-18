@@ -130,7 +130,7 @@ Tab 行为：
 ```text
 CLI 状态                              [🔄 重新检测]
 ─────────────────────────────────────────────
-🤖 Claude Code   [已安装]  路径: C:\...\claude.exe
+🤖 Claude Code   [已安装]  路径: ~/.local/bin/claude
 当前: 1.7.0   最新: 1.8.2   有更新   [▶ 更新]
 
 🧩 Codex         [已安装]  当前: 0.1.0   最新: 0.1.0
@@ -139,17 +139,14 @@ CLI 状态                              [🔄 重新检测]
 
 启动方式
 (•) 自动选择（推荐）
-Windows Terminal
-  ( ) 默认 PowerShell   [默认 Profile] [命令续接]
-  ( ) 其他已检测 Profile [完整追加/命令续接/保留外观]
-独立 Shell
-  ( ) PowerShell 7      [优先级 1]
-  ( ) Windows PowerShell [优先级 2]
-  ( ) 命令提示符         [最终兜底]
+当前平台终端
+  ( ) 系统终端或默认 Profile       [默认] [推荐]
+  ( ) 其他已检测终端/Profile       [原生]
+  ( ) 其他已检测终端              [原生]
 
 关闭窗口行为
-(•) 最小化到托盘   ( ) 退出应用
-关闭到托盘后，双击托盘图标显示主界面
+(•) 关闭后保持后台运行   ( ) 退出应用
+通过 Windows 托盘或 macOS 菜单栏/Dock 重新显示主界面
 
 工具全局参数
 Claude:  [____________________]
@@ -164,9 +161,19 @@ Antigravity: [________________]            [保存全局参数]
 - 未安装：显示"一键安装"按钮，复用安装流程（见 tooling-and-installation.md）。
 - 更新和安装都遵循同一原则：先预览命令、用户确认、输出日志、完成后重新检测。
 - 用户确认后关闭确认浮层并创建后台任务，执行状态与实时日志转到“执行任务”视图展示。
-- 启动方式列表来自 Rust 平台探测结果；默认自动选择 Windows Terminal 默认 Profile，并展示每个 Profile 的保留级别。Windows Terminal 不可用或失败时按 PowerShell 7、Windows PowerShell、CMD 回退（详见 architecture.md 的启动组合）。
-- 关闭窗口行为默认是最小化到托盘；用户选择退出应用后，关闭主窗口即结束进程。托盘右键菜单始终提供显示主界面和退出入口。
+- 启动方式列表来自 Rust 平台探测结果，不由 React 自行判断操作系统。Windows 展示 Windows Terminal Profiles 与独立 Shell；macOS 展示 Terminal.app，以及已检测到的 iTerm2、Ghostty、WezTerm 和 kitty。
+- macOS 当前支持的五款终端均标记为“原生”。
+- 设置页按真实接口说明启动方式：Terminal.app 与 iTerm2 使用一次性、自删除的 `.command`；Ghostty 使用 AppleScript 原生窗口；WezTerm 与 kitty 使用包内 CLI，kitty 额外保留命令退出后的窗口。
+- 自动模式在 Windows 优先使用 Windows Terminal 默认 Profile，在 macOS 固定使用 Terminal.app；第三方终端只响应显式选择。命令预览按平台展示 Profile 保留级别、终端启动接口、临时载荷说明和失败回退链。
+- 关闭窗口行为默认是保持后台运行；用户选择退出应用后，关闭主窗口即结束进程。Windows 托盘和 macOS 菜单栏菜单均提供显示主界面和退出入口，macOS 点击 Dock 图标也能恢复窗口。
 - 配置备份通过系统文件对话框导出/导入 JSON（plugin-dialog），导入按目录路径合并。
+
+## View F：关于
+
+- 使用应用 Logo 展示品牌和版本；项目仓库入口使用 LobeHub 实心 GitHub Mark，固定在侧边栏左下角。
+- 软件信息卡片优先展示三项受支持 CLI；不展示作者、仓库 URL、主命令或实现技术栈。
+- 软件信息与开源许可使用两个独立全宽卡片，随工作区宽度响应式伸展。
+- 许可卡片展示应用 MIT License 与两套内置字体的 SIL OFL 1.1，并允许展开查看随安装包内置的许可证全文。
 
 ## View E：执行任务
 
@@ -188,10 +195,6 @@ Antigravity: [________________]            [保存全局参数]
 - 执行中任务提供“终止任务”，并警告更新中断可能导致 CLI 需要重新安装。
 - 只允许清理已结束任务；清理单条或全部历史都需要确认。
 - 日志超过 1 MiB 时显示“后续日志未保存”的截断提示；默认保留最近 50 个任务。
-
-## View F：关于
-
-展示软件名、版本（Tauri `getVersion`）、技术栈、支持的 CLI 与命令。
 
 ## 会话历史数据源
 

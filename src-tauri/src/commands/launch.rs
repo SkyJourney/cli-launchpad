@@ -3,6 +3,7 @@ use tauri::State;
 use crate::commands::terminal::{load_terminal_environment, TerminalEnvironmentCache};
 use crate::models::tool::ToolKey;
 use crate::services::launch_service;
+use crate::services::storage_service::StoragePaths;
 use crate::{with_conn, AppError, Db};
 
 #[tauri::command]
@@ -27,6 +28,7 @@ pub async fn preview_launch(
 pub async fn launch_tool(
     state: State<'_, Db>,
     terminal_cache: State<'_, TerminalEnvironmentCache>,
+    storage: State<'_, StoragePaths>,
     directory_id: i64,
     tool_key: ToolKey,
 ) -> Result<(), AppError> {
@@ -35,6 +37,7 @@ pub async fn launch_tool(
         Ok(launch_service::launch(
             conn,
             &environment,
+            &storage,
             directory_id,
             tool_key,
         )?)

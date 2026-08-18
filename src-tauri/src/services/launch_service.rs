@@ -11,11 +11,24 @@ use crate::models::terminal::TerminalEnvironment;
 use crate::models::tool::ToolKey;
 use crate::platform::detect;
 use crate::platform::terminal_launch::{
-    build_launch_plan, preview_plan, ComposedCommand, LaunchPayload, LaunchPlan,
+    build_launch_plan, preview_plan, ComposedCommand, LaunchCandidate, LaunchPayload, LaunchPlan,
+    MACOS_COMMAND_DOCUMENT_PLACEHOLDER,
 };
+use crate::services::storage_service::StoragePaths;
 
 #[cfg(windows)]
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+#[cfg(target_os = "macos")]
+const MACOS_ENVIRONMENT_REMOVALS: [&str; 7] = [
+    "NO_COLOR",
+    "TERM",
+    "COLORTERM",
+    "CI",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "FORCE_COLOR",
+];
 
 pub fn preview(
     conn: &Connection,
@@ -32,14 +45,14 @@ pub fn preview(
 pub fn launch(
     conn: &Connection,
     environment: &TerminalEnvironment,
+    storage: &StoragePaths,
     directory_id: i64,
     tool_key: ToolKey,
 ) -> Result<()> {
     let result = (|| {
         let payload = resolve_payload(conn, directory_id, tool_key)?;
         let preference = app_setting_repo::get_launch_target(conn)?;
-        let plan = build_launch_plan(payload, environment, &preference)?;
-        let launched = spawn_plan(&plan)?;
+        let launched = build_and_spawn(payload, environment, &preference, storage)?;
         directory_repo::touch_last_used(conn, directory_id)?;
         Ok(launched)
     })();
@@ -49,6 +62,7 @@ pub fn launch(
 pub fn resume(
     conn: &Connection,
     environment: &TerminalEnvironment,
+    storage: &StoragePaths,
     directory_id: i64,
     tool_key: ToolKey,
     session_id: &str,
@@ -57,18 +71,27 @@ pub fn resume(
         let mut payload = resolve_payload(conn, directory_id, tool_key)?;
         apply_resume(&mut payload, tool_key, session_id);
         let preference = app_setting_repo::get_launch_target(conn)?;
-        let plan = build_launch_plan(payload, environment, &preference)?;
-        let launched = spawn_plan(&plan)?;
+        let launched = build_and_spawn(payload, environment, &preference, storage)?;
         directory_repo::touch_last_used(conn, directory_id)?;
         Ok(launched)
     })();
     record_and_log_result(conn, result, LaunchAction::Resume, directory_id, tool_key)
 }
 
-fn spawn_plan(plan: &LaunchPlan) -> Result<String> {
+fn build_and_spawn(
+    payload: LaunchPayload,
+    environment: &TerminalEnvironment,
+    preference: &str,
+    storage: &StoragePaths,
+) -> Result<String> {
+    let plan = build_launch_plan(payload, environment, preference)?;
+    spawn_plan(&plan, storage)
+}
+
+fn spawn_plan(plan: &LaunchPlan, storage: &StoragePaths) -> Result<String> {
     let mut errors = Vec::new();
     for (index, candidate) in plan.candidates.iter().enumerate() {
-        match spawn_command(&candidate.command) {
+        match spawn_candidate(candidate, &plan.payload, storage) {
             Ok(()) => {
                 if index > 0 {
                     log::warn!(
@@ -91,9 +114,58 @@ fn spawn_plan(plan: &LaunchPlan) -> Result<String> {
     Err(anyhow!("所有终端启动方式均失败：{}", errors.join("；")))
 }
 
+#[cfg(target_os = "macos")]
+fn spawn_candidate(
+    candidate: &LaunchCandidate,
+    payload: &LaunchPayload,
+    storage: &StoragePaths,
+) -> Result<()> {
+    if !candidate.requires_macos_command_document {
+        return spawn_command(&candidate.command);
+    }
+
+    let artifacts = crate::platform::macos_launch_artifacts::prepare(&storage.cache_dir, payload)?;
+    let helper_path = artifacts
+        .helper_path
+        .to_str()
+        .ok_or_else(|| anyhow!("macOS 启动载荷路径不是有效 UTF-8"))?;
+    let mut command = candidate.command.clone();
+    let mut replaced = false;
+    for arg in &mut command.args {
+        if arg == MACOS_COMMAND_DOCUMENT_PLACEHOLDER {
+            *arg = helper_path.to_string();
+            replaced = true;
+        }
+    }
+    if !replaced {
+        artifacts.cleanup();
+        return Err(anyhow!("macOS Terminal.app 启动计划缺少命令文档占位符"));
+    }
+    match spawn_command(&command) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            artifacts.cleanup();
+            Err(error)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_candidate(
+    candidate: &LaunchCandidate,
+    _payload: &LaunchPayload,
+    _storage: &StoragePaths,
+) -> Result<()> {
+    spawn_command(&candidate.command)
+}
+
 fn spawn_command(command: &ComposedCommand) -> Result<()> {
     let mut process = Command::new(&command.program);
     process.args(&command.args);
+    #[cfg(target_os = "macos")]
+    for key in MACOS_ENVIRONMENT_REMOVALS {
+        process.env_remove(key);
+    }
     if let Some(directory) = &command.working_dir {
         process.current_dir(directory);
     }
@@ -274,6 +346,9 @@ fn split_args(value: &str) -> Vec<String> {
 mod tests {
     use super::{merge_args, split_args};
 
+    #[cfg(target_os = "macos")]
+    use super::MACOS_ENVIRONMENT_REMOVALS;
+
     fn vs(items: &[&str]) -> Vec<String> {
         items.iter().map(|value| value.to_string()).collect()
     }
@@ -348,5 +423,13 @@ mod tests {
     #[test]
     fn empty_string_yields_no_args() {
         assert!(split_args("   ").is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_launches_remove_non_interactive_color_environment() {
+        for key in ["NO_COLOR", "TERM", "COLORTERM", "CI", "FORCE_COLOR"] {
+            assert!(MACOS_ENVIRONMENT_REMOVALS.contains(&key));
+        }
     }
 }

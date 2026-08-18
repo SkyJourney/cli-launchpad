@@ -22,6 +22,8 @@
 - 新增 Antigravity 本地会话历史读取与恢复。
 - 三项 CLI 均支持启动模型选择、动态刷新和手动模型/部署名。
 - 新增按会话 ID 保存的稀疏本地别名，支持重命名和恢复原始标题。
+- 新增 Terminal.app、iTerm2、Ghostty、WezTerm 与 kitty 五款 macOS 终端探测和显式选择。
+- 新增 MIT License、第三方字体许可证与响应式关于页，侧边栏提供 GitHub 项目入口。
 
 ### 变更
 
@@ -35,6 +37,9 @@
 - 命令预览新增实际启动方式、Profile 保留级别、启动说明和失败回退链。
 - 会话标题优先使用 Claude `summary`、Codex `name` 和 Antigravity `title` 等 CLI 原生简洁名称，再回退到预览或首条用户消息。
 - Codex 模型目录改为调用 App Server `model/list`，Antigravity 模型目录改为调用 `agy models`；动态结果使用 10 分钟缓存并支持失败回退。
+- 全局 UI 字体改为 IBM Plex Sans SC；命令、路径、参数和日志继续使用 Maple Mono NF CN。
+- macOS 的 Terminal.app/iTerm2 使用自删除 `.command`，Ghostty 使用 AppleScript 原生窗口，WezTerm/kitty 使用包内 CLI，kitty 在命令退出后保留窗口。
+- 主导航页面分别记忆当前进程内的滚动位置；未保存的新增目录表单在切换导航后自动收起。
 
 ### 修复
 
@@ -44,8 +49,13 @@
 - 修复 CLI 安装或更新期间界面无输出、无法判断是否卡住的问题。
 - 修复执行任务空页面板横向偏移的问题。
 - 修复固定使用 PowerShell 启动导致 Windows Terminal Profile 参数、初始化和样式无法充分保留的问题。
+- 修复 macOS 终端继承 `NO_COLOR`、`TERM=dumb` 等调用方环境后 CLI 配色异常的问题。
+- 修复项目卡片删除确认操作可能冒泡进入项目详情的问题。
+- 修复新增目录操作区拥挤、保存与取消按钮缺少图标的问题。
 
 ### 已知限制与测试债务
 
-- 本次未执行真实 CLI 安装或更新的端到端测试：本机三个 CLI 均已是最新版本，没有可安全复现的更新任务。已完成 Rust 单元测试、前端生产构建、Windows Job Object 终止实测和空任务页面视觉检查。下次出现可用更新时，需要验证实时日志、完整状态流转、任务终止、完成后版本刷新及重启后的历史持久化。
-- macOS 启动能力尚未与新版 Windows 分层启动架构同步，也未进行真实设备验证。0.2.0 发布前必须完成 macOS 终端/Shell 探测与结构化启动实现，并实测项目目录、CLI 参数、会话恢复和失败回退。
+- 本机三个 CLI 均已是最新版本，Claude `update` 已完成“已是最新版”的任务启动、实时日志、退出码和历史记录验证，但未发生真实二进制替换。下次出现可用更新时，仍需验证版本变化、任务终止及重启后的历史持久化。
+- macOS 已补齐终端探测与结构化启动、三项 CLI 官方安装计划、平台化 UI、Dock Reopen、CLI 可信路径检测、Unix 进程组终止、平台路径语义及 AGY 平台映射。
+- Apple Silicon 实机已验证五款终端探测、Terminal.app、iTerm2、Ghostty、WezTerm、kitty 冷/热启动、特殊字符参数、自删除载荷、CLI 交互配色及 Dock Reopen。仍需验证真实版本替换、主动终止和完整桌面生命周期，并对 Intel target 完成独立构建检查。
+- Apple Silicon Release DMG 已完成构建和只读挂载验证；当前仅为 ad hoc 签名，正式跨设备分发仍依赖 Developer ID 签名与公证凭据。

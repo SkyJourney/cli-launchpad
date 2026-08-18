@@ -4,6 +4,7 @@ use crate::commands::terminal::{load_terminal_environment, TerminalEnvironmentCa
 use crate::db::session_alias_repo;
 use crate::models::session::SessionPage;
 use crate::models::tool::ToolKey;
+use crate::services::storage_service::StoragePaths;
 use crate::services::{launch_service, session_service};
 use crate::{with_conn, AppError, Db};
 
@@ -80,6 +81,7 @@ async fn ensure_session_belongs(
 pub async fn resume_session(
     state: State<'_, Db>,
     terminal_cache: State<'_, TerminalEnvironmentCache>,
+    storage: State<'_, StoragePaths>,
     directory_id: i64,
     tool_key: ToolKey,
     session_id: String,
@@ -95,6 +97,7 @@ pub async fn resume_session(
         Ok(launch_service::resume(
             conn,
             &environment,
+            &storage,
             directory_id,
             tool_key,
             &session_id,

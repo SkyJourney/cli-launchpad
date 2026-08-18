@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use crate::db::directory_repo;
 use crate::models::session::{SessionInfo, SessionPage};
 use crate::models::tool::ToolKey;
+use crate::platform::path_identity;
 use crate::services::codex_app_server;
 
 const TITLE_MAX_CHARS: usize = 100;
@@ -636,13 +637,7 @@ fn safe_session_id(value: &str) -> bool {
 }
 
 fn paths_match(a: &str, b: &str) -> bool {
-    normalize_path(a) == normalize_path(b)
-}
-
-fn normalize_path(path: &str) -> String {
-    path.replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase()
+    path_identity::paths_equal(a, b)
 }
 
 fn mtime_ms(path: &Path) -> Option<i64> {
@@ -742,15 +737,25 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn file_uri_matches_windows_path_and_decodes_spaces() {
         let uris = r#"["file:///C:/Projects/My%20App"]"#;
         assert!(workspace_matches(uris, "c:\\projects\\my app\\"));
     }
 
     #[test]
+    #[cfg(windows)]
     fn paths_match_ignores_separators_and_case() {
         assert!(paths_match("C:/Projects/Demo", "c:\\projects\\demo\\"));
         assert!(!paths_match("C:\\a", "C:\\b"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn file_uri_matches_unix_path_and_preserves_case() {
+        let uris = r#"["file:///Users/me/Projects/My%20App"]"#;
+        assert!(workspace_matches(uris, "/Users/me/Projects/My App/"));
+        assert!(!workspace_matches(uris, "/Users/me/projects/My App/"));
     }
 
     #[test]

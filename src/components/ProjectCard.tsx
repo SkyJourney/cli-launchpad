@@ -44,7 +44,15 @@ export function ProjectCard({
       role="button"
       tabIndex={0}
       aria-label={`打开 ${directory.name}`}
-      onClick={() => onOpen(directory.id)}
+      onClick={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("button, .project-card-actions, .badge-row")
+        ) {
+          return;
+        }
+        onOpen(directory.id);
+      }}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) {
           return;

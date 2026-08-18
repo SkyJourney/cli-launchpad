@@ -18,6 +18,7 @@ use crate::{AppError, Db};
 pub const TASK_UPDATED_EVENT: &str = "execution-task-updated";
 pub const TASK_LOG_EVENT: &str = "execution-task-log";
 const TASK_TIMEOUT: Duration = Duration::from_secs(600);
+const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
 struct ActiveTask {
     id: String,
@@ -156,6 +157,10 @@ async fn run_task(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if let Err(error) = process_tree.configure(&mut command) {
+        finish_failed(&app, &id, format!("无法配置任务进程树：{error}"));
+        return;
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -202,7 +207,19 @@ async fn run_task(
             log::error!("unable to terminate execution process tree task_id={id} error={error}");
             let _ = child.kill().await;
         }
-        let _ = child.wait().await;
+        let exited = matches!(
+            tokio::time::timeout(TERMINATION_GRACE, child.wait()).await,
+            Ok(Ok(_))
+        );
+        if !exited {
+            if let Err(error) = process_tree.force_kill() {
+                log::error!(
+                    "unable to force kill execution process tree task_id={id} error={error}"
+                );
+                let _ = child.kill().await;
+            }
+            let _ = child.wait().await;
+        }
     }
     if let Some(task) = stdout_task {
         let _ = task.await;

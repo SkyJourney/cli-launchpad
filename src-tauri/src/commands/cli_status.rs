@@ -53,7 +53,7 @@ fn preserve_versions_for_unchanged_paths(
 
 fn paths_equal(left: Option<&str>, right: Option<&str>) -> bool {
     match (left, right) {
-        (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        (Some(left), Some(right)) => crate::platform::path_identity::paths_equal(left, right),
         _ => false,
     }
 }
@@ -77,6 +77,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn preserves_version_only_when_resolved_path_is_unchanged() {
         let previous = vec![status("C:\\Tools\\codex.exe", Some("0.147.0"))];
         let mut unchanged = vec![status("c:\\tools\\CODEX.exe", None)];
@@ -84,6 +85,19 @@ mod tests {
         assert_eq!(unchanged[0].version.as_deref(), Some("0.147.0"));
 
         let mut changed = vec![status("C:\\Other\\codex.exe", None)];
+        preserve_versions_for_unchanged_paths(&mut changed, Some(&previous));
+        assert_eq!(changed[0].version, None);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn preserves_version_with_unix_path_semantics() {
+        let previous = vec![status("/Users/me/bin/codex", Some("0.147.0"))];
+        let mut unchanged = vec![status("/Users/me/bin/codex/", None)];
+        preserve_versions_for_unchanged_paths(&mut unchanged, Some(&previous));
+        assert_eq!(unchanged[0].version.as_deref(), Some("0.147.0"));
+
+        let mut changed = vec![status("/Users/Me/bin/codex", None)];
         preserve_versions_for_unchanged_paths(&mut changed, Some(&previous));
         assert_eq!(changed[0].version, None);
     }

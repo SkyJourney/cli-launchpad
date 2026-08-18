@@ -66,7 +66,15 @@ pub fn set_launch_target(state: State<'_, Db>, target_id: String) -> Result<(), 
 fn is_valid_target_id(value: &str) -> bool {
     if matches!(
         value,
-        "auto" | "direct:pwsh" | "direct:windows-powershell" | "direct:cmd"
+        "auto"
+            | "direct:pwsh"
+            | "direct:windows-powershell"
+            | "direct:cmd"
+            | "macos:terminal"
+            | "macos:iterm2"
+            | "macos:ghostty"
+            | "macos:wezterm"
+            | "macos:kitty"
     ) {
         return true;
     }
@@ -89,6 +97,15 @@ mod tests {
     fn accepts_known_targets() {
         assert!(is_valid_target_id("auto"));
         assert!(is_valid_target_id("direct:pwsh"));
+        for target_id in [
+            "macos:terminal",
+            "macos:iterm2",
+            "macos:ghostty",
+            "macos:wezterm",
+            "macos:kitty",
+        ] {
+            assert!(is_valid_target_id(target_id));
+        }
         assert!(is_valid_target_id(
             "wt:stable:574e775e-4f2a-5b96-ac1e-a2962a402336"
         ));
@@ -97,6 +114,9 @@ mod tests {
     #[test]
     fn rejects_unknown_or_malformed_targets() {
         assert!(!is_valid_target_id("direct:bash"));
+        assert!(!is_valid_target_id("macos:unknown"));
+        assert!(!is_valid_target_id("macos:alacritty"));
+        assert!(!is_valid_target_id("macos:warp"));
         assert!(!is_valid_target_id("wt:stable:not-a-guid"));
         assert!(!is_valid_target_id(
             "wt:unknown:574e775e-4f2a-5b96-ac1e-a2962a402336"
