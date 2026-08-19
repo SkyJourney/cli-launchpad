@@ -128,7 +128,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.id, 'macos-') && '-' || '' }}
         with:
-          tauriScript: pnpm
+          tauriScript: pnpm tauri
           args: ${{ matrix.build_args }}
 
       - name: Prepare Windows release asset
