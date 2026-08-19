@@ -1,11 +1,58 @@
-# CLI Launchpad
+<div align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="CLI Launchpad Logo">
+  <h1>CLI Launchpad</h1>
+  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台桌面启动器。</p>
+  <p>
+    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.1"><img src="https://img.shields.io/badge/version-0.2.1-2856d8" alt="Version 0.2.1"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
+    <a href="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml"><img src="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml/badge.svg" alt="Release Build"></a>
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-475467" alt="Windows and macOS">
+    <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2">
+    <img src="https://img.shields.io/badge/React-19-087EA4?logo=react&logoColor=white" alt="React 19">
+  </p>
+  <p>
+    <a href="CHANGELOG.md">变更日志</a> ·
+    <a href="docs/product-requirements.md">产品需求</a> ·
+    <a href="docs/architecture.md">架构设计</a>
+  </p>
+</div>
 
-CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。
+CLI Launchpad 用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
 
-项目由 [SkyJourney](https://github.com/SkyJourney) 维护，源码仓库位于
-[github.com/SkyJourney/cli-launchpad](https://github.com/SkyJourney/cli-launchpad)。
+## 下载
 
-版本变化与尚待验证的内容见 [CHANGELOG.md](CHANGELOG.md)。
+正式版本由 Git Tag 触发 GitHub Actions，在全部目标构建成功后自动发布到
+[GitHub Releases](https://github.com/SkyJourney/cli-launchpad/releases)。
+
+| 平台                | 安装包                                   |
+| ------------------- | ---------------------------------------- |
+| Windows x64         | NSIS 在线安装包；安装时按需下载 WebView2 |
+| Windows x64 离线版  | 内置 WebView2 的 NSIS 安装包，体积较大   |
+| macOS Apple Silicon | `aarch64.dmg`，适用于 M 系列芯片         |
+| macOS Intel         | `x64.dmg`，适用于 Intel 芯片             |
+
+每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
+Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
+
+## 界面预览
+
+### 项目与 CLI 启动
+
+在常用项目之间快速切换，并直接启动 Claude Code、Codex 或 Antigravity。
+
+![CLI Launchpad 项目页（浅色主题）](docs/images/overview-light.png)
+
+### CLI 与终端管理
+
+统一查看 CLI 安装和版本状态，并选择适合当前平台的终端启动方式。
+
+![CLI Launchpad 设置页（深色主题）](docs/images/settings-dark.png)
+
+### 执行任务与双语界面
+
+安装与更新任务提供实时日志和历史记录；界面支持简体中文与英文切换。
+
+![CLI Launchpad 执行任务页（英文界面）](docs/images/executions-en.png)
 
 项目采用 Tauri 风格架构，参考 CC-Switch 的组织方式：
 
@@ -30,13 +77,13 @@ CLI Launchpad 是一个轻量级桌面启动器，用于快速打开常用项目
 ## 技术栈
 
 - Tauri 2
-- React
+- React 19
 - TypeScript
 - Vite
 - Rust
 - rusqlite
 - Windows Terminal Profile / PowerShell / CMD 分层回退集成
-- IBM Plex Sans SC 与 Maple Mono NF CN 内置字体
+- Noto Sans SC 与 Maple Mono NF CN 内置字体
 
 ## 本地依赖
 
@@ -99,7 +146,7 @@ Windows 产物与运行依赖：
 - **WebView2**：
   - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时检测缺失则联网下载。
   - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
-- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.0_x64-online-setup.exe`。
+- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.1_x64-online-setup.exe`。
 
 macOS 使用独立的 ARM64 与 Intel DMG，不生成 Universal 包：
 
@@ -114,6 +161,11 @@ pnpm tauri:build:macos:x64    # Intel DMG
 - ARM64：`src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`
 - Intel：`src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/`
 
+推送与应用版本一致的 `v*.*.*` Tag 后，`.github/workflows/release.yml` 会在线并行
+构建 Windows 在线/离线 NSIS 与两种 macOS DMG，生成 SHA-256 校验文件，并在全部
+target 成功后自动创建 GitHub Release。手动触发该工作流只保留 Actions Artifacts，
+不会创建 Release。
+
 正式打包前确保 Windows 的 `src-tauri/icons/icon.ico` 和 macOS 的
 `src-tauri/icons/icon.icns` 均已就位。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。
 
@@ -121,16 +173,16 @@ pnpm tauri:build:macos:x64    # Intel DMG
 
 应用不依赖系统安装字体，按内容用途使用两套开源字体：
 
-- 全局 UI：IBM Plex Sans SC，使用 WOFF2 格式的 400、500、600、700 四个字重。
+- 全局 UI：Noto Sans SC，使用覆盖 100–900 的可变 TTF，并采用 400、500、600、700 四个主要字重。
 - 命令、路径、参数和日志：Maple Mono NL NF-CN，使用相同四个字重并关闭连字。
 - 字体文件随 Vite 前端产物进入 NSIS 与 DMG。
 - 两套字体均采用 SIL Open Font License 1.1；来源和授权见
-  `src/assets/fonts/ibm-plex-sans-sc/`、`src/assets/fonts/maple/` 与
+  `src/assets/fonts/noto-sans-sc/`、`src/assets/fonts/maple/` 与
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 应用更新
 
-0.2.0 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
+0.2.1 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
 GitHub Releases 增加显式的版本检查，并在获得用户确认后再进入下载或安装流程。
 
 ## 许可证

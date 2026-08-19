@@ -211,11 +211,11 @@ macOS 安装清单：
 
 更新命令清单：
 
-| 工具        | 更新命令        | Windows 执行环境                                    |
-| ----------- | --------------- | --------------------------------------------------- |
-| Claude Code | `claude update` | 沿用现有结构化计划                                  |
-| Codex       | `codex update`  | 固定使用 Windows PowerShell 5.1 托管并透传退出码    |
-| Antigravity | `agy update`    | 沿用现有结构化计划                                  |
+| 工具        | 更新命令        | Windows 执行环境                                 |
+| ----------- | --------------- | ------------------------------------------------ |
+| Claude Code | `claude update` | 沿用现有结构化计划                               |
+| Codex       | `codex update`  | 固定使用 Windows PowerShell 5.1 托管并透传退出码 |
+| Antigravity | `agy update`    | 沿用现有结构化计划                               |
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。Codex 的 Windows
 更新计划先解析 CLI 完整路径，再在最终 PowerShell 边界进行字面量转义；命令主体

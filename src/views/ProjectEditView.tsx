@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import clsx from "clsx";
+import { useTranslation } from "react-i18next";
 import { useDirectory, useTools } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { useSeededState } from "../hooks/useSeededState";
@@ -32,6 +33,7 @@ function argsFromEntries(entries: DirectoryToolArgs[]): ArgsMap {
 }
 
 export function ProjectEditView() {
+  const { t } = useTranslation();
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const setView = useAppStore((state) => state.setView);
   const queryClient = useQueryClient();
@@ -94,9 +96,9 @@ export function ProjectEditView() {
       <div className="edit-view">
         <button className="ghost-button" onClick={() => setView("projects")}>
           <ArrowLeft size={15} />
-          返回
+          {t("common.back")}
         </button>
-        <p className="muted">未选择目录。</p>
+        <p className="muted">{t("projectEdit.noDirectory")}</p>
       </div>
     );
   }
@@ -108,11 +110,11 @@ export function ProjectEditView() {
     <div className="edit-view">
       <button className="ghost-button" onClick={() => setView("detail")}>
         <ArrowLeft size={15} />
-        返回
+        {t("common.back")}
       </button>
 
       <header className="detail-head">
-        <h1>编辑参数 · {directory.name}</h1>
+        <h1>{t("projectEdit.title", { name: directory.name })}</h1>
         <p className="muted">{directory.path}</p>
       </header>
 
@@ -137,21 +139,23 @@ export function ProjectEditView() {
               <tool.icon size={18} />
               <strong>{tool.label}</strong>
               {disabled && (
-                <span className="muted">未安装，前往设置安装后可编辑</span>
+                <span className="muted">{t("projectEdit.unavailable")}</span>
               )}
             </div>
 
             <div className="edit-field">
-              <label className="muted">全局参数（只读，在设置中修改）</label>
-              <code className="readonly-args">{globalArgs || "（无）"}</code>
+              <label className="muted">{t("projectEdit.globalArgs")}</label>
+              <code className="readonly-args">
+                {globalArgs || t("common.none")}
+              </code>
             </div>
 
             <div className="edit-field">
               <div className="model-field-heading">
-                <label className="muted">启动模型</label>
+                <label className="muted">{t("projectEdit.launchModel")}</label>
                 <button
-                  className="icon-button"
-                  title={`刷新 ${tool.label} 模型目录`}
+                  className="icon-button refresh-button"
+                  title={t("projectEdit.refreshModels", { tool: tool.label })}
                   disabled={disabled || modelCatalog.isFetching}
                   onClick={() =>
                     void queryClient.fetchQuery({
@@ -183,25 +187,25 @@ export function ProjectEditView() {
                 >
                   <option value="">
                     {globalModel
-                      ? `沿用全局设置（${globalModel}）`
-                      : "默认（由 CLI 自动选择）"}
+                      ? t("projectEdit.inheritGlobal", { model: globalModel })
+                      : t("projectEdit.cliDefault")}
                   </option>
                   {!selectedIsKnown && selectedModel && (
                     <option value={selectedModel}>
-                      自定义：{selectedModel}
+                      {t("projectEdit.customModel", { model: selectedModel })}
                     </option>
                   )}
                   {options.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
-                      {option.isDefault ? "（CLI 推荐）" : ""}
+                      {option.isDefault ? t("projectEdit.recommended") : ""}
                     </option>
                   ))}
                 </select>
                 <input
                   value={selectedModel ?? ""}
                   disabled={disabled}
-                  placeholder="或手动输入模型名、部署名"
+                  placeholder={t("projectEdit.modelPlaceholder")}
                   onChange={(event) => {
                     const value = event.target.value;
                     updateArgs(
@@ -217,18 +221,23 @@ export function ProjectEditView() {
               </div>
               {modelCatalog.isError ? (
                 <span className="error model-catalog-note">
-                  读取模型目录失败，仍可手动输入：
-                  {String(modelCatalog.error)}
+                  {t("projectEdit.modelFailed", {
+                    error: String(modelCatalog.error),
+                  })}
                 </span>
               ) : modelCatalog.data ? (
                 <span className="muted model-catalog-note">
-                  来源：{modelCatalog.data.source}
-                  {modelCatalog.data.fromCache ? " · 缓存" : ""}
+                  {t("projectEdit.source", {
+                    source: modelCatalog.data.source,
+                  })}
+                  {modelCatalog.data.fromCache
+                    ? ` · ${t("projectEdit.cached")}`
+                    : ""}
                 </span>
               ) : (
                 !disabled && (
                   <span className="muted model-catalog-note">
-                    正在读取模型目录…
+                    {t("projectEdit.readingModels")}
                   </span>
                 )
               )}
@@ -240,11 +249,11 @@ export function ProjectEditView() {
             </div>
 
             <div className="edit-field">
-              <label className="muted">项目级附加参数</label>
+              <label className="muted">{t("projectEdit.projectArgs")}</label>
               <input
                 value={args[tool.key]}
                 disabled={disabled}
-                placeholder="例如 --resume 或自定义参数"
+                placeholder={t("projectEdit.argsPlaceholder")}
                 onChange={(event) => updateArgs(tool.key, event.target.value)}
               />
             </div>
@@ -254,7 +263,7 @@ export function ProjectEditView() {
 
       <div className="edit-actions">
         <button className="ghost-button" onClick={() => setView("detail")}>
-          取消
+          {t("common.cancel")}
         </button>
         <button
           className="primary-button"
@@ -263,11 +272,15 @@ export function ProjectEditView() {
           }
           onClick={() => saveMutation.mutate()}
         >
-          保存
+          {t("common.save")}
         </button>
       </div>
       {saveMutation.isError && (
-        <p className="error">保存失败：{String(saveMutation.error)}</p>
+        <p className="error">
+          {t("projectEdit.saveFailed", {
+            error: String(saveMutation.error),
+          })}
+        </p>
       )}
     </div>
   );

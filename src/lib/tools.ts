@@ -1,15 +1,15 @@
 import type { ComponentType } from "react";
-// Import only the colored SVG sub-component + brand color, not each brand's
-// index barrel (which also pulls Avatar/Combine/Text/Mono and bloats the build).
-import AntigravityColor from "@lobehub/icons/es/Antigravity/components/Color";
-import { COLOR_PRIMARY as ANTIGRAVITY_COLOR } from "@lobehub/icons/es/Antigravity/style";
-import ClaudeCodeColor from "@lobehub/icons/es/ClaudeCode/components/Color";
-import { COLOR_PRIMARY as CLAUDE_COLOR } from "@lobehub/icons/es/ClaudeCode/style";
-import CodexColor from "@lobehub/icons/es/Codex/components/Color";
-import { COLOR_PRIMARY as CODEX_COLOR } from "@lobehub/icons/es/Codex/style";
+import antigravityIcon from "../assets/icons/brands/antigravity.svg";
+import claudeCodeIcon from "../assets/icons/brands/claude-code.svg";
+import codexIcon from "../assets/icons/brands/codex.svg";
+import { createSvgAssetIcon } from "../components/SvgAssetIcon";
 import type { ToolKey } from "./tauri";
 
 type IconComponent = ComponentType<{ size?: number | string }>;
+
+const AntigravityIcon = createSvgAssetIcon(antigravityIcon);
+const ClaudeCodeIcon = createSvgAssetIcon(claudeCodeIcon);
+const CodexIcon = createSvgAssetIcon(codexIcon);
 
 export interface ToolMeta {
   key: ToolKey;
@@ -21,28 +21,28 @@ export interface ToolMeta {
 }
 
 /// Display order across the app: Claude, Codex, Antigravity. Icons are the
-/// official colored brand marks from @lobehub/icons.
+/// official colored brand marks stored in src/assets/icons/brands.
 export const TOOLS: ToolMeta[] = [
   {
     key: "claude",
     label: "Claude Code",
     shortLabel: "C",
-    icon: ClaudeCodeColor,
-    colorPrimary: CLAUDE_COLOR,
+    icon: ClaudeCodeIcon,
+    colorPrimary: "#D97757",
   },
   {
     key: "codex",
     label: "Codex",
     shortLabel: "X",
-    icon: CodexColor,
-    colorPrimary: CODEX_COLOR,
+    icon: CodexIcon,
+    colorPrimary: "#ffffff",
   },
   {
     key: "antigravity",
     label: "Antigravity",
     shortLabel: "A",
-    icon: AntigravityColor,
-    colorPrimary: ANTIGRAVITY_COLOR,
+    icon: AntigravityIcon,
+    colorPrimary: "#ffffff",
   },
 ];
 

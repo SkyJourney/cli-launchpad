@@ -1,6 +1,7 @@
 import { Check, FolderOpen, Pencil, Pin, Trash2, X } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CLI_STATUS_META, type CliStatusByTool } from "../hooks/useCliStatus";
 import { formatRelative } from "../lib/format";
 import { TOOLS } from "../lib/tools";
@@ -27,6 +28,7 @@ export function ProjectCard({
   onEdit,
   onRemove,
 }: ProjectCardProps) {
+  const { t, i18n } = useTranslation();
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   // Auto-cancel the pending removal if the user does not confirm quickly.
@@ -43,7 +45,7 @@ export function ProjectCard({
       className="project-card"
       role="button"
       tabIndex={0}
-      aria-label={`打开 ${directory.name}`}
+      aria-label={t("projectCard.open", { name: directory.name })}
       onClick={(event) => {
         if (
           event.target instanceof Element &&
@@ -71,7 +73,13 @@ export function ProjectCard({
             {directory.pinned && <span className="pin-mark">★</span>}
             {directory.name}
           </strong>
-          <span className="muted">{formatRelative(directory.lastUsedAt)}</span>
+          <span className="muted">
+            {formatRelative(
+              directory.lastUsedAt,
+              i18n.resolvedLanguage,
+              t("time.neverStarted"),
+            )}
+          </span>
         </div>
         <span className="project-card-path">{directory.path}</span>
       </div>
@@ -85,7 +93,7 @@ export function ProjectCard({
             <button
               key={tool.key}
               className={clsx("cli-badge", meta.badgeClass)}
-              title={`${tool.label} · ${meta.title}`}
+              title={`${tool.label} · ${t(meta.titleKey)}`}
               disabled={!launchable}
               onClick={(event) => {
                 event.stopPropagation();
@@ -101,7 +109,9 @@ export function ProjectCard({
       <div className="project-card-actions">
         <button
           className={clsx("icon-button", { active: directory.pinned })}
-          title={directory.pinned ? "取消置顶" : "置顶"}
+          title={
+            directory.pinned ? t("projectCard.unpin") : t("projectCard.pin")
+          }
           onClick={(event) => {
             event.stopPropagation();
             onTogglePin(directory);
@@ -111,7 +121,7 @@ export function ProjectCard({
         </button>
         <button
           className="icon-button"
-          title="打开项目目录"
+          title={t("projectCard.openDirectory")}
           onClick={(event) => {
             event.stopPropagation();
             onOpenPath(directory.id);
@@ -121,7 +131,7 @@ export function ProjectCard({
         </button>
         <button
           className="icon-button"
-          title="编辑参数"
+          title={t("projectCard.editArgs")}
           onClick={(event) => {
             event.stopPropagation();
             onEdit(directory.id);
@@ -131,10 +141,10 @@ export function ProjectCard({
         </button>
         {confirmingRemove ? (
           <div className="confirm-remove" data-card-interactive>
-            <span className="muted">确认移除？</span>
+            <span className="muted">{t("projectCard.confirmRemove")}</span>
             <button
               className="icon-button danger"
-              title="确认移除（仅删除启动配置，不影响磁盘文件）"
+              title={t("projectCard.confirmRemoveTitle")}
               onClick={(event) => {
                 event.stopPropagation();
                 setConfirmingRemove(false);
@@ -145,7 +155,7 @@ export function ProjectCard({
             </button>
             <button
               className="icon-button"
-              title="取消"
+              title={t("common.cancel")}
               onClick={(event) => {
                 event.stopPropagation();
                 setConfirmingRemove(false);
@@ -157,7 +167,7 @@ export function ProjectCard({
         ) : (
           <button
             className="icon-button danger"
-            title="移除目录"
+            title={t("projectCard.removeDirectory")}
             onClick={(event) => {
               event.stopPropagation();
               setConfirmingRemove(true);

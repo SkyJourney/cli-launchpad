@@ -1,0 +1,240 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate version files and tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAURI_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO_VERSION=$(awk -F'"' '/^version = "/ { print $2; exit }' src-tauri/Cargo.toml)
+
+          if [[ "$PACKAGE_VERSION" != "$TAURI_VERSION" || "$PACKAGE_VERSION" != "$CARGO_VERSION" ]]; then
+            echo "Version mismatch: package=$PACKAGE_VERSION tauri=$TAURI_VERSION cargo=$CARGO_VERSION" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$PACKAGE_VERSION" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match application version $PACKAGE_VERSION" >&2
+              exit 1
+            fi
+
+            git fetch origin main:refs/remotes/origin/main
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "Tag $GITHUB_REF_NAME does not point to a commit contained in main." >&2
+              exit 1
+            fi
+          fi
+
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validated CLI Launchpad $PACKAGE_VERSION"
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-online
+            label: Windows x64 online NSIS
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            build_args: --bundles nsis
+            asset_suffix: x64-online-setup.exe
+          - id: windows-offline
+            label: Windows x64 offline NSIS
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            build_args: --bundles nsis --config src-tauri/tauri.offline.conf.json
+            asset_suffix: x64-offline-setup.exe
+          - id: macos-arm64
+            label: macOS Apple Silicon DMG
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+            build_args: --bundles dmg --target aarch64-apple-darwin
+            asset_suffix: aarch64.dmg
+          - id: macos-x64
+            label: macOS Intel DMG
+            os: macos-latest
+            rust_target: x86_64-apple-darwin
+            build_args: --bundles dmg --target x86_64-apple-darwin
+            asset_suffix: x64.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.rust_target }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v1
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.id, 'macos-') && '-' || '' }}
+        with:
+          tauriScript: pnpm
+          args: ${{ matrix.build_args }}
+
+      - name: Prepare Windows release asset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $bundle = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe' | Select-Object -First 1
+          if ($null -eq $bundle) {
+            throw 'NSIS installer was not generated.'
+          }
+          $destination = "release-assets/CLI.Launchpad_${{ needs.validate.outputs.version }}_${{ matrix.asset_suffix }}"
+          Copy-Item $bundle.FullName $destination
+
+      - name: Prepare macOS release asset
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          bundle=$(find "src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | head -n 1)
+          if [[ -z "$bundle" ]]; then
+            echo "DMG was not generated." >&2
+            exit 1
+          fi
+          cp "$bundle" "release-assets/CLI.Launchpad_${{ needs.validate.outputs.version }}_${{ matrix.asset_suffix }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.id }}
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cd ..
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          awk -v version="$VERSION" '
+            index($0, "## [" version "]") == 1 { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [[ ! -s release-notes.md ]]; then
+            echo "Unable to extract release notes for $VERSION from CHANGELOG.md" >&2
+            exit 1
+          fi
+
+          cat >> release-notes.md <<'EOF'
+
+          ## macOS 安装提示
+
+          当前 macOS 安装包使用 ad hoc 签名且未经过 Apple 公证。首次打开时，如系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
+          EOF
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="$GITHUB_REF_NAME"
+          TITLE="CLI Launchpad $TAG"
+          PRERELEASE_ARGS=()
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-notes.md "${PRERELEASE_ARGS[@]}"
+          else
+            gh release create "$TAG" release-assets/* \
+              --verify-tag \
+              --title "$TITLE" \
+              --notes-file release-notes.md \
+              "${PRERELEASE_ARGS[@]}"
+          fi

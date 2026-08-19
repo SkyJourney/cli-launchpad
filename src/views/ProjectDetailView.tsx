@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { copyText } from "../lib/clipboard";
@@ -41,6 +42,7 @@ import {
 import { useAppStore } from "../store/appStore";
 
 export function ProjectDetailView() {
+  const { t, i18n } = useTranslation();
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const setView = useAppStore((state) => state.setView);
   const selectDirectory = useAppStore((state) => state.selectDirectory);
@@ -160,9 +162,9 @@ export function ProjectDetailView() {
       <div className="detail-view">
         <button className="ghost-button" onClick={() => setView("projects")}>
           <ArrowLeft size={15} />
-          返回
+          {t("common.back")}
         </button>
-        <p className="muted">未选择目录。</p>
+        <p className="muted">{t("projectDetail.noDirectory")}</p>
       </div>
     );
   }
@@ -202,7 +204,7 @@ export function ProjectDetailView() {
   const saveAlias = (sessionId: string) => {
     const alias = aliasDraft.trim();
     if (!alias) {
-      setAliasError("会话别名不能为空");
+      setAliasError(t("projectDetail.aliasRequired"));
       return;
     }
     aliasMutation.mutate({
@@ -226,7 +228,7 @@ export function ProjectDetailView() {
     <div className="detail-view">
       <button className="ghost-button" onClick={() => setView("projects")}>
         <ArrowLeft size={15} />
-        返回
+        {t("common.back")}
       </button>
 
       <header className="detail-head detail-head-row">
@@ -244,7 +246,7 @@ export function ProjectDetailView() {
             }}
           >
             <FolderOpen size={15} />
-            打开目录
+            {t("projectDetail.openDirectory")}
           </button>
           <button
             className="ghost-button"
@@ -254,11 +256,15 @@ export function ProjectDetailView() {
             }}
           >
             <Pencil size={15} />
-            编辑参数
+            {t("projectDetail.editArgs")}
           </button>
         </div>
       </header>
-      {openPathError && <p className="error">打开目录失败：{openPathError}</p>}
+      {openPathError && (
+        <p className="error">
+          {t("projectDetail.openPathFailed", { error: openPathError })}
+        </p>
+      )}
 
       <div className="tab-row" role="tablist">
         {TOOLS.map((tool) => {
@@ -291,22 +297,26 @@ export function ProjectDetailView() {
           onClick={runLaunch}
         >
           <Play size={15} />
-          启动 {TOOLS.find((t) => t.key === activeTool)?.label}
+          {t("projectDetail.launchTool", {
+            tool: TOOLS.find((tool) => tool.key === activeTool)?.label,
+          })}
         </button>
         {!launchable && (
-          <span className="muted">
-            该 CLI 当前不可用，请前往设置检测或安装。
-          </span>
+          <span className="muted">{t("projectDetail.unavailable")}</span>
         )}
       </div>
-      {launchError && <p className="error">启动失败：{launchError}</p>}
+      {launchError && (
+        <p className="error">
+          {t("projectDetail.launchFailed", { error: launchError })}
+        </p>
+      )}
 
       <section>
         <div className="section-heading heading-actions">
-          <span>历史会话</span>
+          <span>{t("projectDetail.sessions")}</span>
           <button
-            className="icon-button"
-            title="刷新会话"
+            className="icon-button refresh-button"
+            title={t("projectDetail.refreshSessions")}
             disabled={sessions.isFetching}
             onClick={refreshSessions}
           >
@@ -317,9 +327,13 @@ export function ProjectDetailView() {
           </button>
         </div>
         {sessions.isError && sessionItems.length === 0 ? (
-          <p className="error">读取会话失败：{String(sessions.error)}</p>
+          <p className="error">
+            {t("projectDetail.sessionsFailed", {
+              error: String(sessions.error),
+            })}
+          </p>
         ) : sessions.isLoading ? (
-          <p className="muted">读取中…</p>
+          <p className="muted">{t("projectDetail.reading")}</p>
         ) : sessionItems.length > 0 ? (
           <div className="session-history">
             <ul className="session-list">
@@ -333,7 +347,7 @@ export function ProjectDetailView() {
                         <input
                           autoFocus
                           className="session-alias-input"
-                          aria-label="会话别名"
+                          aria-label={t("projectDetail.sessionAlias")}
                           maxLength={100}
                           value={aliasDraft}
                           onChange={(event) => {
@@ -354,7 +368,9 @@ export function ProjectDetailView() {
                           className="session-title"
                           title={
                             session.alias
-                              ? `原始标题：${session.title}`
+                              ? t("projectDetail.originalTitle", {
+                                  title: session.title,
+                                })
                               : session.title
                           }
                         >
@@ -362,8 +378,14 @@ export function ProjectDetailView() {
                         </span>
                       )}
                       <span className="muted">
-                        {formatRelativeMs(session.lastActiveMs)}
-                        {session.alias ? " · 自定义标题" : ""}
+                        {formatRelativeMs(
+                          session.lastActiveMs,
+                          i18n.resolvedLanguage,
+                          t("time.unknown"),
+                        )}
+                        {session.alias
+                          ? ` · ${t("projectDetail.customTitle")}`
+                          : ""}
                       </span>
                       {editing && aliasError && (
                         <span className="error session-alias-error">
@@ -376,8 +398,8 @@ export function ProjectDetailView() {
                         <>
                           <button
                             className="icon-button"
-                            title="保存会话别名"
-                            aria-label="保存会话别名"
+                            title={t("projectDetail.saveAlias")}
+                            aria-label={t("projectDetail.saveAlias")}
                             disabled={aliasMutation.isPending}
                             onClick={() => saveAlias(session.sessionId)}
                           >
@@ -385,8 +407,8 @@ export function ProjectDetailView() {
                           </button>
                           <button
                             className="icon-button"
-                            title="取消重命名"
-                            aria-label="取消重命名"
+                            title={t("projectDetail.cancelRename")}
+                            aria-label={t("projectDetail.cancelRename")}
                             disabled={aliasMutation.isPending}
                             onClick={cancelRename}
                           >
@@ -397,8 +419,8 @@ export function ProjectDetailView() {
                         <>
                           <button
                             className="icon-button"
-                            title="重命名会话"
-                            aria-label="重命名会话"
+                            title={t("projectDetail.renameSession")}
+                            aria-label={t("projectDetail.renameSession")}
                             disabled={aliasMutation.isPending}
                             onClick={() =>
                               beginRename(session.sessionId, displayTitle)
@@ -409,8 +431,8 @@ export function ProjectDetailView() {
                           {session.alias && (
                             <button
                               className="icon-button"
-                              title="恢复原始标题"
-                              aria-label="恢复原始标题"
+                              title={t("projectDetail.restoreOriginal")}
+                              aria-label={t("projectDetail.restoreOriginal")}
                               disabled={aliasMutation.isPending}
                               onClick={() =>
                                 restoreOriginalTitle(session.sessionId)
@@ -427,7 +449,7 @@ export function ProjectDetailView() {
                         onClick={() => runResume(session.sessionId)}
                       >
                         <RotateCcw size={14} />
-                        恢复
+                        {t("projectDetail.restore")}
                       </button>
                     </div>
                   </li>
@@ -436,7 +458,9 @@ export function ProjectDetailView() {
             </ul>
             {sessions.isFetchNextPageError && (
               <p className="error session-page-error">
-                加载更多失败：{String(sessions.error)}
+                {t("projectDetail.loadMoreFailed", {
+                  error: String(sessions.error),
+                })}
               </p>
             )}
             {sessions.hasNextPage && (
@@ -445,12 +469,14 @@ export function ProjectDetailView() {
                 disabled={sessions.isFetchingNextPage}
                 onClick={() => void sessions.fetchNextPage()}
               >
-                {sessions.isFetchingNextPage ? "加载中…" : "更多"}
+                {sessions.isFetchingNextPage
+                  ? t("common.loading")
+                  : t("common.more")}
               </button>
             )}
           </div>
         ) : (
-          <p className="muted">无历史会话。</p>
+          <p className="muted">{t("projectDetail.noSessions")}</p>
         )}
       </section>
 
@@ -460,14 +486,14 @@ export function ProjectDetailView() {
           onClick={() => setShowPreview((value) => !value)}
         >
           {showPreview ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          命令预览
+          {t("projectDetail.commandPreview")}
         </button>
         {showPreview && (
           <div className="preview-body">
             <code>
               {preview.isError
                 ? String(preview.error)
-                : (preview.data ?? "生成中…")}
+                : (preview.data ?? t("projectDetail.generating"))}
             </code>
             <button
               className="ghost-button"
@@ -475,7 +501,7 @@ export function ProjectDetailView() {
               onClick={() => preview.data && void copyText(preview.data)}
             >
               <Copy size={14} />
-              复制
+              {t("common.copy")}
             </button>
           </div>
         )}

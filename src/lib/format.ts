@@ -1,7 +1,11 @@
-/// Format a SQLite `datetime('now')` UTC timestamp as a relative Chinese label.
-export function formatRelative(value: string | null): string {
+/// Format a SQLite `datetime('now')` UTC timestamp as a relative label.
+export function formatRelative(
+  value: string | null,
+  language = "zh",
+  emptyLabel = "—",
+): string {
   if (!value) {
-    return "未曾启动";
+    return emptyLabel;
   }
   // SQLite datetime('now') returns "YYYY-MM-DD HH:MM:SS" in UTC.
   const normalized = value.includes("T")
@@ -11,24 +15,29 @@ export function formatRelative(value: string | null): string {
   if (Number.isNaN(then)) {
     return value;
   }
-  return relativeFrom(then);
+  return relativeFrom(then, language);
 }
 
 /// Format a Unix epoch milliseconds value as a relative Chinese label.
-export function formatRelativeMs(ms: number | null): string {
+export function formatRelativeMs(
+  ms: number | null,
+  language = "zh",
+  emptyLabel = "—",
+): string {
   if (ms == null) {
-    return "未知时间";
+    return emptyLabel;
   }
-  return relativeFrom(ms);
+  return relativeFrom(ms, language);
 }
 
 /// Format a SQLite UTC timestamp in the current user's local timezone.
-export function formatUtcDateTime(value: string): string {
+export function formatUtcDateTime(value: string, language = "zh"): string {
   const normalized = value.includes("T")
     ? value
     : value.replace(" ", "T") + "Z";
   const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
+  const locale = language.startsWith("zh") ? "zh-CN" : "en-US";
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
 }
 
 /// Extract a semver-like `x.y.z` from a noisy version string (e.g.
@@ -69,22 +78,24 @@ export function hasUpdate(
   return compareSemver(latestSemver, currentSemver) > 0;
 }
 
-function relativeFrom(then: number): string {
+function relativeFrom(then: number, language = "zh"): string {
+  const locale = language.startsWith("zh") ? "zh-CN" : "en-US";
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   const diffSeconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (diffSeconds < 60) {
-    return "刚刚";
+    return formatter.format(-diffSeconds, "second");
   }
   const diffMinutes = Math.floor(diffSeconds / 60);
   if (diffMinutes < 60) {
-    return `${diffMinutes}分钟前`;
+    return formatter.format(-diffMinutes, "minute");
   }
   const diffHours = Math.floor(diffMinutes / 60);
   if (diffHours < 24) {
-    return `${diffHours}小时前`;
+    return formatter.format(-diffHours, "hour");
   }
   const diffDays = Math.floor(diffHours / 24);
   if (diffDays < 30) {
-    return `${diffDays}天前`;
+    return formatter.format(-diffDays, "day");
   }
-  return new Date(then).toLocaleDateString("zh-CN");
+  return new Date(then).toLocaleDateString(locale);
 }

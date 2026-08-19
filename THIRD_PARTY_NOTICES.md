@@ -4,13 +4,13 @@ CLI Launchpad includes the following third-party font software. These fonts
 are not covered by the project's MIT License; each remains subject to the SIL
 Open Font License 1.1 included alongside its font files.
 
-## IBM Plex Sans SC
+## Noto Sans SC
 
 - Purpose: proportional Simplified Chinese typeface for the application UI.
-- Copyright: Copyright © 2017 IBM Corp. with Reserved Font Name "Plex".
+- Copyright: Copyright 2014-2021 Adobe, with Reserved Font Name "Source".
 - License: SIL Open Font License 1.1.
-- Source: https://github.com/IBM/plex
-- Packaged license: `src/assets/fonts/ibm-plex-sans-sc/LICENSE.txt`
+- Source: https://github.com/google/fonts/tree/main/ofl/notosanssc
+- Packaged license: `src/assets/fonts/noto-sans-sc/LICENSE.txt`
 
 ## Maple Mono NF CN
 

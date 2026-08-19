@@ -2,7 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { AnchoredPopover } from "../components/AnchoredPopover";
 import { useTools } from "../hooks/queries";
 import {
   CLI_STATUS_META,
@@ -52,9 +55,12 @@ import {
 } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
 
-const CLOSE_BEHAVIOR_OPTIONS: { value: CloseBehavior; label: string }[] = [
-  { value: "minimize_to_tray", label: "关闭后保持后台运行" },
-  { value: "quit", label: "退出应用" },
+const CLOSE_BEHAVIOR_OPTIONS: {
+  value: CloseBehavior;
+  labelKey: "settings.closeMinimize" | "settings.closeQuit";
+}[] = [
+  { value: "minimize_to_tray", labelKey: "settings.closeMinimize" },
+  { value: "quit", labelKey: "settings.closeQuit" },
 ];
 
 type GlobalArgsMap = Record<ToolKey, string>;
@@ -79,6 +85,7 @@ interface ActionError {
 }
 
 export function SettingsView() {
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const setView = useAppStore((state) => state.setView);
   const cliStatus = useCliStatus();
@@ -164,7 +171,7 @@ export function SettingsView() {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [planningToolKey, setPlanningToolKey] = useState<ToolKey | null>(null);
   const [actionError, setActionError] = useState<ActionError | null>(null);
-  const popoverContainerRef = useRef<HTMLDivElement | null>(null);
+  const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
@@ -323,38 +330,13 @@ export function SettingsView() {
     },
   });
 
-  useEffect(() => {
-    if (!pending || runMutation.isPending) {
-      return;
-    }
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (
-        popoverContainerRef.current &&
-        !popoverContainerRef.current.contains(event.target as Node)
-      ) {
-        setPending(null);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setPending(null);
-      }
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [pending, runMutation.isPending]);
-
   return (
     <div className="settings-view">
       <header className="detail-head settings-head">
-        <h1>设置</h1>
+        <h1>{t("settings.title")}</h1>
         <button
-          className="icon-button"
-          title="重新检测"
+          className="icon-button refresh-button"
+          title={t("settings.refresh")}
           onClick={() => {
             void refreshDetectedVersions();
           }}
@@ -370,9 +352,11 @@ export function SettingsView() {
       </header>
 
       <section className="cli-status-list">
-        <div className="section-heading">CLI 状态</div>
+        <div className="section-heading">{t("settings.cliStatus")}</div>
         {cliStatus.isError && (
-          <p className="error">检测失败：{String(cliStatus.error)}</p>
+          <p className="error">
+            {t("settings.detectFailed", { error: String(cliStatus.error) })}
+          </p>
         )}
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key];
@@ -393,48 +377,24 @@ export function SettingsView() {
                     CLI_STATUS_META[availability].badgeClass,
                   )}
                 >
-                  {CLI_STATUS_META[availability].label}
+                  {t(CLI_STATUS_META[availability].labelKey)}
                 </span>
                 {updatable === true && (
-                  <span className="update-flag">有更新</span>
+                  <span className="update-flag">
+                    {t("settings.updateAvailable")}
+                  </span>
                 )}
-              </div>
-
-              <div className="cli-status-detail muted">
-                {status?.path && <span>路径：{status.path}</span>}
-                <span>
-                  当前：
-                  {status?.version ??
-                    (isMissing
-                      ? "—"
-                      : status?.versionError
-                        ? `无法获取（${status.versionError}）`
-                        : "未知；点击右上角重新检测")}
-                </span>
-                <span>
-                  最新：
-                  {latest.isFetching
-                    ? "查询中…"
-                    : latestVersion
-                      ? `${latestVersion}${latestEntry?.fromCache ? "（缓存）" : ""}`
-                      : latestEntry?.error
-                        ? `无法获取（${latestEntry.error}）`
-                        : "无法获取"}
-                </span>
-              </div>
-
-              <div className="cli-status-actions">
                 {(isMissing || updatable === true) && (
                   <div
                     className="cli-action-anchor"
                     ref={
                       pending?.toolKey === tool.key
-                        ? popoverContainerRef
+                        ? popoverAnchorRef
                         : undefined
                     }
                   >
                     <button
-                      className="primary-button"
+                      className="primary-button cli-status-action-button"
                       onClick={() =>
                         void startAction(
                           tool.key,
@@ -447,69 +407,116 @@ export function SettingsView() {
                         activeTask != null
                       }
                       title={
-                        activeTask ? "已有安装或更新任务正在执行" : undefined
+                        activeTask ? t("settings.taskActiveTitle") : undefined
                       }
                     >
                       <Download size={15} />
                       {planningToolKey === tool.key
-                        ? "准备中…"
+                        ? t("settings.preparing")
                         : isMissing
-                          ? "一键安装"
-                          : "更新"}
+                          ? t("settings.install")
+                          : t("settings.update")}
                     </button>
                     {pending?.toolKey === tool.key && (
-                      <div
-                        className="cli-action-popover"
-                        role="dialog"
-                        aria-label={
-                          pending.kind === "install" ? "确认安装" : "确认更新"
+                      <AnchoredPopover
+                        anchorRef={popoverAnchorRef}
+                        ariaLabel={
+                          pending.kind === "install"
+                            ? t("settings.confirmInstall")
+                            : t("settings.confirmUpdate")
+                        }
+                        dismissible={!runMutation.isPending}
+                        onClose={() => setPending(null)}
+                        header={
+                          <div className="section-heading">
+                            {pending.kind === "install"
+                              ? t("settings.confirmInstall")
+                              : t("settings.confirmUpdate")}
+                          </div>
+                        }
+                        footer={
+                          <>
+                            <button
+                              className="ghost-button"
+                              onClick={() => setPending(null)}
+                              disabled={runMutation.isPending}
+                            >
+                              {t("common.cancel")}
+                            </button>
+                            <button
+                              className="primary-button"
+                              onClick={() => runMutation.mutate(pending)}
+                              disabled={runMutation.isPending}
+                            >
+                              {runMutation.isPending
+                                ? t("settings.creatingTask")
+                                : t("settings.confirmRun")}
+                            </button>
+                          </>
                         }
                       >
-                        <div className="section-heading">
-                          {pending.kind === "install" ? "确认安装" : "确认更新"}
-                        </div>
-                        <p className="muted">来源：{pending.plan.source}</p>
+                        <p className="muted">
+                          {t("settings.source", {
+                            source: pending.plan.source,
+                          })}
+                        </p>
                         <code className="readonly-args">
                           {pending.plan.preview}
                         </code>
-                        <p className="muted">
-                          该命令将在你的机器上执行。确认后可在“执行任务”中查看实时日志。
-                        </p>
+                        <p className="muted">{t("settings.commandNotice")}</p>
                         {actionError?.toolKey === tool.key && (
                           <p className="error">
-                            执行失败：{actionError.message}
+                            {t("settings.executeFailed", {
+                              error: actionError.message,
+                            })}
                           </p>
                         )}
-                        <div className="edit-actions">
-                          <button
-                            className="ghost-button"
-                            onClick={() => setPending(null)}
-                            disabled={runMutation.isPending}
-                          >
-                            取消
-                          </button>
-                          <button
-                            className="primary-button"
-                            onClick={() => runMutation.mutate(pending)}
-                            disabled={runMutation.isPending}
-                          >
-                            {runMutation.isPending ? "创建任务中…" : "确认执行"}
-                          </button>
-                        </div>
-                      </div>
+                      </AnchoredPopover>
                     )}
                   </div>
                 )}
               </div>
+
+              <div className="cli-status-detail muted">
+                {status?.path && (
+                  <span>{t("settings.path", { path: status.path })}</span>
+                )}
+                <span>
+                  {t("settings.current")}
+                  {status?.version ??
+                    (isMissing
+                      ? "—"
+                      : status?.versionError
+                        ? t("settings.unavailableWithError", {
+                            error: status.versionError,
+                          })
+                        : t("settings.unknownRefresh"))}
+                </span>
+                <span>
+                  {t("settings.latest")}
+                  {latest.isFetching
+                    ? t("settings.checking")
+                    : latestVersion
+                      ? `${latestVersion}${latestEntry?.fromCache ? t("settings.cachedSuffix") : ""}`
+                      : latestEntry?.error
+                        ? t("settings.unavailableWithError", {
+                            error: latestEntry.error,
+                          })
+                        : t("settings.unavailable")}
+                </span>
+              </div>
+
               {actionError?.toolKey === tool.key &&
                 pending?.toolKey !== tool.key && (
                   <p className="error cli-action-message">
-                    操作准备失败：{actionError.message}
+                    {t("settings.prepareFailed", {
+                      error: actionError.message,
+                    })}
                   </p>
                 )}
               {activeTask && activeTask.toolKey === tool.key && (
                 <p className="muted cli-action-message">
-                  此工具当前有任务正在执行，可从左侧“执行任务”查看。
+                  {t("settings.taskRunning")}
                 </p>
               )}
             </div>
@@ -520,18 +527,18 @@ export function SettingsView() {
       <section className="shell-config">
         <div className="terminal-config-head">
           <div>
-            <div className="section-heading">启动方式</div>
+            <div className="section-heading">{t("settings.launchMethod")}</div>
             <p className="muted">
               {terminalEnvironment.data?.platform === "macos"
-                ? "自动模式固定使用 Terminal.app；第三方终端仅在明确选择后使用。"
+                ? t("settings.launchHintMac")
                 : terminalEnvironment.data?.platform === "windows"
-                  ? "优先保留 Windows Terminal Profile；不可用时自动回退到独立 Shell。"
-                  : "根据当前平台检测可用的终端启动方式。"}
+                  ? t("settings.launchHintWindows")
+                  : t("settings.launchHintOther")}
             </p>
           </div>
           <button
-            className="icon-button"
-            title="重新检测终端环境"
+            className="icon-button refresh-button"
+            title={t("settings.refreshTerminal")}
             disabled={terminalEnvironment.isFetching}
             onClick={() => {
               void queryClient.fetchQuery({
@@ -548,25 +555,28 @@ export function SettingsView() {
         </div>
 
         {terminalEnvironment.isLoading || launchTarget.isLoading ? (
-          <p className="muted">正在检测终端环境…</p>
+          <p className="muted">{t("settings.detectingTerminal")}</p>
         ) : terminalEnvironment.isError || launchTarget.isError ? (
           <p className="error">
-            读取启动方式失败：
-            {String(terminalEnvironment.error ?? launchTarget.error)}
+            {t("settings.launchLoadFailed", {
+              error: String(terminalEnvironment.error ?? launchTarget.error),
+            })}
           </p>
         ) : (
           <div className="terminal-option-list">
             <TerminalOption
               targetId="auto"
-              title="自动选择"
+              title={t("settings.autoSelect")}
               description={
                 terminalEnvironment.data?.platform === "macos"
-                  ? "固定使用系统 Terminal.app，安装第三方终端不会改变默认行为。"
-                  : "优先使用 Windows Terminal 默认 Profile，再按 PowerShell 7、Windows PowerShell、CMD 回退。"
+                  ? t("settings.autoDescriptionMac")
+                  : t("settings.autoDescriptionWindows")
               }
               selected={currentLaunchTarget === "auto"}
               disabled={launchTargetMutation.isPending}
-              badges={[{ label: "推荐", tone: "recommended" }]}
+              badges={[
+                { label: t("settings.recommended"), tone: "recommended" },
+              ]}
               onSelect={launchTargetMutation.mutate}
             />
 
@@ -574,11 +584,15 @@ export function SettingsView() {
               <div className="terminal-group" key={host.id}>
                 <div className="terminal-group-title">
                   <strong>{host.displayName}</strong>
-                  <span>{host.version ? `v${host.version}` : "版本未知"}</span>
+                  <span>
+                    {host.version
+                      ? `v${host.version}`
+                      : t("settings.unknownVersion")}
+                  </span>
                 </div>
                 {host.profiles.length === 0 ? (
                   <p className="muted terminal-empty">
-                    未发现可选择的 Profile，自动模式仍会尝试默认 Profile。
+                    {t("settings.noProfiles")}
                   </p>
                 ) : (
                   host.profiles.map((profile) => (
@@ -586,19 +600,19 @@ export function SettingsView() {
                       key={profile.targetId}
                       targetId={profile.targetId}
                       title={profile.name}
-                      description={`${shellFamilyLabel(profile.shellFamily)} · ${profile.preservationReason}`}
+                      description={`${shellFamilyLabel(profile.shellFamily, t)} · ${profile.preservationReason}`}
                       selected={currentLaunchTarget === profile.targetId}
                       disabled={launchTargetMutation.isPending}
                       badges={[
                         ...(profile.isDefault
                           ? [
                               {
-                                label: "默认 Profile",
+                                label: t("settings.defaultProfile"),
                                 tone: "default" as const,
                               },
                             ]
                           : []),
-                        preservationBadge(profile.preservation),
+                        preservationBadge(profile.preservation, t),
                       ]}
                       onSelect={launchTargetMutation.mutate}
                     />
@@ -610,18 +624,23 @@ export function SettingsView() {
             {(terminalEnvironment.data?.directShells.length ?? 0) > 0 && (
               <div className="terminal-group">
                 <div className="terminal-group-title">
-                  <strong>独立控制台</strong>
-                  <span>不使用 Windows Terminal Profile</span>
+                  <strong>{t("settings.standaloneConsole")}</strong>
+                  <span>{t("settings.standaloneDescription")}</span>
                 </div>
                 {terminalEnvironment.data?.directShells.map((shell) => (
                   <TerminalOption
                     key={shell.targetId}
                     targetId={shell.targetId}
                     title={shell.displayName}
-                    description={`${shellFamilyLabel(shell.shellFamily)} · 回退优先级 ${shell.priority}`}
+                    description={`${shellFamilyLabel(shell.shellFamily, t)} · ${t("settings.fallbackPriority", { priority: shell.priority })}`}
                     selected={currentLaunchTarget === shell.targetId}
                     disabled={launchTargetMutation.isPending}
-                    badges={[{ label: "独立窗口", tone: "standalone" }]}
+                    badges={[
+                      {
+                        label: t("settings.standaloneWindow"),
+                        tone: "standalone",
+                      },
+                    ]}
                     onSelect={launchTargetMutation.mutate}
                   />
                 ))}
@@ -631,15 +650,16 @@ export function SettingsView() {
             {terminalEnvironment.data?.platform === "macos" && (
               <div className="terminal-group">
                 <div className="terminal-group-title">
-                  <strong>macOS 终端</strong>
+                  <strong>{t("settings.macTerminals")}</strong>
                   <span>
-                    已检测 {terminalEnvironment.data.macosTerminalHosts.length}{" "}
-                    项
+                    {t("settings.detectedCount", {
+                      count: terminalEnvironment.data.macosTerminalHosts.length,
+                    })}
                   </span>
                 </div>
                 {terminalEnvironment.data.macosTerminalHosts.length === 0 ? (
                   <p className="muted terminal-empty">
-                    未检测到可用终端，自动启动暂不可用。
+                    {t("settings.noTerminals")}
                   </p>
                 ) : (
                   terminalEnvironment.data.macosTerminalHosts.map((host) => (
@@ -647,20 +667,20 @@ export function SettingsView() {
                       key={host.targetId}
                       targetId={host.targetId}
                       title={host.displayName}
-                      description={macosTerminalDescription(host)}
+                      description={macosTerminalDescription(host, t)}
                       selected={currentLaunchTarget === host.targetId}
                       disabled={launchTargetMutation.isPending}
                       badges={[
                         ...(host.targetId === "macos:terminal"
                           ? [
                               {
-                                label: "系统默认",
+                                label: t("settings.systemDefault"),
                                 tone: "default" as const,
                               },
                             ]
                           : []),
                         {
-                          label: "原生",
+                          label: t("settings.native"),
                           tone: "native" as const,
                         },
                       ]}
@@ -675,8 +695,9 @@ export function SettingsView() {
 
         {unavailableSavedTarget && (
           <p className="terminal-warning">
-            已保存的启动目标 {currentLaunchTarget}{" "}
-            在当前平台不可用；实际启动时将自动回退到推荐终端。请选择当前列表中的终端可更新此设置。
+            {t("settings.unavailableSavedTarget", {
+              target: currentLaunchTarget,
+            })}
           </p>
         )}
 
@@ -687,17 +708,19 @@ export function SettingsView() {
         ))}
         {launchTargetMutation.isError && (
           <p className="error">
-            保存启动方式失败：{String(launchTargetMutation.error)}
+            {t("settings.saveLaunchFailed", {
+              error: String(launchTargetMutation.error),
+            })}
           </p>
         )}
       </section>
 
       <section className="shell-config">
-        <div className="section-heading">关闭窗口行为</div>
+        <div className="section-heading">{t("settings.closeBehavior")}</div>
         <p className="muted">
           {terminalEnvironment.data?.platform === "macos"
-            ? "默认关闭后保持后台运行；点击 Dock 图标或菜单栏入口可重新显示主界面。"
-            : "默认关闭后保留在系统托盘；双击托盘图标可重新显示主界面。"}
+            ? t("settings.closeDescriptionMac")
+            : t("settings.closeDescriptionOther")}
         </p>
         <div className="model-presets">
           {CLOSE_BEHAVIOR_OPTIONS.map((option) => (
@@ -711,20 +734,22 @@ export function SettingsView() {
               }
               onClick={() => closeBehaviorMutation.mutate(option.value)}
             >
-              {option.label}
+              {t(option.labelKey)}
             </button>
           ))}
         </div>
         {closeBehaviorMutation.isError && (
           <p className="error">
-            保存失败：{String(closeBehaviorMutation.error)}
+            {t("settings.saveFailed", {
+              error: String(closeBehaviorMutation.error),
+            })}
           </p>
         )}
       </section>
 
       <section className="shell-config">
-        <div className="section-heading">工具全局参数</div>
-        <p className="muted">对所有项目生效；项目级参数会覆盖同名参数。</p>
+        <div className="section-heading">{t("settings.globalArgs")}</div>
+        <p className="muted">{t("settings.globalArgsDescription")}</p>
         {TOOLS.map((tool) => (
           <div className="global-arg-row" key={tool.key}>
             <label className="global-arg-label">
@@ -733,7 +758,7 @@ export function SettingsView() {
             </label>
             <input
               value={globalArgs[tool.key]}
-              placeholder="例如 --dangerously-skip-permissions"
+              placeholder={t("settings.argsPlaceholder")}
               onChange={(event) =>
                 setGlobalArgs((prev) => ({
                   ...prev,
@@ -750,19 +775,17 @@ export function SettingsView() {
             onClick={() => saveGlobalArgsMutation.mutate()}
           >
             <Save size={15} />
-            保存全局参数
+            {t("settings.saveGlobalArgs")}
           </button>
           {saveGlobalArgsMutation.isSuccess && (
-            <span className="muted">已保存。</span>
+            <span className="muted">{t("settings.saved")}</span>
           )}
         </div>
       </section>
 
       <section className="config-backup">
-        <div className="section-heading">配置备份</div>
-        <p className="muted">
-          导出/导入目录、工具参数到文件（导入按路径合并，不重复添加目录）。
-        </p>
+        <div className="section-heading">{t("settings.configBackup")}</div>
+        <p className="muted">{t("settings.configBackupDescription")}</p>
         <div className="config-actions">
           <button
             className="ghost-button"
@@ -770,7 +793,7 @@ export function SettingsView() {
             disabled={exportMutation.isPending}
           >
             <Download size={15} />
-            导出到文件
+            {t("settings.exportFile")}
           </button>
           <button
             className="ghost-button"
@@ -778,25 +801,33 @@ export function SettingsView() {
             disabled={importMutation.isPending}
           >
             <Upload size={15} />
-            从文件导入
+            {t("settings.importFile")}
           </button>
         </div>
         {exportMutation.isSuccess && exportMutation.data && (
-          <p className="muted">已导出。</p>
+          <p className="muted">{t("settings.exported")}</p>
         )}
         {exportMutation.isError && (
-          <p className="error">导出失败：{String(exportMutation.error)}</p>
+          <p className="error">
+            {t("settings.exportFailed", {
+              error: String(exportMutation.error),
+            })}
+          </p>
         )}
         {importMutation.isSuccess && importMutation.data && (
-          <p className="muted">导入成功。</p>
+          <p className="muted">{t("settings.importSuccess")}</p>
         )}
         {importMutation.isError && (
-          <p className="error">导入失败：{String(importMutation.error)}</p>
+          <p className="error">
+            {t("settings.importFailed", {
+              error: String(importMutation.error),
+            })}
+          </p>
         )}
       </section>
 
       <section className="config-backup">
-        <div className="section-heading">诊断</div>
+        <div className="section-heading">{t("settings.diagnostics")}</div>
         <div className="config-actions">
           <button
             className="ghost-button"
@@ -804,23 +835,27 @@ export function SettingsView() {
             onClick={() => diagnosticsMutation.mutate()}
           >
             <Download size={15} />
-            导出诊断报告
+            {t("settings.exportDiagnostics")}
           </button>
         </div>
         {diagnosticsMutation.isError && (
-          <p className="error">导出失败：{String(diagnosticsMutation.error)}</p>
+          <p className="error">
+            {t("settings.exportFailed", {
+              error: String(diagnosticsMutation.error),
+            })}
+          </p>
         )}
       </section>
 
       <section className="config-backup">
-        <div className="section-heading">最近启动</div>
+        <div className="section-heading">{t("settings.recentLaunch")}</div>
         <div className="config-actions">
           <button
             className="ghost-button"
             disabled={clearHistoryMutation.isPending}
             onClick={() => clearHistoryMutation.mutate()}
           >
-            清除历史
+            {t("settings.clearHistory")}
           </button>
         </div>
         <div className="backup-list">
@@ -831,9 +866,12 @@ export function SettingsView() {
                   {event.directoryName} · {event.toolKey}
                 </strong>
                 <span className="muted">
-                  {event.action === "resume" ? "恢复会话" : "新建会话"} ·{" "}
-                  {event.success ? "成功" : "失败"} ·{" "}
-                  {formatUtcDateTime(event.launchedAt)}
+                  {event.action === "resume"
+                    ? t("settings.resumeSession")
+                    : t("settings.newSession")}{" "}
+                  ·{" "}
+                  {event.success ? t("settings.success") : t("settings.failed")}{" "}
+                  · {formatUtcDateTime(event.launchedAt, i18n.resolvedLanguage)}
                 </span>
               </div>
             </div>
@@ -842,15 +880,24 @@ export function SettingsView() {
       </section>
 
       <section className="config-backup">
-        <div className="section-heading">缓存</div>
+        <div className="section-heading">{t("settings.cache")}</div>
         <div className="cache-summary">
-          <span>条目：{cacheStats.data?.entryCount ?? 0}</span>
-          <span>大小：{formatBytes(cacheStats.data?.sizeBytes ?? 0)}</span>
           <span>
-            最近写入：
-            {cacheStats.data?.newestEntryAtMs
-              ? new Date(cacheStats.data.newestEntryAtMs).toLocaleString()
-              : "无"}
+            {t("settings.entries", { count: cacheStats.data?.entryCount ?? 0 })}
+          </span>
+          <span>
+            {t("settings.size", {
+              size: formatBytes(cacheStats.data?.sizeBytes ?? 0),
+            })}
+          </span>
+          <span>
+            {t("settings.newestWrite", {
+              time: cacheStats.data?.newestEntryAtMs
+                ? new Date(cacheStats.data.newestEntryAtMs).toLocaleString(
+                    i18n.resolvedLanguage,
+                  )
+                : t("common.none"),
+            })}
           </span>
         </div>
         <div className="config-actions">
@@ -859,16 +906,14 @@ export function SettingsView() {
             disabled={clearCacheMutation.isPending}
             onClick={() => clearCacheMutation.mutate()}
           >
-            清除缓存
+            {t("settings.clearCache")}
           </button>
         </div>
       </section>
 
       <section className="config-backup">
-        <div className="section-heading">数据恢复</div>
-        <p className="muted">
-          自动恢复点会在导入配置和恢复操作前创建；手动恢复点保存当前全部业务数据。
-        </p>
+        <div className="section-heading">{t("settings.recovery")}</div>
+        <p className="muted">{t("settings.recoveryDescription")}</p>
         <div className="config-actions">
           <button
             className="primary-button"
@@ -876,20 +921,26 @@ export function SettingsView() {
             onClick={() => createBackupMutation.mutate()}
           >
             <Save size={15} />
-            创建恢复点
+            {t("settings.createRecovery")}
           </button>
         </div>
         {backups.isError && (
-          <p className="error">读取恢复点失败：{String(backups.error)}</p>
+          <p className="error">
+            {t("settings.readRecoveryFailed", {
+              error: String(backups.error),
+            })}
+          </p>
         )}
         <div className="backup-list">
           {backups.data?.map((backup) => (
             <div className="backup-row" key={backup.id}>
               <div>
-                <strong>{backupReasonLabel(backup.reason)}</strong>
+                <strong>{backupReasonLabel(backup.reason, t)}</strong>
                 <span className="muted">
-                  {new Date(backup.createdAtMs).toLocaleString()} ·{" "}
-                  {formatBytes(backup.sizeBytes)}
+                  {new Date(backup.createdAtMs).toLocaleString(
+                    i18n.resolvedLanguage,
+                  )}{" "}
+                  · {formatBytes(backup.sizeBytes)}
                 </span>
               </div>
               <button
@@ -897,17 +948,22 @@ export function SettingsView() {
                 disabled={restoreBackupMutation.isPending}
                 onClick={() => setPendingRestore(backup)}
               >
-                恢复
+                {t("settings.restore")}
               </button>
             </div>
           ))}
         </div>
         {pendingRestore && (
           <div className="restore-confirm">
-            <div className="section-heading">确认恢复数据</div>
+            <div className="section-heading">
+              {t("settings.confirmRestore")}
+            </div>
             <p className="muted">
-              将恢复到 {new Date(pendingRestore.createdAtMs).toLocaleString()}{" "}
-              的数据状态；执行前会自动保存当前状态。
+              {t("settings.restoreDescription", {
+                time: new Date(pendingRestore.createdAtMs).toLocaleString(
+                  i18n.resolvedLanguage,
+                ),
+              })}
             </p>
             <div className="edit-actions">
               <button
@@ -915,21 +971,23 @@ export function SettingsView() {
                 onClick={() => setPendingRestore(null)}
                 disabled={restoreBackupMutation.isPending}
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 className="primary-button"
                 onClick={() => restoreBackupMutation.mutate(pendingRestore.id)}
                 disabled={restoreBackupMutation.isPending}
               >
-                确认恢复
+                {t("settings.confirmRestoreAction")}
               </button>
             </div>
           </div>
         )}
         {restoreBackupMutation.isError && (
           <p className="error">
-            恢复失败：{String(restoreBackupMutation.error)}
+            {t("settings.restoreFailed", {
+              error: String(restoreBackupMutation.error),
+            })}
           </p>
         )}
       </section>
@@ -937,14 +995,8 @@ export function SettingsView() {
   );
 }
 
-function backupReasonLabel(reason: BackupManifest["reason"]) {
-  const labels = {
-    manual: "手动恢复点",
-    pre_import: "导入前自动备份",
-    pre_restore: "恢复前保护备份",
-    pre_migration: "升级前自动备份",
-  };
-  return labels[reason];
+function backupReasonLabel(reason: BackupManifest["reason"], t: TFunction) {
+  return t(`settings.backupReason.${reason}`);
 }
 
 type TerminalBadgeTone =
@@ -1003,49 +1055,56 @@ function TerminalOption({
   );
 }
 
-function preservationBadge(preservation: ProfilePreservation): {
+function preservationBadge(
+  preservation: ProfilePreservation,
+  t: TFunction,
+): {
   label: string;
   tone: TerminalBadgeTone;
 } {
   const badges = {
-    exact: { label: "完整保留", tone: "exact" as const },
+    exact: {
+      label: t("settings.preservation.exact"),
+      tone: "exact" as const,
+    },
     command_continuation: {
-      label: "命令续接",
+      label: t("settings.preservation.command_continuation"),
       tone: "continuation" as const,
     },
     appearance_only: {
-      label: "仅保留外观",
+      label: t("settings.preservation.appearance_only"),
       tone: "appearance" as const,
     },
   };
   return badges[preservation];
 }
 
-function shellFamilyLabel(family: ShellFamily) {
+function shellFamilyLabel(family: ShellFamily, t: TFunction) {
   const labels: Record<ShellFamily, string> = {
     pwsh: "PowerShell 7",
     windows_power_shell: "Windows PowerShell",
     cmd: "CMD",
-    unknown: "自定义 Shell",
+    unknown: t("settings.shell.custom"),
   };
   return labels[family];
 }
 
 function macosTerminalDescription(
   host: import("../lib/tauri").MacosTerminalHost,
+  t: TFunction,
 ) {
   const version = host.version ? `v${host.version} · ` : "";
   const descriptions: Record<
     import("../lib/tauri").MacosTerminalLaunchMode,
     string
   > = {
-    command_document: "通过 LaunchServices 打开一次性、自删除的 .command",
-    apple_script: "通过 AppleScript 创建 Ghostty 原生窗口并输入命令",
-    direct_arguments: "通过应用包内官方 CLI 传递结构化参数",
+    command_document: t("settings.terminalDescription.command_document"),
+    apple_script: t("settings.terminalDescription.apple_script"),
+    direct_arguments: t("settings.terminalDescription.direct_arguments"),
   };
   const launchDescription =
     host.targetId === "macos:kitty"
-      ? `${descriptions.direct_arguments}，并保留命令退出后的窗口`
+      ? `${descriptions.direct_arguments}${t("settings.terminalDescription.kittySuffix")}`
       : descriptions[host.launchMode];
   return `${version}${launchDescription} · ${host.applicationPath}`;
 }

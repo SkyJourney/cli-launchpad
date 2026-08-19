@@ -7,6 +7,7 @@ import { SettingsView } from "./views/SettingsView";
 import { ExecutionsView } from "./views/ExecutionsView";
 import { AboutView } from "./views/AboutView";
 import { useExecutionTaskEvents } from "./hooks/useExecutionTasks";
+import { useThemeSync } from "./hooks/useThemeSync";
 import { type ViewName, useAppStore } from "./store/appStore";
 
 export function App() {
@@ -14,6 +15,7 @@ export function App() {
   const workspaceRef = useRef<HTMLElement>(null);
   const scrollPositions = useRef<Partial<Record<ViewName, number>>>({});
   useExecutionTaskEvents();
+  useThemeSync();
 
   useLayoutEffect(() => {
     if (workspaceRef.current) {

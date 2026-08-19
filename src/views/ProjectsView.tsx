@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Plus, RefreshCw, Save, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ProjectCard } from "../components/ProjectCard";
 import { useDirectories } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
@@ -21,6 +22,7 @@ import { useAppStore } from "../store/appStore";
 type SortMode = "recent" | "name";
 
 export function ProjectsView() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const openDirectory = useAppStore((state) => state.openDirectory);
   const setView = useAppStore((state) => state.setView);
@@ -99,7 +101,7 @@ export function ProjectsView() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "选择项目目录",
+      title: t("projects.chooseDirectory"),
     });
     if (typeof selected === "string") {
       setNewPath(selected);
@@ -136,12 +138,12 @@ export function ProjectsView() {
   return (
     <div className="projects-view">
       <header className="projects-toolbar">
-        <h1>项目</h1>
+        <h1>{t("projects.title")}</h1>
         <div className="toolbar-controls">
           <label className="search-box">
             <Search size={15} />
             <input
-              placeholder="搜索名称或路径"
+              placeholder={t("projects.searchPlaceholder")}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -150,12 +152,12 @@ export function ProjectsView() {
             value={sortMode}
             onChange={(event) => setSortMode(event.target.value as SortMode)}
           >
-            <option value="recent">最近使用</option>
-            <option value="name">名称</option>
+            <option value="recent">{t("projects.sortRecent")}</option>
+            <option value="name">{t("projects.sortName")}</option>
           </select>
           <button
-            className="icon-button"
-            title="重新检测 CLI"
+            className="icon-button refresh-button"
+            title={t("projects.refreshCli")}
             onClick={() =>
               void queryClient.fetchQuery({
                 queryKey: qk.cliStatus(),
@@ -174,7 +176,7 @@ export function ProjectsView() {
             onClick={() => setShowAdd((value) => !value)}
           >
             <Plus size={15} />
-            添加目录
+            {t("projects.addDirectory")}
           </button>
         </div>
       </header>
@@ -183,12 +185,12 @@ export function ProjectsView() {
         <div className="add-form">
           <div className="add-form-fields">
             <input
-              placeholder="名称"
+              placeholder={t("projects.namePlaceholder")}
               value={newName}
               onChange={(event) => setNewName(event.target.value)}
             />
             <input
-              placeholder="完整路径，或点击「浏览」选择"
+              placeholder={t("projects.pathPlaceholder")}
               value={newPath}
               onChange={(event) => setNewPath(event.target.value)}
             />
@@ -196,7 +198,7 @@ export function ProjectsView() {
           <div className="add-form-actions">
             <button className="ghost-button" onClick={() => void pickFolder()}>
               <FolderOpen size={15} />
-              浏览
+              {t("common.browse")}
             </button>
             <button
               className="primary-button"
@@ -204,23 +206,33 @@ export function ProjectsView() {
               onClick={() => addMutation.mutate()}
             >
               <Save size={15} />
-              保存
+              {t("common.save")}
             </button>
             <button className="ghost-button" onClick={() => setShowAdd(false)}>
               <X size={15} />
-              取消
+              {t("common.cancel")}
             </button>
           </div>
         </div>
       )}
       {addMutation.isError && (
-        <p className="error">添加失败：{String(addMutation.error)}</p>
+        <p className="error">
+          {t("projects.addFailed", { error: String(addMutation.error) })}
+        </p>
       )}
-      {launchError && <p className="error">启动失败：{launchError}</p>}
-      {openPathError && <p className="error">打开目录失败：{openPathError}</p>}
+      {launchError && (
+        <p className="error">
+          {t("projects.launchFailed", { error: launchError })}
+        </p>
+      )}
+      {openPathError && (
+        <p className="error">
+          {t("projects.openPathFailed", { error: openPathError })}
+        </p>
+      )}
 
       {visible.length === 0 ? (
-        <p className="muted">没有匹配的目录。点击「添加目录」创建第一个。</p>
+        <p className="muted">{t("projects.empty")}</p>
       ) : (
         <div className="project-grid">
           {visible.map((directory) => (

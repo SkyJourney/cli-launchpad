@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   isExecutionActive,
   useExecutionTasks,
@@ -15,33 +16,51 @@ import {
   clearExecutionTask,
   getExecutionTask,
   type ExecutionStatus,
-  type ExecutionStream,
   type ExecutionTask,
 } from "../lib/tauri";
 
 const STATUS_META: Record<
   ExecutionStatus,
-  { label: string; className: string }
+  { labelKey: string; className: string }
 > = {
-  preparing: { label: "准备中", className: "status-preparing" },
-  running: { label: "执行中", className: "status-running" },
-  cancelling: { label: "正在终止", className: "status-cancelling" },
-  succeeded: { label: "执行成功", className: "status-succeeded" },
-  failed: { label: "执行失败", className: "status-failed" },
-  cancelled: { label: "已取消", className: "status-cancelled" },
-  timed_out: { label: "已超时", className: "status-failed" },
-  interrupted: { label: "意外中断", className: "status-interrupted" },
-};
-
-const STREAM_LABELS: Record<ExecutionStream, string> = {
-  stdout: "输出",
-  stderr: "错误",
-  system: "系统",
+  preparing: {
+    labelKey: "executions.status.preparing",
+    className: "status-preparing",
+  },
+  running: {
+    labelKey: "executions.status.running",
+    className: "status-running",
+  },
+  cancelling: {
+    labelKey: "executions.status.cancelling",
+    className: "status-cancelling",
+  },
+  succeeded: {
+    labelKey: "executions.status.succeeded",
+    className: "status-succeeded",
+  },
+  failed: {
+    labelKey: "executions.status.failed",
+    className: "status-failed",
+  },
+  cancelled: {
+    labelKey: "executions.status.cancelled",
+    className: "status-cancelled",
+  },
+  timed_out: {
+    labelKey: "executions.status.timed_out",
+    className: "status-failed",
+  },
+  interrupted: {
+    labelKey: "executions.status.interrupted",
+    className: "status-interrupted",
+  },
 };
 
 type Confirmation = "cancel" | "clear-one" | "clear-all" | null;
 
 export function ExecutionsView() {
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const tasks = useExecutionTasks();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -136,13 +155,13 @@ export function ExecutionsView() {
     <div className="executions-view">
       <header className="execution-page-head">
         <div>
-          <h1>执行任务</h1>
-          <p className="muted">查看安装与更新任务的实时输出和历史日志。</p>
+          <h1>{t("executions.title")}</h1>
+          <p className="muted">{t("executions.description")}</p>
         </div>
         <div className="execution-page-actions">
           <button
-            className="icon-button"
-            title="刷新任务"
+            className="icon-button refresh-button"
+            title={t("executions.refresh")}
             onClick={() => void tasks.refetch()}
             disabled={tasks.isFetching}
           >
@@ -152,12 +171,12 @@ export function ExecutionsView() {
             />
           </button>
           <button
-            className="ghost-button danger-button"
+            className="ghost-button danger-button page-cleanup-button"
             onClick={() => setConfirmation("clear-all")}
             disabled={finishedCount === 0}
           >
             <Trash2 size={15} />
-            清理历史
+            {t("executions.clearHistory")}
           </button>
         </div>
       </header>
@@ -165,9 +184,9 @@ export function ExecutionsView() {
       {confirmation === "clear-all" && (
         <div className="execution-confirm" role="alert">
           <div>
-            <strong>清理全部已结束任务？</strong>
+            <strong>{t("executions.clearAllTitle")}</strong>
             <p className="muted">
-              将删除 {finishedCount} 条任务及其日志，无法撤销。
+              {t("executions.clearAllDescription", { count: finishedCount })}
             </p>
           </div>
           <div className="execution-confirm-actions">
@@ -175,24 +194,32 @@ export function ExecutionsView() {
               className="ghost-button"
               onClick={() => setConfirmation(null)}
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               className="primary-button danger-fill"
               onClick={() => clearAllMutation.mutate()}
               disabled={clearAllMutation.isPending}
             >
-              {clearAllMutation.isPending ? "清理中…" : "确认清理"}
+              {clearAllMutation.isPending
+                ? t("executions.clearing")
+                : t("executions.confirmClear")}
             </button>
           </div>
         </div>
       )}
 
       {tasks.isError && (
-        <p className="error">读取任务失败：{String(tasks.error)}</p>
+        <p className="error">
+          {t("executions.readFailed", { error: String(tasks.error) })}
+        </p>
       )}
       {mutationError && (
-        <p className="error">操作失败：{String(mutationError)}</p>
+        <p className="error">
+          {t("executions.operationFailed", {
+            error: String(mutationError),
+          })}
+        </p>
       )}
 
       <section
@@ -200,16 +227,19 @@ export function ExecutionsView() {
           "is-empty": showUnifiedState,
         })}
       >
-        <div className="execution-task-list" aria-label="执行任务列表">
+        <div
+          className="execution-task-list"
+          aria-label={t("executions.listLabel")}
+        >
           {tasks.isLoading && (
-            <p className="muted execution-empty">正在读取任务…</p>
+            <p className="muted execution-empty">
+              {t("executions.readingTasks")}
+            </p>
           )}
           {!tasks.isLoading && tasks.data?.length === 0 && (
             <div className="execution-empty">
-              <strong>还没有执行任务</strong>
-              <p className="muted">
-                从设置页安装或更新 CLI 后，任务会显示在这里。
-              </p>
+              <strong>{t("executions.emptyTitle")}</strong>
+              <p className="muted">{t("executions.emptyDescription")}</p>
             </div>
           )}
           {tasks.data?.map((task) => {
@@ -226,11 +256,17 @@ export function ExecutionsView() {
                 <span className="execution-task-title">
                   {Icon && <Icon size={18} />}
                   <strong>{tool?.label ?? task.toolKey}</strong>
-                  <span>{task.kind === "install" ? "安装" : "更新"}</span>
+                  <span>
+                    {task.kind === "install"
+                      ? t("executions.install")
+                      : t("executions.update")}
+                  </span>
                 </span>
                 <span className="execution-task-meta">
                   <TaskStatus status={task.status} />
-                  <time>{formatTaskTime(task.startedAtMs)}</time>
+                  <time>
+                    {formatTaskTime(task.startedAtMs, i18n.resolvedLanguage)}
+                  </time>
                 </span>
               </button>
             );
@@ -241,7 +277,7 @@ export function ExecutionsView() {
           <div className="execution-detail">
             {!selectedTask && !tasks.isLoading && (
               <div className="execution-detail-empty muted">
-                选择一个任务查看执行日志。
+                {t("executions.selectTask")}
               </div>
             )}
             {selectedTask && (
@@ -249,10 +285,18 @@ export function ExecutionsView() {
                 <div className="execution-detail-head">
                   <div>
                     <div className="execution-detail-title">
-                      <strong>{taskTitle(selectedTask)}</strong>
+                      <strong>
+                        {taskTitle(
+                          selectedTask,
+                          t("executions.install"),
+                          t("executions.update"),
+                        )}
+                      </strong>
                       <TaskStatus status={selectedTask.status} />
                     </div>
-                    <p className="muted">来源：{selectedTask.source}</p>
+                    <p className="muted">
+                      {t("executions.source", { source: selectedTask.source })}
+                    </p>
                   </div>
                   <div className="execution-detail-actions">
                     {isExecutionActive(selectedTask.status) ? (
@@ -266,8 +310,8 @@ export function ExecutionsView() {
                       >
                         <Square size={13} fill="currentColor" />
                         {selectedTask.status === "cancelling"
-                          ? "正在终止"
-                          : "终止任务"}
+                          ? t("executions.cancelling")
+                          : t("executions.cancelTask")}
                       </button>
                     ) : (
                       <button
@@ -276,7 +320,7 @@ export function ExecutionsView() {
                         disabled={clearOneMutation.isPending}
                       >
                         <Trash2 size={14} />
-                        清理记录
+                        {t("executions.clearRecord")}
                       </button>
                     )}
                   </div>
@@ -289,10 +333,9 @@ export function ExecutionsView() {
                 {confirmation === "cancel" && (
                   <div className="execution-confirm danger" role="alert">
                     <div>
-                      <strong>确定终止此任务？</strong>
+                      <strong>{t("executions.cancelTitle")}</strong>
                       <p className="muted">
-                        将强制结束完整进程树。更新中断可能导致 CLI
-                        需要重新安装。
+                        {t("executions.cancelDescription")}
                       </p>
                     </div>
                     <div className="execution-confirm-actions">
@@ -300,14 +343,16 @@ export function ExecutionsView() {
                         className="ghost-button"
                         onClick={() => setConfirmation(null)}
                       >
-                        取消
+                        {t("common.cancel")}
                       </button>
                       <button
                         className="primary-button danger-fill"
                         onClick={() => cancelMutation.mutate(selectedTask.id)}
                         disabled={cancelMutation.isPending}
                       >
-                        {cancelMutation.isPending ? "正在请求…" : "确认终止"}
+                        {cancelMutation.isPending
+                          ? t("executions.requesting")
+                          : t("executions.confirmCancel")}
                       </button>
                     </div>
                   </div>
@@ -316,9 +361,9 @@ export function ExecutionsView() {
                 {confirmation === "clear-one" && (
                   <div className="execution-confirm" role="alert">
                     <div>
-                      <strong>删除这条任务记录？</strong>
+                      <strong>{t("executions.deleteTitle")}</strong>
                       <p className="muted">
-                        对应的历史日志也会一并删除，无法撤销。
+                        {t("executions.deleteDescription")}
                       </p>
                     </div>
                     <div className="execution-confirm-actions">
@@ -326,14 +371,16 @@ export function ExecutionsView() {
                         className="ghost-button"
                         onClick={() => setConfirmation(null)}
                       >
-                        取消
+                        {t("common.cancel")}
                       </button>
                       <button
                         className="primary-button danger-fill"
                         onClick={() => clearOneMutation.mutate(selectedTask.id)}
                         disabled={clearOneMutation.isPending}
                       >
-                        {clearOneMutation.isPending ? "删除中…" : "确认删除"}
+                        {clearOneMutation.isPending
+                          ? t("executions.deleting")
+                          : t("executions.confirmDelete")}
                       </button>
                     </div>
                   </div>
@@ -341,16 +388,22 @@ export function ExecutionsView() {
 
                 <div className="execution-log-toolbar">
                   <span className="muted">
-                    开始于 {new Date(selectedTask.startedAtMs).toLocaleString()}
+                    {t("executions.startedAt", {
+                      time: new Date(selectedTask.startedAtMs).toLocaleString(
+                        i18n.resolvedLanguage,
+                      ),
+                    })}
                     {selectedTask.exitCode != null &&
-                      ` · 退出码 ${selectedTask.exitCode}`}
+                      ` · ${t("executions.exitCode", {
+                        code: selectedTask.exitCode,
+                      })}`}
                   </span>
                   {isExecutionActive(selectedTask.status) && !followLogs && (
                     <button
                       className="log-follow-button"
                       onClick={() => setFollowLogs(true)}
                     >
-                      跟随最新输出
+                      {t("executions.followOutput")}
                     </button>
                   )}
                 </div>
@@ -373,11 +426,11 @@ export function ExecutionsView() {
                   }}
                 >
                   {detail.isLoading && (
-                    <span className="muted">正在读取日志…</span>
+                    <span className="muted">{t("executions.readingLogs")}</span>
                   )}
                   {!detail.isLoading && logs.length === 0 && (
                     <span className="execution-log-placeholder">
-                      （暂无输出）
+                      {t("executions.noOutput")}
                     </span>
                   )}
                   {logs.map((chunk) => (
@@ -389,14 +442,14 @@ export function ExecutionsView() {
                       key={chunk.sequence}
                     >
                       <span className="execution-stream-label">
-                        {STREAM_LABELS[chunk.stream]}
+                        {t(`executions.stream.${chunk.stream}`)}
                       </span>
                       <pre>{chunk.content}</pre>
                     </div>
                   ))}
                   {selectedTask.logTruncated && (
                     <div className="execution-log-truncated">
-                      日志已达到 1 MiB 上限，后续输出未保存。
+                      {t("executions.truncated")}
                     </div>
                   )}
                 </div>
@@ -416,25 +469,38 @@ export function ExecutionsView() {
 }
 
 function TaskStatus({ status }: { status: ExecutionStatus }) {
+  const { t } = useTranslation();
   const meta = STATUS_META[status];
   return (
     <span className={clsx("execution-status", meta.className)}>
       {isExecutionActive(status) && <span className="execution-status-dot" />}
-      {meta.label}
+      {t(meta.labelKey)}
     </span>
   );
 }
 
-function taskTitle(task: ExecutionTask) {
+function taskTitle(
+  task: ExecutionTask,
+  installLabel: string,
+  updateLabel: string,
+) {
   const tool = TOOLS.find((entry) => entry.key === task.toolKey);
-  return `${tool?.label ?? task.toolKey} ${task.kind === "install" ? "安装" : "更新"}`;
+  return `${tool?.label ?? task.toolKey} ${
+    task.kind === "install" ? installLabel : updateLabel
+  }`;
 }
 
-function formatTaskTime(timestamp: number) {
+function formatTaskTime(timestamp: number, language = "en") {
   const date = new Date(timestamp);
   const today = new Date();
   if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString(language, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
-  return date.toLocaleDateString([], { month: "2-digit", day: "2-digit" });
+  return date.toLocaleDateString(language, {
+    month: "2-digit",
+    day: "2-digit",
+  });
 }

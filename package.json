@@ -1,6 +1,6 @@
 {
   "name": "cli-launchpad",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "SkyJourney",
   "license": "MIT",
   "homepage": "https://github.com/SkyJourney/cli-launchpad",
@@ -26,21 +26,22 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@lobehub/icons": "^5.8.0",
     "@tanstack/react-query": "^5.0.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "clsx": "^2.1.1",
+    "i18next": "^26.3.6",
     "lucide-react": "^0.468.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-i18next": "^17.0.11",
     "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^4.3.1",
     "prettier": "^3.3.3",
     "typescript": "^5.6.0",
