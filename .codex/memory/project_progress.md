@@ -3,7 +3,7 @@ name: 项目进度
 description: 当前完成状态和近期待办
 type: project
 last_updated: 2026-08-19
-commit: cf73bb3
+commit: b01a015
 ---
 
 # 项目进度
@@ -31,9 +31,9 @@ commit: cf73bb3
 
 **See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话摘要不进入应用持久缓存]]
 
-## 0.2.0 工作进展
+## 0.2.0 发布完成
 
-- 项目开始维护 `CHANGELOG.md`，当前开发版本统一为 `0.2.0`，发布状态仍为 Unreleased。
+- 项目从 `0.2.0` 开始维护 `CHANGELOG.md`，Windows 与 macOS 生态功能对齐后已正式发布 `v0.2.0`。
 - 三项 CLI 的当前版本主动探测、官方最新版本查询、Windows 已知安装路径和官方更新命令已更新。
 - 执行任务页、SQLite 任务历史、实时分流日志、50 项留存、1 MiB 日志上限、启动中断修正和 Windows Job Object 进程树终止已落地。
 - Windows Terminal Profile 探测、自动推荐、显式选择和分层启动候选已落地；设置页展示 Profile 保留级别，命令预览展示实际启动方式与失败回退链。
@@ -48,10 +48,21 @@ commit: cf73bb3
 
 **See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[decisions.md#启动使用完整-CLI-路径与平台分层候选]] [[project_overview.md#执行任务边界]]
 
+## 0.2.1 发布完成
+
+- React 与 React DOM 已升级至 19.2，并完成前端生产构建与桌面端回归。
+- 简体中文/英文切换和浅色/深色/跟随系统主题已落地；全局控件统一为紧凑高度，安装更新浮层可根据窗口空间翻转和内部滚动。
+- UI 字体切换为 Noto Sans SC，终端内容保留 Maple Mono NF CN；品牌图标迁移为本地 SVG 并修复正式包中的遮罩渲染问题。
+- 项目卡片点击、导航滚动隔离、未保存表单收起、GitHub 外链和暗色主题配色等真实交互问题已修复。
+- `v0.2.1` 已通过 GitHub Actions 四目标手动预检，并由 Tag 流水线自动发布 Windows 在线/离线 NSIS、macOS ARM64/Intel DMG 与 SHA-256 校验文件。
+- 本地 GitHub CLI 已使用现有 SSH Git 协议和独立 OAuth API 认证完成验证，可读取、触发和监控 release workflow 及 Release。
+
+**See Also：** [[decisions.md#Git-Tag-驱动四目标自动发布]] [[project_overview.md#界面与本地素材]] [[project_overview.md#桌面体验与分发]]
+
 ## 近期待办
 
 - 在下次出现可用 CLI 更新时，完成安装/更新任务链路的人工端到端验证并清理对应测试债务。
-- 对 macOS Intel target 完成独立构建检查；正式跨设备分发前补齐 Developer ID 签名与公证。
+- 正式跨设备分发达到规模后，评估 Apple Developer Program，并补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
 - 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。
 - 后续评估 Linux 启动辅助；不扩大三项 CLI 产品范围。

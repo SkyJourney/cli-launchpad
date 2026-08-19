@@ -3,7 +3,7 @@ name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
 last_updated: 2026-08-19
-commit: cf73bb3
+commit: b01a015
 ---
 
 # 项目决策
@@ -41,7 +41,7 @@ commit: cf73bb3
 **结论：** 三项 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；Windows 使用 Job Object 管理完整进程树。
 **Why：** 缓冲式静默执行无法判断任务是否卡住，也无法可靠终止子进程或在重启后查看历史；安装和自更新同时运行还可能互相干扰。
 **How to apply：** 全局同时只运行一个任务；只接受内置工具清单生成的结构化计划，不开放自由命令或保存环境变量；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 使用“终止任务”表达强制结束进程树，并提示更新中断风险。
-**See Also：** [[project_overview.md#执行任务边界]] [[project_progress.md#0.2.0-工作进展]]
+**See Also：** [[project_overview.md#执行任务边界]] [[project_progress.md#0.2.0-发布完成]]
 
 ## 启动使用完整 CLI 路径与平台分层候选
 
@@ -91,3 +91,10 @@ commit: cf73bb3
 **Why：** 应用需要常驻托盘且在窗口关闭前即可可靠判断行为；仅保存在 React 状态或窗口状态文件中无法覆盖启动、配置导入和数据库恢复后的统一行为。
 **How to apply：** 托盘菜单固定提供显示主界面和退出，左键双击显示主界面；配置导入或数据库恢复后同步刷新运行时策略。
 **See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#已完成功能]]
+
+## Git Tag 驱动四目标自动发布
+
+**结论：** 正式版本使用与应用版本一致的 `v*.*.*` Git Tag 触发 GitHub Actions，同时构建 Windows x64 在线/离线 NSIS 与 macOS ARM64/Intel DMG；全部目标成功后才生成校验和并发布 GitHub Release。手动触发只生成限时 Artifact，不创建 Release。
+**Why：** 本地只能完整实测当前主机架构，直接打 Tag 会把跨平台配置错误带入正式发布；先以同一矩阵手动预检，可以在不产生 Release 的前提下验证所有 target，并让正式发布具备一致、可审计的产物来源。
+**How to apply：** 发版前先完成本地调试和版本一致性检查，再手动运行 release workflow；四目标全部通过后创建 Tag。macOS 暂用 ad hoc 签名且不公证，待项目规模需要时再引入 Developer ID 与 notarization secrets。
+**See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#0.2.1-发布完成]] [[reference.md#发布工具官方资料]]

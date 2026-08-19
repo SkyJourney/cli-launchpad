@@ -3,7 +3,7 @@ name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
 last_updated: 2026-08-19
-commit: cf73bb3
+commit: b01a015
 ---
 
 # 项目概览
@@ -13,7 +13,7 @@ CLI Launchpad 是一个轻量桌面工具，用于管理常用项目目录，并
 ## 技术栈
 
 - 桌面壳：Tauri 2。
-- 前端：React + TypeScript + React Query + Zustand，承载项目、详情、参数编辑、执行任务、设置和关于视图。
+- 前端：React 19 + TypeScript + React Query + Zustand + i18next，承载项目、详情、参数编辑、执行任务、设置和关于视图，并统一管理中英文文案与主题状态。
 - 后端：Rust，负责 Tauri commands、启动编排、依赖检测、后台安装/更新任务、会话读取、SQLite 备份恢复、诊断导出和平台相关逻辑。
 - 数据：SQLite 保存业务配置、安全启动历史以及安装/更新任务历史；可重建缓存使用独立 SQLite 库。
 - Node 包管理器：pnpm，仓库只维护 `pnpm-lock.yaml`。
@@ -33,6 +33,15 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - Antigravity CLI：官方主命令 `agy`。
 
 `antigravity` 仅作为保守兼容探测命令，不作为推荐启动命令。Gemini CLI 不进入检测、安装或启动范围。
+
+## 界面与本地素材
+
+- 界面支持简体中文、英文，以及浅色、深色、跟随系统三种主题；这些属于设备本地 UI 状态，不进入业务 SQLite。
+- 全局 UI 内置 Noto Sans SC 可变字体，命令、路径、参数和日志继续使用 Maple Mono NF CN，不依赖系统字体安装。
+- Claude Code、Codex、Antigravity 与 GitHub 品牌图标使用仓库内本地 SVG 素材，避免运行时图标依赖与生产包资源解析差异；授权信息统一维护在第三方声明中。
+- 通用交互控件以 36 px 为高度基线；确认浮层根据窗口可用空间上下翻转并限制内部滚动。
+
+**See Also：** [[project_progress.md#0.2.1-发布完成]]
 
 ## 启动与检测边界
 
@@ -54,7 +63,7 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - 任务入口只接受三个内置 CLI 生成的结构化安装或更新计划，不接受自由命令，也不持久化环境变量或密钥。
 - Windows 下 Codex 更新仍使用 `codex update`，但固定由 Windows PowerShell 5.1 托管并透传退出码，避免 PowerShell 7 环境缺失官方更新脚本依赖。
 
-**See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[project_progress.md#0.2.0-工作进展]]
+**See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[project_progress.md#0.2.0-发布完成]]
 
 ## 会话与配置数据
 
@@ -82,9 +91,11 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - 托盘右键菜单提供显示主界面和退出，左键双击托盘图标显示并聚焦主界面。
 - Windows 分发使用 NSIS；支持在线/离线 WebView2 两类安装包，并静态链接 MSVC CRT。
 - `build:installers` 同时归档在线与离线 x64 安装包；在线版可用于本机静默覆盖安装，覆盖后业务数据保持不变。
+- macOS 分别构建 Apple Silicon 与 Intel DMG，不生成 Universal 包；当前使用 ad hoc 签名且未公证。
+- GitHub Actions 以相同矩阵构建四类正式产物。手动触发用于发版预检并保留 Actions Artifact；版本 Tag 在全部 target 成功后生成 `SHA256SUMS.txt` 和 GitHub Release。
 - 图标资源已生成，Windows 打包使用 `src-tauri/icons/icon.ico`。
 
-**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]]
+**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]] [[decisions.md#Git-Tag-驱动四目标自动发布]] [[project_progress.md#0.2.1-发布完成]]
 
 ## See Also
 

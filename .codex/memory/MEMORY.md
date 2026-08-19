@@ -1,5 +1,5 @@
 # Memory Index
-> _Last synced: 2026-08-19 | Base commit: `cf73bb3`_
+> _Last synced: 2026-08-19 | Base commit: `b01a015`_
 
 ## 启动引导
 
@@ -13,9 +13,9 @@
 
 | 文件 | 描述 | 类型 | 引用 | Commit |
 | --- | --- | --- | --- | --- |
-| `decisions.md` | 当前关键架构和产品决策 | project | 16* | `cf73bb3` |
-| `project_overview.md` | 项目技术栈、边界、工具链和核心 CLI 范围 | project | 8* | `cf73bb3` |
-| `project_progress.md` | 当前项目进度、已完成事项和近期待办 | project | 6* | `cf73bb3` |
+| `decisions.md` | 当前关键架构、产品范围和发布策略决策 | project | 26* | `b01a015` |
+| `project_overview.md` | 项目技术栈、界面、架构边界、工具链和核心 CLI 范围 | project | 15* | `b01a015` |
+| `project_progress.md` | 当前项目进度、已发布里程碑和近期待办 | project | 13* | `b01a015` |
 | `feedback.md` | 用户协作偏好和范围纠正 | feedback | 4* | `3ad8ce1` |
-| `reference.md` | 官方资料摘要和外部依据 | reference | 3* | `3ad8ce1` |
-| `lint_report.md` | 记忆健康检查报告 | lint | 0 | `3ad8ce1` |
+| `reference.md` | 官方 CLI 与发布工具资料摘要和外部依据 | reference | 4* | `b01a015` |
+| `lint_report.md` | 记忆健康检查报告 | lint | 0 | `b01a015` |
