@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-08-18
-commit: 68cd9b2
+last_updated: 2026-08-19
+commit: cf73bb3
 ---
 
 # 项目决策
@@ -46,8 +46,8 @@ commit: 68cd9b2
 ## 启动使用完整 CLI 路径与平台分层候选
 
 **结论：** CLI 启动前解析为完整路径；Windows 优先保留 Windows Terminal Profile，并按 Profile 原生追加、PowerShell 命令续接、保留外观替换命令、PowerShell 7、Windows PowerShell、CMD 建立分层候选。
-**Why：** 桌面进程继承的 PATH 可能落后于用户安装状态；固定替换 Shell 会丢失用户 Profile 的参数、初始化和样式，而只依赖单一终端又无法覆盖未安装 Windows Terminal 或 Profile 命令不兼容的机器。
-**How to apply：** 终端探测与启动计划放在 Rust platform/services；设置页持久化 `auto`、指定 Profile 或直接 Shell 目标；启动参数先结构化建模，只在最终 Shell 边界编码；进程创建失败时继续尝试安全候选。CMD 只作为最终受控兜底，不直接拼接不可信字符串。配置导入不接受外部可执行 Shell 字段或初始化脚本。
+**Why：** 桌面进程继承的 PATH 可能落后于用户安装状态，开发沙箱还可能传入残缺 PATH、`NO_COLOR` 或 `TERM=dumb`；固定替换 Shell 会丢失用户 Profile 的参数、初始化和样式，而只依赖单一终端又无法覆盖未安装 Windows Terminal 或 Profile 命令不兼容的机器。
+**How to apply：** 终端探测与启动计划放在 Rust platform/services；设置页持久化 `auto`、指定 Profile 或直接 Shell 目标；启动参数先结构化建模，只在最终 Shell 边界编码；进程创建失败时继续尝试安全候选。启动终端前移除非交互配色变量，Windows 子终端补入注册环境中当前进程缺失的 Machine/User PATH 项。CMD 只作为最终受控兜底，不直接拼接不可信字符串。配置导入不接受外部可执行 Shell 字段或初始化脚本。
 **See Also：** [[project_overview.md#启动与检测边界]]
 
 ## 会话历史按需读取本地事实来源

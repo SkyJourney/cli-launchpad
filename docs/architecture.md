@@ -254,9 +254,12 @@ Bundle ID 打开。载荷只包含应用生成的固定控制流程和经过 POS
 编码的目录、完整工具路径与参数，执行开始即删除自身，CLI 退出后回到用户
 登录 Shell。WezTerm 与 kitty 直接使用包内 CLI 的结构化参数，其中 kitty 使用
 `--hold` 保留命令退出后的窗口。应用启动时清理超过限定时长的残留载荷，启动
-失败也主动清理本次文件。所有 macOS 终端启动子进程都会移除调用方继承的
+失败也主动清理本次文件。所有平台的终端启动子进程都会移除调用方继承的
 `NO_COLOR`、`TERM`、`COLORTERM`、`CI` 与强制配色变量，让目标终端建立自己的
-交互环境。
+交互环境；这也避免 Windows 开发版或从非交互终端启动的安装版把无颜色环境
+继续传给 Windows Terminal、PowerShell 和目标 CLI。Windows 启动边界还会从
+注册环境读取 Machine PATH 与 User PATH，将当前进程缺失的条目补入子终端 PATH，
+避免开发沙箱或隔离父进程隐藏用户级工具入口；该过程不修改注册表或系统环境。
 
 终端探测先检查 `/Applications` 与 `~/Applications` 中的标准应用路径，再使用
 `/usr/bin/mdfind` 按 Bundle ID 查找被用户移动的应用。所有候选必须读取

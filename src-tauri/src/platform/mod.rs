@@ -6,3 +6,5 @@ pub mod opener;
 pub mod path_identity;
 pub mod terminal;
 pub mod terminal_launch;
+#[cfg(windows)]
+pub mod windows_environment;

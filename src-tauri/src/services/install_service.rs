@@ -11,6 +11,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
 pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
+    #[cfg(windows)]
+    if tool_key == ToolKey::Codex && kind == InstallKind::Update {
+        return codex_windows_update_plan();
+    }
+
     let (program_name, args, source) = match kind {
         InstallKind::Install => install_spec(tool_key)?,
         InstallKind::Update => match tool_key {
@@ -32,6 +37,39 @@ pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
         source: source.to_string(),
         preview,
     })
+}
+
+#[cfg(windows)]
+fn codex_windows_update_plan() -> Result<InstallPlan> {
+    let codex = resolve_program("codex")?;
+    let program = resolve_program("powershell")?;
+    let command = format!(
+        "& {} update; exit $LASTEXITCODE",
+        quote_powershell_arg(&codex)
+    );
+    let args = vec![
+        "-NoProfile".to_string(),
+        "-NonInteractive".to_string(),
+        "-ExecutionPolicy".to_string(),
+        "Bypass".to_string(),
+        "-Command".to_string(),
+        command,
+    ];
+    let preview = format!("{program} {}", args.join(" "));
+
+    Ok(InstallPlan {
+        tool_key: ToolKey::Codex,
+        kind: InstallKind::Update,
+        program,
+        args,
+        source: "Codex 内置更新命令（Windows PowerShell 5.1）".to_string(),
+        preview,
+    })
+}
+
+#[cfg(windows)]
+fn quote_powershell_arg(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(windows)]
@@ -169,11 +207,37 @@ mod tests {
         assert!(plan.preview.contains("chatgpt.com/codex/install.ps1"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn codex_update_uses_builtin_command() {
         if let Ok(plan) = plan(ToolKey::Codex, InstallKind::Update) {
             assert_eq!(plan.args, vec!["update".to_string()]);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_update_uses_builtin_command_under_windows_powershell_5_1() {
+        let plan = plan(ToolKey::Codex, InstallKind::Update).unwrap();
+        assert!(plan
+            .program
+            .to_ascii_lowercase()
+            .ends_with("system32\\windowspowershell\\v1.0\\powershell.exe"));
+        assert_eq!(plan.args[0], "-NoProfile");
+        assert_eq!(plan.args[4], "-Command");
+        assert!(plan.args[5].contains(" update; exit $LASTEXITCODE"));
+        assert!(plan.source.contains("Windows PowerShell 5.1"));
+        assert!(plan.preview.contains("codex"));
+        assert!(plan.preview.contains("update"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_argument_escapes_single_quotes() {
+        assert_eq!(
+            quote_powershell_arg("C:\\Tools\\O'Brien\\codex.exe"),
+            "'C:\\Tools\\O''Brien\\codex.exe'"
+        );
     }
 
     #[cfg(windows)]

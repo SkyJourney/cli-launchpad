@@ -19,8 +19,7 @@ use crate::services::storage_service::StoragePaths;
 #[cfg(windows)]
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
-#[cfg(target_os = "macos")]
-const MACOS_ENVIRONMENT_REMOVALS: [&str; 7] = [
+const NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS: [&str; 7] = [
     "NO_COLOR",
     "TERM",
     "COLORTERM",
@@ -162,9 +161,12 @@ fn spawn_candidate(
 fn spawn_command(command: &ComposedCommand) -> Result<()> {
     let mut process = Command::new(&command.program);
     process.args(&command.args);
-    #[cfg(target_os = "macos")]
-    for key in MACOS_ENVIRONMENT_REMOVALS {
-        process.env_remove(key);
+    remove_non_interactive_color_environment(&mut process);
+    #[cfg(windows)]
+    if let Some(path) = crate::platform::windows_environment::merged_registered_path(
+        std::env::var_os("PATH").as_deref(),
+    ) {
+        process.env("PATH", path);
     }
     if let Some(directory) = &command.working_dir {
         process.current_dir(directory);
@@ -176,6 +178,12 @@ fn spawn_command(command: &ComposedCommand) -> Result<()> {
     }
     process.spawn()?;
     Ok(())
+}
+
+fn remove_non_interactive_color_environment(process: &mut Command) {
+    for key in NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS {
+        process.env_remove(key);
+    }
 }
 
 fn record_and_log_result(
@@ -344,10 +352,12 @@ fn split_args(value: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_args, split_args};
+    use std::process::Command;
 
-    #[cfg(target_os = "macos")]
-    use super::MACOS_ENVIRONMENT_REMOVALS;
+    use super::{
+        merge_args, remove_non_interactive_color_environment, split_args,
+        NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS,
+    };
 
     fn vs(items: &[&str]) -> Vec<String> {
         items.iter().map(|value| value.to_string()).collect()
@@ -425,11 +435,21 @@ mod tests {
         assert!(split_args("   ").is_empty());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_launches_remove_non_interactive_color_environment() {
-        for key in ["NO_COLOR", "TERM", "COLORTERM", "CI", "FORCE_COLOR"] {
-            assert!(MACOS_ENVIRONMENT_REMOVALS.contains(&key));
+    fn terminal_launches_remove_non_interactive_color_environment() {
+        use std::ffi::OsStr;
+
+        let mut command = Command::new("unused");
+        for key in NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS {
+            command.env(key, "inherited");
+        }
+
+        remove_non_interactive_color_environment(&mut command);
+
+        for key in NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS {
+            assert!(command
+                .get_envs()
+                .any(|(name, value)| name == OsStr::new(key) && value.is_none()));
         }
     }
 }

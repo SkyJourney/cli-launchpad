@@ -29,7 +29,7 @@
 
 - CLI 当前版本仅在用户主动刷新或任务结束后，通过已解析的完整可执行路径执行有界 `--version` 探测。
 - Claude Code、Codex 和 Antigravity 的最新版本改为读取各自官方发布元数据。
-- 更新命令统一使用 CLI 内置命令：`claude update`、`codex update` 和 `agy update`。
+- 更新继续使用 CLI 内置命令：`claude update`、`codex update` 和 `agy update`；Windows 下的 Codex 更新固定由 Windows PowerShell 5.1 托管执行。
 - Codex Windows 安装首选官方 PowerShell 安装器，npm 保留为手动备选方式。
 - 安装与更新确认改为按钮附近的浮层；确认后创建后台任务并转到执行任务页。
 - 全局同时只允许一个安装或更新任务运行。
@@ -43,6 +43,9 @@
 
 ### 修复
 
+- 修复 Windows 开发版或从隔离环境启动时 PATH 缺少用户注册条目，导致 Claude Code 无法解析 `ccstatusline` 等用户级命令的问题。
+- 修复 Windows 终端继承开发环境中的 `NO_COLOR`、`TERM=dumb` 等变量后，CLI 交互界面失去配色的问题。
+- 修复 Windows 下 Codex 更新继承 PowerShell 7 环境后，官方安装脚本可能无法调用 `Get-FileHash` 的问题。
 - 修复设置页无法可靠显示三个 CLI 当前版本的问题。
 - 修复 Antigravity 无法获取最新版本的问题。
 - 补充 `%LOCALAPPDATA%\agy\bin` 和 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` 等 Windows 安装路径探测。

@@ -2,8 +2,8 @@
 name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
-last_updated: 2026-08-18
-commit: 68cd9b2
+last_updated: 2026-08-19
+commit: cf73bb3
 ---
 
 # 项目概览
@@ -40,6 +40,7 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - 启动逻辑位于 Rust services 与 platform helper；工具和安装程序在执行前解析为完整路径，终端与 Shell 由平台探测结果生成结构化候选。
 - Windows 探测 Windows Terminal Stable、Preview、Canary 和非打包版本及其 Profiles，优先保留默认 Profile；失败时按 Profile 兼容模式、PowerShell 7、Windows PowerShell、CMD 分层回退。
 - CMD 仅作为使用受控编码载荷的最终兜底，不直接拼接不可信参数。Windows Terminal 和 PowerShell 同样在最终边界编码命令，避免终端解析器再次拆分。
+- 所有平台启动终端前移除调用方继承的非交互配色变量；Windows 还会将注册环境中缺失的 Machine/User PATH 项补入子终端，使开发沙箱与安装版获得一致的用户工具入口。
 - 被动检测只解析可信路径，不执行候选 CLI 获取版本；用户参数始终以 PowerShell 字面值传递。
 - 全局参数与项目级参数分离，项目级同名 flag 覆盖全局 flag。
 
@@ -51,6 +52,7 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - 全局只允许一个任务运行；任务和日志持久化到业务 SQLite，默认保留最近 50 项，每项日志最多 1 MiB。
 - Windows 任务进程加入 Job Object，用户终止或任务超时时结束完整进程树；应用重启后将遗留活动任务标记为意外中断。
 - 任务入口只接受三个内置 CLI 生成的结构化安装或更新计划，不接受自由命令，也不持久化环境变量或密钥。
+- Windows 下 Codex 更新仍使用 `codex update`，但固定由 Windows PowerShell 5.1 托管并透传退出码，避免 PowerShell 7 环境缺失官方更新脚本依赖。
 
 **See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[project_progress.md#0.2.0-工作进展]]
 

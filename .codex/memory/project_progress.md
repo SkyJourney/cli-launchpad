@@ -2,8 +2,8 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-08-18
-commit: 68cd9b2
+last_updated: 2026-08-19
+commit: cf73bb3
 ---
 
 # 项目进度
@@ -42,15 +42,16 @@ commit: 68cd9b2
 - 会话本地别名使用稀疏 `session_aliases` 关联，只在手动重命名时入表，并支持恢复 CLI 原始标题。
 - 已通过前端生产构建、102 项 Rust 测试、版本一致性检查、Windows Job Object 终止实测、Windows Terminal Profile 受控启动探针及关键页面实机检查。
 - Windows NSIS 在线版和内嵌 WebView2 离线版均已构建；在线版已在本机静默覆盖安装，注册表/进程确认版本 `0.2.0`，项目数据、会话分页/重命名和三项目录选择验证正常。
+- macOS 已完成五款终端探测、结构化启动、可信路径检测、Unix 进程组终止和平台路径语义对齐；Apple Silicon 已完成真实终端、特殊字符参数、CLI 配色、Dock Reopen 与 ad hoc DMG 实机验证。
+- Windows 已修复隔离父进程传入无颜色环境和残缺 PATH 导致的 CLI 配色、用户级命令解析问题；Codex 更新固定在 Windows PowerShell 5.1 环境中执行内置 `codex update`。
 - **测试债务：** 本机三个 CLI 均已是最新版本，本次没有执行真实安装或更新的端到端测试。下次出现可用更新时，必须验证实时日志、完整状态流转、主动终止、完成后版本刷新和重启后的历史持久化。
-- **0.2.0 发布阻断项：** macOS 尚未同步新版终端/Shell 探测与结构化启动计划，也未在真实设备验证项目目录、CLI 参数、会话恢复和失败回退；发布前必须完成实现与实测。
 
 **See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[decisions.md#启动使用完整-CLI-路径与平台分层候选]] [[project_overview.md#执行任务边界]]
 
 ## 近期待办
 
 - 在下次出现可用 CLI 更新时，完成安装/更新任务链路的人工端到端验证并清理对应测试债务。
-- 在 0.2.0 发布前同步实现 macOS 终端/Shell 启动计划，并在真实 macOS 设备完成启动、参数、目录、恢复和回退验证。
+- 对 macOS Intel target 完成独立构建检查；正式跨设备分发前补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
 - 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。
 - 后续评估 Linux 启动辅助；不扩大三项 CLI 产品范围。
