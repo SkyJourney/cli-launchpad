@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
-import { useRef, useState } from "react";
+import { createRef, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { AnchoredPopover } from "../components/AnchoredPopover";
@@ -171,7 +171,11 @@ export function SettingsView() {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [planningToolKey, setPlanningToolKey] = useState<ToolKey | null>(null);
   const [actionError, setActionError] = useState<ActionError | null>(null);
-  const popoverAnchorRef = useRef<HTMLDivElement | null>(null);
+  const popoverAnchorRefs = useRef({
+    claude: createRef<HTMLDivElement>(),
+    codex: createRef<HTMLDivElement>(),
+    antigravity: createRef<HTMLDivElement>(),
+  }).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
@@ -387,11 +391,7 @@ export function SettingsView() {
                 {(isMissing || updatable === true) && (
                   <div
                     className="cli-action-anchor"
-                    ref={
-                      pending?.toolKey === tool.key
-                        ? popoverAnchorRef
-                        : undefined
-                    }
+                    ref={popoverAnchorRefs[tool.key]}
                   >
                     <button
                       className="primary-button cli-status-action-button"
@@ -419,7 +419,7 @@ export function SettingsView() {
                     </button>
                     {pending?.toolKey === tool.key && (
                       <AnchoredPopover
-                        anchorRef={popoverAnchorRef}
+                        anchorRef={popoverAnchorRefs[tool.key]}
                         ariaLabel={
                           pending.kind === "install"
                             ? t("settings.confirmInstall")
