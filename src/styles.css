@@ -24,6 +24,8 @@
   --color-primary-button: #2856d8;
   --color-primary-button-hover: #2149bd;
   --color-on-primary: #ffffff;
+  --color-running-button: #a84608;
+  --color-on-running: #ffffff;
   --color-success-bg: #ecfdf3;
   --color-success-hover: #d4efdd;
   --color-success-border: #86d7a8;
@@ -78,6 +80,8 @@
   --color-primary-button: #3659b8;
   --color-primary-button-hover: #4268cb;
   --color-on-primary: #f3f5f9;
+  --color-running-button: #f2a23a;
+  --color-on-running: #251304;
   --color-success-bg: #123624;
   --color-success-hover: #19472f;
   --color-success-border: #2f7d52;
@@ -604,6 +608,13 @@ h1 {
   border-color: var(--color-border);
   color: var(--color-text-disabled);
   cursor: not-allowed;
+}
+
+.badge-refreshing {
+  background: var(--color-info-bg);
+  border-color: var(--color-info-border);
+  color: var(--color-info-text);
+  cursor: progress;
 }
 
 .project-card-actions {
@@ -1363,7 +1374,85 @@ h1 {
 
 .cli-status-action-button {
   height: var(--control-height-compact);
+  min-width: 96px;
   padding-inline: 11px;
+}
+
+.cli-status-action-button.is-running:disabled {
+  background: var(--color-running-button);
+  border-color: var(--color-running-button);
+  color: var(--color-on-running);
+  cursor: progress;
+}
+
+.cli-status-action-button.is-refreshing:disabled {
+  background: var(--color-info-bg);
+  border-color: var(--color-info-border);
+  color: var(--color-info-text);
+  cursor: progress;
+}
+
+/* Sonner inherits the app palette so notifications match both themes. */
+[data-sonner-toaster][data-sonner-theme] {
+  --border-radius: 10px;
+  --normal-bg: var(--color-surface);
+  --normal-bg-hover: var(--color-surface-hover);
+  --normal-border: var(--color-border-strong);
+  --normal-border-hover: var(--color-primary-border);
+  --normal-text: var(--color-text);
+  --success-bg: var(--color-success-bg);
+  --success-border: var(--color-success-border);
+  --success-text: var(--color-success-text);
+  --info-bg: var(--color-info-bg);
+  --info-border: var(--color-info-border);
+  --info-text: var(--color-info-text);
+  --warning-bg: var(--color-warning-bg);
+  --warning-border: var(--color-warning-border);
+  --warning-text: var(--color-warning-text);
+  --error-bg: var(--color-danger-bg);
+  --error-border: var(--color-danger-border);
+  --error-text: var(--color-danger-text);
+  --toast-close-button-start: unset;
+  --toast-close-button-end: 10px;
+  --toast-close-button-transform: none;
+  font-family: var(--font-ui);
+}
+
+[data-sonner-toast][data-styled="true"] {
+  box-shadow: 0 14px 36px var(--color-popover-shadow);
+  gap: 9px;
+  padding: 14px 40px 14px 16px;
+}
+
+[data-sonner-toast][data-styled="true"] [data-title] {
+  font-weight: 600;
+}
+
+[data-sonner-toast][data-styled="true"] [data-description] {
+  color: currentColor;
+  opacity: 0.82;
+}
+
+[data-sonner-toast][data-styled="true"] [data-close-button],
+[data-rich-colors="true"][data-sonner-toast][data-styled="true"]
+  [data-close-button] {
+  background: transparent;
+  border-color: transparent;
+  color: currentColor;
+  opacity: 0.72;
+  top: 9px;
+}
+
+[data-sonner-toast][data-styled="true"]:hover [data-close-button]:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: transparent;
+  opacity: 1;
+}
+
+[data-sonner-toast]:focus-visible {
+  box-shadow:
+    0 14px 36px var(--color-popover-shadow),
+    0 0 0 2px var(--color-primary-focus);
 }
 
 .anchored-popover {

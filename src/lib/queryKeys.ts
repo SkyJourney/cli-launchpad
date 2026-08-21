@@ -16,6 +16,7 @@ export const qk = {
   appVersion: () => ["app-version"],
   executionTasks: () => ["execution-tasks", "list"],
   executionTask: (taskId: string) => ["execution-tasks", "detail", taskId],
+  executionReconciliations: () => ["execution-tasks", "reconciliations"],
   modelCatalog: (toolKey: ToolKey) => ["model-catalog", toolKey],
   directoryToolArgs: (directoryId?: number | null) =>
     directoryId == null

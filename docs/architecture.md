@@ -343,7 +343,7 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
 ```text
 Settings / Execution View
   -> Tauri command（创建、查询、终止、清理）
-  -> ExecutionTaskManager（单任务并发、状态机、进程句柄）
+  -> ExecutionTaskManager（按 CLI 互斥、跨 CLI 并行、状态机、进程句柄）
   -> platform process runner（Windows Job Object / Unix process group）
   -> SQLite execution_tasks / execution_task_logs
   -> Tauri events（状态与 stdout/stderr 日志增量）
@@ -364,10 +364,16 @@ macOS 执行器在 spawn 前把任务命令放入新的 Unix process group。终
 任务会在 `child.wait()` 上无限等待。
 
 任务创建时只接受内置三工具清单生成的 `InstallPlan`，持久化工具、类型、来源、
-程序、参数数组和预览，不保存环境变量或自由命令。全局同时最多运行一个安装/
-更新任务。日志按序号分别记录 `stdout`、`stderr`、`system`，通过 Tauri event 实时
+程序、参数数组和预览，不保存环境变量或自由命令。任务管理器按 `ToolKey` 保存
+活动任务：同一 CLI 内互斥，三个 CLI 之间可并行；每项任务持有独立取消信号和
+平台进程树。日志按序号分别记录 `stdout`、`stderr`、`system`，通过 Tauri event 实时
 增量下发，同时写入 SQLite。每个任务日志上限 1 MiB，达到上限后写入截断标记；
 默认保留最近 50 个任务，裁剪时级联删除日志。执行中任务不可被历史清理。
+
+前端按 `toolKey` 独立维护命令计划、确认浮层、创建状态和错误。任务进入终态后，
+对应 CLI 进入短生命周期的版本回读状态；该状态结束前压住旧版本数据计算出的
+更新标签和操作按钮，其他 CLI 不受影响。任务终态通过右上角 Toast 提示，完整
+状态与日志仍以“执行任务”视图和 SQLite 记录为准。
 
 ## 会话历史读取
 

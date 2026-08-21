@@ -2,8 +2,8 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-08-19
-commit: b01a015
+last_updated: 2026-08-21
+commit: ddca86f
 ---
 
 # 项目进度
@@ -59,9 +59,25 @@ commit: b01a015
 
 **See Also：** [[decisions.md#Git-Tag-驱动四目标自动发布]] [[project_overview.md#界面与本地素材]] [[project_overview.md#桌面体验与分发]]
 
+## 0.2.2 发布完成
+
+- 修复 macOS DMG 等生产构建中安装与更新确认浮层首次定位失败、界面看似无响应的问题。
+- 三项 CLI 使用稳定且独立的确认浮层锚点，并完成生产诊断包与 Release App 人工验证。
+- `v0.2.2` 已发布；后续小更新暂存于 CHANGELOG 的 `Unreleased`，正式发布前再统一确定版本号和 Tag。
+
+## Unreleased 累积更新
+
+- 安装与更新任务改为同一 CLI 内互斥、不同 CLI 并行；任务 ID、取消信号、平台进程树、日志和设置页状态均按 CLI 独立闭环。
+- 设置页移除命令计划读取期间的按钮灰显和尺寸抖动；创建任务后保留当前视图，其他 CLI 可继续操作。
+- 引入 Sonner 任务结果 Toast，适配浅色、深色和跟随系统主题，并按任务 ID 去重。
+- 任务终态后按 CLI 显示“刷新版本中”过渡状态，只回读本机版本并压住旧更新入口，修复更新成功后的短暂状态回跳。
+- macOS 开发版已完成真实 Antigravity 更新、成功 Toast 与双主题人工验证；前端生产构建和 118 项 Rust 测试通过。
+
+**See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[project_overview.md#执行任务边界]]
+
 ## 近期待办
 
-- 在下次出现可用 CLI 更新时，完成安装/更新任务链路的人工端到端验证并清理对应测试债务。
+- 继续对 Claude Code、Codex 的真实版本替换，以及跨 CLI 并行、主动终止和重启后历史持久化进行人工端到端验证。
 - 正式跨设备分发达到规模后，评估 Apple Developer Program，并补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
 - 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。

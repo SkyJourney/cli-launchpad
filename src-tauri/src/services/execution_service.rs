@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,6 +12,7 @@ use crate::models::execution::{
     ExecutionLogChunk, ExecutionStatus, ExecutionStream, ExecutionTask,
 };
 use crate::models::install::InstallPlan;
+use crate::models::tool::ToolKey;
 use crate::platform::execution_process::ProcessTree;
 use crate::services::install_service;
 use crate::{AppError, Db};
@@ -26,8 +28,35 @@ struct ActiveTask {
 }
 
 #[derive(Default)]
+struct ActiveTasks {
+    by_tool: HashMap<ToolKey, ActiveTask>,
+}
+
+impl ActiveTasks {
+    fn contains_tool(&self, tool_key: ToolKey) -> bool {
+        self.by_tool.contains_key(&tool_key)
+    }
+
+    fn insert(&mut self, tool_key: ToolKey, task: ActiveTask) {
+        self.by_tool.insert(tool_key, task);
+    }
+
+    fn get_mut_by_id(&mut self, id: &str) -> Option<&mut ActiveTask> {
+        self.by_tool.values_mut().find(|task| task.id == id)
+    }
+
+    fn get_by_id(&self, id: &str) -> Option<&ActiveTask> {
+        self.by_tool.values().find(|task| task.id == id)
+    }
+
+    fn remove_by_id(&mut self, id: &str) {
+        self.by_tool.retain(|_, task| task.id != id);
+    }
+}
+
+#[derive(Default)]
 pub struct ExecutionTaskManager {
-    active: Mutex<Option<ActiveTask>>,
+    active: Mutex<ActiveTasks>,
 }
 
 impl ExecutionTaskManager {
@@ -36,10 +65,11 @@ impl ExecutionTaskManager {
             .active
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
-        if active.is_some() {
-            return Err(AppError::msg(
-                "已有安装或更新任务正在执行，请等待其结束或先终止任务",
-            ));
+        if active.contains_tool(plan.tool_key) {
+            return Err(AppError::msg(format!(
+                "{} 已有安装或更新任务正在执行，请等待其结束或先终止任务",
+                plan.tool_key.as_str()
+            )));
         }
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -52,10 +82,13 @@ impl ExecutionTaskManager {
             )?)
         })?;
         let (cancel, cancel_rx) = oneshot::channel();
-        *active = Some(ActiveTask {
-            id: id.clone(),
-            cancel: Some(cancel),
-        });
+        active.insert(
+            plan.tool_key,
+            ActiveTask {
+                id: id.clone(),
+                cancel: Some(cancel),
+            },
+        );
         emit_task(app, &task);
 
         let app = app.clone();
@@ -71,8 +104,7 @@ impl ExecutionTaskManager {
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
         let running = active
-            .as_mut()
-            .filter(|running| running.id == id)
+            .get_mut_by_id(id)
             .ok_or_else(|| AppError::msg("该任务当前未在执行，无法终止"))?;
 
         if let Some(cancel) = running.cancel.take() {
@@ -90,8 +122,7 @@ impl ExecutionTaskManager {
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
         let running = active
-            .as_ref()
-            .filter(|running| running.id == id)
+            .get_by_id(id)
             .ok_or_else(|| AppError::msg("执行任务状态已丢失"))?;
         if running.cancel.is_none() {
             return get_task(app, id);
@@ -113,9 +144,7 @@ impl ExecutionTaskManager {
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
         let task = update_status(app, id, status, Some(now_ms()), exit_code, error_message)?;
-        if active.as_ref().map(|running| running.id.as_str()) == Some(id) {
-            *active = None;
-        }
+        active.remove_by_id(id);
         with_db(app, |connection| {
             execution_task_repo::prune_old_finished(connection)?;
             Ok(())
@@ -397,4 +426,63 @@ pub fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn active_task(id: &str) -> ActiveTask {
+        let (cancel, _cancel_rx) = oneshot::channel();
+        ActiveTask {
+            id: id.to_string(),
+            cancel: Some(cancel),
+        }
+    }
+
+    #[test]
+    fn active_tasks_keep_each_tool_independent() {
+        let mut active = ActiveTasks::default();
+        active.insert(ToolKey::Claude, active_task("claude-task"));
+        active.insert(ToolKey::Codex, active_task("codex-task"));
+
+        assert!(active.contains_tool(ToolKey::Claude));
+        assert!(active.contains_tool(ToolKey::Codex));
+        assert!(!active.contains_tool(ToolKey::Antigravity));
+        assert_eq!(
+            active.get_by_id("claude-task").map(|task| task.id.as_str()),
+            Some("claude-task")
+        );
+        assert_eq!(
+            active.get_by_id("codex-task").map(|task| task.id.as_str()),
+            Some("codex-task")
+        );
+    }
+
+    #[test]
+    fn removing_one_task_only_releases_its_tool() {
+        let mut active = ActiveTasks::default();
+        active.insert(ToolKey::Claude, active_task("claude-task"));
+        active.insert(ToolKey::Codex, active_task("codex-task"));
+
+        active.remove_by_id("claude-task");
+
+        assert!(!active.contains_tool(ToolKey::Claude));
+        assert!(active.contains_tool(ToolKey::Codex));
+        assert!(active.get_by_id("claude-task").is_none());
+        assert!(active.get_by_id("codex-task").is_some());
+    }
+
+    #[test]
+    fn cancellation_lookup_targets_only_the_matching_task() {
+        let mut active = ActiveTasks::default();
+        active.insert(ToolKey::Claude, active_task("claude-task"));
+        active.insert(ToolKey::Codex, active_task("codex-task"));
+
+        let matching = active.get_mut_by_id("codex-task").unwrap();
+        let _cancel = matching.cancel.take();
+
+        assert!(active.get_by_id("codex-task").unwrap().cancel.is_none());
+        assert!(active.get_by_id("claude-task").unwrap().cancel.is_some());
+    }
 }

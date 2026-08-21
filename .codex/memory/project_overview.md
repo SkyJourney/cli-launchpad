@@ -2,8 +2,8 @@
 name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
-last_updated: 2026-08-19
-commit: b01a015
+last_updated: 2026-08-21
+commit: ddca86f
 ---
 
 # 项目概览
@@ -13,7 +13,7 @@ CLI Launchpad 是一个轻量桌面工具，用于管理常用项目目录，并
 ## 技术栈
 
 - 桌面壳：Tauri 2。
-- 前端：React 19 + TypeScript + React Query + Zustand + i18next，承载项目、详情、参数编辑、执行任务、设置和关于视图，并统一管理中英文文案与主题状态。
+- 前端：React 19 + TypeScript + React Query + Zustand + i18next + Sonner，承载项目、详情、参数编辑、执行任务、设置和关于视图，并统一管理中英文文案、主题状态和任务结果 Toast。
 - 后端：Rust，负责 Tauri commands、启动编排、依赖检测、后台安装/更新任务、会话读取、SQLite 备份恢复、诊断导出和平台相关逻辑。
 - 数据：SQLite 保存业务配置、安全启动历史以及安装/更新任务历史；可重建缓存使用独立 SQLite 库。
 - Node 包管理器：pnpm，仓库只维护 `pnpm-lock.yaml`。
@@ -58,10 +58,12 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 ## 执行任务边界
 
 - 安装与更新由 Rust 任务管理器后台执行，前端通过 Tauri 事件接收状态变化和 stdout、stderr、system 日志增量。
-- 全局只允许一个任务运行；任务和日志持久化到业务 SQLite，默认保留最近 50 项，每项日志最多 1 MiB。
+- 任务管理器按 CLI 独立维护活动任务：同一 CLI 内互斥，不同 CLI 可并行；每项任务拥有独立取消信号和平台进程树。
+- 任务和日志持久化到业务 SQLite，默认保留最近 50 项，每项日志最多 1 MiB。
 - Windows 任务进程加入 Job Object，用户终止或任务超时时结束完整进程树；应用重启后将遗留活动任务标记为意外中断。
 - 任务入口只接受三个内置 CLI 生成的结构化安装或更新计划，不接受自由命令，也不持久化环境变量或密钥。
 - Windows 下 Codex 更新仍使用 `codex update`，但固定由 Windows PowerShell 5.1 托管并透传退出码，避免 PowerShell 7 环境缺失官方更新脚本依赖。
+- 前端按 CLI 独立维护计划、确认、创建、执行和版本回读状态；任务终态使用双主题 Toast 提示，版本回读期间压住旧版本推导出的更新入口。
 
 **See Also：** [[decisions.md#安装与更新使用持久化后台任务]] [[project_progress.md#0.2.0-发布完成]]
 

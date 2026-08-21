@@ -1,16 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect } from "react";
+import { toast } from "sonner";
+import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
+import { TOOLS } from "../lib/tools";
 import {
   detectCliStatus,
-  fetchLatestVersions,
   listExecutionTasks,
   type ExecutionLogChunk,
   type ExecutionStatus,
   type ExecutionTask,
   type ExecutionTaskDetail,
+  type InstallKind,
+  type ToolKey,
 } from "../lib/tauri";
+
+export type ExecutionReconciliations = Partial<Record<ToolKey, InstallKind>>;
 
 export const ACTIVE_EXECUTION_STATUSES: ReadonlySet<ExecutionStatus> = new Set([
   "preparing",
@@ -44,6 +50,16 @@ export function useExecutionTasks() {
   });
 }
 
+export function useExecutionReconciliations() {
+  return useQuery<ExecutionReconciliations>({
+    queryKey: qk.executionReconciliations(),
+    queryFn: async () => ({}),
+    initialData: {},
+    enabled: false,
+    staleTime: Infinity,
+  });
+}
+
 export function useExecutionTaskEvents() {
   const queryClient = useQueryClient();
 
@@ -66,19 +82,29 @@ export function useExecutionTaskEvents() {
           );
 
           if (!isExecutionActive(task.status)) {
+            queryClient.setQueryData<ExecutionReconciliations>(
+              qk.executionReconciliations(),
+              (current) => ({ ...current, [task.toolKey]: task.kind }),
+            );
+            showTaskCompletionToast(task);
             void queryClient.invalidateQueries({
               queryKey: qk.executionTask(task.id),
             });
-            void Promise.allSettled([
-              queryClient.fetchQuery({
+            void queryClient
+              .fetchQuery({
                 queryKey: qk.cliStatus(),
                 queryFn: () => detectCliStatus(true),
-              }),
-              queryClient.fetchQuery({
-                queryKey: qk.latestVersions(),
-                queryFn: () => fetchLatestVersions(true),
-              }),
-            ]);
+              })
+              .finally(() => {
+                queryClient.setQueryData<ExecutionReconciliations>(
+                  qk.executionReconciliations(),
+                  (current) => {
+                    const next = { ...current };
+                    delete next[task.toolKey];
+                    return next;
+                  },
+                );
+              });
           }
         },
       );
@@ -128,4 +154,40 @@ export function useExecutionTaskEvents() {
       }
     };
   }, [queryClient]);
+}
+
+function showTaskCompletionToast(task: ExecutionTask) {
+  const tool = TOOLS.find((entry) => entry.key === task.toolKey);
+  const toolLabel = tool?.label ?? task.toolKey;
+  const operation = i18n.t(
+    task.kind === "install"
+      ? "executions.operationInstall"
+      : "executions.operationUpdate",
+  );
+  const title = i18n.t("executions.taskToastTitle", {
+    tool: toolLabel,
+    operation,
+  });
+  const options = {
+    id: `execution-task-${task.id}`,
+    description: task.errorMessage ?? undefined,
+  };
+
+  switch (task.status) {
+    case "succeeded":
+      toast.success(i18n.t("executions.taskSucceededToast", { title }), {
+        id: options.id,
+      });
+      break;
+    case "failed":
+    case "timed_out":
+      toast.error(i18n.t("executions.taskFailedToast", { title }), options);
+      break;
+    case "cancelled":
+    case "interrupted":
+      toast.warning(i18n.t("executions.taskStoppedToast", { title }), options);
+      break;
+    default:
+      break;
+  }
 }
