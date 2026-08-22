@@ -3,7 +3,7 @@
   <h1>CLI Launchpad</h1>
   <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台桌面启动器。</p>
   <p>
-    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.1"><img src="https://img.shields.io/badge/version-0.2.1-2856d8" alt="Version 0.2.1"></a>
+    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.3"><img src="https://img.shields.io/badge/version-0.2.3-2856d8" alt="Version 0.2.3"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
     <a href="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml"><img src="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml/badge.svg" alt="Release Build"></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-475467" alt="Windows and macOS">
@@ -147,7 +147,7 @@ Windows 产物与运行依赖：
 - **WebView2**：
   - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时检测缺失则联网下载。
   - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
-- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.1_x64-online-setup.exe`。
+- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.3_x64-online-setup.exe`。
 
 macOS 使用独立的 ARM64 与 Intel DMG，不生成 Universal 包：
 
@@ -183,7 +183,7 @@ target 成功后自动创建 GitHub Release。手动触发该工作流只保留 
 
 ## 应用更新
 
-0.2.1 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
+0.2.3 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
 GitHub Releases 增加显式的版本检查，并在获得用户确认后再进入下载或安装流程。
 
 ## 许可证

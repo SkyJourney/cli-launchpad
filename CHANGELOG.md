@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-22
+
 ### 新增
 
 - 安装与更新任务完成后新增右上角 Toast，支持成功、失败、超时和终止提示，并适配浅色、深色与跟随系统主题。
@@ -138,7 +140,8 @@
 - Apple Silicon 实机已验证五款终端探测、Terminal.app、iTerm2、Ghostty、WezTerm、kitty 冷/热启动、特殊字符参数、自删除载荷、CLI 交互配色及 Dock Reopen。仍需验证真实版本替换、主动终止和完整桌面生命周期，并对 Intel target 完成独立构建检查。
 - Apple Silicon Release DMG 已完成构建和只读挂载验证；当前仅为 ad hoc 签名，正式跨设备分发仍依赖 Developer ID 签名与公证凭据。
 
-[Unreleased]: https://github.com/SkyJourney/cli-launchpad/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/SkyJourney/cli-launchpad/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.3
 [0.2.2]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.2
 [0.2.1]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.1
 [0.2.0]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.0
