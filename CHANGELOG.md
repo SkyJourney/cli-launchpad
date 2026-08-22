@@ -137,3 +137,8 @@
 - macOS 已补齐终端探测与结构化启动、三项 CLI 官方安装计划、平台化 UI、Dock Reopen、CLI 可信路径检测、Unix 进程组终止、平台路径语义及 AGY 平台映射。
 - Apple Silicon 实机已验证五款终端探测、Terminal.app、iTerm2、Ghostty、WezTerm、kitty 冷/热启动、特殊字符参数、自删除载荷、CLI 交互配色及 Dock Reopen。仍需验证真实版本替换、主动终止和完整桌面生命周期，并对 Intel target 完成独立构建检查。
 - Apple Silicon Release DMG 已完成构建和只读挂载验证；当前仅为 ad hoc 签名，正式跨设备分发仍依赖 Developer ID 签名与公证凭据。
+
+[Unreleased]: https://github.com/SkyJourney/cli-launchpad/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.2
+[0.2.1]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.1
+[0.2.0]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.0
