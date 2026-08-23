@@ -7,13 +7,15 @@ import {
   type ToolKey,
 } from "../lib/tauri";
 
-export function useCliStatus() {
+export function useCliStatus(probeVersions = false) {
   return useQuery({
     queryKey: qk.cliStatus(),
-    queryFn: () => detectCliStatus(false),
+    queryFn: () => detectCliStatus(probeVersions),
     // CLI detection runs subprocesses; refresh is user-driven (the settings /
-    // projects refresh buttons) and after install/update invalidation.
+    // projects refresh buttons) and after install/update invalidation. Settings
+    // opts into a forced version probe every time the view is mounted.
     staleTime: Infinity,
+    refetchOnMount: probeVersions ? "always" : undefined,
   });
 }
 

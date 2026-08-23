@@ -82,7 +82,7 @@ interface PendingAction {
 export function SettingsView() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const cliStatus = useCliStatus();
+  const cliStatus = useCliStatus(true);
   const executionTasks = useExecutionTasks();
   const executionReconciliations = useExecutionReconciliations();
   const activeTaskByTool = new Map(
@@ -94,8 +94,9 @@ export function SettingsView() {
 
   const latest = useQuery({
     queryKey: qk.latestVersions(),
-    queryFn: () => fetchLatestVersions(false),
+    queryFn: () => fetchLatestVersions(true),
     staleTime: 1000 * 60 * 30,
+    refetchOnMount: "always",
   });
   const latestByTool = new Map(
     latest.data?.map((entry) => [entry.toolKey, entry]),
@@ -405,8 +406,13 @@ export function SettingsView() {
           const availability = status?.status ?? "missing";
           const latestEntry = latestByTool.get(tool.key);
           const latestVersion = latestEntry?.latest ?? null;
-          const updatable = hasUpdate(status?.version ?? null, latestVersion);
+          const versionsRefreshing = cliStatus.isFetching || latest.isFetching;
+          const updatable = versionsRefreshing
+            ? null
+            : hasUpdate(status?.version ?? null, latestVersion);
           const isMissing = availability === "missing";
+          const canInstall = !cliStatus.isFetching && isMissing;
+          const canUpdate = updatable === true;
           const activeTask = activeTaskByTool.get(tool.key);
           const reconciliationKind = executionReconciliations.data[tool.key];
           const isReconciling = reconciliationKind != null;
@@ -433,12 +439,12 @@ export function SettingsView() {
                     ? t("settings.refreshingVersion")
                     : t(CLI_STATUS_META[availability].labelKey)}
                 </span>
-                {updatable === true && busyKind == null && (
+                {canUpdate && busyKind == null && (
                   <span className="update-flag">
                     {t("settings.updateAvailable")}
                   </span>
                 )}
-                {(busyKind || isMissing || updatable === true) && (
+                {(busyKind || canInstall || canUpdate) && (
                   <div
                     className="cli-action-anchor"
                     ref={popoverAnchorRefs[tool.key]}
@@ -543,14 +549,16 @@ export function SettingsView() {
                 )}
                 <span>
                   {t("settings.current")}
-                  {status?.version ??
-                    (isMissing
-                      ? "—"
-                      : status?.versionError
-                        ? t("settings.unavailableWithError", {
-                            error: status.versionError,
-                          })
-                        : t("settings.unknownRefresh"))}
+                  {cliStatus.isFetching
+                    ? t("settings.checking")
+                    : (status?.version ??
+                      (isMissing
+                        ? "—"
+                        : status?.versionError
+                          ? t("settings.unavailableWithError", {
+                              error: status.versionError,
+                            })
+                          : t("settings.unknownRefresh")))}
                 </span>
                 <span>
                   {t("settings.latest")}
