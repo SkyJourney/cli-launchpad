@@ -251,17 +251,17 @@ fn candidate_dirs() -> Vec<PathBuf> {
         }
     }
 
+    // `/usr/local/bin`, Volta and nvm all follow the same layout on Linux
+    // and macOS; only Homebrew's Apple Silicon prefix is macOS-specific.
     #[cfg(not(windows))]
     if let Some(home) = home_dir() {
         dirs.push(home.join(".local/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        dirs.push(home.join(".volta/bin"));
+        dirs.extend(nvm_bin_dirs(&home));
 
         #[cfg(target_os = "macos")]
-        {
-            dirs.push(PathBuf::from("/opt/homebrew/bin"));
-            dirs.push(PathBuf::from("/usr/local/bin"));
-            dirs.push(home.join(".volta/bin"));
-            dirs.extend(nvm_bin_dirs(&home));
-        }
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
     }
     dirs
 }
@@ -271,7 +271,7 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(windows))]
 fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
     let versions = home.join(".nvm/versions/node");
     let Ok(entries) = std::fs::read_dir(versions) else {

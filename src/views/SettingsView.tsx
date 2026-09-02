@@ -129,6 +129,9 @@ export function SettingsView() {
     ...(terminalEnvironment.data?.macosTerminalHosts.map(
       (host) => host.targetId,
     ) ?? []),
+    ...(terminalEnvironment.data?.linuxTerminalHosts.map(
+      (host) => host.targetId,
+    ) ?? []),
   ]);
   const unavailableSavedTarget =
     currentLaunchTarget !== "auto" &&
@@ -605,7 +608,9 @@ export function SettingsView() {
                 ? t("settings.launchHintMac")
                 : terminalEnvironment.data?.platform === "windows"
                   ? t("settings.launchHintWindows")
-                  : t("settings.launchHintOther")}
+                  : terminalEnvironment.data?.platform === "linux"
+                    ? t("settings.launchHintLinux")
+                    : t("settings.launchHintOther")}
             </p>
           </div>
           <button
@@ -642,7 +647,9 @@ export function SettingsView() {
               description={
                 terminalEnvironment.data?.platform === "macos"
                   ? t("settings.autoDescriptionMac")
-                  : t("settings.autoDescriptionWindows")
+                  : terminalEnvironment.data?.platform === "linux"
+                    ? t("settings.autoDescriptionLinux")
+                    : t("settings.autoDescriptionWindows")
               }
               selected={currentLaunchTarget === "auto"}
               disabled={launchTargetMutation.isPending}
@@ -744,6 +751,51 @@ export function SettingsView() {
                       disabled={launchTargetMutation.isPending}
                       badges={[
                         ...(host.targetId === "macos:terminal"
+                          ? [
+                              {
+                                label: t("settings.systemDefault"),
+                                tone: "default" as const,
+                              },
+                            ]
+                          : []),
+                        {
+                          label: t("settings.native"),
+                          tone: "native" as const,
+                        },
+                      ]}
+                      onSelect={launchTargetMutation.mutate}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+
+            {terminalEnvironment.data?.platform === "linux" && (
+              <div className="terminal-group">
+                <div className="terminal-group-title">
+                  <strong>{t("settings.linuxTerminals")}</strong>
+                  <span>
+                    {t("settings.detectedCount", {
+                      count: terminalEnvironment.data.linuxTerminalHosts.length,
+                    })}
+                  </span>
+                </div>
+                {terminalEnvironment.data.linuxTerminalHosts.length === 0 ? (
+                  <p className="muted terminal-empty">
+                    {t("settings.noTerminals")}
+                  </p>
+                ) : (
+                  terminalEnvironment.data.linuxTerminalHosts.map((host) => (
+                    <TerminalOption
+                      key={host.targetId}
+                      targetId={host.targetId}
+                      title={host.displayName}
+                      description={linuxTerminalDescription(host, t)}
+                      selected={currentLaunchTarget === host.targetId}
+                      disabled={launchTargetMutation.isPending}
+                      badges={[
+                        ...(host.targetId ===
+                        terminalEnvironment.data?.recommendedTargetId
                           ? [
                               {
                                 label: t("settings.systemDefault"),
@@ -1179,6 +1231,25 @@ function macosTerminalDescription(
       ? `${descriptions.direct_arguments}${t("settings.terminalDescription.kittySuffix")}`
       : descriptions[host.launchMode];
   return `${version}${launchDescription} · ${host.applicationPath}`;
+}
+
+function linuxTerminalDescription(
+  host: import("../lib/tauri").LinuxTerminalHost,
+  t: TFunction,
+) {
+  const descriptions: Record<
+    import("../lib/tauri").LinuxTerminalLaunchMode,
+    string
+  > = {
+    xdg_terminal_exec: t("settings.terminalDescription.xdg_terminal_exec"),
+    direct_arguments: t("settings.terminalDescription.direct_arguments"),
+    shell_wrapped: t("settings.terminalDescription.shell_wrapped"),
+  };
+  const launchDescription =
+    host.targetId === "linux:kitty"
+      ? `${descriptions.direct_arguments}${t("settings.terminalDescription.kittySuffix")}`
+      : descriptions[host.launchMode];
+  return `${launchDescription} · ${host.executablePath}`;
 }
 
 function formatBytes(bytes: number) {

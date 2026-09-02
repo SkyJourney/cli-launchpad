@@ -112,18 +112,19 @@ fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &
     })
 }
 
-#[cfg(target_os = "macos")]
-fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    Ok(match tool_key {
+/// Official install scripts detect the OS themselves (`uname -s` for
+/// darwin/linux), so macOS and Linux share the exact same URLs and
+/// interpreters; only the human-readable source label differs.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn unix_install_command(tool_key: ToolKey) -> (&'static str, Vec<&'static str>) {
+    match tool_key {
         ToolKey::Claude => (
             "/bin/bash",
             vec!["-c", "curl -fsSL https://claude.ai/install.sh | bash"],
-            "Anthropic Claude Code 官方 macOS 安装脚本",
         ),
         ToolKey::Codex => (
             "/bin/sh",
             vec!["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
-            "OpenAI Codex 官方 macOS 安装脚本",
         ),
         ToolKey::Antigravity => (
             "/bin/bash",
@@ -131,12 +132,33 @@ fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &
                 "-c",
                 "curl -fsSL https://antigravity.google/cli/install.sh | bash",
             ],
-            "Google Antigravity 官方 macOS 安装脚本",
         ),
-    })
+    }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "macos")]
+fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
+    let (program, args) = unix_install_command(tool_key);
+    let source = match tool_key {
+        ToolKey::Claude => "Anthropic Claude Code 官方 macOS 安装脚本",
+        ToolKey::Codex => "OpenAI Codex 官方 macOS 安装脚本",
+        ToolKey::Antigravity => "Google Antigravity 官方 macOS 安装脚本",
+    };
+    Ok((program, args, source))
+}
+
+#[cfg(target_os = "linux")]
+fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
+    let (program, args) = unix_install_command(tool_key);
+    let source = match tool_key {
+        ToolKey::Claude => "Anthropic Claude Code 官方 Linux 安装脚本",
+        ToolKey::Codex => "OpenAI Codex 官方 Linux 安装脚本",
+        ToolKey::Antigravity => "Google Antigravity 官方 Linux 安装脚本",
+    };
+    Ok((program, args, source))
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn install_spec(_tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
     Err(anyhow!("当前平台尚未配置 CLI 安装计划"))
 }
@@ -274,6 +296,35 @@ mod tests {
             assert_eq!(plan.args, vec!["-c", script]);
             assert_eq!(plan.preview, format!("{program} -c {script}"));
             assert!(plan.source.contains("官方 macOS 安装脚本"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_installs_use_fixed_official_scripts() {
+        let cases = [
+            (
+                ToolKey::Claude,
+                "/bin/bash",
+                "curl -fsSL https://claude.ai/install.sh | bash",
+            ),
+            (
+                ToolKey::Codex,
+                "/bin/sh",
+                "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+            ),
+            (
+                ToolKey::Antigravity,
+                "/bin/bash",
+                "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+            ),
+        ];
+        for (tool_key, program, script) in cases {
+            let plan = plan(tool_key, InstallKind::Install).unwrap();
+            assert_eq!(plan.program, program);
+            assert_eq!(plan.args, vec!["-c", script]);
+            assert_eq!(plan.preview, format!("{program} -c {script}"));
+            assert!(plan.source.contains("官方 Linux 安装脚本"));
         }
     }
 

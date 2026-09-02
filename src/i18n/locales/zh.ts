@@ -150,6 +150,8 @@ export const zh = {
       "自动模式固定使用 Terminal.app；第三方终端仅在明确选择后使用。",
     launchHintWindows:
       "优先保留 Windows Terminal Profile；不可用时自动回退到独立 Shell。",
+    launchHintLinux:
+      "自动模式优先委托系统默认终端；也可手动选择已检测到的终端。",
     launchHintOther: "根据当前平台检测可用的终端启动方式。",
     refreshTerminal: "重新检测终端环境",
     detectingTerminal: "正在检测终端环境…",
@@ -159,6 +161,8 @@ export const zh = {
       "固定使用系统 Terminal.app，安装第三方终端不会改变默认行为。",
     autoDescriptionWindows:
       "优先使用 Windows Terminal 默认 Profile，再按 PowerShell 7、Windows PowerShell、CMD 回退。",
+    autoDescriptionLinux:
+      "优先通过 xdg-terminal-exec 委托系统默认终端，找不到时按检测顺序回退。",
     recommended: "推荐",
     unknownVersion: "版本未知",
     noProfiles: "未发现可选择的 Profile，自动模式仍会尝试默认 Profile。",
@@ -168,6 +172,7 @@ export const zh = {
     fallbackPriority: "回退优先级 {{priority}}",
     standaloneWindow: "独立窗口",
     macTerminals: "macOS 终端",
+    linuxTerminals: "Linux 终端",
     detectedCount: "已检测 {{count}} 项",
     noTerminals: "未检测到可用终端，自动启动暂不可用。",
     systemDefault: "系统默认",
@@ -238,6 +243,8 @@ export const zh = {
       apple_script: "通过 AppleScript 创建 Ghostty 原生窗口并输入命令",
       direct_arguments: "通过应用包内官方 CLI 传递结构化参数",
       kittySuffix: "，并保留命令退出后的窗口",
+      xdg_terminal_exec: "委托系统默认终端启动（xdg-terminal-exec）",
+      shell_wrapped: "通过 -e 参数在新窗口中执行命令",
     },
   },
   about: {

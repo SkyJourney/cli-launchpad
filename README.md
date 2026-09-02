@@ -3,10 +3,10 @@
   <h1>CLI Launchpad</h1>
   <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台桌面启动器。</p>
   <p>
-    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.3"><img src="https://img.shields.io/badge/version-0.2.3-2856d8" alt="Version 0.2.3"></a>
+    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4"><img src="https://img.shields.io/badge/version-0.2.4-2856d8" alt="Version 0.2.4"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
     <a href="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml"><img src="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml/badge.svg" alt="Release Build"></a>
-    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-475467" alt="Windows and macOS">
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-475467" alt="Windows, macOS and Linux">
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2">
     <img src="https://img.shields.io/badge/React-19-087EA4?logo=react&logoColor=white" alt="React 19">
   </p>
@@ -30,9 +30,13 @@ CLI Launchpad 用于快速打开常用项目目录，并通过 Antigravity CLI�
 | Windows x64 离线版  | 内置 WebView2 的 NSIS 安装包，体积较大   |
 | macOS Apple Silicon | `aarch64.dmg`，适用于 M 系列芯片         |
 | macOS Intel         | `x64.dmg`，适用于 Intel 芯片             |
+| Linux x64（deb）    | 适用于 Debian/Ubuntu 系发行版            |
+| Linux x64（rpm）    | 适用于 Fedora/RHEL/openSUSE 系发行版     |
+| Linux x64（AppImage）| 免安装单文件，通用于主流发行版          |
 
 每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
 Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
+Linux 的 AppImage 下载后需先自行添加可执行权限（`chmod +x`）才能运行。
 
 ## 界面预览
 
@@ -107,6 +111,18 @@ macOS 开发与打包还需要：
 - Apple Silicon target：`rustup target add aarch64-apple-darwin`
 - Intel target：`rustup target add x86_64-apple-darwin`
 
+Linux 开发与打包还需要（以 Debian/Ubuntu 为例，其他发行版请替换为对应包管理器）：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl wget file \
+  libxdo-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev \
+  libwebkit2gtk-4.1-dev
+```
+
+若打包 AppImage 时提示 FUSE 相关错误，再安装 `libfuse2t64`（较新发行版）或 `libfuse2`（较旧发行版）——`linuxdeploy` 下载的 AppImage 打包工具本身以 AppImage 形式运行，需要 FUSE 才能直接执行。
+
 当前项目使用 pnpm 作为 Node 包管理器。不要混用 npm、yarn 或其他锁文件。
 
 ## 首次运行
@@ -162,13 +178,27 @@ pnpm tauri:build:macos:x64    # Intel DMG
 - ARM64：`src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`
 - Intel：`src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/`
 
-推送与应用版本一致的 `v*.*.*` Tag 后，`.github/workflows/release.yml` 会在线并行
-构建 Windows 在线/离线 NSIS 与两种 macOS DMG，生成 SHA-256 校验文件，并在全部
-target 成功后自动创建 GitHub Release。手动触发该工作流只保留 Actions Artifacts，
-不会创建 Release。
+Linux 一次性构建 deb、rpm、AppImage 三种格式：
 
-正式打包前确保 Windows 的 `src-tauri/icons/icon.ico` 和 macOS 的
-`src-tauri/icons/icon.icns` 均已就位。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。
+```bash
+pnpm tauri:build:linux
+```
+
+产物分别输出到：
+
+- deb：`src-tauri/target/release/bundle/deb/`
+- rpm：`src-tauri/target/release/bundle/rpm/`
+- AppImage：`src-tauri/target/release/bundle/appimage/`
+
+首次打包 AppImage 时，Tauri 会自动下载 `linuxdeploy` 及相关插件（需要联网），后续构建可复用缓存。
+
+推送与应用版本一致的 `v*.*.*` Tag 后，`.github/workflows/release.yml` 会在线并行
+构建 Windows 在线/离线 NSIS、Linux deb/rpm/AppImage 与两种 macOS DMG，生成 SHA-256
+校验文件，并在全部 target 成功后自动创建 GitHub Release。手动触发该工作流只保留
+Actions Artifacts，不会创建 Release。
+
+正式打包前确保 Windows 的 `src-tauri/icons/icon.ico`、macOS 的
+`src-tauri/icons/icon.icns` 均已就位；Linux 复用 `src-tauri/icons/` 下现有的 PNG 图标，无需额外准备。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。
 
 ## 内置字体
 
@@ -176,14 +206,14 @@ target 成功后自动创建 GitHub Release。手动触发该工作流只保留 
 
 - 全局 UI：Noto Sans SC，使用覆盖 100–900 的可变 TTF，并采用 400、500、600、700 四个主要字重。
 - 命令、路径、参数和日志：Maple Mono NL NF-CN，使用相同四个字重并关闭连字。
-- 字体文件随 Vite 前端产物进入 NSIS 与 DMG。
+- 字体文件随 Vite 前端产物进入 NSIS、DMG 与 deb/rpm/AppImage。
 - 两套字体均采用 SIL Open Font License 1.1；来源和授权见
   `src/assets/fonts/noto-sans-sc/`、`src/assets/fonts/maple/` 与
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 应用更新
 
-0.2.3 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
+0.2.4 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
 GitHub Releases 增加显式的版本检查，并在获得用户确认后再进入下载或安装流程。
 
 ## 许可证

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum TerminalPlatform {
     Windows,
     Macos,
+    Linux,
     Other,
 }
 
@@ -102,12 +103,36 @@ pub struct MacosTerminalHost {
     pub launch_mode: MacosTerminalLaunchMode,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinuxTerminalLaunchMode {
+    /// `xdg-terminal-exec --dir=<dir> --hold -- <cmd> <args>`; the launcher
+    /// resolves the desktop's configured default terminal itself.
+    XdgTerminalExec,
+    /// Terminal's own CLI accepts the target program as structured argv
+    /// (kitty/WezTerm; argument shapes reused verbatim from macOS).
+    DirectArguments,
+    /// Generic `-e <shell> -c '<script>'` fallback for `x-terminal-emulator`
+    /// and `xterm`, which have no native working-directory flag.
+    ShellWrapped,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinuxTerminalHost {
+    pub target_id: String,
+    pub display_name: String,
+    pub executable_path: String,
+    pub launch_mode: LinuxTerminalLaunchMode,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalEnvironment {
     pub platform: TerminalPlatform,
     pub windows_terminal_hosts: Vec<WindowsTerminalHost>,
     pub macos_terminal_hosts: Vec<MacosTerminalHost>,
+    pub linux_terminal_hosts: Vec<LinuxTerminalHost>,
     pub direct_shells: Vec<DirectShellTarget>,
     pub recommended_target_id: Option<String>,
     pub warnings: Vec<String>,

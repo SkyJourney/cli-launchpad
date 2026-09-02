@@ -157,6 +157,8 @@ export const en = {
       "Automatic mode always uses Terminal.app. Third-party terminals are used only when explicitly selected.",
     launchHintWindows:
       "Prefer a Windows Terminal profile, then fall back to a standalone shell when unavailable.",
+    launchHintLinux:
+      "Automatic mode delegates to the desktop's default terminal first; you can also pick a detected terminal manually.",
     launchHintOther:
       "Detect available terminal launch methods for the current platform.",
     refreshTerminal: "Detect terminal environment again",
@@ -167,6 +169,8 @@ export const en = {
       "Always use Terminal.app. Installing a third-party terminal will not change the default.",
     autoDescriptionWindows:
       "Use the default Windows Terminal profile first, then fall back through PowerShell 7, Windows PowerShell, and CMD.",
+    autoDescriptionLinux:
+      "Delegate to the desktop's default terminal via xdg-terminal-exec first, then fall back through the detected terminals in order.",
     recommended: "Recommended",
     unknownVersion: "Unknown version",
     noProfiles:
@@ -177,6 +181,7 @@ export const en = {
     fallbackPriority: "Fallback priority {{priority}}",
     standaloneWindow: "Standalone window",
     macTerminals: "macOS terminals",
+    linuxTerminals: "Linux terminals",
     detectedCount_one: "{{count}} detected",
     detectedCount_other: "{{count}} detected",
     noTerminals:
@@ -253,6 +258,9 @@ export const en = {
       direct_arguments:
         "Pass structured arguments through the app bundle's official CLI",
       kittySuffix: ", keeping the window open after the command exits",
+      xdg_terminal_exec:
+        "Delegates to the desktop's default terminal (xdg-terminal-exec)",
+      shell_wrapped: "Runs the command in a new window via the -e flag",
     },
   },
   about: {

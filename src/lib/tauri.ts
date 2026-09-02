@@ -64,7 +64,7 @@ export interface DirectShellTarget {
   priority: number;
 }
 
-export type TerminalPlatform = "windows" | "macos" | "other";
+export type TerminalPlatform = "windows" | "macos" | "linux" | "other";
 export type MacosTerminalLaunchMode =
   | "command_document"
   | "apple_script"
@@ -80,10 +80,23 @@ export interface MacosTerminalHost {
   launchMode: MacosTerminalLaunchMode;
 }
 
+export type LinuxTerminalLaunchMode =
+  | "xdg_terminal_exec"
+  | "direct_arguments"
+  | "shell_wrapped";
+
+export interface LinuxTerminalHost {
+  targetId: string;
+  displayName: string;
+  executablePath: string;
+  launchMode: LinuxTerminalLaunchMode;
+}
+
 export interface TerminalEnvironment {
   platform: TerminalPlatform;
   windowsTerminalHosts: WindowsTerminalHost[];
   macosTerminalHosts: MacosTerminalHost[];
+  linuxTerminalHosts: LinuxTerminalHost[];
   directShells: DirectShellTarget[];
   recommendedTargetId: string | null;
   warnings: string[];

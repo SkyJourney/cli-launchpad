@@ -1,6 +1,6 @@
 [package]
 name = "cli-launchpad"
-version = "0.2.3"
+version = "0.2.4"
 description = "Lightweight desktop launcher for agentic CLI tools"
 authors = ["SkyJourney"]
 license = "MIT"

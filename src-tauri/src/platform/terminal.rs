@@ -12,13 +12,15 @@ use tokio::process::Command;
 use crate::models::terminal::{DirectShellTarget, WindowsTerminalHost};
 #[cfg(target_os = "macos")]
 use crate::models::terminal::{MacosTerminalHost, MacosTerminalLaunchMode};
+#[cfg(target_os = "linux")]
+use crate::models::terminal::{LinuxTerminalHost, LinuxTerminalLaunchMode};
 #[cfg(any(windows, test))]
 use crate::models::terminal::{
     ProfilePreservation, ShellFamily, TerminalDistribution, TerminalProfileTarget,
 };
 use crate::models::terminal::{TerminalEnvironment, TerminalPlatform};
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use super::detect;
 
 #[cfg(windows)]
@@ -71,11 +73,16 @@ pub async fn detect_environment() -> TerminalEnvironment {
     {
         return detect_macos_environment().await;
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        return detect_linux_environment().await;
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     TerminalEnvironment {
         platform: TerminalPlatform::Other,
         windows_terminal_hosts: Vec::new(),
         macos_terminal_hosts: Vec::new(),
+        linux_terminal_hosts: Vec::new(),
         direct_shells: Vec::new(),
         recommended_target_id: None,
         warnings: vec!["当前平台尚未实现终端探测".to_string()],
@@ -98,6 +105,7 @@ async fn detect_windows_environment() -> TerminalEnvironment {
         platform: TerminalPlatform::Windows,
         windows_terminal_hosts: hosts,
         macos_terminal_hosts: Vec::new(),
+        linux_terminal_hosts: Vec::new(),
         direct_shells,
         recommended_target_id,
         warnings,
@@ -198,8 +206,67 @@ async fn detect_macos_environment() -> TerminalEnvironment {
         platform: TerminalPlatform::Macos,
         windows_terminal_hosts: Vec::new(),
         macos_terminal_hosts: hosts,
+        linux_terminal_hosts: Vec::new(),
         direct_shells: Vec::new(),
         recommended_target_id: has_terminal.then(|| "macos:terminal".to_string()),
+        warnings,
+    }
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_TERMINAL_SPECS: &[(&str, &str, LinuxTerminalLaunchMode)] = &[
+    (
+        "xdg-terminal-exec",
+        "系统默认终端",
+        LinuxTerminalLaunchMode::XdgTerminalExec,
+    ),
+    (
+        "x-terminal-emulator",
+        "系统默认终端（update-alternatives）",
+        LinuxTerminalLaunchMode::ShellWrapped,
+    ),
+    (
+        "ghostty",
+        "Ghostty",
+        LinuxTerminalLaunchMode::DirectArguments,
+    ),
+    ("kitty", "kitty", LinuxTerminalLaunchMode::DirectArguments),
+    (
+        "wezterm",
+        "WezTerm",
+        LinuxTerminalLaunchMode::DirectArguments,
+    ),
+    ("xterm", "xterm", LinuxTerminalLaunchMode::ShellWrapped),
+];
+
+#[cfg(target_os = "linux")]
+async fn detect_linux_environment() -> TerminalEnvironment {
+    let mut hosts = Vec::new();
+    for (command, display_name, launch_mode) in LINUX_TERMINAL_SPECS {
+        if let Some(path) = detect::which(command).await {
+            hosts.push(LinuxTerminalHost {
+                target_id: format!("linux:{command}"),
+                display_name: display_name.to_string(),
+                executable_path: path.display().to_string(),
+                launch_mode: *launch_mode,
+            });
+        }
+    }
+
+    let warnings = if hosts.is_empty() {
+        vec!["未检测到可用的终端模拟器，请安装 xterm 或桌面环境自带的终端".to_string()]
+    } else {
+        Vec::new()
+    };
+    let recommended_target_id = hosts.first().map(|host| host.target_id.clone());
+
+    TerminalEnvironment {
+        platform: TerminalPlatform::Linux,
+        windows_terminal_hosts: Vec::new(),
+        macos_terminal_hosts: Vec::new(),
+        linux_terminal_hosts: hosts,
+        direct_shells: Vec::new(),
+        recommended_target_id,
         warnings,
     }
 }
@@ -927,5 +994,24 @@ mod tests {
             .macos_terminal_hosts
             .iter()
             .any(|host| host.target_id == "macos:terminal"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn detects_linux_environment_without_panicking() {
+        let environment = detect_linux_environment().await;
+        assert_eq!(environment.platform, TerminalPlatform::Linux);
+        // Whatever is actually installed on the CI/dev box, the recommended
+        // target must be a host that was actually detected (or none, if the
+        // machine truly has no terminal emulator at all).
+        if let Some(target_id) = &environment.recommended_target_id {
+            assert!(environment
+                .linux_terminal_hosts
+                .iter()
+                .any(|host| &host.target_id == target_id));
+        } else {
+            assert!(environment.linux_terminal_hosts.is_empty());
+            assert!(!environment.warnings.is_empty());
+        }
     }
 }

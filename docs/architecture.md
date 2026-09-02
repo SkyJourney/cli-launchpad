@@ -200,7 +200,9 @@ launch target（auto / platform terminal host / Windows Terminal Profile / direc
 
 其中 launch target 使用跨平台稳定 ID：Windows 保留现有 `wt:*` 与
 `direct:*`；macOS 使用 `macos:terminal`、`macos:iterm2`、
-`macos:ghostty`、`macos:wezterm` 与 `macos:kitty`。终端环境响应包含
+`macos:ghostty`、`macos:wezterm` 与 `macos:kitty`；Linux 使用
+`linux:xdg-terminal-exec`、`linux:x-terminal-emulator`、`linux:ghostty`、
+`linux:kitty`、`linux:wezterm` 与 `linux:xterm`。终端环境响应包含
 `platform`、平台中立的 host 列表、Windows 专属 Profile 信息、Shell 信息、
 推荐目标和告警。旧数据库中的其他
 平台显式目标不会被执行，而是作为当前平台不可用目标进入自动回退。
@@ -262,6 +264,28 @@ Bundle ID 打开。载荷只包含应用生成的固定控制流程和经过 POS
 继续传给 Windows Terminal、PowerShell 和目标 CLI。Windows 启动边界还会从
 注册环境读取 Machine PATH 与 User PATH，将当前进程缺失的条目补入子终端 PATH，
 避免开发沙箱或隔离父进程隐藏用户级工具入口；该过程不修改注册表或系统环境。
+
+**Linux 启动策略**：
+
+```text
+自动推荐
+  → xdg-terminal-exec（委托桌面环境配置的默认终端）
+  → x-terminal-emulator（Debian alternatives，找不到 xdg-terminal-exec 时）
+显式选择
+  → Ghostty / kitty / WezTerm（应用包内官方 CLI 结构化参数，与 macOS 分支复用同一套参数格式）
+  → x-terminal-emulator / xterm（-e 参数 + 内联 shell 脚本）
+显式目标不可用或启动失败
+  → 按检测顺序回退到下一个候选终端
+```
+
+Linux 不复刻 macOS 的一次性 `.command` 载荷机制：`xdg-terminal-exec` 原生接受
+`--dir` 与结构化 argv；Ghostty/kitty/WezTerm 同 macOS 一样接受官方 CLI 参数
+（Ghostty 用 `--working-directory` + `--wait-after-command=true` + `-e`）；
+`x-terminal-emulator`/xterm 没有工作目录标志，退化为 `-e bash -c '<脚本>'`
+内联执行，脚本本身用 POSIX 单引号规则编码目录与参数，命令结束后 `exec bash
+-li` 回到交互 Shell，不落地任何临时文件。三个目标 CLI 的官方安装脚本
+（claude.ai、chatgpt.com/codex、antigravity.google）本身按 `uname -s` 识别
+Linux/macOS，因此 Linux 安装计划直接复用 macOS 分支的脚本 URL 与解释器。
 
 终端探测先检查 `/Applications` 与 `~/Applications` 中的标准应用路径，再使用
 `/usr/bin/mdfind` 按 Bundle ID 查找被用户移动的应用。所有候选必须读取
@@ -412,7 +436,7 @@ CLI 原始标题和源文件路径不进入应用持久缓存。
 - Windows 路径切换使用 `Set-Location -LiteralPath`。
 - macOS 路径和参数使用 POSIX 单引号字面值编码，单引号按关闭、转义、重新打开的规则处理，不允许未编码内容进入启动载荷。
 - 工具可执行文件和参数分开建模。
-- 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`，内部通过平台模块隔离 Windows 与 macOS 逻辑。
+- 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`，内部通过平台模块隔离 Windows、macOS 与 Linux 逻辑。
 - 启动和安装前都要在 UI 中提供命令预览。
 - 不在 SQLite 中保存密钥。如果未来需要凭据，使用操作系统凭据存储。
 

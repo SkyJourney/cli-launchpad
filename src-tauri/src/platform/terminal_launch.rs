@@ -4,8 +4,9 @@ use anyhow::{anyhow, Result};
 use base64::Engine;
 
 use crate::models::terminal::{
-    DirectShellTarget, MacosTerminalHost, MacosTerminalLaunchMode, ProfilePreservation,
-    ShellFamily, TerminalEnvironment, TerminalPlatform, TerminalProfileTarget, WindowsTerminalHost,
+    DirectShellTarget, LinuxTerminalHost, LinuxTerminalLaunchMode, MacosTerminalHost,
+    MacosTerminalLaunchMode, ProfilePreservation, ShellFamily, TerminalEnvironment,
+    TerminalPlatform, TerminalProfileTarget, WindowsTerminalHost,
 };
 
 pub const MACOS_COMMAND_DOCUMENT_PLACEHOLDER: &str = "<一次性启动载荷.command>";
@@ -57,10 +58,12 @@ fn build_launch_plan_internal(
     environment: &TerminalEnvironment,
     preference: &str,
 ) -> Result<LaunchPlan> {
-    if environment.platform == TerminalPlatform::Macos {
-        return build_macos_launch_plan(payload, environment, preference);
+    match environment.platform {
+        TerminalPlatform::Macos => build_macos_launch_plan(payload, environment, preference),
+        TerminalPlatform::Linux => build_linux_launch_plan(payload, environment, preference),
+        TerminalPlatform::Windows => build_windows_launch_plan(payload, environment, preference),
+        TerminalPlatform::Other => Err(anyhow!("当前操作系统尚未支持终端启动")),
     }
-    build_windows_launch_plan(payload, environment, preference)
 }
 
 fn build_windows_launch_plan(
@@ -168,6 +171,196 @@ fn build_macos_launch_plan(
         candidates,
         selection_note,
     })
+}
+
+fn build_linux_launch_plan(
+    payload: LaunchPayload,
+    environment: &TerminalEnvironment,
+    preference: &str,
+) -> Result<LaunchPlan> {
+    let selected = if preference == "auto" {
+        environment
+            .recommended_target_id
+            .as_deref()
+            .and_then(|target_id| find_linux_host(environment, target_id))
+            .or_else(|| environment.linux_terminal_hosts.first())
+    } else {
+        find_linux_host(environment, preference)
+    };
+
+    let primary = selected.and_then(|host| compose_linux_candidate(&payload, host));
+
+    let mut selection_note = None;
+    if preference != "auto" {
+        match (selected, &primary) {
+            (None, _) => {
+                selection_note = Some(format!(
+                    "保存的启动目标 {preference} 当前不可用，已回退到自动探测"
+                ));
+            }
+            (Some(host), None) => {
+                selection_note = Some(format!(
+                    "启动目标 {} 缺少必要的运行环境（例如 bash），已回退到自动探测",
+                    host.display_name
+                ));
+            }
+            (Some(_), Some(_)) => {}
+        }
+    }
+
+    let mut candidates = Vec::new();
+    candidates.extend(primary);
+    for host in &environment.linux_terminal_hosts {
+        if selected.is_some_and(|chosen| chosen.target_id == host.target_id) {
+            continue;
+        }
+        candidates.extend(compose_linux_candidate(&payload, host));
+    }
+
+    deduplicate_commands(&mut candidates);
+    if candidates.is_empty() {
+        return Err(anyhow!(
+            "未找到可用的 Linux 终端模拟器，请安装 xterm 或桌面环境自带的终端"
+        ));
+    }
+    Ok(LaunchPlan {
+        platform: environment.platform,
+        payload,
+        candidates,
+        selection_note,
+    })
+}
+
+fn find_linux_host<'a>(
+    environment: &'a TerminalEnvironment,
+    target_id: &str,
+) -> Option<&'a LinuxTerminalHost> {
+    environment
+        .linux_terminal_hosts
+        .iter()
+        .find(|host| host.target_id == target_id)
+}
+
+fn compose_linux_candidate(
+    payload: &LaunchPayload,
+    host: &LinuxTerminalHost,
+) -> Option<LaunchCandidate> {
+    match host.launch_mode {
+        LinuxTerminalLaunchMode::XdgTerminalExec => Some(compose_xdg_terminal_exec(payload, host)),
+        LinuxTerminalLaunchMode::DirectArguments => compose_linux_direct_arguments(payload, host),
+        LinuxTerminalLaunchMode::ShellWrapped => compose_linux_shell_wrapped(payload, host),
+    }
+}
+
+/// `xdg-terminal-exec` resolves the desktop's configured default terminal
+/// itself; we only need to hand it the working directory and argv.
+fn compose_xdg_terminal_exec(payload: &LaunchPayload, host: &LinuxTerminalHost) -> LaunchCandidate {
+    let mut args = vec![
+        format!("--dir={}", payload.directory),
+        "--hold".to_string(),
+        "--".to_string(),
+        payload.tool_executable.clone(),
+    ];
+    args.extend(payload.tool_args.iter().cloned());
+
+    LaunchCandidate {
+        target_id: host.target_id.clone(),
+        label: host.display_name.clone(),
+        preservation: None,
+        reason: "通过 xdg-terminal-exec 委托系统默认终端启动".to_string(),
+        command: ComposedCommand {
+            program: host.executable_path.clone(),
+            args,
+            working_dir: Some(payload.directory.clone()),
+            new_console: false,
+        },
+        requires_macos_command_document: false,
+    }
+}
+
+/// Argument shapes reused verbatim from the macOS `DirectArguments` branch:
+/// both CLIs take identical flags on Linux and macOS.
+fn compose_linux_direct_arguments(
+    payload: &LaunchPayload,
+    host: &LinuxTerminalHost,
+) -> Option<LaunchCandidate> {
+    let mut args = match host.target_id.as_str() {
+        "linux:wezterm" => vec![
+            "start".to_string(),
+            "--cwd".to_string(),
+            payload.directory.clone(),
+            "--".to_string(),
+            payload.tool_executable.clone(),
+        ],
+        "linux:kitty" => vec![
+            "--hold".to_string(),
+            "--directory".to_string(),
+            payload.directory.clone(),
+            payload.tool_executable.clone(),
+        ],
+        "linux:ghostty" => vec![
+            format!("--working-directory={}", payload.directory),
+            "--wait-after-command=true".to_string(),
+            "-e".to_string(),
+            payload.tool_executable.clone(),
+        ],
+        _ => return None,
+    };
+    args.extend(payload.tool_args.iter().cloned());
+
+    Some(LaunchCandidate {
+        target_id: host.target_id.clone(),
+        label: host.display_name.clone(),
+        preservation: None,
+        reason: "通过终端官方 CLI 的结构化参数直接执行目标 CLI".to_string(),
+        command: ComposedCommand {
+            program: host.executable_path.clone(),
+            args,
+            working_dir: Some(payload.directory.clone()),
+            new_console: false,
+        },
+        requires_macos_command_document: false,
+    })
+}
+
+/// Fallback for terminals with no native working-directory flag
+/// (`x-terminal-emulator`, `xterm`): wrap the invocation in a `bash -c`
+/// script passed to their classic `-e` flag, no temp files required.
+fn compose_linux_shell_wrapped(
+    payload: &LaunchPayload,
+    host: &LinuxTerminalHost,
+) -> Option<LaunchCandidate> {
+    let bash = crate::platform::detect::which_path_sync("bash")?;
+
+    let mut args = Vec::new();
+    if host.target_id == "linux:xterm" {
+        args.push("-hold".to_string());
+    }
+    args.push("-e".to_string());
+    args.push(bash);
+    args.push("-c".to_string());
+    args.push(compose_linux_wrapped_command(payload));
+
+    Some(LaunchCandidate {
+        target_id: host.target_id.clone(),
+        label: host.display_name.clone(),
+        preservation: None,
+        reason: "通过 -e 参数在新终端窗口中执行 CLI".to_string(),
+        command: ComposedCommand {
+            program: host.executable_path.clone(),
+            args,
+            working_dir: Some(payload.directory.clone()),
+            new_console: false,
+        },
+        requires_macos_command_document: false,
+    })
+}
+
+fn compose_linux_wrapped_command(payload: &LaunchPayload) -> String {
+    format!(
+        "{}; status=$?; printf '\\nCLI 已退出（状态码 %d）。\\n' \"$status\"; exec bash -li",
+        compose_shell_command(payload)
+    )
 }
 
 fn compose_macos_candidate(
@@ -288,16 +481,19 @@ fn quote_posix(value: &str) -> String {
 pub fn preview_plan(plan: &LaunchPlan) -> String {
     let primary = &plan.candidates[0];
     let mut lines = vec![format!("启动方式：{}", primary.label)];
-    if plan.platform == TerminalPlatform::Macos {
-        lines.push(format!(
+    match plan.platform {
+        TerminalPlatform::Macos => lines.push(format!(
             "启动接口：{}",
             macos_launch_interface(&primary.target_id)
-        ));
-    } else {
-        lines.push(format!(
+        )),
+        TerminalPlatform::Linux => lines.push(format!(
+            "启动接口：{}",
+            linux_launch_interface(&primary.target_id)
+        )),
+        TerminalPlatform::Windows | TerminalPlatform::Other => lines.push(format!(
             "保留级别：{}",
             preservation_label(primary.preservation)
-        ));
+        )),
     }
     lines.extend([
         format!("项目目录：{}", plan.payload.directory),
@@ -335,6 +531,15 @@ fn macos_launch_interface(target_id: &str) -> &'static str {
         "macos:ghostty" => "Ghostty AppleScript 原生窗口 + shell 输入",
         "macos:wezterm" | "macos:kitty" => "终端官方 CLI 结构化参数",
         _ => "macOS 终端安全启动载荷",
+    }
+}
+
+fn linux_launch_interface(target_id: &str) -> &'static str {
+    match target_id {
+        "linux:xdg-terminal-exec" => "xdg-terminal-exec 委托系统默认终端",
+        "linux:wezterm" | "linux:kitty" | "linux:ghostty" => "终端官方 CLI 结构化参数",
+        "linux:x-terminal-emulator" | "linux:xterm" => "-e 参数 + shell 脚本",
+        _ => "Linux 终端启动载荷",
     }
 }
 
@@ -778,6 +983,7 @@ mod tests {
                 profiles: vec![profile],
             }],
             macos_terminal_hosts: Vec::new(),
+            linux_terminal_hosts: Vec::new(),
             direct_shells: vec![
                 shell("direct:pwsh", ShellFamily::Pwsh, 1),
                 shell(
@@ -838,6 +1044,7 @@ mod tests {
             platform: TerminalPlatform::Windows,
             windows_terminal_hosts: Vec::new(),
             macos_terminal_hosts: Vec::new(),
+            linux_terminal_hosts: Vec::new(),
             direct_shells: vec![shell("direct:cmd", ShellFamily::Cmd, 3)],
             recommended_target_id: Some("direct:cmd".to_string()),
             warnings: Vec::new(),
@@ -942,6 +1149,7 @@ mod tests {
                     MacosTerminalLaunchMode::DirectArguments,
                 ),
             ],
+            linux_terminal_hosts: Vec::new(),
             direct_shells: Vec::new(),
             recommended_target_id: Some("macos:terminal".to_string()),
             warnings: Vec::new(),
@@ -1090,5 +1298,201 @@ mod tests {
                 .as_deref()
                 .is_some_and(|note| note.contains(target_id)));
         }
+    }
+
+    fn linux_payload(args: Vec<&str>) -> LaunchPayload {
+        LaunchPayload {
+            directory: "/workspace/demo".to_string(),
+            tool_executable: "/home/test/.local/bin/claude".to_string(),
+            tool_args: args.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    fn linux_host(
+        target_id: &str,
+        display_name: &str,
+        executable_path: &str,
+        launch_mode: LinuxTerminalLaunchMode,
+    ) -> LinuxTerminalHost {
+        LinuxTerminalHost {
+            target_id: target_id.to_string(),
+            display_name: display_name.to_string(),
+            executable_path: executable_path.to_string(),
+            launch_mode,
+        }
+    }
+
+    fn linux_environment() -> TerminalEnvironment {
+        TerminalEnvironment {
+            platform: TerminalPlatform::Linux,
+            windows_terminal_hosts: Vec::new(),
+            macos_terminal_hosts: Vec::new(),
+            linux_terminal_hosts: vec![
+                linux_host(
+                    "linux:xdg-terminal-exec",
+                    "系统默认终端",
+                    "/usr/bin/xdg-terminal-exec",
+                    LinuxTerminalLaunchMode::XdgTerminalExec,
+                ),
+                linux_host(
+                    "linux:ghostty",
+                    "Ghostty",
+                    "/usr/bin/ghostty",
+                    LinuxTerminalLaunchMode::DirectArguments,
+                ),
+                linux_host(
+                    "linux:kitty",
+                    "kitty",
+                    "/usr/bin/kitty",
+                    LinuxTerminalLaunchMode::DirectArguments,
+                ),
+                linux_host(
+                    "linux:wezterm",
+                    "WezTerm",
+                    "/usr/bin/wezterm",
+                    LinuxTerminalLaunchMode::DirectArguments,
+                ),
+                linux_host(
+                    "linux:xterm",
+                    "xterm",
+                    "/usr/bin/xterm",
+                    LinuxTerminalLaunchMode::ShellWrapped,
+                ),
+            ],
+            direct_shells: Vec::new(),
+            recommended_target_id: Some("linux:xdg-terminal-exec".to_string()),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn linux_auto_prefers_xdg_terminal_exec_and_keeps_fallback_chain() {
+        let plan =
+            build_launch_plan(linux_payload(vec!["--model", "opus"]), &linux_environment(), "auto")
+                .unwrap();
+        assert_eq!(plan.candidates[0].target_id, "linux:xdg-terminal-exec");
+        assert_eq!(
+            plan.candidates
+                .iter()
+                .map(|candidate| candidate.target_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "linux:xdg-terminal-exec",
+                "linux:ghostty",
+                "linux:kitty",
+                "linux:wezterm",
+                "linux:xterm",
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_xdg_terminal_exec_uses_dir_and_hold_flags() {
+        let plan = build_launch_plan(
+            linux_payload(vec!["--model", "opus"]),
+            &linux_environment(),
+            "linux:xdg-terminal-exec",
+        )
+        .unwrap();
+        assert_eq!(
+            plan.candidates[0].command.args,
+            vec![
+                "--dir=/workspace/demo",
+                "--hold",
+                "--",
+                "/home/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_direct_terminals_receive_tool_and_arguments_without_helper() {
+        let wezterm = build_launch_plan(
+            linux_payload(vec!["--model", "opus"]),
+            &linux_environment(),
+            "linux:wezterm",
+        )
+        .unwrap();
+        assert_eq!(
+            wezterm.candidates[0].command.args,
+            vec![
+                "start",
+                "--cwd",
+                "/workspace/demo",
+                "--",
+                "/home/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+
+        let kitty = build_launch_plan(
+            linux_payload(vec!["--model", "opus"]),
+            &linux_environment(),
+            "linux:kitty",
+        )
+        .unwrap();
+        assert_eq!(
+            kitty.candidates[0].command.args,
+            vec![
+                "--hold",
+                "--directory",
+                "/workspace/demo",
+                "/home/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_ghostty_uses_working_directory_and_wait_after_command() {
+        let plan = build_launch_plan(
+            linux_payload(vec!["--model", "opus"]),
+            &linux_environment(),
+            "linux:ghostty",
+        )
+        .unwrap();
+        assert_eq!(
+            plan.candidates[0].command.args,
+            vec![
+                "--working-directory=/workspace/demo",
+                "--wait-after-command=true",
+                "-e",
+                "/home/test/.local/bin/claude",
+                "--model",
+                "opus",
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_shell_wrapped_terminal_keeps_window_open_via_inline_script() {
+        let plan = build_launch_plan(
+            linux_payload(vec!["a;b", "$unsafe"]),
+            &linux_environment(),
+            "linux:xterm",
+        )
+        .unwrap();
+        let candidate = &plan.candidates[0];
+        assert!(candidate.command.args.contains(&"-hold".to_string()));
+        assert!(candidate.command.args.contains(&"-e".to_string()));
+        let script = candidate.command.args.last().unwrap();
+        assert!(script.contains("builtin cd -- '/workspace/demo'"));
+        assert!(script.contains("exec bash -li"));
+        // Arguments are quoted, never interpolated unescaped into the script.
+        assert!(script.contains("'a;b'"));
+        assert!(script.contains("'$unsafe'"));
+    }
+
+    #[test]
+    fn linux_stale_preference_falls_back_to_auto() {
+        let plan =
+            build_launch_plan(linux_payload(vec![]), &linux_environment(), "linux:missing")
+                .unwrap();
+        assert!(plan.selection_note.is_some());
+        assert_eq!(plan.candidates[0].target_id, "linux:xdg-terminal-exec");
     }
 }

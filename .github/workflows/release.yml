@@ -80,6 +80,18 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             build_args: --bundles nsis --config src-tauri/tauri.offline.conf.json
             asset_suffix: x64-offline-setup.exe
+          - id: linux-x64
+            label: Linux x64 deb/rpm/AppImage
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            build_args: --bundles deb,rpm,appimage
+            asset_suffix: ""
+          - id: linux-arm64
+            label: Linux ARM64 deb/rpm/AppImage
+            os: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            build_args: --bundles deb,rpm,appimage
+            asset_suffix: ""
           - id: macos-arm64
             label: macOS Apple Silicon DMG
             os: macos-latest
@@ -113,6 +125,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev
+          # linuxdeploy's downloaded AppImage tooling needs libfuse2 to run;
+          # Ubuntu renamed the package to libfuse2t64 on newer releases.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
@@ -156,6 +181,28 @@ jobs:
             exit 1
           fi
           cp "$bundle" "release-assets/CLI.Launchpad_${{ needs.validate.outputs.version }}_${{ matrix.asset_suffix }}"
+
+      - name: Prepare Linux release asset
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          # Tauri's bundler already encodes the correct architecture in each
+          # filename (amd64/arm64 for deb, x86_64/aarch64 for rpm, etc.), so
+          # copy it as-is instead of re-guessing the arch per matrix entry.
+          for spec in "deb:*.deb" "rpm:*.rpm" "appimage:*.AppImage"; do
+            kind="${spec%%:*}"
+            pattern="${spec#*:}"
+            file=$(find "src-tauri/target/release/bundle/$kind" -maxdepth 1 -name "$pattern" -type f | head -n 1)
+            if [[ -z "$file" ]]; then
+              echo "$kind package was not generated." >&2
+              exit 1
+            fi
+            filename=$(basename "$file")
+            cp "$file" "release-assets/${filename// /.}"
+          done
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
@@ -212,6 +259,12 @@ jobs:
           ## macOS 安装提示
 
           当前 macOS 安装包使用 ad hoc 签名且未经过 Apple 公证。首次打开时，如系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
+
+          ## Linux 安装提示
+
+          - `.deb`：`sudo dpkg -i` 或系统包管理器双击安装，适用于 Debian/Ubuntu 系。
+          - `.rpm`：`sudo rpm -i` 或系统包管理器安装，适用于 Fedora/RHEL/openSUSE 系。
+          - `.AppImage`：下载后需先添加可执行权限再运行，例如 `chmod +x *.AppImage && ./*.AppImage`。
           EOF
 
       - name: Create or update GitHub Release

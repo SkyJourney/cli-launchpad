@@ -75,6 +75,12 @@ fn is_valid_target_id(value: &str) -> bool {
             | "macos:ghostty"
             | "macos:wezterm"
             | "macos:kitty"
+            | "linux:xdg-terminal-exec"
+            | "linux:x-terminal-emulator"
+            | "linux:ghostty"
+            | "linux:wezterm"
+            | "linux:kitty"
+            | "linux:xterm"
     ) {
         return true;
     }
@@ -103,6 +109,12 @@ mod tests {
             "macos:ghostty",
             "macos:wezterm",
             "macos:kitty",
+            "linux:xdg-terminal-exec",
+            "linux:x-terminal-emulator",
+            "linux:ghostty",
+            "linux:wezterm",
+            "linux:kitty",
+            "linux:xterm",
         ] {
             assert!(is_valid_target_id(target_id));
         }
@@ -117,6 +129,8 @@ mod tests {
         assert!(!is_valid_target_id("macos:unknown"));
         assert!(!is_valid_target_id("macos:alacritty"));
         assert!(!is_valid_target_id("macos:warp"));
+        assert!(!is_valid_target_id("linux:gnome-terminal"));
+        assert!(!is_valid_target_id("linux:konsole"));
         assert!(!is_valid_target_id("wt:stable:not-a-guid"));
         assert!(!is_valid_target_id(
             "wt:unknown:574e775e-4f2a-5b96-ac1e-a2962a402336"

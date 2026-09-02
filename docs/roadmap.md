@@ -51,7 +51,7 @@
 - Tauri Windows 打包，优先支持公司内部可分发安装包。
 - 明确 MSI/NSIS 选择、签名、版本号和升级策略。
 - macOS 分别准备 Apple Silicon 与 Intel DMG，不生成 Universal 包；正式跨设备分发补齐签名与公证。
-- Linux 启动辅助留待后续评估，不进入 0.2.0 范围。
+- Linux 终端探测与启动（`xdg-terminal-exec` → `x-terminal-emulator` → kitty/WezTerm → xterm 兜底）及三项 CLI 的 Linux 安装脚本已补齐，随 deb/rpm/AppImage 打包一起发布。
 
 ## 阶段 7：执行任务与历史日志
 

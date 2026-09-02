@@ -124,6 +124,8 @@ fn antigravity_platform_for(os: &str, arch: &str) -> Result<&'static str, String
         ("windows", "aarch64") => Ok("windows_arm64"),
         ("macos", "x86_64") => Ok("darwin_amd64"),
         ("macos", "aarch64") => Ok("darwin_arm64"),
+        ("linux", "x86_64") => Ok("linux_amd64"),
+        ("linux", "aarch64") => Ok("linux_arm64"),
         _ => Err("当前平台尚未配置 Antigravity 官方版本查询".to_string()),
     }
 }
@@ -156,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_antigravity_windows_and_macos_platforms() {
+    fn maps_antigravity_windows_macos_and_linux_platforms() {
         assert_eq!(
             antigravity_platform_for("windows", "x86_64").unwrap(),
             "windows_amd64"
@@ -169,6 +171,14 @@ mod tests {
             antigravity_platform_for("macos", "x86_64").unwrap(),
             "darwin_amd64"
         );
-        assert!(antigravity_platform_for("linux", "x86_64").is_err());
+        assert_eq!(
+            antigravity_platform_for("linux", "x86_64").unwrap(),
+            "linux_amd64"
+        );
+        assert_eq!(
+            antigravity_platform_for("linux", "aarch64").unwrap(),
+            "linux_arm64"
+        );
+        assert!(antigravity_platform_for("freebsd", "x86_64").is_err());
     }
 }

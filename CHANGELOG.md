@@ -6,9 +6,27 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-02
+
+### 新增
+
+- 新增 Linux 平台支持：发布 deb、rpm、AppImage 三种打包格式，覆盖 x86_64 与 arm64 两种架构。
+- Linux 终端启动新增链式探测与回退：优先通过 `xdg-terminal-exec` 委托桌面环境默认终端，其次 `x-terminal-emulator`（Debian alternatives），再回退到 Ghostty、kitty、WezTerm（参数格式与 macOS 分支一致）与 xterm。
+- Linux 下新增 Claude Code、Codex、Antigravity 的一键安装支持，复用与 macOS 相同的官方安装脚本；同步补齐 Antigravity 在 Linux 上的官方版本查询。
+
+### 变更
+
+- GitHub Actions 发布流水线新增 Linux x86_64、Linux arm64（原生 ARM64 Runner）两条构建线，并统一 Linux 产物的资产命名逻辑，避免不同架构产物被误标注为同一架构。
+
 ### 修复
 
 - 进入设置页时同步重新检查 Claude Code、Codex 和 Antigravity 的本地版本与远程最新版本，并在检查完成前隐藏旧状态推导出的安装或更新入口，避免 CLI 已自动更新后仍显示虚假更新按钮。
+- 保存的 Linux 启动目标存在但当前环境缺少必要组件（如 bash）时，现在会给出明确的回退提示，而不是静默切换到其他终端。
+
+### 验证
+
+- 已在本机 Ubuntu 桌面环境完成 deb/rpm/AppImage 打包、安装、Ghostty/xdg-terminal-exec 终端启动、CLI 一键安装与 Antigravity 版本查询的人工验证。
+- 前端生产构建、Rust 全量测试（120 个用例）均通过。
 
 ## [0.2.3] - 2026-08-22
 
