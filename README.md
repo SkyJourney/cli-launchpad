@@ -118,10 +118,10 @@ sudo apt update
 sudo apt install -y build-essential curl wget file \
   libxdo-dev libssl-dev \
   libayatana-appindicator3-dev librsvg2-dev \
-  libwebkit2gtk-4.1-dev
+  libwebkit2gtk-4.1-dev xdg-utils
 ```
 
-若打包 AppImage 时提示 FUSE 相关错误，再安装 `libfuse2t64`（较新发行版）或 `libfuse2`（较旧发行版）——`linuxdeploy` 下载的 AppImage 打包工具本身以 AppImage 形式运行，需要 FUSE 才能直接执行。
+若打包 AppImage 时提示 FUSE 相关错误，再安装 `libfuse2t64`（较新发行版）或 `libfuse2`（较旧发行版）——`linuxdeploy` 下载的 AppImage 打包工具本身以 AppImage 形式运行，需要 FUSE 才能直接执行。`xdg-utils`（提供 `xdg-open`）是 `tauri-plugin-opener` 的运行时依赖，打包时会校验是否存在，精简系统镜像上缺失会导致 AppImage 打包直接失败。
 
 当前项目使用 pnpm 作为 Node 包管理器。不要混用 npm、yarn 或其他锁文件。
 

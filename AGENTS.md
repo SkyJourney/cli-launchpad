@@ -138,6 +138,7 @@ Linux 打包产出 deb、rpm、AppImage 三种格式（`pnpm tauri:build:linux`�
 - rustup + Rust stable
 - pnpm（版本与 CI 一致，见 `.github/workflows/release.yml` 中的 `pnpm/action-setup`）
 - Tauri v2 官方 Linux 依赖：`build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev`
+- `xdg-utils`（提供 `xdg-open`）：`tauri-plugin-opener` 的运行时依赖，打包时会校验，缺失会导致 AppImage 打包失败（精简版 CI 镜像，例如 ARM64 Runner，可能不预装）
 - AppImage 打包若报 FUSE 错误，补装 `libfuse2t64`（新发行版）或 `libfuse2`（旧发行版），CI 里已按此顺序尝试
 
 Linux 终端探测与启动（`platform/terminal.rs`、`platform/terminal_launch.rs`）已实现：优先探测 `xdg-terminal-exec`（委托桌面环境默认终端），其次 `x-terminal-emulator`（Debian alternatives），再回退到 Ghostty/kitty/WezTerm（参数格式与 macOS 分支一致）与 xterm。CLI 安装脚本（`services/install_service.rs`）复用与 macOS 相同的官方脚本 URL（claude.ai、chatgpt.com/codex、antigravity.google 均原生支持 Linux）。Antigravity 官方版本查询（`services/version_service.rs`）已补齐 `linux_amd64`/`linux_arm64` 清单映射。Linux 不需要 macOS 那套一次性 `.command` 载荷机制，终端参数或 `-e` 内联脚本直接完成传参。

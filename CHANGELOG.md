@@ -17,6 +17,7 @@
 ### 变更
 
 - GitHub Actions 发布流水线新增 Linux x86_64、Linux arm64（原生 ARM64 Runner）两条构建线，并统一 Linux 产物的资产命名逻辑，避免不同架构产物被误标注为同一架构。
+- Linux 构建依赖补充 `xdg-utils`（提供 `xdg-open`，`tauri-plugin-opener` 的运行时依赖），避免精简系统镜像上 AppImage 打包因缺少该依赖而失败。
 
 ### 修复
 
