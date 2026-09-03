@@ -24,15 +24,16 @@ CLI Launchpad 用于快速打开常用项目目录，并通过 Antigravity CLI�
 正式版本由 Git Tag 触发 GitHub Actions，在全部目标构建成功后自动发布到
 [GitHub Releases](https://github.com/SkyJourney/cli-launchpad/releases)。
 
-| 平台                | 安装包                                   |
-| ------------------- | ---------------------------------------- |
-| Windows x64         | NSIS 在线安装包；安装时按需下载 WebView2 |
-| Windows x64 离线版  | 内置 WebView2 的 NSIS 安装包，体积较大   |
-| macOS Apple Silicon | `aarch64.dmg`，适用于 M 系列芯片         |
-| macOS Intel         | `x64.dmg`，适用于 Intel 芯片             |
-| Linux x64（deb）    | 适用于 Debian/Ubuntu 系发行版            |
-| Linux x64（rpm）    | 适用于 Fedora/RHEL/openSUSE 系发行版     |
-| Linux x64（AppImage）| 免安装单文件，通用于主流发行版          |
+发布产物统一使用 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]` 命名：
+
+| 平台                  | 文件名示例                                        | 说明                              |
+| --------------------- | -------------------------------------------------- | --------------------------------- |
+| Windows x64           | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe` | NSIS 在线安装包；按需下载 WebView2 |
+| Windows x64 离线版    | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`| 内置 WebView2，体积较大           |
+| macOS Apple Silicon   | `CLI.Launchpad_<版本>_macos_arm64.dmg`              | 适用于 M 系列芯片                 |
+| macOS Intel           | `CLI.Launchpad_<版本>_macos_x64.dmg`                | 适用于 Intel 芯片                 |
+| Linux x64             | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}` | 三种格式任选，适用于 x86_64       |
+| Linux arm64           | `CLI.Launchpad_<版本>_linux_arm64.{deb,rpm,AppImage}`| 三种格式任选，适用于 ARM64        |
 
 每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
 Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
@@ -193,9 +194,10 @@ pnpm tauri:build:linux
 首次打包 AppImage 时，Tauri 会自动下载 `linuxdeploy` 及相关插件（需要联网），后续构建可复用缓存。
 
 推送与应用版本一致的 `v*.*.*` Tag 后，`.github/workflows/release.yml` 会在线并行
-构建 Windows 在线/离线 NSIS、Linux deb/rpm/AppImage 与两种 macOS DMG，生成 SHA-256
-校验文件，并在全部 target 成功后自动创建 GitHub Release。手动触发该工作流只保留
-Actions Artifacts，不会创建 Release。
+构建 Windows 在线/离线 NSIS、Linux x64/arm64 deb+rpm+AppImage（arm64 使用 GitHub
+原生 ARM64 Runner，不做交叉编译）与两种 macOS DMG，生成 SHA-256 校验文件，并在
+全部 target 成功后自动创建 GitHub Release。手动触发该工作流只保留 Actions
+Artifacts，不会创建 Release。
 
 正式打包前确保 Windows 的 `src-tauri/icons/icon.ico`、macOS 的
 `src-tauri/icons/icon.icns` 均已就位；Linux 复用 `src-tauri/icons/` 下现有的 PNG 图标，无需额外准备。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。

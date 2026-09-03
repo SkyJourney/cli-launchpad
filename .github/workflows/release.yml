@@ -73,37 +73,37 @@ jobs:
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             build_args: --bundles nsis
-            asset_suffix: x64-online-setup.exe
+            asset_suffix: windows_x64-online-setup.exe
           - id: windows-offline
             label: Windows x64 offline NSIS
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             build_args: --bundles nsis --config src-tauri/tauri.offline.conf.json
-            asset_suffix: x64-offline-setup.exe
+            asset_suffix: windows_x64-offline-setup.exe
           - id: linux-x64
             label: Linux x64 deb/rpm/AppImage
             os: ubuntu-latest
             rust_target: x86_64-unknown-linux-gnu
             build_args: --bundles deb,rpm,appimage
-            asset_suffix: ""
+            arch: x64
           - id: linux-arm64
             label: Linux ARM64 deb/rpm/AppImage
             os: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
             build_args: --bundles deb,rpm,appimage
-            asset_suffix: ""
+            arch: arm64
           - id: macos-arm64
             label: macOS Apple Silicon DMG
             os: macos-latest
             rust_target: aarch64-apple-darwin
             build_args: --bundles dmg --target aarch64-apple-darwin
-            asset_suffix: aarch64.dmg
+            asset_suffix: macos_arm64.dmg
           - id: macos-x64
             label: macOS Intel DMG
             os: macos-latest
             rust_target: x86_64-apple-darwin
             build_args: --bundles dmg --target x86_64-apple-darwin
-            asset_suffix: x64.dmg
+            asset_suffix: macos_x64.dmg
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -188,20 +188,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
+          VERSION="${{ needs.validate.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
 
-          # Tauri's bundler already encodes the correct architecture in each
-          # filename (amd64/arm64 for deb, x86_64/aarch64 for rpm, etc.), so
-          # copy it as-is instead of re-guessing the arch per matrix entry.
-          for spec in "deb:*.deb" "rpm:*.rpm" "appimage:*.AppImage"; do
+          # Tauri's bundler names each format with its own native arch string
+          # (amd64/arm64 for deb, x86_64/aarch64 for rpm and AppImage, plus an
+          # rpm-only "-1" release number) - normalize all three to the same
+          # CLI.Launchpad_<version>_linux_<arch>.<ext> shape used by every
+          # other platform's release asset.
+          for spec in "deb:*.deb:deb" "rpm:*.rpm:rpm" "appimage:*.AppImage:AppImage"; do
             kind="${spec%%:*}"
-            pattern="${spec#*:}"
+            rest="${spec#*:}"
+            pattern="${rest%%:*}"
+            ext="${rest#*:}"
             file=$(find "src-tauri/target/release/bundle/$kind" -maxdepth 1 -name "$pattern" -type f | head -n 1)
             if [[ -z "$file" ]]; then
               echo "$kind package was not generated." >&2
               exit 1
             fi
-            filename=$(basename "$file")
-            cp "$file" "release-assets/${filename// /.}"
+            cp "$file" "release-assets/CLI.Launchpad_${VERSION}_linux_${ARCH}.${ext}"
           done
 
       - name: Upload workflow artifact
