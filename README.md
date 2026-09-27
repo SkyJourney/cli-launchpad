@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="CLI Launchpad Logo">
+  <img src="assets/icon/v3/macos/icon-512.png" width="96" height="96" alt="CLI Launchpad 圆角正方形产品标识">
   <h1>CLI Launchpad</h1>
-  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台桌面启动器。</p>
+  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台 CLI 会话工作台。</p>
   <p>
     <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4"><img src="https://img.shields.io/badge/version-0.2.4-2856d8" alt="Version 0.2.4"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
@@ -13,11 +13,12 @@
   <p>
     <a href="CHANGELOG.md">变更日志</a> ·
     <a href="docs/product-requirements.md">产品需求</a> ·
-    <a href="docs/architecture.md">架构设计</a>
+    <a href="docs/architecture.md">架构设计</a> ·
+    <a href="docs/roadmap.md">0.3.0 路线图</a>
   </p>
 </div>
 
-CLI Launchpad 用于快速打开常用项目目录，并通过 Antigravity CLI、Codex CLI 或 Claude Code CLI 启动对应的命令行工作流。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
+CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。正在规划的 0.3.0 将转型为以项目和内置终端会话为中心的轻量工作台。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
 
 ## 下载
 
@@ -40,6 +41,8 @@ Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私
 Linux 的 AppImage 下载后需先自行添加可执行权限（`chmod +x`）才能运行。
 
 ## 界面预览
+
+以下截图展示 0.2.x 版本界面；0.3.0 将采用项目导航与内置 PTY 终端组成的大窗口工作台。
 
 ### 项目与 CLI 启动
 
@@ -227,6 +230,7 @@ MIT License 覆盖，继续遵循各自的 SIL Open Font License 1.1。
 
 ```text
 docs/                         产品和架构说明
+docs/milestones/               0.3.0 分阶段验收文档
 src/                          React UI
 src-tauri/                    Tauri/Rust 后端
 src-tauri/migrations/         SQLite 迁移脚本
@@ -236,7 +240,7 @@ src-tauri/src/db/             数据库连接和仓储
 src-tauri/src/platform/       平台相关启动逻辑
 ```
 
-## MVP 范围
+## 0.2.x 已有能力
 
 - 目录增删改查。
 - Antigravity、Codex 和 Claude Code 的工具配置。
@@ -246,3 +250,13 @@ src-tauri/src/platform/       平台相关启动逻辑
 - 三项 CLI 的会话历史、每次 10 条懒加载与安全恢复。
 - 按会话 ID 设置本地别名，不同步普通会话到业务数据库。
 - 三项 CLI 的启动模型选择与手动模型/部署名。
+
+## 0.3.0 工作台目标
+
+- 在大窗口工作台中按项目导航和切换 CLI 终端。
+- 在应用内 PTY 中运行 Claude Code、Codex 和 Antigravity CLI。
+- 每个 PTY 独立归属项目和工具；CLI 对话可选关联。
+- 支持多终端标签和分栏，布局预设只记录排列方式，不拥有或终止终端会话。
+- 保留现有会话历史与恢复、模型参数、CLI 管理、执行任务、配置备份和桌面能力。
+
+分阶段范围和验收条件见 [0.3.0 路线图](docs/roadmap.md) 与 [里程碑文档](docs/milestones/0.3.0/README.md)。

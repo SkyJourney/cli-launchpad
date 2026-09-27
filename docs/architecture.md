@@ -1,6 +1,6 @@
 # 架构说明
 
-CLI Launchpad 采用 Tauri + React + Rust 的分层结构。React 负责展示和交互，Rust 负责本地能力、命令组合、依赖检测和启动执行。
+CLI Launchpad 采用 Tauri + React + Rust + SQLite 的分层结构。0.2.4 基线通过系统外部终端启动 CLI；0.3.0 目标是在保留该架构的前提下，由 Rust 管理 PTY，React 在主工作区内渲染终端并管理面板布局。
 
 ## 分层
 
@@ -18,8 +18,47 @@ DB repositories
   负责 SQLite 查询和迁移
 
 Platform helpers
-  按 Windows/macOS 分支负责 CLI 路径解析、终端探测、结构化启动计划、参数边界和进程树管理
+  按 Windows/macOS/Linux 分支负责 CLI 路径解析、外部终端兼容启动及 PTY 实现、参数边界和进程树管理
 ```
+
+## 0.3.0 PTY 工作台目标架构
+
+```text
+React 工作台
+  项目导航、PTY 标签与分栏、布局呈现、终端模拟器
+          │ Tauri commands / 有界输出流
+Rust services
+  PTY 会话生命周期、进程归属、输出缓冲、项目/工具关联
+          │ platform helpers
+Windows ConPTY / macOS PTY / Linux PTY
+          │
+claude / codex / agy
+```
+
+架构边界：
+
+- Rust service 拥有 PTY 与子进程的创建、输入输出、尺寸调整、退出监控和终止；React 管理可见面板、焦点和布局。
+- 每个 PTY 会话独立拥有稳定 ID、项目 ID、工具 key、工作目录和运行状态；PTY 会话记录与布局记录分离。
+- CLI 对话 ID 是可选关联，只有从 CLI 权威来源可靠匹配时才保存；应用不缓存 CLI 会话正文或原始摘要。
+- 布局只保存 PTY 面板引用、树形排列与尺寸比例。布局的切换、编辑和删除不能直接终止或转移 PTY。
+- 多项目切换只选择显示上下文，非当前项目 PTY 继续由应用运行时管理。
+- PTY 输出使用有界、可背压的数据通道，避免高频 TUI 输出阻塞 Tauri IPC 或耗尽前端内存；具体传输机制和 PTY crate 在 M1 技术评审确认。
+- 数据库只持久化重启后有意义的 PTY 元数据与布局。PTY 活进程能否跨应用退出保留、关闭到托盘是否继续运行、重启后如何恢复，在 M0 明确生命周期语义，M1/M5 验收。
+- PTY service 必须为 Windows、macOS 与 Linux 提供一致的上层会话接口，并在平台层处理终端尺寸、信号/进程树、编码和环境差异。
+
+```text
+projects
+  └── pty_sessions (session_id, project_id, tool_key, cwd, cli_conversation_id?, state)
+
+layouts
+  └── layout_panes (layout_id, pty_session_id, split_tree, size_ratio)
+```
+
+以上为目标概念模型；具体 SQLite schema、数据迁移和失效引用策略属于 M1 与 M3 的验收设计。
+
+## 0.2.x 外部终端兼容启动架构
+
+0.2.4 已实现的完整路径解析、终端探测、结构化参数和安全边界继续保留为基线。它是否作为 0.3.0 的显式外部终端备用启动方式，由 M0 确认；内置 PTY 启动不得退化为临时拼接命令字符串。
 
 ## 全局 CLI 状态
 
@@ -43,6 +82,11 @@ cli_status
 
 启动
   preview_launch / launch_tool / resume_session
+
+PTY 工作台（0.3.0 目标）
+  create_pty_session / write_pty_session / resize_pty_session
+  terminate_pty_session / list_pty_sessions / get_pty_session
+  outputs and state changes streamed from Rust to the matching terminal view
 
 工具与全局参数
   list_tools / save_tool_global_args_batch
@@ -186,7 +230,7 @@ TTL；过期后重新检测路径时，仅在可执行路径未变化的情况�
 
 其他 CLI 工具不进入当前检测、安装或启动设计。
 
-## 启动组合
+## 0.2.x 外部终端启动组合
 
 启动输入按以下顺序组合：
 
@@ -442,8 +486,7 @@ CLI 原始标题和源文件路径不进入应用持久缓存。
 
 ## 跨平台发布约束
 
-- Windows 启动策略已经实现并完成本机受控探针与界面验收。
-- macOS 必须提供 CLI 路径检测、五款目标终端探测、一次性结构化启动载荷、Unix 进程组终止和平台路径语义，不允许简单复用 Windows 命令字符串。
+- 0.2.x 的外部终端启动策略已在 Windows、macOS、Linux 实现；若 0.3.0 保留该模式作为备用入口，仍需沿用相应平台安全边界。
 - macOS 分别发布 Apple Silicon 与 Intel DMG，不发布 Universal DMG；两个架构均需独立完成构建和运行验证。
 - macOS DMG 的 target 配置与功能实现分离；内部未签名测试包可以用于本机验证，正式跨设备分发仍需有效 Developer ID Application 身份、公证凭据和 stapling 验证。
-- 0.2.0 发布前必须在真实 macOS 设备完成 CLI 检测与版本、直接启动、项目目录、特殊字符参数、模型目录、会话恢复、安装更新任务、主动终止、Dock/菜单栏恢复和终端失败回退实测；完成前保持发布状态为 Unreleased。
+- 0.3.0 的 PTY 生命周期、内置终端交互、布局、升级迁移和安装包验收按 `docs/milestones/0.3.0/M5-release-readiness.md` 执行。

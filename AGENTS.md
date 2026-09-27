@@ -21,9 +21,10 @@
 
 - 项目默认分支为 `main`。
 - 项目使用 Tauri 2 + React + TypeScript + Rust + SQLite。
+- 当前发布基线为 0.2.4；0.3.0 目标是转型为以项目和内置 PTY 会话为中心的轻量本地工作台。
 - Node 包管理器统一使用 pnpm，仓库中应只维护 `pnpm-lock.yaml`。
 - Rust 工具链采用 stable MSVC，Windows 构建依赖包含 Visual Studio Build Tools 2022、MSVC C++ x64/x86 编译工具、Windows SDK 和 WebView2 Runtime。
-- Tauri 图标资源已生成，主要文件为 `src-tauri/icons/icon.ico` 和 `assets/icon/final/icon.ico`。
+- 各平台应用标识使用统一的圆角正方形图形，Windows 不使用圆形专属变体。
 - 产品当前只聚焦三个 CLI：Claude Code CLI（`claude`）、Codex CLI（`codex`）、Antigravity CLI（官方主命令 `agy`）。
 - `antigravity` 仅作为保守兼容探测命令，不作为推荐启动命令。
 - 其他 CLI 不进入当前检测、安装或快速启动范围。
@@ -47,9 +48,9 @@
 3. `docs/product-requirements.md`：产品目标、MVP、三项 CLI 范围、非目标。
 4. `docs/adr-0001-technology-stack.md`：技术栈选择及其原因。
 5. `docs/architecture.md`：分层结构、启动组合、全局 CLI 状态、会话读取、检测安装边界。
-6. `docs/ui-design.md`：cc-switch 风格多视图设计、全局 CLI 状态映射、会话历史数据源。
+6. `docs/ui-design.md`：大窗口工作台设计、项目/PTY/CLI 对话/布局关系、会话历史数据源。
 7. `docs/tooling-and-installation.md`：`claude`、`codex`、`agy` 的检测、安装和更新设计。
-8. `docs/roadmap.md`：阶段计划和后续演进顺序。
+8. `docs/roadmap.md` 与 `docs/milestones/0.3.0/`：目标版本路线图及分阶段验收条件。
 
 文档之间的关系：
 
@@ -58,9 +59,9 @@
 - `product-requirements.md` 定义做什么和不做什么。
 - `adr-0001-technology-stack.md` 解释为什么选择当前技术栈。
 - `architecture.md` 解释模块边界和关键技术路径。
-- `ui-design.md` 定义界面形态、视图结构和全局 CLI 状态映射。
+- `ui-design.md` 定义工作台布局、终端视图和会话交互。
 - `tooling-and-installation.md` 细化三项 CLI 的检测、安装、更新和 UI 状态设计。
-- `roadmap.md` 记录实现优先级，不覆盖需求和架构文档。
+- `roadmap.md` 记录 0.3.0 转型目标与优先级；里程碑文档定义阶段验收，不覆盖需求和架构文档。
 
 ## 执行顺序
 
@@ -74,11 +75,24 @@
 6. 功能实现后同步更新相关 docs 和 README。
 7. 最后执行必要验证，例如 `pnpm run build`、`pnpm exec tauri --version`、`cargo check --manifest-path src-tauri/Cargo.toml`。
 
+## 里程碑执行流程
+
+开始一个里程碑时，按以下流程推进；具体任务可以依里程碑规模细分或合并，但不得省略范围确认、验收门禁和最终复核：
+
+1. **建立开发基线。** 阅读 `docs/roadmap.md`、目标里程碑文档及其引用的需求、架构和 UI 文档；检查当前分支、工作区改动、代码实现、测试和依赖状态。对照里程碑前置条件和上一阶段验收结果，确认哪些已满足、哪些仍未完成，以及本次开发是否受阻。保留用户已有改动，不把未提交内容误认为本次工作。
+2. **确认开发范围。** 汇总本阶段目标、明确不做的内容、交付物、依赖和验收标准。发现文档冲突、需求歧义或会影响产品/架构选择的问题时，先整理具体选项并向用户交互确认；可由现有决策和代码事实确定的细节直接采用，不重复询问。范围和关键设计对齐后再进入实施。
+3. **制定可验收计划。** 将工作拆分为有顺序、可检查的任务，标明依赖、涉及模块、文档同步点和阶段产物。逐项列出与变更风险相称的完整测试覆盖要求，包括适用的单元、集成、前端构建、跨平台/真实 CLI 手工验证，以及可复现的边界和失败场景；同时写清前置门禁、每项任务的验收条件、最终里程碑门禁和无法在当前环境执行的检查。计划应能证明需求、数据与进程生命周期、错误恢复和回归范围均已覆盖，而不只列一个构建命令。
+4. **分阶段实施并持续推进。** 按计划完成实现、必要迁移、文档和测试。每个阶段汇报已完成内容、验证结果、剩余事项及下一步。非阻断问题记录为待办或风险并继续推进独立工作；只有会使方案不安全、验收标准无法判断或后续工作无法正确开展的阻断问题才暂停相关部分并请求用户决策。遇到超出已确认范围的架构或产品变更时，先对齐后再实施。
+5. **完成代码审查闭环。** 里程碑实现完成后，对照需求、任务计划和差异进行一次完整审查，重点检查功能遗漏、生命周期与数据一致性、安全边界、平台差异、错误处理、测试缺口及文档偏差。修复审查发现的问题后，对修复及相关调用路径再次审查；若复审引入新问题，继续修复和复审，直到没有未处理的里程碑级问题。非阻断遗留项须记录负责人或后续阶段、影响和理由，不得隐去。
+6. **执行最终测试与门禁。** 在审查修复闭环之后，重新运行计划中适用的完整测试覆盖和全部里程碑门禁，不能用代码审查前的结果代替最终结果。逐项记录通过、失败、跳过或受环境限制的检查及证据；失败项先修复并重跑受影响检查，最终门禁不通过时不得宣告里程碑完成或提交为已验收状态。
+7. **提交并汇报。** 所有必需门禁通过后，检查最终差异与工作区，仅暂存本里程碑相关变更，按 Git 提交规范提交代码。随后更新路线图/里程碑进度，生成里程碑汇报，说明目标与交付、关键设计、审查及修复结果、测试和门禁证据、提交信息、未完成事项及其后续安排。若存在无法执行的门禁或明确保留的非阻断问题，应在汇报中清楚说明，不得将其表述为通过。
+
 ## 架构边界
 
 - `src/` 负责展示状态，并调用 Tauri commands。
 - `src-tauri/src/commands/` 暴露小而清晰的 IPC 入口。
 - `src-tauri/src/services/` 负责命令组合、校验等行为逻辑。
+- PTY 生命周期、输出流与进程归属由 Rust service 管理，React 负责终端呈现和布局。
 - `src-tauri/src/db/` 负责 SQLite schema、连接和 repositories。
 - `src-tauri/src/platform/` 负责操作系统相关的命令启动细节。
 
@@ -129,7 +143,7 @@ VS Build Tools 自带的 CMake 和 Ninja 可以作为编译辅助工具；当前
 
 ## 打包约定
 
-项目目标包括构建为公司内部使用的 Windows 安装包，同时通过 GitHub Actions 发布 macOS 和 Linux 安装包。打包前需要维护并验证 Tauri 图标资源，例如 `src-tauri/icons/icon.ico`（Windows）、`src-tauri/icons/icon.icns`（macOS）；Linux 复用现有 PNG 图标，无需额外资源。
+项目目标包括构建为公司内部使用的 Windows 安装包，同时通过 GitHub Actions 发布 macOS 和 Linux 安装包。各平台安装包、应用内 Logo 和 README 使用同一圆角正方形品牌图形。打包前维护并验证 `src-tauri/icons/icon.ico`（Windows）、`src-tauri/icons/icon.icns`（macOS）和 Linux PNG 图标。
 
 Windows 后续根据内部分发策略选择 MSI 或 EXE 安装器，并按 Tauri Windows 打包要求补齐 WiX、NSIS 或相关工具链。
 
