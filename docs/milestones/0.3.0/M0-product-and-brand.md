@@ -8,7 +8,7 @@
 - 明确 CLI Launchpad 是轻量、本地优先的 CLI 会话工作台，核心工具仍为 `claude`、`codex`、`agy`。
 - 明确项目、运行中的 PTY、CLI 自身的历史对话以及布局预设是不同对象。
 - 布局可引用 PTY，会话仍独立归属项目与工具；导航或重新排列布局不得隐式终止 PTY。
-- 在开始 M1 前确定应用退出、隐藏到托盘和重新启动时的 PTY 与布局恢复语义。
+- 确定应用退出、隐藏到托盘、异常结束和重启时的 PTY 与布局恢复语义，并决定外部终端备用入口。
 - 统一 Windows、macOS、Linux 安装包、应用内 Logo 和 README 使用的圆角正方形品牌图形。
 
 ## 非目标
@@ -18,11 +18,11 @@
 
 ## 验收条件
 
-- [ ] `docs/product-requirements.md`、`docs/architecture.md`、`docs/ui-design.md` 定义一致。
-- [ ] `docs/roadmap.md` 与 M1–M5 文档的顺序、依赖和验收目标一致。
-- [ ] 项目、PTY、CLI 对话、布局及生命周期恢复语义有明确书面决定。
-- [ ] 应用内、安装包与 README 的品牌图形一致，Windows 不再使用圆形变体。
-- [ ] 0.3.0 的非目标保持轻量范围，不引入 Orca 式的完整编排管理面。
+- [x] `docs/product-requirements.md`、`docs/architecture.md`、`docs/ui-design.md` 定义一致。
+- [x] `docs/roadmap.md` 与 M1–M5 文档的顺序、依赖和验收目标一致。
+- [x] 项目、PTY、CLI 对话、布局及生命周期恢复语义有明确书面决定。
+- [x] 应用内、安装包与 README 的品牌图形一致，Windows 不再使用圆形变体。
+- [x] 0.3.0 的非目标保持轻量范围，不引入 Orca 式的完整编排管理面。
 
 ## 产物
 
