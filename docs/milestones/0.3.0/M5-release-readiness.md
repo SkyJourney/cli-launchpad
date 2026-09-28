@@ -4,6 +4,8 @@
 **依赖：** M1、M2、M3、M4
 **目标：** 为 0.3.0 建立可靠的跨平台发布候选。
 
+macOS/Linux 实机验收在 Windows 版 M1–M4 完成后集中开展，检查项和逐平台结果见[跨平台对齐待办](cross-platform-alignment.md)。
+
 ## 范围
 
 - 在 Windows、macOS、Linux 覆盖 PTY 生命周期、项目切换、多个会话、分栏布局、 CLI 恢复和窗口/托盘行为。

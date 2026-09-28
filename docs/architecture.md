@@ -1,12 +1,12 @@
 # 架构说明
 
-CLI Launchpad 采用 Tauri + React + Rust + SQLite 的分层结构。0.2.4 基线通过系统外部终端启动 CLI；0.3.0 目标是在保留该架构的前提下，由 Rust 管理 PTY，React 在主工作区内渲染终端并管理面板布局。
+CLI Launchpad 采用 Tauri + React + Rust + SQLite 的分层结构。0.2.4 基线通过系统外部终端启动 CLI；0.3.0 由 Rust 管理 PTY，React 在全局主工作区内展示跨项目会话标签和可调分栏。
 
 ## 分层
 
 ```text
 React UI
-  调用 Tauri commands，维护全局 CLI 状态和视图状态
+  调用 Tauri commands，维护项目选择、PTY 会话索引、焦点和工作区布局状态
 
 Commands
   处理 IPC 边界，转换请求和响应类型
@@ -23,12 +23,16 @@ Platform helpers
 
 ## 0.3.0 PTY 工作台目标架构
 
+PTY 后端和输出流实施决策见 [ADR-0002](adr-0002-embedded-pty.md)。M1 使用 `portable-pty`、xterm.js/Fit addon 和带消费确认的 Tauri Channel；Windows 以 Job Object、Unix 以 PTY 进程组管理进程树。Rust PTY service 持有会话、输出读取和退出监控；UI 关闭或应用退出时由 service 执行有界清理。数据库仅保留会话元数据，启动时将遗留运行态标记为已结束。M1 的 Windows 验收先行，macOS/Linux 实机门禁补齐前不完成该里程碑。
+
+终端文本复制和粘贴通过 Tauri clipboard-manager 读写系统文本剪贴板，并只在用户快捷键触发时访问；剪贴板内容不会入库或写入诊断日志。图片内容留在操作系统剪贴板中，应用只将 Claude Code 或 Codex 对应的按键序列送入 PTY，不读取、编码或经 PTY 传输图片字节。Antigravity 图片粘贴能力未验证，不对其提供支持承诺。
+
 ```text
 React 工作台
-  项目导航、PTY 标签与分栏、布局呈现、终端模拟器
+  项目导航、全局 PTY 标签与分栏、布局呈现、终端模拟器
           │ Tauri commands / 有界输出流
 Rust services
-  PTY 会话生命周期、进程归属、输出缓冲、项目/工具关联
+  PTY 会话生命周期、进程归属、输出缓冲、项目/工具/标题关联
           │ platform helpers
 Windows ConPTY / macOS PTY / Linux PTY
           │
@@ -37,28 +41,28 @@ claude / codex / agy
 
 架构边界：
 
-- Rust service 拥有 PTY 与子进程的创建、输入输出、尺寸调整、退出监控和终止；React 管理可见面板、焦点和布局。关闭终端只终止对应 PTY；仅从布局移除引用不终止会话。
-- 每个 PTY 会话独立拥有稳定 ID、项目 ID、工具 key、工作目录和运行状态；PTY 会话记录与布局记录分离。
+- Rust service 拥有 PTY 与子进程的创建、输入输出、尺寸调整、退出监控和终止；React 管理可见面板、焦点和布局。关闭会话标签只终止对应 PTY；仅从布局移除引用不终止会话。
+- 每个 PTY 会话独立拥有稳定 ID、项目 ID、工具 key、工作目录、标题和运行状态；前端按 session ID 索引会话，不能再按项目 ID 只保存一个会话。
 - CLI 对话 ID 是可选关联，只有从 CLI 权威来源可靠匹配时才保存；应用不缓存 CLI 会话正文或原始摘要。
-- 布局只保存 PTY 面板引用、树形排列与尺寸比例。布局的切换、编辑和删除不能直接终止或转移 PTY。
-- 多项目切换只选择显示上下文，非当前项目 PTY 继续由应用运行时管理。
+- 多项目 PTY 在同一工作区中混排。项目选择只改变启动/恢复目标，并突出显示归属该项目的会话标签与面板；聚焦会话会同步其项目上下文。
+- M2 布局树只保存 PTY 面板引用、排列方向与尺寸比例；分隔条直接调整比例。M3 再持久化全局混合项目布局和可选布局预设。布局的切换、编辑和删除不能直接终止或转移 PTY。
 - PTY 输出使用有界、可背压的数据通道，避免高频 TUI 输出阻塞 Tauri IPC 或耗尽前端内存；具体传输机制和 PTY crate 在 M1 技术评审确认。
-- 数据库持久化 PTY 会话元数据与布局，不持久化终端输出或滚屏。隐藏到托盘时应用及 PTY 继续运行；用户显式退出时，若有活动 PTY 先请求确认，确认后由 Rust 结束全部托管 PTY 再退出，取消则保留应用和会话。PTY 进程树必须受应用与平台进程隔离机制管理，应用异常退出时不得遗留失管子进程；M1 实现并验证，M5 跨平台复验。系统重启后不接管进程；重启后旧会话元数据与布局恢复为已结束状态，可重新启动或通过 CLI 历史恢复，不能显示成仍在运行。
+- 数据库持久化 PTY 会话元数据；M2 的活动布局仅驻留当前应用运行期，M3 增加布局持久化，不持久化终端输出或滚屏。隐藏到托盘时应用及 PTY 继续运行；用户显式退出时，若有活动 PTY 先请求确认，确认后由 Rust 结束全部托管 PTY 再退出，取消则保留应用和会话。PTY 进程树必须受应用与平台进程隔离机制管理，应用异常退出时不得遗留失管子进程；M1 实现并验证，M5 跨平台复验。系统重启后不接管进程；旧会话元数据与布局恢复为已结束状态，可重新启动或通过 CLI 历史恢复，不能显示成仍在运行。
 - PTY service 必须为 Windows、macOS 与 Linux 提供一致的上层会话接口，并在平台层处理终端尺寸、信号/进程树、编码和环境差异。
 
 ```text
 projects
-  └── pty_sessions (session_id, project_id, tool_key, cwd, cli_conversation_id?, state)
+  └── pty_sessions (session_id, project_id, tool_key, cwd, title, cli_conversation_id?, state)
 
-layouts
-  └── layout_panes (layout_id, pty_session_id, split_tree, size_ratio)
+workspace_layouts (M3)
+  └── pane tree (layout_id, pty_session_id, orientation, size_ratio)
 ```
 
-以上为目标概念模型；具体 SQLite schema、数据迁移和失效引用策略属于 M1 与 M3 的验收设计。
+以上为目标概念模型；M2 实现运行期工作区布局，M3 验收 SQLite schema、数据迁移、命名布局与失效引用策略。
 
 ## 0.2.x 外部终端兼容启动架构
 
-0.2.4 已实现的完整路径解析、终端探测、结构化参数和安全边界继续保留为基线。0.3.0 将其作为用户显式选择的外部终端备用启动方式，默认仍使用内置 PTY；PTY 启动失败时不得静默切换到外部终端。内置 PTY 启动不得退化为临时拼接命令字符串。
+0.2.4 的完整路径解析、终端探测、结构化参数和安全边界作为兼容基线保留。0.3.0 工作台的普通 CLI 启动与历史恢复统一使用内置 PTY；用户界面不提供外部 CLI 启动选项或普通启动命令预览，PTY 启动失败时直接显示错误。内置 PTY 启动不得退化为临时拼接命令字符串。
 
 ## 全局 CLI 状态
 
@@ -76,20 +80,19 @@ cli_status
 ## Tauri commands 清单
 
 ```text
-目录与参数
+项目
   list_directories / add_directory / update_directory / remove_directory / set_directory_pinned
-  get_directory_tool_args / save_directory_tool_args_batch
 
 启动
   preview_launch / launch_tool / resume_session
 
 PTY 工作台（0.3.0 目标）
-  create_pty_session / write_pty_session / resize_pty_session
+  create_pty_session（新建或按已验证的 CLI session ID 恢复） / write_pty_session / resize_pty_session
   terminate_pty_session / list_pty_sessions / get_pty_session
   outputs and state changes streamed from Rust to the matching terminal view
 
-工具与全局参数
-  list_tools / save_tool_global_args_batch
+工具
+  list_tools
 
 CLI 状态与版本
   detect_cli_status            被动检测安装与全路径；显式刷新时才执行 --version
@@ -101,7 +104,7 @@ CLI 状态与版本
 会话历史
   list_sessions                按目录和工具实时读取会话
   set/delete_session_alias     设置或删除匹配会话 ID 的本地别名
-  resume_session               按工具恢复指定会话
+  PTY 恢复前重新验证 CLI session ID 属于目标项目，再将 CLI 专用参数传给内置 PTY
 
 模型目录
   get_model_catalog            获取三项 CLI 的模型选项，支持强制刷新
@@ -184,9 +187,7 @@ schema 版本与日志内容，用于本地排障。
 
 ## 配置交换与启动历史
 
-可移植 JSON 配置 bundle 当前版本为 v2，覆盖目录及全局/项目级工具参数；
-为避免导入文件改变执行链，不再导入或导出 Shell 程序与初始化脚本。仍兼容 v1 文件。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不
-包含日志、缓存、备份、窗口位置或外部 CLI 会话正文。
+可移植 JSON 配置 bundle 不再导出全局或项目级 CLI 参数；导入旧版 bundle 时忽略这些兼容字段。配置导入不接受 Shell 程序或初始化脚本。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不包含日志、缓存、备份、窗口位置、布局预设或外部 CLI 会话正文。SQLite 中 0.2.x 遗留的参数字段与记录暂时保留以兼容旧数据库和备份，但当前启动链不读取它们。
 
 `launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
 类别，不持久化最终命令或参数文本。添加目录和实际发起启动时，Rust
@@ -240,7 +241,7 @@ launch target（auto / platform terminal host / Windows Terminal Profile / direc
 + selected directory
 + resolved full path of shell / terminal
 + resolved full path of tool（候选命令解析，agy 优先于 antigravity）
-+ tool global args ⊕ directory-specific tool args（项目级覆盖同名 flag）
++ CLI 默认启动参数（不读取 0.2.x 遗留自定义参数）
 ```
 
 其中 launch target 使用跨平台稳定 ID：Windows 保留现有 `wt:*` 与
@@ -252,7 +253,7 @@ launch target（auto / platform terminal host / Windows Terminal Profile / direc
 推荐目标和告警。旧数据库中的其他
 平台显式目标不会被执行，而是作为当前平台不可用目标进入自动回退。
 
-**执行边界**：工具在启动或版本探测前解析为完整路径；安装计划在用户确认前解析实际目标，并按该目标执行。终端与 Shell 由平台探测结果生成结构化候选，用户参数始终作为字面值传递，只在最终 Shell 边界编码。
+**执行边界**：工具在启动或版本探测前解析为完整路径；普通启动使用 CLI 默认行为，会话恢复只附加该 CLI 所需的内部恢复参数；安装计划在用户确认前解析实际目标，并按该目标执行。终端与 Shell 由平台探测结果生成结构化候选，所有参数只在最终 Shell 边界编码。
 
 **Windows 启动策略**：
 
@@ -482,12 +483,12 @@ CLI 原始标题和源文件路径不进入应用持久缓存。
 - macOS 路径和参数使用 POSIX 单引号字面值编码，单引号按关闭、转义、重新打开的规则处理，不允许未编码内容进入启动载荷。
 - 工具可执行文件和参数分开建模。
 - 终端探测与启动计划分别集中在 `platform/terminal.rs` 和 `platform/terminal_launch.rs`，内部通过平台模块隔离 Windows、macOS 与 Linux 逻辑。
-- 启动和安装前都要在 UI 中提供命令预览。
+- CLI 安装与更新计划在用户确认前显示来源和命令；0.3.0 普通 CLI PTY 启动不展示命令预览。
 - 不在 SQLite 中保存密钥。如果未来需要凭据，使用操作系统凭据存储。
 
 ## 跨平台发布约束
 
-- 0.2.x 的外部终端启动策略已在 Windows、macOS、Linux 实现；0.3.0 将其保留为用户显式选择的备用入口，仍须沿用相应平台安全边界，且不得在 PTY 启动失败时静默切换。
+- 0.2.x 的外部终端启动策略已在 Windows、macOS、Linux 实现，仅作为旧版本兼容能力保留；0.3.0 工作台不提供外部启动入口，PTY 启动失败时显示明确错误，不静默回退。
 - macOS 分别发布 Apple Silicon 与 Intel DMG，不发布 Universal DMG；两个架构均需独立完成构建和运行验证。
 - macOS DMG 的 target 配置与功能实现分离；内部未签名测试包可以用于本机验证，正式跨设备分发仍需有效 Developer ID Application 身份、公证凭据和 stapling 验证。
 - 0.3.0 的 PTY 生命周期、内置终端交互、布局、升级迁移和安装包验收按 `docs/milestones/0.3.0/M5-release-readiness.md` 执行。
