@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "CLI Launchpad",
-        "width": 1120,
-        "height": 760,
+        "width": 1360,
+        "height": 860,
         "minWidth": 860,
         "minHeight": 560
       }

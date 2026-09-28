@@ -3,16 +3,15 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 
-use crate::db::{
-    app_setting_repo, directory_repo, directory_tool_args_repo, launch_history_repo, tool_repo,
-};
+use crate::db::{app_setting_repo, directory_repo, launch_history_repo, tool_repo};
 use crate::models::launch_history::LaunchAction;
 use crate::models::terminal::TerminalEnvironment;
 use crate::models::tool::ToolKey;
 use crate::platform::detect;
+#[cfg(target_os = "macos")]
+use crate::platform::terminal_launch::MACOS_COMMAND_DOCUMENT_PLACEHOLDER;
 use crate::platform::terminal_launch::{
     build_launch_plan, preview_plan, ComposedCommand, LaunchCandidate, LaunchPayload, LaunchPlan,
-    MACOS_COMMAND_DOCUMENT_PLACEHOLDER,
 };
 use crate::services::storage_service::StoragePaths;
 
@@ -245,23 +244,42 @@ fn apply_resume(payload: &mut LaunchPayload, tool_key: ToolKey, session_id: &str
     }
 }
 
-fn resolve_payload(
+pub(crate) fn resolve_resume_payload(
+    conn: &Connection,
+    directory_id: i64,
+    tool_key: ToolKey,
+    session_id: &str,
+) -> Result<LaunchPayload> {
+    let mut payload = resolve_payload(conn, directory_id, tool_key)?;
+    apply_resume(&mut payload, tool_key, session_id);
+    Ok(payload)
+}
+
+pub(crate) fn resolve_payload(
     conn: &Connection,
     directory_id: i64,
     tool_key: ToolKey,
 ) -> Result<LaunchPayload> {
+    resolve_payload_with(conn, directory_id, tool_key, resolve_tool_executable)
+}
+
+fn resolve_payload_with(
+    conn: &Connection,
+    directory_id: i64,
+    tool_key: ToolKey,
+    resolve_executable: impl FnOnce(ToolKey) -> Result<String>,
+) -> Result<LaunchPayload> {
     let directory = directory_repo::get(conn, directory_id)?
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))?;
     crate::services::directory_service::validate_path(&directory.path)?;
-    let tool = tool_repo::get_by_key(conn, tool_key)?
-        .ok_or_else(|| anyhow!("tool {} is not configured", tool_key.as_str()))?;
-    let directory_args =
-        directory_tool_args_repo::get(conn, directory_id, tool_key)?.unwrap_or_default();
+    if !tool_repo::exists(conn, tool_key)? {
+        return Err(anyhow!("tool {} is not configured", tool_key.as_str()));
+    }
 
     Ok(LaunchPayload {
         directory: directory.path,
-        tool_executable: resolve_tool_executable(tool_key)?,
-        tool_args: merge_args(split_args(&tool.global_args), split_args(&directory_args)),
+        tool_executable: resolve_executable(tool_key)?,
+        tool_args: Vec::new(),
     })
 }
 
@@ -270,169 +288,76 @@ fn resolve_tool_executable(tool_key: ToolKey) -> Result<String> {
         .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))
 }
 
-fn merge_args(global: Vec<String>, project: Vec<String>) -> Vec<String> {
-    use std::collections::HashSet;
-    let project_flag_bases: HashSet<&str> = project
-        .iter()
-        .filter(|token| token.starts_with('-'))
-        .map(|token| flag_base(token))
-        .collect();
-
-    let mut merged = Vec::new();
-    let mut index = 0;
-    while index < global.len() {
-        let token = &global[index];
-        if token.starts_with('-') && project_flag_bases.contains(flag_base(token)) {
-            let has_value = !token.contains('=')
-                && index + 1 < global.len()
-                && !global[index + 1].starts_with('-');
-            index += if has_value { 2 } else { 1 };
-            continue;
-        }
-        merged.push(token.clone());
-        index += 1;
-    }
-    merged.extend(project);
-    merged
-}
-
-fn flag_base(token: &str) -> &str {
-    match token.find('=') {
-        Some(index) => &token[..index],
-        None => token,
-    }
-}
-
-fn split_args(value: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut current = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut has_token = false;
-
-    let mut characters = value.chars().peekable();
-    while let Some(character) = characters.next() {
-        match character {
-            '\\' if in_double => {
-                if characters
-                    .peek()
-                    .is_some_and(|next| matches!(*next, '"' | '\\'))
-                {
-                    current.push(characters.next().expect("peeked character must exist"));
-                } else {
-                    current.push('\\');
-                }
-                has_token = true;
-            }
-            '\'' if !in_double => {
-                in_single = !in_single;
-                has_token = true;
-            }
-            '"' if !in_single => {
-                in_double = !in_double;
-                has_token = true;
-            }
-            value if value.is_whitespace() && !in_single && !in_double => {
-                if has_token {
-                    args.push(std::mem::take(&mut current));
-                    has_token = false;
-                }
-            }
-            value => {
-                current.push(value);
-                has_token = true;
-            }
-        }
-    }
-    if has_token {
-        args.push(current);
-    }
-    args
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
 
     use super::{
-        merge_args, remove_non_interactive_color_environment, split_args,
+        apply_resume, remove_non_interactive_color_environment, resolve_payload_with,
         NON_INTERACTIVE_COLOR_ENVIRONMENT_REMOVALS,
     };
 
-    fn vs(items: &[&str]) -> Vec<String> {
-        items.iter().map(|value| value.to_string()).collect()
+    #[test]
+    fn normal_payload_ignores_saved_global_and_project_arguments() {
+        use rusqlite::Connection;
+
+        use crate::db::{connection, directory_repo};
+        use crate::models::tool::ToolKey;
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations(&conn).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let record =
+            directory_repo::add(&conn, "demo", directory.path().to_str().unwrap(), None).unwrap();
+        conn.execute(
+            "update tools set global_args = '--ignored-global' where key = 'claude'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', '--ignored-project')",
+            [record.id],
+        )
+        .unwrap();
+
+        let payload = resolve_payload_with(&conn, record.id, ToolKey::Claude, |_| {
+            Ok("claude".to_string())
+        })
+        .unwrap();
+
+        assert!(payload.tool_args.is_empty());
     }
 
     #[test]
-    fn project_flag_overrides_global() {
-        assert_eq!(
-            merge_args(
-                vs(&["--model", "sonnet", "--verbose"]),
-                vs(&["--model", "opus"]),
+    fn resume_keeps_only_the_selected_cli_internal_arguments() {
+        use crate::models::tool::ToolKey;
+        use crate::platform::terminal_launch::LaunchPayload;
+
+        let cases = [
+            (
+                ToolKey::Claude,
+                vec!["--resume".to_string(), "session-1".to_string()],
             ),
-            vs(&["--verbose", "--model", "opus"])
-        );
-    }
+            (
+                ToolKey::Codex,
+                vec!["resume".to_string(), "session-1".to_string()],
+            ),
+            (
+                ToolKey::Antigravity,
+                vec!["--conversation=session-1".to_string()],
+            ),
+        ];
 
-    #[test]
-    fn boolean_flag_override_does_not_eat_next() {
-        assert_eq!(
-            merge_args(vs(&["--verbose", "--model", "x"]), vs(&["--verbose"])),
-            vs(&["--model", "x", "--verbose"])
-        );
-    }
-
-    #[test]
-    fn disjoint_args_concatenate() {
-        assert_eq!(
-            merge_args(vs(&["--global"]), vs(&["--proj"])),
-            vs(&["--global", "--proj"])
-        );
-    }
-
-    #[test]
-    fn equals_form_overrides_space_form() {
-        assert_eq!(
-            merge_args(vs(&["--model", "sonnet"]), vs(&["--model=opus"])),
-            vs(&["--model=opus"])
-        );
-    }
-
-    #[test]
-    fn space_form_overrides_equals_form() {
-        assert_eq!(
-            merge_args(vs(&["--model=sonnet"]), vs(&["--model", "opus"])),
-            vs(&["--model", "opus"])
-        );
-    }
-
-    #[test]
-    fn splits_quoted_values() {
-        assert_eq!(
-            split_args("--note \"hello world\" 'a b'"),
-            vec!["--note", "hello world", "a b"]
-        );
-    }
-
-    #[test]
-    fn split_args_unescapes_serialized_double_quotes() {
-        assert_eq!(
-            split_args(r#"--label "a \"quoted\" value" --path C:\Tools\cli"#),
-            vec!["--label", "a \"quoted\" value", "--path", "C:\\Tools\\cli"]
-        );
-    }
-
-    #[test]
-    fn split_args_preserves_windows_backslashes_inside_quotes() {
-        assert_eq!(
-            split_args(r#"--path "C:\Program Files\CLI""#),
-            vec!["--path", "C:\\Program Files\\CLI"]
-        );
-    }
-
-    #[test]
-    fn empty_string_yields_no_args() {
-        assert!(split_args("   ").is_empty());
+        for (tool_key, expected) in cases {
+            let mut payload = LaunchPayload {
+                directory: "project".to_string(),
+                tool_executable: "cli".to_string(),
+                tool_args: Vec::new(),
+            };
+            apply_resume(&mut payload, tool_key, "session-1");
+            assert_eq!(payload.tool_args, expected);
+        }
     }
 
     #[test]

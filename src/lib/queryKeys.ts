@@ -4,7 +4,6 @@ import type { ToolKey } from "./tauri";
 /// invalidations always agree (no stray string literals to drift).
 export const qk = {
   directories: () => ["directories"],
-  tools: () => ["tools"],
   cliStatus: () => ["cli-status"],
   latestVersions: () => ["latest-versions"],
   backups: () => ["backups"],
@@ -17,19 +16,9 @@ export const qk = {
   executionTasks: () => ["execution-tasks", "list"],
   executionTask: (taskId: string) => ["execution-tasks", "detail", taskId],
   executionReconciliations: () => ["execution-tasks", "reconciliations"],
-  modelCatalog: (toolKey: ToolKey) => ["model-catalog", toolKey],
-  directoryToolArgs: (directoryId?: number | null) =>
-    directoryId == null
-      ? ["directory-tool-args"]
-      : ["directory-tool-args", directoryId],
   sessions: (directoryId: number | null, toolKey: ToolKey) => [
     "sessions",
     "pages",
-    directoryId,
-    toolKey,
-  ],
-  preview: (directoryId: number | null, toolKey: ToolKey) => [
-    "preview",
     directoryId,
     toolKey,
   ],

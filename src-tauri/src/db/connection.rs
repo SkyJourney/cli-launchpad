@@ -25,6 +25,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (6, include_str!("../../migrations/0006_execution_tasks.sql")),
     (7, include_str!("../../migrations/0007_launch_target.sql")),
     (8, include_str!("../../migrations/0008_session_aliases.sql")),
+    (9, include_str!("../../migrations/0009_pty_sessions.sql")),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -173,6 +174,42 @@ mod tests {
             .query_row("select count(*) from session_aliases", [], |row| row.get(0))
             .expect("count session aliases");
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn migrations_create_pty_session_table_with_project_restriction() {
+        let connection = memory_db();
+        let columns: i64 = connection
+            .query_row(
+                "select count(*) from pragma_table_info('pty_sessions') where name in ('session_id', 'directory_id', 'tool_key', 'working_directory', 'state', 'started_at_ms', 'ended_at_ms', 'exit_code')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count PTY session columns");
+        assert_eq!(columns, 8);
+        let directory =
+            crate::db::directory_repo::add(&connection, "test project", "C:\\Projects\\test", None)
+                .expect("insert directory");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "session-1",
+            directory.id,
+            crate::models::tool::ToolKey::Claude,
+            &directory.path,
+            10,
+        )
+        .expect("insert PTY session");
+        assert!(
+            crate::db::directory_repo::has_running_pty_session(&connection, directory.id)
+                .expect("query active PTY")
+        );
+        assert!(crate::db::directory_repo::remove(&connection, directory.id).is_err());
+        assert_eq!(
+            crate::db::pty_session_repo::mark_running_ended(&connection, 20)
+                .expect("mark stale PTY ended"),
+            1
+        );
+        assert!(crate::db::directory_repo::remove(&connection, directory.id).is_ok());
     }
 
     #[test]

@@ -2,107 +2,101 @@ import {
   type InfiniteData,
   useInfiniteQuery,
   useMutation,
-  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
   FolderOpen,
+  PanelRight,
   Pencil,
-  Play,
   RefreshCw,
   RotateCcw,
   Undo2,
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
-import { copyText } from "../lib/clipboard";
 import { formatRelativeMs } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
 import {
-  launchTool,
   deleteSessionAlias,
   listSessionPage,
   openProjectDirectory,
-  previewLaunch,
-  resumeSession,
   setSessionAlias,
   type SessionPage,
+  type PtySession,
+  type SessionInfo,
   type ToolKey,
 } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
+import { PtyTerminal, type PtyTerminalHandle } from "../components/PtyTerminal";
 
-export function ProjectDetailView() {
+interface ProjectDetailViewProps {
+  directoryId: number;
+  active: boolean;
+}
+
+export function ProjectDetailView({
+  directoryId: requestedDirectoryId,
+  active,
+}: ProjectDetailViewProps) {
   const { t, i18n } = useTranslation();
-  const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
-  const setView = useAppStore((state) => state.setView);
-  const selectDirectory = useAppStore((state) => state.selectDirectory);
+  const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
+  const setContextPanelOpen = useAppStore((state) => state.setContextPanelOpen);
+  const recordPtySession = useAppStore((state) => state.setPtySession);
   const queryClient = useQueryClient();
 
-  const directory = useDirectory(selectedDirectoryId);
+  const directory = useDirectory(requestedDirectoryId);
   const statusByTool = indexByTool(useCliStatus().data);
-
-  // Manual tab selection wins when still available; otherwise default to the
-  // first available tool. Pure derivation — no effect, no stale closure.
-  const [manualTool, setManualTool] = useState<ToolKey | null>(null);
-  const firstAvailable = TOOLS.find(
-    (tool) => statusByTool[tool.key]?.status === "available",
-  )?.key;
-  const manualValid =
-    manualTool && statusByTool[manualTool]?.status === "available";
-  const activeTool: ToolKey =
-    (manualValid ? manualTool : firstAvailable) ?? TOOLS[0].key;
-
-  const [showPreview, setShowPreview] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
   const [openPathError, setOpenPathError] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [aliasError, setAliasError] = useState<string | null>(null);
+  const [ptySession, setPtySession] = useState<PtySession | null>(null);
+  const [ptyStarting, setPtyStarting] = useState(false);
+  const ptyTerminalRef = useRef<PtyTerminalHandle>(null);
+
+  useEffect(() => {
+    const narrowViewport = window.matchMedia("(max-width: 1120px)");
+    if (narrowViewport.matches) setContextPanelOpen(false);
+    const closeForNarrowViewport = (event: MediaQueryListEvent) => {
+      if (event.matches) setContextPanelOpen(false);
+    };
+    narrowViewport.addEventListener("change", closeForNarrowViewport);
+    return () =>
+      narrowViewport.removeEventListener("change", closeForNarrowViewport);
+  }, [setContextPanelOpen]);
 
   const directoryId = directory?.id ?? null;
-  const launchable = statusByTool[activeTool]?.status === "available";
-
-  const sessions = useInfiniteQuery({
-    queryKey: qk.sessions(directoryId, activeTool),
-    queryFn: ({ pageParam }) =>
-      listSessionPage(directoryId as number, activeTool, pageParam, 10),
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    enabled: directoryId != null,
-  });
-  const sessionItems = sessions.data?.pages.flatMap((page) => page.items) ?? [];
-
-  const preview = useQuery({
-    queryKey: qk.preview(directoryId, activeTool),
-    queryFn: () => previewLaunch(directoryId as number, activeTool),
-    enabled: directoryId != null && showPreview,
-  });
-
-  const invalidateDirectories = () =>
-    queryClient.invalidateQueries({ queryKey: qk.directories() });
-
-  const launchMutation = useMutation({
-    mutationFn: () => launchTool(directoryId as number, activeTool),
-    onSuccess: invalidateDirectories,
-    onError: (error) => setLaunchError(String(error)),
-  });
-
-  const resumeMutation = useMutation({
-    mutationFn: (sessionId: string) =>
-      resumeSession(directoryId as number, activeTool, sessionId),
-    onSuccess: invalidateDirectories,
-    onError: (error) => setLaunchError(String(error)),
-  });
+  const claudeSessions = useProjectSessions(directoryId, active, "claude");
+  const codexSessions = useProjectSessions(directoryId, active, "codex");
+  const antigravitySessions = useProjectSessions(
+    directoryId,
+    active,
+    "antigravity",
+  );
+  const sessionQueries = [
+    claudeSessions,
+    codexSessions,
+    antigravitySessions,
+  ] as const;
+  const sessionItems = sessionQueries
+    .flatMap((query) => query.data?.pages.flatMap((page) => page.items) ?? [])
+    .sort((left, right) => (right.lastActiveMs ?? 0) - (left.lastActiveMs ?? 0));
+  const sessionsLoading = sessionQueries.some((query) => query.isLoading);
+  const sessionsFetching = sessionQueries.some((query) => query.isFetching);
+  const sessionsError = sessionQueries.find((query) => query.isError);
+  const sessionsHaveNextPage = sessionQueries.some((query) => query.hasNextPage);
+  const sessionsFetchingNextPage = sessionQueries.some(
+    (query) => query.isFetchingNextPage,
+  );
+  const sessionsNextPageError = sessionQueries.find(
+    (query) => query.isFetchNextPageError,
+  );
 
   const openPathMutation = useMutation({
     mutationFn: () => openProjectDirectory(directoryId as number),
@@ -155,44 +149,59 @@ export function ProjectDetailView() {
     onError: (error) => setAliasError(String(error)),
   });
 
-  const anyPending = launchMutation.isPending || resumeMutation.isPending;
+  const anyPending = ptyStarting;
 
   if (!directory) {
     return (
-      <div className="detail-view">
-        <button className="ghost-button" onClick={() => setView("projects")}>
-          <ArrowLeft size={15} />
-          {t("common.back")}
-        </button>
+      <div className="detail-view workbench-project project-detail-loading">
         <p className="muted">{t("projectDetail.noDirectory")}</p>
       </div>
     );
   }
 
-  const runLaunch = () => {
-    setLaunchError(null);
-    launchMutation.mutate();
+  const runEmbeddedLaunch = async (
+    toolKey: ToolKey,
+    resumeSessionId?: string,
+  ) => {
+    if (
+      !directoryId ||
+      statusByTool[toolKey]?.status !== "available" ||
+      ptySession?.state === "running" ||
+      ptyStarting
+    ) {
+      return;
+    }
+    setPtyStarting(true);
+    try {
+      await ptyTerminalRef.current?.startSession(
+        directoryId,
+        toolKey,
+        resumeSessionId,
+      );
+    } finally {
+      setPtyStarting(false);
+    }
   };
-  const runResume = (sessionId: string) => {
-    setLaunchError(null);
-    resumeMutation.mutate(sessionId);
-  };
+  const runResume = (session: SessionInfo) =>
+    void runEmbeddedLaunch(session.toolKey, session.sessionId);
   const refreshSessions = () => {
-    const queryKey = qk.sessions(directoryId, activeTool);
-    queryClient.setQueryData<InfiniteData<SessionPage, string | null>>(
-      queryKey,
-      (current) =>
-        current
-          ? {
-              pages: current.pages.slice(0, 1),
-              pageParams: current.pageParams.slice(0, 1),
-            }
-          : current,
-    );
-    void queryClient.invalidateQueries({ queryKey, exact: true });
+    for (const tool of TOOLS) {
+      const queryKey = qk.sessions(directoryId, tool.key);
+      queryClient.setQueryData<InfiniteData<SessionPage, string | null>>(
+        queryKey,
+        (current) =>
+          current
+            ? {
+                pages: current.pages.slice(0, 1),
+                pageParams: current.pageParams.slice(0, 1),
+              }
+            : current,
+      );
+      void queryClient.invalidateQueries({ queryKey, exact: true });
+    }
   };
-  const beginRename = (sessionId: string, currentTitle: string) => {
-    setEditingSessionId(sessionId);
+  const beginRename = (session: SessionInfo, currentTitle: string) => {
+    setEditingSessionId(`${session.toolKey}:${session.sessionId}`);
     setAliasDraft(currentTitle);
     setAliasError(null);
   };
@@ -201,7 +210,7 @@ export function ProjectDetailView() {
     setAliasDraft("");
     setAliasError(null);
   };
-  const saveAlias = (sessionId: string) => {
+  const saveAlias = (session: SessionInfo) => {
     const alias = aliasDraft.trim();
     if (!alias) {
       setAliasError(t("projectDetail.aliasRequired"));
@@ -209,303 +218,355 @@ export function ProjectDetailView() {
     }
     aliasMutation.mutate({
       directoryId: directory.id,
-      toolKey: activeTool,
-      sessionId,
+      toolKey: session.toolKey,
+      sessionId: session.sessionId,
       alias,
     });
   };
-  const restoreOriginalTitle = (sessionId: string) => {
+  const restoreOriginalTitle = (session: SessionInfo) => {
     setAliasError(null);
     aliasMutation.mutate({
       directoryId: directory.id,
-      toolKey: activeTool,
-      sessionId,
+      toolKey: session.toolKey,
+      sessionId: session.sessionId,
       alias: null,
     });
   };
 
   return (
-    <div className="detail-view">
-      <button className="ghost-button" onClick={() => setView("projects")}>
-        <ArrowLeft size={15} />
-        {t("common.back")}
-      </button>
-
-      <header className="detail-head detail-head-row">
-        <div>
-          <h1>{directory.name}</h1>
-          <p className="muted">{directory.path}</p>
-        </div>
-        <div className="detail-actions">
+    <div
+      className={clsx("detail-view workbench-project", {
+        "context-open": contextPanelOpen,
+      })}
+    >
+      <section
+        className="detail-terminal-column"
+        aria-label={t("pty.panelLabel")}
+      >
+        {!contextPanelOpen && (
           <button
-            className="ghost-button"
-            disabled={openPathMutation.isPending}
-            onClick={() => {
-              setOpenPathError(null);
-              openPathMutation.mutate();
-            }}
+            type="button"
+            className="icon-button context-panel-reopen"
+            title={t("projectDetail.showContextPanel")}
+            aria-label={t("projectDetail.showContextPanel")}
+            aria-expanded={false}
+            onClick={() => setContextPanelOpen(true)}
           >
-            <FolderOpen size={15} />
-            {t("projectDetail.openDirectory")}
+            <PanelRight size={16} />
           </button>
-          <button
-            className="ghost-button"
-            onClick={() => {
-              selectDirectory(directory.id);
-              setView("edit");
-            }}
-          >
-            <Pencil size={15} />
-            {t("projectDetail.editArgs")}
-          </button>
-        </div>
-      </header>
-      {openPathError && (
-        <p className="error">
-          {t("projectDetail.openPathFailed", { error: openPathError })}
-        </p>
-      )}
+        )}
+        <PtyTerminal
+          ref={ptyTerminalRef}
+          onSessionChange={(session) => {
+            recordPtySession(requestedDirectoryId, session)
+            if (session) {
+              void queryClient.invalidateQueries({ queryKey: qk.directories() });
+            }
+          }}
+        />
+      </section>
 
-      <div className="tab-row" role="tablist">
-        {TOOLS.map((tool) => {
-          const status = statusByTool[tool.key]?.status ?? "missing";
-          const disabled = status === "missing";
-          return (
+      <aside
+        className="project-context-panel"
+        aria-label={t("projectDetail.context")}
+        aria-hidden={!contextPanelOpen}
+      >
+        <header className="project-context-header">
+          <div>
+            <h2>{t("projectDetail.context")}</h2>
+            <span>{directory.name}</span>
+          </div>
+          <div className="project-context-header-actions">
             <button
-              key={tool.key}
-              role="tab"
-              aria-selected={tool.key === activeTool}
-              className={clsx("tab", { active: tool.key === activeTool })}
-              disabled={disabled}
+              type="button"
+              className="icon-button"
+              title={t("projectDetail.openDirectory")}
+              aria-label={t("projectDetail.openDirectory")}
+              disabled={openPathMutation.isPending}
               onClick={() => {
-                cancelRename();
-                setManualTool(tool.key);
+                setOpenPathError(null);
+                openPathMutation.mutate();
               }}
             >
-              <tool.icon size={15} />
-              {tool.label}
-              <span className={clsx("tab-dot", `dot-${status}`)} />
+              <FolderOpen size={15} />
             </button>
-          );
-        })}
-      </div>
+            <button
+              type="button"
+              className="icon-button"
+              title={t("projectDetail.hideContextPanel")}
+              aria-label={t("projectDetail.hideContextPanel")}
+              onClick={() => setContextPanelOpen(false)}
+            >
+              <PanelRight size={16} />
+            </button>
+          </div>
+        </header>
+        <div className="project-context-body">
+          {openPathError && (
+            <p className="error">
+              {t("projectDetail.openPathFailed", { error: openPathError })}
+            </p>
+          )}
 
-      <div className="launch-bar">
-        <button
-          className="primary-button"
-          disabled={!launchable || anyPending}
-          onClick={runLaunch}
-        >
-          <Play size={15} />
-          {t("projectDetail.launchTool", {
-            tool: TOOLS.find((tool) => tool.key === activeTool)?.label,
-          })}
-        </button>
-        {!launchable && (
-          <span className="muted">{t("projectDetail.unavailable")}</span>
-        )}
-      </div>
-      {launchError && (
-        <p className="error">
-          {t("projectDetail.launchFailed", { error: launchError })}
-        </p>
-      )}
-
-      <section>
-        <div className="section-heading heading-actions">
-          <span>{t("projectDetail.sessions")}</span>
-          <button
-            className="icon-button refresh-button"
-            title={t("projectDetail.refreshSessions")}
-            disabled={sessions.isFetching}
-            onClick={refreshSessions}
-          >
-            <RefreshCw
-              size={14}
-              className={sessions.isFetching ? "spinning" : undefined}
-            />
-          </button>
-        </div>
-        {sessions.isError && sessionItems.length === 0 ? (
-          <p className="error">
-            {t("projectDetail.sessionsFailed", {
-              error: String(sessions.error),
-            })}
-          </p>
-        ) : sessions.isLoading ? (
-          <p className="muted">{t("projectDetail.reading")}</p>
-        ) : sessionItems.length > 0 ? (
-          <div className="session-history">
-            <ul className="session-list">
-              {sessionItems.map((session) => {
-                const editing = editingSessionId === session.sessionId;
-                const displayTitle = session.alias ?? session.title;
+          <section className="project-context-section">
+            <div className="section-heading">
+              {t("projectDetail.cliLaunchers")}
+            </div>
+            <div
+              className="cli-launcher-list"
+              role="group"
+              aria-label={t("projectDetail.cliLaunchers")}
+            >
+              {TOOLS.map((tool) => {
+                const status = statusByTool[tool.key]?.status ?? "missing";
+                const available = status === "available";
+                const ToolIcon = tool.icon;
                 return (
-                  <li className="session-row" key={session.sessionId}>
-                    <div className="session-meta">
-                      {editing ? (
-                        <input
-                          autoFocus
-                          className="session-alias-input"
-                          aria-label={t("projectDetail.sessionAlias")}
-                          maxLength={100}
-                          value={aliasDraft}
-                          onChange={(event) => {
-                            setAliasDraft(event.target.value);
-                            setAliasError(null);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              saveAlias(session.sessionId);
-                            } else if (event.key === "Escape") {
-                              cancelRename();
-                            }
-                          }}
-                        />
-                      ) : (
-                        <span
-                          className="session-title"
-                          title={
-                            session.alias
-                              ? t("projectDetail.originalTitle", {
-                                  title: session.title,
-                                })
-                              : session.title
-                          }
-                        >
-                          {displayTitle}
-                        </span>
-                      )}
-                      <span className="muted">
-                        {formatRelativeMs(
-                          session.lastActiveMs,
-                          i18n.resolvedLanguage,
-                          t("time.unknown"),
-                        )}
-                        {session.alias
-                          ? ` · ${t("projectDetail.customTitle")}`
-                          : ""}
-                      </span>
-                      {editing && aliasError && (
-                        <span className="error session-alias-error">
-                          {aliasError}
-                        </span>
-                      )}
-                    </div>
-                    <div className="session-actions">
-                      {editing ? (
-                        <>
-                          <button
-                            className="icon-button"
-                            title={t("projectDetail.saveAlias")}
-                            aria-label={t("projectDetail.saveAlias")}
-                            disabled={aliasMutation.isPending}
-                            onClick={() => saveAlias(session.sessionId)}
-                          >
-                            <Check size={14} />
-                          </button>
-                          <button
-                            className="icon-button"
-                            title={t("projectDetail.cancelRename")}
-                            aria-label={t("projectDetail.cancelRename")}
-                            disabled={aliasMutation.isPending}
-                            onClick={cancelRename}
-                          >
-                            <X size={14} />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="icon-button"
-                            title={t("projectDetail.renameSession")}
-                            aria-label={t("projectDetail.renameSession")}
-                            disabled={aliasMutation.isPending}
-                            onClick={() =>
-                              beginRename(session.sessionId, displayTitle)
-                            }
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          {session.alias && (
-                            <button
-                              className="icon-button"
-                              title={t("projectDetail.restoreOriginal")}
-                              aria-label={t("projectDetail.restoreOriginal")}
-                              disabled={aliasMutation.isPending}
-                              onClick={() =>
-                                restoreOriginalTitle(session.sessionId)
-                              }
-                            >
-                              <Undo2 size={14} />
-                            </button>
-                          )}
-                        </>
-                      )}
-                      <button
-                        className="ghost-button"
-                        disabled={!launchable || anyPending || editing}
-                        onClick={() => runResume(session.sessionId)}
-                      >
-                        <RotateCcw size={14} />
-                        {t("projectDetail.restore")}
-                      </button>
-                    </div>
-                  </li>
+                  <button
+                    key={tool.key}
+                    type="button"
+                    className="cli-launch-button"
+                    title={t(
+                      available
+                        ? "cliStatus.availableTitle"
+                        : "cliStatus.missingTitle",
+                    )}
+                    aria-label={t("projectDetail.launchTool", { tool: tool.label })}
+                    disabled={
+                      !available ||
+                      anyPending ||
+                      ptySession?.state === "running"
+                    }
+                    onClick={() => {
+                      cancelRename();
+                      void runEmbeddedLaunch(tool.key);
+                    }}
+                  >
+                    <ToolIcon size={17} />
+                    {tool.label}
+                    <span
+                      className={clsx("tab-dot", `dot-${status}`)}
+                      aria-hidden="true"
+                    />
+                  </button>
                 );
               })}
-            </ul>
-            {sessions.isFetchNextPageError && (
-              <p className="error session-page-error">
-                {t("projectDetail.loadMoreFailed", {
-                  error: String(sessions.error),
+            </div>
+          </section>
+
+          <section className="project-context-section">
+            <div className="section-heading heading-actions">
+              <span>{t("projectDetail.sessions")}</span>
+              <button
+                className="icon-button refresh-button"
+                title={t("projectDetail.refreshSessions")}
+                disabled={sessionsFetching}
+                onClick={refreshSessions}
+              >
+                <RefreshCw
+                  size={14}
+                  className={sessionsFetching ? "spinning" : undefined}
+                />
+              </button>
+            </div>
+            {sessionsError && sessionItems.length === 0 ? (
+              <p className="error">
+                {t("projectDetail.sessionsFailed", {
+                  error: String(sessionsError.error),
                 })}
               </p>
+            ) : sessionsLoading && sessionItems.length === 0 ? (
+              <p className="muted">{t("projectDetail.reading")}</p>
+            ) : sessionItems.length > 0 ? (
+              <div className="session-history">
+                <ul className="session-list">
+                  {sessionItems.map((session) => {
+                    const editing =
+                      editingSessionId ===
+                      `${session.toolKey}:${session.sessionId}`;
+                    const displayTitle = session.alias ?? session.title;
+                    const sessionTool = TOOLS.find(
+                      (tool) => tool.key === session.toolKey,
+                    )!;
+                    const SessionToolIcon = sessionTool.icon;
+                    return (
+                      <li
+                        className="session-row"
+                        key={`${session.toolKey}:${session.sessionId}`}
+                      >
+                        <div className="session-meta">
+                          <span className="session-tool-label">
+                            <SessionToolIcon size={14} />
+                            {sessionTool.label}
+                          </span>
+                          {editing ? (
+                            <input
+                              autoFocus
+                              className="session-alias-input"
+                              aria-label={t("projectDetail.sessionAlias")}
+                              maxLength={100}
+                              value={aliasDraft}
+                              onChange={(event) => {
+                                setAliasDraft(event.target.value);
+                                setAliasError(null);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  saveAlias(session);
+                                } else if (event.key === "Escape") {
+                                  cancelRename();
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span
+                              className="session-title"
+                              title={
+                                session.alias
+                                  ? t("projectDetail.originalTitle", {
+                                      title: session.title,
+                                    })
+                                  : session.title
+                              }
+                            >
+                              {displayTitle}
+                            </span>
+                          )}
+                          <span className="muted">
+                            {formatRelativeMs(
+                              session.lastActiveMs,
+                              i18n.resolvedLanguage,
+                              t("time.unknown"),
+                            )}
+                            {session.alias
+                              ? ` · ${t("projectDetail.customTitle")}`
+                              : ""}
+                          </span>
+                          {editing && aliasError && (
+                            <span className="error session-alias-error">
+                              {aliasError}
+                            </span>
+                          )}
+                        </div>
+                        <div className="session-actions">
+                          {editing ? (
+                            <>
+                              <button
+                                className="icon-button"
+                                title={t("projectDetail.saveAlias")}
+                                aria-label={t("projectDetail.saveAlias")}
+                                disabled={aliasMutation.isPending}
+                                onClick={() => saveAlias(session)}
+                              >
+                                <Check size={14} />
+                              </button>
+                              <button
+                                className="icon-button"
+                                title={t("projectDetail.cancelRename")}
+                                aria-label={t("projectDetail.cancelRename")}
+                                disabled={aliasMutation.isPending}
+                                onClick={cancelRename}
+                              >
+                                <X size={14} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="icon-button"
+                                title={t("projectDetail.renameSession")}
+                                aria-label={t("projectDetail.renameSession")}
+                                disabled={aliasMutation.isPending}
+                                onClick={() =>
+                                  beginRename(session, displayTitle)
+                                }
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              {session.alias && (
+                                <button
+                                  className="icon-button"
+                                  title={t("projectDetail.restoreOriginal")}
+                                  aria-label={t(
+                                    "projectDetail.restoreOriginal",
+                                  )}
+                                  disabled={aliasMutation.isPending}
+                                  onClick={() =>
+                                    restoreOriginalTitle(session)
+                                  }
+                                >
+                                  <Undo2 size={14} />
+                                </button>
+                              )}
+                            </>
+                          )}
+                          <button
+                            className="ghost-button"
+                            disabled={
+                              statusByTool[session.toolKey]?.status !==
+                                "available" ||
+                              anyPending ||
+                              ptySession?.state === "running" ||
+                              editing
+                            }
+                            onClick={() => runResume(session)}
+                          >
+                            <RotateCcw size={14} />
+                            {t("projectDetail.resumeEmbedded")}
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {sessionsNextPageError && (
+                  <p className="error session-page-error">
+                    {t("projectDetail.loadMoreFailed", {
+                      error: String(sessionsNextPageError.error),
+                    })}
+                  </p>
+                )}
+                {sessionsHaveNextPage && (
+                  <button
+                    className="ghost-button session-load-more"
+                    disabled={sessionsFetchingNextPage}
+                    onClick={() => {
+                      void Promise.all(
+                        sessionQueries
+                          .filter((query) => query.hasNextPage)
+                          .map((query) => query.fetchNextPage()),
+                      );
+                    }}
+                  >
+                    {sessionsFetchingNextPage
+                      ? t("common.loading")
+                      : t("common.more")}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="muted">{t("projectDetail.noSessions")}</p>
             )}
-            {sessions.hasNextPage && (
-              <button
-                className="ghost-button session-load-more"
-                disabled={sessions.isFetchingNextPage}
-                onClick={() => void sessions.fetchNextPage()}
-              >
-                {sessions.isFetchingNextPage
-                  ? t("common.loading")
-                  : t("common.more")}
-              </button>
-            )}
-          </div>
-        ) : (
-          <p className="muted">{t("projectDetail.noSessions")}</p>
-        )}
-      </section>
+          </section>
 
-      <section className="command-preview">
-        <button
-          className="preview-toggle"
-          onClick={() => setShowPreview((value) => !value)}
-        >
-          {showPreview ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          {t("projectDetail.commandPreview")}
-        </button>
-        {showPreview && (
-          <div className="preview-body">
-            <code>
-              {preview.isError
-                ? String(preview.error)
-                : (preview.data ?? t("projectDetail.generating"))}
-            </code>
-            <button
-              className="ghost-button"
-              disabled={!preview.data}
-              onClick={() => preview.data && void copyText(preview.data)}
-            >
-              <Copy size={14} />
-              {t("common.copy")}
-            </button>
-          </div>
-        )}
-      </section>
+        </div>
+      </aside>
     </div>
   );
+}
+
+function useProjectSessions(
+  directoryId: number | null,
+  enabled: boolean,
+  toolKey: ToolKey,
+) {
+  return useInfiniteQuery({
+    queryKey: qk.sessions(directoryId, toolKey),
+    queryFn: ({ pageParam }) =>
+      listSessionPage(directoryId as number, toolKey, pageParam, 10),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: enabled && directoryId != null,
+  });
 }

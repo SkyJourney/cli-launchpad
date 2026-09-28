@@ -9,7 +9,7 @@ pub mod execution_service;
 pub mod file_service;
 pub mod install_service;
 pub mod launch_service;
-pub mod model_service;
+pub mod pty_session_service;
 pub mod session_service;
 pub mod storage_service;
 pub mod version_service;

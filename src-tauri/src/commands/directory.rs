@@ -42,7 +42,14 @@ pub fn remove_directory(
     cache: State<'_, CacheDb>,
     id: i64,
 ) -> Result<(), AppError> {
-    with_conn(&state, |conn| Ok(directory_repo::remove(conn, id)?))?;
+    with_conn(&state, |conn| {
+        if directory_repo::has_running_pty_session(conn, id)? {
+            return Err(AppError::msg(
+                "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
+            ));
+        }
+        Ok(directory_repo::remove(conn, id)?)
+    })?;
     with_cache(&cache, |connection| {
         cache_service::remove_prefix(connection, "sessions:")?;
         Ok(())

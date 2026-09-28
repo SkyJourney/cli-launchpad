@@ -1367,9 +1367,12 @@ mod tests {
 
     #[test]
     fn linux_auto_prefers_xdg_terminal_exec_and_keeps_fallback_chain() {
-        let plan =
-            build_launch_plan(linux_payload(vec!["--model", "opus"]), &linux_environment(), "auto")
-                .unwrap();
+        let plan = build_launch_plan(
+            linux_payload(vec!["--model", "opus"]),
+            &linux_environment(),
+            "auto",
+        )
+        .unwrap();
         assert_eq!(plan.candidates[0].target_id, "linux:xdg-terminal-exec");
         assert_eq!(
             plan.candidates
@@ -1489,9 +1492,8 @@ mod tests {
 
     #[test]
     fn linux_stale_preference_falls_back_to_auto() {
-        let plan =
-            build_launch_plan(linux_payload(vec![]), &linux_environment(), "linux:missing")
-                .unwrap();
+        let plan = build_launch_plan(linux_payload(vec![]), &linux_environment(), "linux:missing")
+            .unwrap();
         assert!(plan.selection_note.is_some());
         assert_eq!(plan.candidates[0].target_id, "linux:xdg-terminal-exec");
     }

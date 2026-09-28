@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type ToolKey = "antigravity" | "codex" | "claude";
 
@@ -10,15 +10,6 @@ export interface Directory {
   pinned: boolean;
   lastUsedAt: string | null;
   note: string | null;
-}
-
-export interface Tool {
-  id: number;
-  key: ToolKey;
-  displayName: string;
-  executable: string;
-  globalArgs: string;
-  enabled: boolean;
 }
 
 export type CloseBehavior = "minimize_to_tray" | "quit";
@@ -102,17 +93,6 @@ export interface TerminalEnvironment {
   warnings: string[];
 }
 
-export interface DirectoryToolArgs {
-  directoryId: number;
-  toolKey: ToolKey;
-  args: string;
-}
-
-export interface ToolArgsUpdate {
-  toolKey: ToolKey;
-  args: string;
-}
-
 export interface SessionInfo {
   toolKey: ToolKey;
   sessionId: string;
@@ -126,19 +106,43 @@ export interface SessionPage {
   nextCursor: string | null;
 }
 
-export interface ModelOption {
-  value: string;
-  label: string;
-  isDefault: boolean;
+export interface PtySession {
+  sessionId: string;
+  directoryId: number;
+  toolKey: ToolKey;
+  workingDirectory: string;
+  state: "running" | "exited" | "terminated" | "failed";
+  startedAtMs: number;
+  endedAtMs: number | null;
+  exitCode: number | null;
 }
 
-export interface ModelCatalog {
-  toolKey: ToolKey;
-  options: ModelOption[];
-  source: string;
-  fromCache: boolean;
-  warning: string | null;
+export interface PtySizeUpdate {
+  cols: number;
+  rows: number;
+  pixelWidth: number;
+  pixelHeight: number;
 }
+
+export type PtyEvent =
+  | { type: "output"; sessionId: string; sequence: number; dataBase64: string }
+  | {
+      type: "exited";
+      sessionId: string;
+      state: PtySession["state"];
+      exitCode: number | null;
+    }
+  | { type: "failed"; sessionId: string; message: string };
+
+export type PtyFrontendStage =
+  | "startupInputFlushed"
+  | "outputReceived"
+  | "outputDecodeFailed"
+  | "xtermWritePending"
+  | "xtermWriteCompleted"
+  | "xtermWriteFailed"
+  | "rendererPaused"
+  | "rendererResumed";
 
 export type InstallKind = "install" | "update";
 
@@ -270,15 +274,6 @@ export function openProjectDirectory(id: number) {
   return invoke<void>("open_project_directory", { id });
 }
 
-// Tools
-export function listTools() {
-  return invoke<Tool[]>("list_tools");
-}
-
-export function saveToolGlobalArgsBatch(updates: ToolArgsUpdate[]) {
-  return invoke<void>("save_tool_global_args_batch", { updates });
-}
-
 // CLI detection
 export function detectCliStatus(force = false) {
   return invoke<CliStatus[]>("detect_cli_status", { force });
@@ -350,6 +345,50 @@ export function clearExecutionHistory() {
   return invoke<number>("clear_execution_history");
 }
 
+// Embedded PTY sessions
+export function createPtySession(
+  directoryId: number,
+  toolKey: ToolKey,
+  size: PtySizeUpdate,
+  onEvent: Channel<PtyEvent>,
+  resumeSessionId?: string,
+) {
+  return invoke<PtySession>("create_pty_session", {
+    directoryId,
+    toolKey,
+    size,
+    onEvent,
+    resumeSessionId,
+  });
+}
+
+export function writePtySession(sessionId: string, data: string) {
+  return invoke<void>("write_pty_session", { sessionId, data });
+}
+
+export function resizePtySession(sessionId: string, size: PtySizeUpdate) {
+  return invoke<void>("resize_pty_session", { sessionId, size });
+}
+
+export function acknowledgePtyOutput(sessionId: string, sequence: number) {
+  return invoke<void>("acknowledge_pty_output", { sessionId, sequence });
+}
+
+export function reportPtyFrontendStage(
+  sessionId: string,
+  stage: PtyFrontendStage,
+) {
+  return invoke<void>("report_pty_frontend_stage", { sessionId, stage });
+}
+
+export function terminatePtySession(sessionId: string) {
+  return invoke<void>("terminate_pty_session", { sessionId });
+}
+
+export function confirmPtyExit() {
+  return invoke<void>("confirm_pty_exit");
+}
+
 // Terminal environment and launch target
 export function detectTerminalEnvironment(force = false) {
   return invoke<TerminalEnvironment>("detect_terminal_environment", { force });
@@ -371,32 +410,6 @@ export function setCloseBehavior(closeBehavior: CloseBehavior) {
   return invoke<void>("set_close_behavior", { closeBehavior });
 }
 
-// Directory-level tool arguments
-export function getDirectoryToolArgs(directoryId: number) {
-  return invoke<DirectoryToolArgs[]>("get_directory_tool_args", {
-    directoryId,
-  });
-}
-
-export function saveDirectoryToolArgsBatch(
-  directoryId: number,
-  updates: ToolArgsUpdate[],
-) {
-  return invoke<void>("save_directory_tool_args_batch", {
-    directoryId,
-    updates,
-  });
-}
-
-// Launch
-export function previewLaunch(directoryId: number, toolKey: ToolKey) {
-  return invoke<string>("preview_launch", { directoryId, toolKey });
-}
-
-export function launchTool(directoryId: number, toolKey: ToolKey) {
-  return invoke<void>("launch_tool", { directoryId, toolKey });
-}
-
 // Sessions
 export function listSessionPage(
   directoryId: number,
@@ -410,14 +423,6 @@ export function listSessionPage(
     cursor,
     limit,
   });
-}
-
-export function resumeSession(
-  directoryId: number,
-  toolKey: ToolKey,
-  sessionId: string,
-) {
-  return invoke<void>("resume_session", { directoryId, toolKey, sessionId });
 }
 
 export function setSessionAlias(
@@ -444,10 +449,6 @@ export function deleteSessionAlias(
     toolKey,
     sessionId,
   });
-}
-
-export function getModelCatalog(toolKey: ToolKey, force = false) {
-  return invoke<ModelCatalog>("get_model_catalog", { toolKey, force });
 }
 
 export function getCacheStats() {

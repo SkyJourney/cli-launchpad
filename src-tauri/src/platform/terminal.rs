@@ -10,10 +10,10 @@ use tokio::process::Command;
 
 #[cfg(windows)]
 use crate::models::terminal::{DirectShellTarget, WindowsTerminalHost};
-#[cfg(target_os = "macos")]
-use crate::models::terminal::{MacosTerminalHost, MacosTerminalLaunchMode};
 #[cfg(target_os = "linux")]
 use crate::models::terminal::{LinuxTerminalHost, LinuxTerminalLaunchMode};
+#[cfg(target_os = "macos")]
+use crate::models::terminal::{MacosTerminalHost, MacosTerminalLaunchMode};
 #[cfg(any(windows, test))]
 use crate::models::terminal::{
     ProfilePreservation, ShellFamily, TerminalDistribution, TerminalProfileTarget,

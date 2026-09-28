@@ -40,21 +40,3 @@ impl ToolKey {
         }
     }
 }
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Tool {
-    pub id: i64,
-    pub key: ToolKey,
-    pub display_name: String,
-    pub executable: String,
-    pub global_args: String,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolArgsUpdate {
-    pub tool_key: ToolKey,
-    pub args: String,
-}

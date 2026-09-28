@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, State, WebviewWindow, WindowEvent};
+use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_window_state::StateFlags;
 
@@ -70,6 +70,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // Open trusted external links with the operating system's default app.
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -86,6 +87,7 @@ pub fn run() {
             }
             app.handle().plugin(
                 tauri_plugin_log::Builder::new()
+                    .level(log::LevelFilter::Info)
                     .clear_targets()
                     .target(Target::new(TargetKind::Folder {
                         path: paths.logs_dir.clone(),
@@ -131,9 +133,17 @@ pub fn run() {
             if interrupted != 0 {
                 log::warn!("marked {interrupted} unfinished execution task(s) as interrupted");
             }
+            let ended_pty_sessions = db::pty_session_repo::mark_running_ended(
+                &connection,
+                services::execution_service::now_ms(),
+            )?;
+            if ended_pty_sessions != 0 {
+                log::warn!("marked {ended_pty_sessions} stale PTY session(s) as ended");
+            }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
             app.manage(Db(Mutex::new(connection)));
             app.manage(services::execution_service::ExecutionTaskManager::default());
+            app.manage(services::pty_session_service::PtySessionManager::default());
             app.manage(commands::terminal::TerminalEnvironmentCache::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
@@ -167,7 +177,14 @@ pub fn run() {
             commands::session::set_session_alias,
             commands::session::delete_session_alias,
             commands::session::resume_session,
-            commands::model::get_model_catalog,
+            commands::pty_session::create_pty_session,
+            commands::pty_session::write_pty_session,
+            commands::pty_session::resize_pty_session,
+            commands::pty_session::acknowledge_pty_output,
+            commands::pty_session::report_pty_frontend_stage,
+            commands::pty_session::terminate_pty_session,
+            commands::pty_session::list_pty_sessions,
+            commands::pty_session::confirm_pty_exit,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
@@ -180,16 +197,12 @@ pub fn run() {
             commands::execution::cancel_execution_task,
             commands::execution::clear_execution_task,
             commands::execution::clear_execution_history,
-            commands::tool::list_tools,
-            commands::tool::save_tool_global_args_batch,
             commands::cli_status::detect_cli_status,
             commands::install::fetch_latest_versions,
             commands::install::get_install_plan,
             commands::terminal::detect_terminal_environment,
             commands::terminal::get_launch_target,
             commands::terminal::set_launch_target,
-            commands::tool_args::get_directory_tool_args,
-            commands::tool_args::save_directory_tool_args_batch,
             commands::config::export_config_to_path,
             commands::config::import_config_from_path,
             commands::app_setting::get_close_behavior,
@@ -209,6 +222,9 @@ pub fn run() {
                 if close_behavior == CloseBehavior::MinimizeToTray {
                     api.prevent_close();
                     let _ = window.hide();
+                } else {
+                    api.prevent_close();
+                    window.app_handle().exit(0);
                 }
             }
         })
@@ -217,17 +233,31 @@ pub fn run() {
     app.run(handle_run_event);
 }
 
-#[cfg(target_os = "macos")]
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
-    if let tauri::RunEvent::Reopen { .. } = event {
-        if let Some(window) = app.get_webview_window("main") {
-            show_main_window(&window);
+    match event {
+        tauri::RunEvent::ExitRequested { api, .. } => {
+            let sessions = app.state::<services::pty_session_service::PtySessionManager>();
+            if sessions.consume_exit_authorization() {
+                return;
+            }
+            let active_count = sessions.active_count();
+            if active_count > 0 {
+                api.prevent_exit();
+                if let Some(window) = app.get_webview_window("main") {
+                    show_main_window(&window);
+                }
+                let _ = app.emit("pty-exit-requested", active_count);
+            }
         }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            if let Some(window) = app.get_webview_window("main") {
+                show_main_window(&window);
+            }
+        }
+        _ => {}
     }
 }
-
-#[cfg(not(target_os = "macos"))]
-fn handle_run_event(_app: &tauri::AppHandle, _event: tauri::RunEvent) {}
 
 fn show_main_window(window: &WebviewWindow) {
     let _ = window.show();

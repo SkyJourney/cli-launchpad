@@ -1,16 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::app_setting::CloseBehavior;
-use super::tool::ToolKey;
-
-pub const CONFIG_BUNDLE_VERSION: u32 = 3;
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportedToolArgs {
-    pub tool_key: ToolKey,
-    pub args: String,
-}
+pub const CONFIG_BUNDLE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,14 +10,6 @@ pub struct ExportedDirectory {
     pub path: String,
     pub pinned: bool,
     pub note: Option<String>,
-    pub tool_args: Vec<ExportedToolArgs>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportedTool {
-    pub key: ToolKey,
-    pub global_args: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -34,7 +17,6 @@ pub struct ExportedTool {
 pub struct ConfigBundle {
     pub version: u32,
     pub directories: Vec<ExportedDirectory>,
-    pub tools: Vec<ExportedTool>,
     #[serde(default)]
     pub shell_profiles: Vec<ExportedShellProfile>,
     #[serde(default)]

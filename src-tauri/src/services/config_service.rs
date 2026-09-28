@@ -1,42 +1,22 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::{app_setting_repo, directory_repo, directory_tool_args_repo, tool_repo};
-use crate::models::config_bundle::{
-    ConfigBundle, ExportedDirectory, ExportedTool, ExportedToolArgs, CONFIG_BUNDLE_VERSION,
-};
+use crate::db::{app_setting_repo, directory_repo};
+use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
 
-/// Snapshot directories (with per-tool args) and tool global args into a bundle.
+/// Snapshot project configuration into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
-    let mut directories = Vec::new();
-    for directory in directory_repo::list(conn)? {
-        let tool_args = directory_tool_args_repo::list_for_directory(conn, directory.id)?
-            .into_iter()
-            .map(|entry| ExportedToolArgs {
-                tool_key: entry.tool_key,
-                args: entry.args,
-            })
-            .collect();
-        directories.push(ExportedDirectory {
+    let directories = directory_repo::list(conn)?
+        .into_iter()
+        .map(|directory| ExportedDirectory {
             name: directory.name,
             path: directory.path,
             pinned: directory.pinned,
             note: directory.note,
-            tool_args,
         });
-    }
-
-    let tools = tool_repo::list(conn)?
-        .into_iter()
-        .map(|tool| ExportedTool {
-            key: tool.key,
-            global_args: tool.global_args,
-        })
-        .collect();
     Ok(ConfigBundle {
         version: CONFIG_BUNDLE_VERSION,
-        directories,
-        tools,
+        directories: directories.collect(),
         shell_profiles: Vec::new(),
         close_behavior: Some(app_setting_repo::get_close_behavior(conn)?),
     })
@@ -80,21 +60,16 @@ pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     }
 }
 
-/// Update tool global args by key, add any missing directories (matched by
-/// path), and apply their per-tool args. Existing directories keep their
-/// identity; pinned/note are refreshed.
+/// Add any missing directories (matched by path), and refresh pinned/note
+/// values for existing directories. Legacy tool argument fields are ignored.
 fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     if let Some(close_behavior) = bundle.close_behavior {
         app_setting_repo::set_close_behavior(conn, close_behavior)?;
     }
 
-    for tool in &bundle.tools {
-        tool_repo::update_global_args(conn, tool.key, &tool.global_args)?;
-    }
-
     for directory in &bundle.directories {
         let path = super::directory_service::normalized_configured_path(&directory.path)?;
-        let id = match directory_repo::get_by_path(conn, &path)? {
+        match directory_repo::get_by_path(conn, &path)? {
             Some(existing) => {
                 directory_repo::set_pinned_and_note(
                     conn,
@@ -102,7 +77,6 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
                     directory.pinned,
                     directory.note.as_deref(),
                 )?;
-                existing.id
             }
             None => {
                 let added =
@@ -110,12 +84,7 @@ fn import_inner(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
                 if directory.pinned {
                     directory_repo::set_pinned(conn, added.id, true)?;
                 }
-                added.id
             }
-        };
-
-        for entry in &directory.tool_args {
-            directory_tool_args_repo::save(conn, id, entry.tool_key, &entry.args)?;
         }
     }
 
@@ -133,7 +102,6 @@ mod tests {
     use super::*;
     use crate::db::connection;
     use crate::models::app_setting::CloseBehavior;
-    use crate::models::tool::ToolKey;
 
     fn seeded_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -159,12 +127,12 @@ mod tests {
         let path = absolute_test_path("demo");
         let directory = directory_repo::add(&source, "demo", &path, Some("note")).unwrap();
         directory_repo::set_pinned(&source, directory.id, true).unwrap();
-        directory_tool_args_repo::save(&source, directory.id, ToolKey::Claude, "--model x")
-            .unwrap();
-        tool_repo::update_global_args(&source, ToolKey::Codex, "--global").unwrap();
         app_setting_repo::set_close_behavior(&source, CloseBehavior::Quit).unwrap();
 
         let json = export_json(&source).unwrap();
+        assert!(json.contains("\"version\": 4"));
+        assert!(!json.contains("\"toolArgs\""));
+        assert!(!json.contains("\"tools\""));
 
         // Import into a fresh database and re-export; the bundles must match.
         let target = seeded_db();
@@ -178,9 +146,7 @@ mod tests {
     fn import_is_idempotent_on_existing_paths() {
         let db = seeded_db();
         let path = absolute_test_path("demo");
-        let directory = directory_repo::add(&db, "demo", &path, None).unwrap();
-        directory_tool_args_repo::save(&db, directory.id, ToolKey::Claude, "--model x").unwrap();
-
+        directory_repo::add(&db, "demo", &path, None).unwrap();
         let json = export_json(&db).unwrap();
         import_json(&db, &json).unwrap();
 
@@ -211,7 +177,7 @@ mod tests {
     #[test]
     fn imports_exported_close_behavior() {
         let db = seeded_db();
-        let json = r#"{"version":3,"directories":[],"tools":[],"shellProfiles":[],"closeBehavior":"quit"}"#;
+        let json = r#"{"version":4,"directories":[],"shellProfiles":[],"closeBehavior":"quit"}"#;
         import_json(&db, json).unwrap();
         assert_eq!(
             app_setting_repo::get_close_behavior(&db).unwrap(),
@@ -222,8 +188,51 @@ mod tests {
     #[test]
     fn import_rejects_relative_directory_identity() {
         let db = seeded_db();
-        let json = r#"{"version":2,"directories":[{"name":"bad","path":"relative/path","pinned":false,"note":null,"toolArgs":[]}],"tools":[],"shellProfiles":[]}"#;
+        let json = r#"{"version":2,"directories":[{"name":"bad","path":"relative/path","pinned":false,"note":null,"toolArgs":[{"toolKey":"claude","args":"--model x"}]}],"tools":[],"shellProfiles":[]}"#;
         assert!(import_json(&db, json).is_err());
         assert!(directory_repo::list(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn legacy_parameter_fields_are_ignored_without_deleting_saved_values() {
+        let db = seeded_db();
+        let path = absolute_test_path("legacy");
+        let directory = directory_repo::add(&db, "legacy", &path, None).unwrap();
+        db.execute(
+            "update tools set global_args = ?1 where key = 'codex'",
+            ["--existing-global"],
+        )
+        .unwrap();
+        db.execute(
+            "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', ?2)",
+            rusqlite::params![directory.id, "--existing-project"],
+        )
+        .unwrap();
+
+        let legacy = format!(
+            r#"{{"version":3,"directories":[{{"name":"renamed","path":"{}","pinned":false,"note":null,"toolArgs":[{{"toolKey":"claude","args":"--ignored-project"}}]}}],"tools":[{{"key":"codex","globalArgs":"--ignored-global"}}],"shellProfiles":[]}}"#,
+            path.replace('\\', "\\\\")
+        );
+        import_json(&db, &legacy).unwrap();
+
+        let global_args: String = db
+            .query_row(
+                "select global_args from tools where key = 'codex'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let project_args: String = db
+            .query_row(
+                "select args from directory_tool_args where directory_id = ?1 and tool_key = 'claude'",
+                [directory.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(global_args, "--existing-global");
+        assert_eq!(project_args, "--existing-project");
+        let exported = export_json(&db).unwrap();
+        assert!(!exported.contains("--existing-global"));
+        assert!(!exported.contains("--existing-project"));
     }
 }

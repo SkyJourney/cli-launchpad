@@ -1,11 +1,29 @@
 use std::io;
 
+use portable_pty::{Child as PtyChild, MasterPty};
 use tokio::process::Child;
+
+pub fn attach_pty_or_terminate(
+    process_tree: &ProcessTree,
+    child: &mut Box<dyn PtyChild + Send + Sync>,
+    master: &dyn MasterPty,
+) -> io::Result<()> {
+    if let Err(error) = process_tree.attach_pty(&**child, master) {
+        let _ = process_tree.terminate();
+        let _ = process_tree.force_kill();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    Ok(())
+}
 
 #[cfg(windows)]
 mod windows {
     use std::mem::size_of;
 
+    use portable_pty::Child as PtyChild;
+    use portable_pty::MasterPty;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -62,6 +80,19 @@ mod windows {
             Ok(())
         }
 
+        pub fn attach_pty(&self, child: &dyn PtyChild, _master: &dyn MasterPty) -> io::Result<()> {
+            use std::os::windows::io::RawHandle;
+
+            let process = child
+                .as_raw_handle()
+                .ok_or_else(|| io::Error::other("PTY 子进程句柄不可用"))?
+                as RawHandle as HANDLE;
+            if unsafe { AssignProcessToJobObject(self.job, process) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
         pub fn configure(&self, _command: &mut tokio::process::Command) -> io::Result<()> {
             Ok(())
         }
@@ -89,6 +120,9 @@ mod windows {
     #[cfg(test)]
     mod tests {
         use std::time::Duration;
+        use std::{thread, time::Instant};
+
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
         use super::*;
 
@@ -118,6 +152,63 @@ mod windows {
                 .expect("wait for process");
             assert!(!status.success());
         }
+
+        #[test]
+        fn job_object_terminates_pty_process() {
+            let system = native_pty_system();
+            let pair = system.openpty(PtySize::default()).expect("open ConPTY");
+            let mut command = CommandBuilder::new(crate::platform::detect::system32(
+                "WindowsPowerShell\\v1.0\\powershell.exe",
+            ));
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ]);
+            let mut child = pair
+                .slave
+                .spawn_command(command)
+                .expect("spawn PTY test process");
+            let tree = ProcessTree::new().expect("create job object");
+            tree.attach_pty(&*child, &*pair.master)
+                .expect("attach PTY process");
+            tree.terminate().expect("terminate PTY process tree");
+
+            let started = Instant::now();
+            loop {
+                if child.try_wait().expect("poll PTY process").is_some() {
+                    break;
+                }
+                assert!(started.elapsed() < Duration::from_secs(3));
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        #[test]
+        fn failed_job_attachment_terminates_pty_process() {
+            let system = native_pty_system();
+            let pair = system.openpty(PtySize::default()).expect("open ConPTY");
+            let mut command = CommandBuilder::new(crate::platform::detect::system32(
+                "WindowsPowerShell\\v1.0\\powershell.exe",
+            ));
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ]);
+            let mut child = pair
+                .slave
+                .spawn_command(command)
+                .expect("spawn PTY test process");
+            let process_tree = ProcessTree {
+                job: std::ptr::null_mut(),
+            };
+
+            assert!(attach_pty_or_terminate(&process_tree, &mut child, &*pair.master).is_err());
+            assert!(child.try_wait().expect("poll terminated child").is_some());
+        }
     }
 }
 
@@ -126,6 +217,7 @@ mod unix {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use super::*;
+    use portable_pty::{Child as PtyChild, MasterPty};
 
     pub struct ProcessTree {
         process_group: AtomicI32,
@@ -150,6 +242,18 @@ mod unix {
                 .id()
                 .and_then(|pid| i32::try_from(pid).ok())
                 .ok_or_else(|| io::Error::other("子进程 ID 不可用"))?;
+            self.process_group.store(pid, Ordering::Release);
+            Ok(())
+        }
+
+        pub fn attach_pty(&self, child: &dyn PtyChild, master: &dyn MasterPty) -> io::Result<()> {
+            let pid = master
+                .process_group_leader()
+                .or_else(|| child.process_id().and_then(|pid| i32::try_from(pid).ok()))
+                .ok_or_else(|| io::Error::other("PTY 进程组 ID 不可用"))?;
+            if pid <= 0 {
+                return Err(io::Error::other("PTY 进程组 ID 无效"));
+            }
             self.process_group.store(pid, Ordering::Release);
             Ok(())
         }
@@ -182,6 +286,9 @@ mod unix {
     #[cfg(test)]
     mod tests {
         use std::time::Duration;
+        use std::{thread, time::Instant};
+
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
 
         use super::*;
 
@@ -200,6 +307,31 @@ mod unix {
                 .expect("process group should terminate")
                 .unwrap();
             assert!(!status.success());
+        }
+
+        #[test]
+        fn process_group_terminates_pty_process() {
+            let system = native_pty_system();
+            let pair = system.openpty(PtySize::default()).expect("open PTY");
+            let mut command = CommandBuilder::new("/bin/sh");
+            command.args(["-c", "sleep 30 & wait"]);
+            let mut child = pair
+                .slave
+                .spawn_command(command)
+                .expect("spawn PTY test process");
+            let tree = ProcessTree::new().expect("create process tree");
+            tree.attach_pty(&*child, &*pair.master)
+                .expect("attach PTY process group");
+            tree.terminate().expect("terminate PTY process group");
+
+            let started = Instant::now();
+            loop {
+                if child.try_wait().expect("poll PTY process").is_some() {
+                    break;
+                }
+                assert!(started.elapsed() < Duration::from_secs(3));
+                thread::sleep(Duration::from_millis(20));
+            }
         }
     }
 }
