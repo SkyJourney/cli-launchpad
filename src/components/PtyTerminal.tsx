@@ -179,7 +179,11 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               .then((text) => {
                 if (text) terminal.paste(text);
               })
-              .catch((reason) => setError(String(reason)));
+              .catch((reason) => {
+                if (!isClipboardTextUnavailable(reason)) {
+                  setError(String(reason));
+                }
+              });
           }
           return false;
         };
@@ -415,6 +419,15 @@ function fitTerminalToPtyBounds(fit: FitAddon, terminal: Terminal) {
   if (cols !== terminal.cols || rows !== terminal.rows) {
     terminal.resize(cols, rows);
   }
+}
+
+function isClipboardTextUnavailable(reason: unknown): boolean {
+  const message = String(reason).toLowerCase();
+  return (
+    message.includes("clipboard") &&
+    (message.includes("empty") ||
+      message.includes("not available in the requested format"))
+  );
 }
 
 function handlePtyEvent(
