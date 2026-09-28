@@ -31,6 +31,8 @@ export const en = {
     about: "About",
     activeTasks_one: "{{count}} active task",
     activeTasks_other: "{{count}} active tasks",
+    managedCliSessions_one: "{{tool}}, {{count}} managed session",
+    managedCliSessions_other: "{{tool}}, {{count}} managed sessions",
     openRepository: "Open GitHub repository",
     openRepositoryError:
       "Unable to open the GitHub repository in your default browser.",

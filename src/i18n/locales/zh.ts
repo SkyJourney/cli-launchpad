@@ -29,6 +29,7 @@ export const zh = {
     settings: "设置",
     about: "关于",
     activeTasks: "{{count}} 个执行中任务",
+    managedCliSessions: "{{tool}}，{{count}} 个受管理会话",
     openRepository: "打开 GitHub 项目仓库",
     openRepositoryError: "无法使用系统默认浏览器打开 GitHub 项目仓库。",
   },

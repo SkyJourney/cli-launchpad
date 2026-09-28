@@ -38,6 +38,7 @@ import {
   type Directory,
 } from "../lib/tauri";
 import githubIcon from "../assets/icons/brands/github.svg";
+import { TOOLS } from "../lib/tools";
 import { AnchoredPopover } from "./AnchoredPopover";
 import { AppLogo } from "./AppLogo";
 import { SvgAssetIcon } from "./SvgAssetIcon";
@@ -73,6 +74,9 @@ export function Sidebar() {
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
+  const ptySessionsByDirectory = useAppStore(
+    (state) => state.ptySessionsByDirectory,
+  );
   const queryClient = useQueryClient();
   const { data: directories } = useDirectories();
   const [showThemeMenu, setShowThemeMenu] = useState(false);
@@ -208,53 +212,91 @@ export function Sidebar() {
           {visibleDirectories.map((directory) => {
             const selected =
               selectedDirectoryId === directory.id && view === "detail";
+            const managedSession = ptySessionsByDirectory[directory.id];
+            const projectCliSessions =
+              managedSession?.state === "running"
+                ? TOOLS.filter(
+                    (tool) => tool.key === managedSession.toolKey,
+                  ).map((tool) => ({ tool, count: 1 }))
+                : [];
             return (
               <div
-                className="project-navigation-row"
+                className="project-navigation-entry"
                 key={directory.id}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setProjectMenuDirectoryId(directory.id);
                 }}
               >
-                <button
-                  type="button"
-                  className={clsx("project-navigation-item", {
-                    active: selected,
-                  })}
-                  title={directory.name}
-                  aria-current={selected ? "page" : undefined}
-                  onClick={() => openDirectory(directory.id)}
-                >
-                  <span className="project-navigation-name">
-                    {directory.name}
-                  </span>
-                </button>
-                <button
-                  ref={(element) => {
-                    if (element) {
-                      projectMenuAnchors.current.set(directory.id, element);
-                    } else projectMenuAnchors.current.delete(directory.id);
-                  }}
-                  type="button"
-                  className={clsx(
-                    "icon-button project-navigation-menu-button",
-                    { active: projectMenuDirectoryId === directory.id },
-                  )}
-                  title={t("sidebar.projectActions", { name: directory.name })}
-                  aria-label={t("sidebar.projectActions", {
-                    name: directory.name,
-                  })}
-                  aria-haspopup="menu"
-                  aria-expanded={projectMenuDirectoryId === directory.id}
-                  onClick={() =>
-                    setProjectMenuDirectoryId((current) =>
-                      current === directory.id ? null : directory.id,
-                    )
-                  }
-                >
-                  <Ellipsis size={17} />
-                </button>
+                <div className="project-navigation-row">
+                  <button
+                    type="button"
+                    className={clsx("project-navigation-item", {
+                      active: selected,
+                    })}
+                    title={directory.name}
+                    aria-current={selected ? "page" : undefined}
+                    onClick={() => openDirectory(directory.id)}
+                  >
+                    <span className="project-navigation-name">
+                      {directory.name}
+                    </span>
+                  </button>
+                  <button
+                    ref={(element) => {
+                      if (element) {
+                        projectMenuAnchors.current.set(directory.id, element);
+                      } else projectMenuAnchors.current.delete(directory.id);
+                    }}
+                    type="button"
+                    className={clsx(
+                      "icon-button project-navigation-menu-button",
+                      { active: projectMenuDirectoryId === directory.id },
+                    )}
+                    title={t("sidebar.projectActions", {
+                      name: directory.name,
+                    })}
+                    aria-label={t("sidebar.projectActions", {
+                      name: directory.name,
+                    })}
+                    aria-haspopup="menu"
+                    aria-expanded={projectMenuDirectoryId === directory.id}
+                    onClick={() =>
+                      setProjectMenuDirectoryId((current) =>
+                        current === directory.id ? null : directory.id,
+                      )
+                    }
+                  >
+                    <Ellipsis size={17} />
+                  </button>
+                </div>
+                {projectCliSessions.length > 0 && (
+                  <ul className="project-navigation-session-list">
+                    {projectCliSessions.map(({ tool, count }) => {
+                      const ToolIcon = tool.icon;
+                      const label = t("sidebar.managedCliSessions", {
+                        tool: tool.label,
+                        count,
+                      });
+                      return (
+                        <li
+                          className="project-navigation-session-item"
+                          key={tool.key}
+                          aria-label={label}
+                          title={label}
+                        >
+                          <ToolIcon size={14} />
+                          <span className="project-navigation-session-name">
+                            {tool.label}
+                          </span>
+                          <span className="project-navigation-session-count">
+                            {count}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             );
           })}
