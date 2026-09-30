@@ -2,11 +2,11 @@ use tauri::State;
 
 use crate::commands::terminal::{load_terminal_environment, TerminalEnvironmentCache};
 use crate::db::session_alias_repo;
-use crate::models::session::SessionPage;
+use crate::models::session::{SessionPage, SessionSearchIndexRefresh, SessionSearchResults};
 use crate::models::tool::ToolKey;
 use crate::services::storage_service::StoragePaths;
 use crate::services::{launch_service, session_service};
-use crate::{with_conn, AppError, Db};
+use crate::{with_cache, with_conn, AppError, CacheDb, Db};
 
 #[tauri::command]
 pub async fn list_sessions(
@@ -27,6 +27,56 @@ pub async fn list_sessions(
             .await?;
     session_service::apply_aliases(&mut page, &aliases);
     Ok(page)
+}
+
+#[tauri::command]
+pub async fn search_sessions(
+    state: State<'_, Db>,
+    cache: State<'_, CacheDb>,
+    directory_id: i64,
+    query: String,
+) -> Result<SessionSearchResults, AppError> {
+    let aliases = with_conn(&state, |conn| {
+        session_service::directory_path(conn, directory_id)?;
+        let mut aliases = std::collections::HashMap::new();
+        for tool_key in ToolKey::ALL {
+            aliases.insert(tool_key, session_alias_repo::list_for_tool(conn, tool_key)?);
+        }
+        Ok(aliases)
+    })?;
+    with_cache(&cache, |connection| {
+        Ok(session_service::search_indexed_sessions(
+            connection,
+            directory_id,
+            &query,
+            &aliases,
+        )?)
+    })
+}
+
+#[tauri::command]
+pub async fn refresh_session_search_index(
+    state: State<'_, Db>,
+    cache: State<'_, CacheDb>,
+    directory_id: i64,
+) -> Result<SessionSearchIndexRefresh, AppError> {
+    let path = with_conn(&state, |conn| {
+        Ok(session_service::directory_path(conn, directory_id)?)
+    })?;
+    let sources = session_service::refresh_search_index(&path).await?;
+    let current_path = with_conn(&state, |conn| {
+        Ok(session_service::directory_path(conn, directory_id)?)
+    })?;
+    if current_path != path {
+        return Err(AppError::msg("项目目录已变更，已取消写入旧的会话搜索索引"));
+    }
+    with_cache(&cache, |connection| {
+        Ok(crate::db::session_search_repo::refresh(
+            connection,
+            directory_id,
+            &sources,
+        )?)
+    })
 }
 
 #[tauri::command]

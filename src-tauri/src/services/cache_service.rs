@@ -46,6 +46,8 @@ pub fn put<T: Serialize>(connection: &Connection, key: &str, value: &T) -> Resul
 
 pub fn clear(connection: &Connection) -> Result<()> {
     connection.execute("delete from cache_entries", [])?;
+    connection.execute("delete from session_search_documents", [])?;
+    connection.execute("delete from session_search_sources", [])?;
     connection.execute_batch("vacuum")?;
     Ok(())
 }

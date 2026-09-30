@@ -26,6 +26,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("../../migrations/0007_launch_target.sql")),
     (8, include_str!("../../migrations/0008_session_aliases.sql")),
     (9, include_str!("../../migrations/0009_pty_sessions.sql")),
+    (10, include_str!("../../migrations/0010_grok_build.sql")),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -125,7 +126,7 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
     }
 
     #[test]
@@ -219,7 +220,81 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn grok_migration_preserves_existing_session_metadata_and_accepts_grok() {
+        let connection = Connection::open_in_memory().expect("open in-memory db");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable fk");
+        for (version, sql) in &MIGRATIONS[..9] {
+            connection
+                .execute_batch(&format!(
+                    "BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;"
+                ))
+                .expect("apply legacy migrations");
+        }
+
+        let directory = crate::db::directory_repo::add(
+            &connection,
+            "existing project",
+            "C:\\Projects\\existing",
+            None,
+        )
+        .expect("insert directory");
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Claude,
+            "old-session",
+            "Existing alias",
+        )
+        .expect("insert existing alias");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "old-pty",
+            directory.id,
+            crate::models::tool::ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .expect("insert existing pty");
+
+        apply_migrations(&connection).expect("apply Grok migration");
+
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Claude
+            )
+            .expect("read existing alias")
+            .get("old-session")
+            .map(String::as_str),
+            Some("Existing alias")
+        );
+        assert_eq!(
+            crate::db::pty_session_repo::list_for_directory(&connection, directory.id)
+                .expect("read existing pty")[0]
+                .session_id,
+            "old-pty"
+        );
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Grok,
+            "grok-session",
+            "Grok alias",
+        )
+        .expect("insert Grok alias");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "grok-pty",
+            directory.id,
+            crate::models::tool::ToolKey::Grok,
+            &directory.path,
+            2,
+        )
+        .expect("insert Grok pty");
     }
 
     #[test]

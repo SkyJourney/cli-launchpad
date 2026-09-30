@@ -241,6 +241,10 @@ fn apply_resume(payload: &mut LaunchPayload, tool_key: ToolKey, session_id: &str
                 .tool_args
                 .push(format!("--conversation={session_id}"));
         }
+        ToolKey::Grok => {
+            payload.tool_args.push("--resume".to_string());
+            payload.tool_args.push(session_id.to_string());
+        }
     }
 }
 
@@ -346,6 +350,10 @@ mod tests {
             (
                 ToolKey::Antigravity,
                 vec!["--conversation=session-1".to_string()],
+            ),
+            (
+                ToolKey::Grok,
+                vec!["--resume".to_string(), "session-1".to_string()],
             ),
         ];
 

@@ -50,4 +50,27 @@ pub struct LatestVersion {
     pub error: Option<String>,
     #[serde(default)]
     pub from_cache: bool,
+    /// Whether Launchpad may run the tool's built-in updater. Grok is allowed
+    /// only when its native installer source and executable location agree.
+    #[serde(default)]
+    pub managed_update_allowed: bool,
+    /// Why a managed update is unavailable, when source verification failed.
+    #[serde(default)]
+    pub management_message: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LatestVersion;
+
+    #[test]
+    fn older_latest_version_cache_defaults_grok_update_gate_to_closed() {
+        let cached: LatestVersion = serde_json::from_str(
+            r#"{"toolKey":"grok","latest":"1.0.44","error":null,"fromCache":false}"#,
+        )
+        .unwrap();
+
+        assert!(!cached.managed_update_allowed);
+        assert_eq!(cached.management_message, None);
+    }
 }

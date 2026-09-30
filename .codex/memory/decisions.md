@@ -2,7 +2,7 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-08-21
+last_updated: 2026-09-30
 commit: ddca86f
 ---
 
@@ -15,11 +15,11 @@ commit: ddca86f
 **How to apply：** 新功能应沿用 Tauri + React + Rust 架构，本地能力放在 Rust 层实现。
 **See Also：** [[project_overview.md#技术栈]]
 
-## 只聚焦三项核心 CLI
+## 只聚焦四项核心 CLI
 
-**结论：** 产品只支持 `claude`、`codex`、`agy` 三个 CLI。
-**Why：** 核心功能是快速在项目目录中打开公司内部常用 AI CLI，不是通用 CLI 工具管理器。
-**How to apply：** 检测、安装、启动、UI 状态和文档都只围绕这三个工具展开。
+**结论：** 产品只支持 `claude`、`codex`、`agy`、`grok` 四个 CLI。
+**Why：** 核心功能是快速在项目目录中管理已确认的 AI CLI 会话，不是通用 CLI 工具管理器。
+**How to apply：** 检测、安装、启动、UI 状态和文档只围绕这四个工具展开。
 **See Also：** [[project_overview.md#核心-CLI-范围]] [[feedback.md#不要扩展为通用-CLI-管理器]] [[project_progress.md#已完成功能]]
 
 ## Antigravity 使用 agy 作为官方主命令
@@ -38,9 +38,9 @@ commit: ddca86f
 
 ## 安装与更新使用持久化后台任务
 
-**结论：** 三项 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；同一 CLI 内互斥，不同 CLI 可并行，每项任务拥有独立取消信号和平台进程树。
+**结论：** 四项 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；同一 CLI 内互斥，不同 CLI 可并行，每项任务拥有独立取消信号和平台进程树。
 **Why：** 缓冲式静默执行无法判断任务是否卡住，也无法可靠终止子进程或在重启后查看历史；同一 CLI 的安装和自更新会争用同一工具状态，但三个不同 CLI 已具备独立命令、日志和进程树边界，无需互相阻塞。
-**How to apply：** 任务管理器按 `ToolKey` 维护活动任务，每个 CLI 同时最多一个任务；只接受内置工具清单生成的结构化计划，不开放自由命令或保存环境变量；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 按 CLI 独立维护执行与版本回读状态，并使用“终止任务”表达强制结束进程树。
+**How to apply：** 任务管理器按 `ToolKey` 维护活动任务，每个 CLI 同时最多一个任务；只接受四项内置工具生成的结构化计划，不开放自由命令或保存环境变量；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 按 CLI 独立维护执行与版本回读状态，并使用“终止任务”表达强制结束进程树。
 **See Also：** [[project_overview.md#执行任务边界]] [[project_progress.md#0.2.0-发布完成]] [[project_progress.md#Unreleased-累积更新]]
 
 ## 启动使用完整 CLI 路径与平台分层候选
@@ -52,9 +52,9 @@ commit: ddca86f
 
 ## 会话历史按需读取本地事实来源
 
-**结论：** 三项 CLI 会话列表均按查看时读取各自本地事实来源，不建立原始会话缓存；每项 CLI 独立按 10 条分页。Claude 优先使用 sessions index，Codex 优先使用 App Server，Antigravity 只读本机摘要 SQLite 与 metadata。
+**结论：** 四项 CLI 普通历史列表均按查看时读取各自本地事实来源，每项 CLI 独立按 10 条分页；G1.4 的搜索索引独立按项目存入可重建缓存。
 **Why：** CLI 自有索引和会话存储是标题、时间及项目归属的权威来源，按需读取可避免缓存陈旧；Antigravity 新版本已在本机暴露可按 workspace 匹配的摘要库。
-**How to apply：** 列表读取后仍要按项目目录或 workspace URI 过滤，恢复前重新验证归属；Claude 使用 `--resume`，Codex 使用 `resume`，Antigravity 使用 `--conversation`。原始标题与路径不进入应用缓存。
+**How to apply：** 列表读取后仍要按项目目录或 workspace URI 过滤，恢复前重新验证归属；普通列表不从搜索索引读取。索引不得保存项目路径或完整 transcript。
 **See Also：** [[project_overview.md#会话与配置数据]]
 
 ## 会话本地别名使用稀疏关联
@@ -62,7 +62,7 @@ commit: ddca86f
 **结论：** 用户手动重命名会话时，才以 `tool_key + session_id` 向业务 SQLite 写入别名；普通会话不入表，删除别名即恢复 CLI 原始标题。
 **Why：** 会话 ID 足以稳定关联用户命名，同时避免复制 CLI 会话索引、正文或源路径，也不会因为项目目录移动丢失别名。
 **How to apply：** 别名必须在写入或删除前验证 session 属于当前项目；列表先读取真实会话，再合并匹配别名，孤立记录不得生成虚假会话。配置 JSON 暂不交换别名，但数据库备份与恢复自然包含该表。
-**See Also：** [[decisions.md#会话摘要不进入应用持久缓存]] [[project_overview.md#会话与配置数据]]
+**See Also：** [[decisions.md#会话搜索-metadata-只进入独立可重建缓存]] [[project_overview.md#会话与配置数据]]
 
 ## Windows 内部分发使用 NSIS 双安装包策略
 
@@ -78,12 +78,12 @@ commit: ddca86f
 **How to apply：** 数据库迁移与备份使用 SQLite 一致性备份；恢复校验 manifest、完整性和 schema，并在覆盖前生成保护恢复点；缓存损坏可重建或降级内存，不阻断业务数据。
 **See Also：** [[project_overview.md#存储与可靠性边界]] [[project_progress.md#可靠性治理完成]]
 
-## 会话摘要不进入应用持久缓存
+## 会话搜索 metadata 只进入独立可重建缓存
 
-**结论：** 三项 CLI 的原始会话列表实时读取外部事实来源；原始标题摘要和源文件路径不持久写入应用缓存。只有用户显式设置的稀疏别名属于业务配置。
-**Why：** 会话标题可能包含工作内容，且缓存身份失配会导致错误项目展示或恢复风险；性能收益不足以抵消隐私与正确性成本。
-**How to apply：** 持久缓存只保存 CLI 状态、版本和模型目录等可重建信息；恢复会话或修改别名前重新验证 session 与当前目录的归属关系；升级时清理历史会话缓存条目。
-**See Also：** [[decisions.md#会话本地别名使用稀疏关联]] [[project_overview.md#会话与配置数据]] [[project_progress.md#可靠性治理完成]]
+**结论：** 普通历史列表仍实时读取 CLI 事实来源；G1.4 搜索可将受限的实际显示标题、summary 与首条用户消息/preview 存入按项目 ID 隔离的可重建 cache DB 索引。索引不保存项目路径或完整正文。用户改名仍只写业务库 `session_aliases`。
+**Why：** 每次键入都扫描 CLI 文件导致搜索缓慢且字段与历史列表展示不一致；独立缓存索引可复用 bounded metadata，同时与业务配置和完整 transcript 隔离。
+**How to apply：** 项目激活或手动刷新时有界更新索引；FTS5 trigram 匹配子串，1–2 字符查询回退；失败来源保留上一份可用索引并标记不完整。恢复会话或修改别名前重新验证 session 与当前目录的归属关系。
+**See Also：** [[decisions.md#会话本地别名使用稀疏关联]] [[project_overview.md#会话与配置数据]] [[project_progress.md#G1.4-会话搜索索引]]
 
 ## 关闭窗口策略由 Rust 执行并持久化为业务配置
 

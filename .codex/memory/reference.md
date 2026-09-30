@@ -2,7 +2,7 @@
 name: 参考资料
 description: 官方 CLI 文档调研摘要和外部依据
 type: reference
-last_updated: 2026-08-19
+last_updated: 2026-09-30
 commit: b01a015
 ---
 
@@ -13,12 +13,13 @@ commit: b01a015
 - Claude Code CLI：官方命令为 `claude`。Windows 可使用 `winget install Anthropic.ClaudeCode`，也可使用官方 PowerShell 安装脚本。
 - Codex CLI：官方命令为 `codex`。官方安装方式为 `npm i -g @openai/codex`，升级命令为 `npm i -g @openai/codex@latest`。
 - Antigravity CLI：官方命令为 `agy`。Windows 官方安装方式为 PowerShell：`irm https://antigravity.google/cli/install.ps1 | iex`。
+- Grok Build CLI：官方命令为 `grok`，Windows 官方安装器为 `https://x.ai/cli/install.ps1`；版本检查、安装来源和本地会话 metadata 的边界见 [G1 调研与验收文档](../../docs/milestones/grok-build-cli.md)。
 
 **See Also：** [[project_progress.md#已完成功能]]
 
 ## 使用方式
 
-这些资料用于维护 `docs/tooling-and-installation.md` 及已实现的三项 CLI 检测、安装和更新清单。若官方文档变化，应先更新 docs，再调整内置命令计划。
+这些资料用于维护 `docs/tooling-and-installation.md` 及已实现的四项 CLI 检测、安装和更新清单。若官方文档变化，应先更新 docs，再调整内置命令计划。
 
 ## 发布工具官方资料
 

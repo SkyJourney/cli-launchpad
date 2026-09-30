@@ -7,6 +7,7 @@ import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
 import {
   detectCliStatus,
+  fetchLatestVersions,
   listExecutionTasks,
   type ExecutionLogChunk,
   type ExecutionStatus,
@@ -90,11 +91,21 @@ export function useExecutionTaskEvents() {
             void queryClient.invalidateQueries({
               queryKey: qk.executionTask(task.id),
             });
-            void queryClient
-              .fetchQuery({
+            const refreshes: Promise<unknown>[] = [
+              queryClient.fetchQuery({
                 queryKey: qk.cliStatus(),
                 queryFn: () => detectCliStatus(true),
-              })
+              }),
+            ];
+            if (task.toolKey === "grok") {
+              refreshes.push(
+                queryClient.fetchQuery({
+                  queryKey: qk.latestVersions(),
+                  queryFn: () => fetchLatestVersions(true, true),
+                }),
+              );
+            }
+            void Promise.all(refreshes)
               .finally(() => {
                 queryClient.setQueryData<ExecutionReconciliations>(
                   qk.executionReconciliations(),
@@ -104,7 +115,8 @@ export function useExecutionTaskEvents() {
                     return next;
                   },
                 );
-              });
+              })
+              .catch(() => undefined);
           }
         },
       );

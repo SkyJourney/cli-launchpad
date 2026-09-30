@@ -8,13 +8,16 @@ use crate::services::{execution_service::ExecutionTaskManager, install_service};
 use crate::{with_conn, AppError, Db};
 
 #[tauri::command]
-pub fn start_execution_task(
+pub async fn start_execution_task(
     app: AppHandle,
     manager: State<'_, ExecutionTaskManager>,
     tool_key: ToolKey,
     kind: InstallKind,
 ) -> Result<ExecutionTask, AppError> {
-    let plan: InstallPlan = install_service::plan(tool_key, kind)?;
+    let plan: InstallPlan =
+        tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
+            .await
+            .map_err(|error| AppError::msg(error.to_string()))??;
     manager.start(&app, plan)
 }
 

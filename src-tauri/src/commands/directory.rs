@@ -48,12 +48,14 @@ pub fn remove_directory(
                 "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
             ));
         }
-        Ok(directory_repo::remove(conn, id)?)
+        Ok(())
     })?;
     with_cache(&cache, |connection| {
         cache_service::remove_prefix(connection, "sessions:")?;
+        crate::db::session_search_repo::remove_directory(connection, id)?;
         Ok(())
-    })
+    })?;
+    with_conn(&state, |conn| Ok(directory_repo::remove(conn, id)?))
 }
 
 #[tauri::command]

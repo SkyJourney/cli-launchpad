@@ -33,9 +33,6 @@ export const en = {
     activeTasks_other: "{{count}} active tasks",
     managedCliSessions_one: "{{tool}}, {{count}} managed session",
     managedCliSessions_other: "{{tool}}, {{count}} managed sessions",
-    openRepository: "Open GitHub repository",
-    openRepositoryError:
-      "Unable to open the GitHub repository in your default browser.",
   },
   theme: {
     current: "Theme: {{mode}}",
@@ -159,7 +156,14 @@ export const en = {
     openPathFailed: "Failed to open directory: {{error}}",
     launchTool: "Start {{tool}} in embedded terminal",
     sessions: "Session history",
-    resumeEmbedded: "Resume in app",
+    searchSessions: "Search sessions",
+    searchPlaceholder: "Search session titles, summaries, or aliases",
+    clearSearch: "Clear search",
+    searchIncomplete:
+      "Some session sources could not be fully searched: {{tools}}",
+    searchFailed: "Session search failed: {{error}}",
+    noSearchResults: "No matching sessions.",
+    resumeEmbedded: "Resume",
     refreshSessions: "Refresh sessions",
     sessionsFailed: "Failed to read sessions: {{error}}",
     reading: "Loading…",
@@ -185,6 +189,19 @@ export const en = {
     preparing: "Preparing…",
     install: "Install",
     update: "Update",
+    grokInstallEffectsHeading: "The official installer will:",
+    grokInstallEffectPath:
+      "Install to .grok\\bin in the current user's profile, or to GROK_BIN_DIR when it is set.",
+    grokInstallEffectChannel:
+      "Launchpad pins the stable channel so inherited environment settings cannot select a prerelease or enterprise channel.",
+    grokInstallEffectFiles:
+      "Download and install grok.exe and agent.exe, replacing existing files; create or update the CLI installer marker in .grok\\config.toml under the current user's profile and generate PowerShell completions.",
+    grokInstallEffectPathEnv:
+      "Add the install directory to the current user's PATH if it is not already present.",
+    grokInstallEffectNetwork:
+      "Fetch version information and binaries from x.ai, with a Google Cloud Storage fallback. If GROK_DEPLOYMENT_KEY is present in the environment, also fetch deployment settings and write managed configuration files.",
+    grokUpdateSourceUnknown:
+      "Refresh version information first to verify the Grok Build installation source.",
     installing: "Installing…",
     updating: "Updating…",
     refreshingVersion: "Refreshing version…",
@@ -207,6 +224,8 @@ export const en = {
     checking: "Checking…",
     cachedSuffix: " (cached)",
     unavailable: "Unavailable",
+    managementComingSoon:
+      "Install and update actions will be added in a later step.",
     prepareFailed: "Failed to prepare action: {{error}}",
     taskRunning:
       "A task is running for this tool. Open Tasks from the sidebar to follow it.",
@@ -321,6 +340,12 @@ export const en = {
     description:
       "A lightweight desktop launcher for opening AI CLI work sessions in your regular project directories and managing session history, tool arguments, and versions.",
     supportedCli: "Supported CLIs",
+    repository: "Project repository",
+    repositoryDescription:
+      "Explore the CLI Launchpad source code and project updates.",
+    openRepository: "View on GitHub",
+    openRepositoryError:
+      "Unable to open the GitHub repository in your default browser.",
     licenses: "Open-source licenses",
     licenseIntro:
       "CLI Launchpad and its bundled brand icons use the MIT License. Bundled fonts remain under their respective SIL Open Font License 1.1 terms.",

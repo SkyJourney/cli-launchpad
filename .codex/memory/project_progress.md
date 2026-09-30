@@ -2,7 +2,7 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-08-21
+last_updated: 2026-09-30
 commit: ddca86f
 ---
 
@@ -13,8 +13,8 @@ commit: ddca86f
 - 默认分支已改为 `main`。
 - 可启动 MVP 已完成：SQLite migrations、目录/工具/启动偏好/项目参数读写、命令预览与 Windows 终端分层启动均已落地。
 - 卡片式多视图 UI 已完成：项目主页、详情、参数编辑、设置、关于，以及全局 CLI 状态驱动的禁用/启动交互。
-- 会话能力已完成：三项 CLI 均可读取、分页和恢复历史会话；标题优先使用 CLI 原生摘要/名称，并支持稀疏本地别名。
-- CLI 管理能力已完成：安全路径检测、当前/最新版本查询、安装/更新计划预览、后台执行、实时日志、历史记录和任务终止。
+- 会话能力已完成：四项 CLI 均可读取、分页和恢复历史会话；标题优先使用 CLI 原生摘要/名称，并支持稀疏本地别名；G1.4 增加按项目隔离的本地搜索索引。
+- CLI 管理能力已完成：四项 CLI 的安全路径检测、当前/最新版本查询、安装/更新计划预览、后台执行、实时日志、历史记录和任务终止。
 - 桌面能力已完成：系统托盘、默认关闭到托盘与可配置退出行为、双击托盘唤起、窗口状态持久化、文件/目录选择对话框和 JSON 配置导入导出。
 - Windows 分发配置已完成：NSIS、静态 CRT、在线/离线 WebView2 两种安装包及归档脚本。
 - 相关架构、产品、UI、安装与里程碑文档均已补齐；后续事实应以当前实现和最新文档为准。
@@ -29,7 +29,7 @@ commit: ddca86f
 - 日志与诊断导出、事务化参数保存、原子文件导出及会话隐私缓存治理已落地。
 - 五阶段修复已完成并通过 Rust 测试、编译检查、前端生产构建与 Windows NSIS release 构建。
 
-**See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话摘要不进入应用持久缓存]]
+**See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话搜索-metadata-只进入独立可重建缓存]]
 
 ## 0.2.0 发布完成
 
@@ -81,10 +81,22 @@ commit: ddca86f
 - 正式跨设备分发达到规模后，评估 Apple Developer Program，并补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
 - 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。
-- 后续评估 Linux 启动辅助；不扩大三项 CLI 产品范围。
+- 后续评估 Linux 启动辅助；不扩大四项 CLI 产品范围。
+
+## G1.4 会话搜索索引
+
+- 已将每次查询扫描 CLI metadata 改为 cache DB 可重建索引；索引使用项目 ID 隔离，主库中的会话别名保持独立；FTS5 trigram 支持子串查询，1–2 字符走短词回退。
+- Rust 160 项测试、`cargo check`、格式检查、前端 Prettier 检查、37 项测试、生产构建与 `git diff --check` 均通过。
+- Windows 开发版手工验收已由用户确认全部通过；G1.5 最终审查与门禁完成后，G1 里程碑整体关闭。
+
+## G1 Grok Build CLI 接入（Windows 阶段完成）
+
+- Grok Build 已纳入四项 CLI 工作台，支持 Windows 检测、版本读取、官方安装/更新计划、内置 PTY 启动、summary metadata 历史读取、别名、会话恢复与项目隔离搜索。
+- G1 各阶段代码审查、修复复审、Rust 与前端最终门禁记录见 [G1 里程碑文档](../../docs/milestones/grok-build-cli.md)；用户已确认 G1.4 Windows 搜索验收通过。
+- 未实际执行 Grok 安装或更新命令，避免更改本机环境；macOS/Linux 真机检测、安装、PTY 与会话恢复仍按 M5 清单验证。
 
 ## See Also
 
-- [[decisions.md#只聚焦三项核心-CLI]]
+- [[decisions.md#只聚焦四项核心-CLI]]
 - [[decisions.md#启动使用完整-CLI-路径与平台分层候选]]
 - [[reference.md#官方-CLI-资料]]

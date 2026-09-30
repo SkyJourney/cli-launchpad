@@ -30,8 +30,6 @@ export const zh = {
     about: "关于",
     activeTasks: "{{count}} 个执行中任务",
     managedCliSessions: "{{tool}}，{{count}} 个受管理会话",
-    openRepository: "打开 GitHub 项目仓库",
-    openRepositoryError: "无法使用系统默认浏览器打开 GitHub 项目仓库。",
   },
   theme: {
     current: "主题：{{mode}}",
@@ -151,7 +149,13 @@ export const zh = {
     openPathFailed: "打开目录失败：{{error}}",
     launchTool: "在内置终端启动 {{tool}}",
     sessions: "历史会话",
-    resumeEmbedded: "内置终端恢复",
+    searchSessions: "搜索会话",
+    searchPlaceholder: "搜索会话标题、摘要或别名",
+    clearSearch: "清除搜索",
+    searchIncomplete: "部分会话来源暂不可完整搜索：{{tools}}",
+    searchFailed: "搜索会话失败：{{error}}",
+    noSearchResults: "没有匹配的会话。",
+    resumeEmbedded: "恢复",
     refreshSessions: "刷新会话",
     sessionsFailed: "读取会话失败：{{error}}",
     reading: "读取中…",
@@ -177,6 +181,18 @@ export const zh = {
     preparing: "准备中…",
     install: "一键安装",
     update: "更新",
+    grokInstallEffectsHeading: "官方安装脚本会执行以下操作：",
+    grokInstallEffectPath:
+      "默认安装到当前用户目录下的 .grok\\bin；如设置 GROK_BIN_DIR，则使用该目录。",
+    grokInstallEffectChannel:
+      "Launchpad 固定使用 stable 通道，避免继承环境变量切换到测试版或企业通道。",
+    grokInstallEffectFiles:
+      "下载并安装 grok.exe、agent.exe；如目标文件已存在会替换，并创建或更新当前用户目录下 .grok\\config.toml 的 CLI 安装来源及 PowerShell 补全文件。",
+    grokInstallEffectPathEnv:
+      "如果安装目录尚未位于当前用户 PATH，会将其加入用户 PATH。",
+    grokInstallEffectNetwork:
+      "从 x.ai 获取版本信息和程序文件；网络不可达时会回退 Google Cloud Storage。若环境提供 GROK_DEPLOYMENT_KEY，还会请求部署配置并写入托管配置文件。",
+    grokUpdateSourceUnknown: "请先刷新版本信息，以确认 Grok Build 的安装来源。",
     installing: "安装中…",
     updating: "更新中…",
     refreshingVersion: "刷新版本中…",
@@ -198,6 +214,7 @@ export const zh = {
     checking: "查询中…",
     cachedSuffix: "（缓存）",
     unavailable: "无法获取",
+    managementComingSoon: "安装和更新入口将在后续接入。",
     prepareFailed: "操作准备失败：{{error}}",
     taskRunning: "此工具当前有任务正在执行，可从左侧“执行任务”查看。",
     launchMethod: "启动方式",
@@ -303,6 +320,10 @@ export const zh = {
     description:
       "轻量级桌面启动器：在常用项目目录中一键打开 AI CLI 工作会话，管理历史会话、工具参数与版本。",
     supportedCli: "支持的 CLI",
+    repository: "项目仓库",
+    repositoryDescription: "查看 CLI Launchpad 的源码与项目动态。",
+    openRepository: "在 GitHub 上查看",
+    openRepositoryError: "无法使用系统默认浏览器打开 GitHub 项目仓库。",
     licenses: "开源许可",
     licenseIntro:
       "CLI Launchpad 与内置品牌图标使用 MIT License；内置字体继续遵循各自的 SIL Open Font License 1.1。",

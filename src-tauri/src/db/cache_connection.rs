@@ -10,6 +10,46 @@ create table if not exists cache_entries (
   value_json text not null,
   created_at_ms integer not null
 );
+
+create table if not exists session_search_documents (
+  directory_id integer not null,
+  tool_key text not null,
+  session_id text not null,
+  title text not null,
+  search_text text not null,
+  last_active_ms integer,
+  primary key (directory_id, tool_key, session_id)
+);
+
+create table if not exists session_search_sources (
+  directory_id integer not null,
+  tool_key text not null,
+  incomplete integer not null,
+  refreshed_at_ms integer not null,
+  primary key (directory_id, tool_key)
+);
+
+create virtual table if not exists session_search_fts using fts5(
+  search_text,
+  content='session_search_documents',
+  content_rowid='rowid',
+  tokenize='trigram'
+);
+
+create trigger if not exists session_search_documents_ai after insert on session_search_documents begin
+  insert into session_search_fts(rowid, search_text) values (new.rowid, new.search_text);
+end;
+
+create trigger if not exists session_search_documents_ad after delete on session_search_documents begin
+  insert into session_search_fts(session_search_fts, rowid, search_text)
+  values ('delete', old.rowid, old.search_text);
+end;
+
+create trigger if not exists session_search_documents_au after update on session_search_documents begin
+  insert into session_search_fts(session_search_fts, rowid, search_text)
+  values ('delete', old.rowid, old.search_text);
+  insert into session_search_fts(rowid, search_text) values (new.rowid, new.search_text);
+end;
 ";
 
 pub fn init_cache(path: &Path) -> Result<Connection> {

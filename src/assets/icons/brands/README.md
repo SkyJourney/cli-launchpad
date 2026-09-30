@@ -6,6 +6,7 @@ The SVG files in this directory are sourced from LobeHub's
 - `claude-code.svg` from `claudecode-color.svg`
 - `codex.svg` from `codex-color.svg`
 - `antigravity.svg` from `antigravity-color.svg`
+- `grok.svg` from `grok.svg`
 - `github.svg` from `github.svg`
 
 Source: https://github.com/lobehub/lobe-icons

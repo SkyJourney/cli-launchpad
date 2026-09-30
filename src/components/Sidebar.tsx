@@ -11,7 +11,6 @@ import {
   Pin,
   PinOff,
   Pencil,
-  Search,
   Settings,
   SquareTerminal,
   Sun,
@@ -20,7 +19,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -38,13 +36,10 @@ import {
   setDirectoryPinned,
   type Directory,
 } from "../lib/tauri";
-import githubIcon from "../assets/icons/brands/github.svg";
 import { TOOLS } from "../lib/tools";
 import { AnchoredPopover } from "./AnchoredPopover";
 import { AppLogo } from "./AppLogo";
-import { SvgAssetIcon } from "./SvgAssetIcon";
-
-const REPOSITORY_URL = "https://github.com/SkyJourney/cli-launchpad";
+import { SearchInput } from "./SearchInput";
 
 const THEME_OPTIONS: {
   icon: LucideIcon;
@@ -212,15 +207,12 @@ export function Sidebar() {
             <Plus size={16} />
           </button>
         </div>
-        <label className="project-navigation-search">
-          <Search size={14} />
-          <input
-            value={projectSearch}
-            onChange={(event) => setProjectSearch(event.target.value)}
-            placeholder={t("sidebar.searchProjects")}
-            aria-label={t("sidebar.searchProjects")}
-          />
-        </label>
+        <SearchInput
+          value={projectSearch}
+          onChange={setProjectSearch}
+          placeholder={t("sidebar.searchProjects")}
+          ariaLabel={t("sidebar.searchProjects")}
+        />
         <div className="project-navigation-list">
           {visibleDirectories.map((directory) => {
             const selected =
@@ -399,48 +391,7 @@ export function Sidebar() {
         </AnchoredPopover>
       )}
 
-      <nav className="sidebar-nav">
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "executions",
-          })}
-          title={t("sidebar.executions")}
-          aria-label={t("sidebar.executions")}
-          onClick={() => setView("executions")}
-        >
-          <SquareTerminal size={16} />
-          {activeCount > 0 && (
-            <span
-              className="nav-count"
-              aria-label={t("sidebar.activeTasks", { count: activeCount })}
-            >
-              {activeCount}
-            </span>
-          )}
-        </button>
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "settings",
-          })}
-          title={t("sidebar.settings")}
-          aria-label={t("sidebar.settings")}
-          onClick={() => setView("settings")}
-        >
-          <Settings size={16} />
-        </button>
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "about",
-          })}
-          title={t("sidebar.about")}
-          aria-label={t("sidebar.about")}
-          onClick={() => setView("about")}
-        >
-          <Info size={16} />
-        </button>
-      </nav>
-
-      <div className="sidebar-footer">
+      <div className="sidebar-actions">
         <button
           ref={languageButtonRef}
           type="button"
@@ -555,18 +506,42 @@ export function Sidebar() {
           </AnchoredPopover>
         )}
         <button
-          type="button"
-          className="icon-button sidebar-repository-button"
-          title={t("sidebar.openRepository")}
-          aria-label={t("sidebar.openRepository")}
-          onClick={() => {
-            void openUrl(REPOSITORY_URL).catch((error: unknown) => {
-              console.error(t("sidebar.openRepositoryError"), error);
-              window.alert(t("sidebar.openRepositoryError"));
-            });
-          }}
+          className={clsx("icon-button nav-item", {
+            active: view === "executions",
+          })}
+          title={t("sidebar.executions")}
+          aria-label={t("sidebar.executions")}
+          onClick={() => setView("executions")}
         >
-          <SvgAssetIcon src={githubIcon} size={20} monochrome />
+          <SquareTerminal size={16} />
+          {activeCount > 0 && (
+            <span
+              className="nav-count"
+              aria-label={t("sidebar.activeTasks", { count: activeCount })}
+            >
+              {activeCount}
+            </span>
+          )}
+        </button>
+        <button
+          className={clsx("icon-button nav-item", {
+            active: view === "settings",
+          })}
+          title={t("sidebar.settings")}
+          aria-label={t("sidebar.settings")}
+          onClick={() => setView("settings")}
+        >
+          <Settings size={16} />
+        </button>
+        <button
+          className={clsx("icon-button nav-item", {
+            active: view === "about",
+          })}
+          title={t("sidebar.about")}
+          aria-label={t("sidebar.about")}
+          onClick={() => setView("about")}
+        >
+          <Info size={16} />
         </button>
       </div>
     </aside>

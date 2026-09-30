@@ -29,7 +29,7 @@ commit: b01a015
 
 ## 条目级高频引用 Top
 
-- `decisions.md#只聚焦三项核心-CLI`：被 `feedback.md`、`project_overview.md`、`project_progress.md` 3 个不同源文件引用，是 synthesis 候选。
+- `decisions.md#只聚焦四项核心-CLI`：被 `feedback.md`、`project_overview.md`、`project_progress.md` 3 个不同源文件引用，是 synthesis 候选。
 - `decisions.md#Git-Tag-驱动四目标自动发布`：被 `project_overview.md`、`project_progress.md`、`reference.md` 3 个不同源文件引用，是 synthesis 候选。
 - 其余 decisions/feedback 条目均少于 3 个不同源文件引用。
 

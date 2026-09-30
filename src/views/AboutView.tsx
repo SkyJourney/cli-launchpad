@@ -1,13 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
+import githubIcon from "../assets/icons/brands/github.svg";
 import appLicense from "../../LICENSE?raw";
 import mapleLicense from "../assets/fonts/maple/LICENSE.txt?raw";
 import notoSansLicense from "../assets/fonts/noto-sans-sc/LICENSE.txt?raw";
 import lobeIconsLicense from "../assets/icons/brands/LICENSE.txt?raw";
 import { AppLogo } from "../components/AppLogo";
+import { SvgAssetIcon } from "../components/SvgAssetIcon";
 import { qk } from "../lib/queryKeys";
 import { TOOLS } from "../lib/tools";
+
+const REPOSITORY_URL = "https://github.com/SkyJourney/cli-launchpad";
 
 export function AboutView() {
   const { t } = useTranslation();
@@ -45,6 +50,28 @@ export function AboutView() {
             </span>
           </div>
         </div>
+      </section>
+
+      <section className="about-card about-repository-card">
+        <div>
+          <span className="about-key">{t("about.repository")}</span>
+          <p className="muted about-repository-description">
+            {t("about.repositoryDescription")}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="ghost-button about-repository-link"
+          onClick={() => {
+            void openUrl(REPOSITORY_URL).catch((error: unknown) => {
+              console.error(t("about.openRepositoryError"), error);
+              window.alert(t("about.openRepositoryError"));
+            });
+          }}
+        >
+          <SvgAssetIcon src={githubIcon} size={18} monochrome />
+          {t("about.openRepository")}
+        </button>
       </section>
 
       <section className="about-card about-license-card">

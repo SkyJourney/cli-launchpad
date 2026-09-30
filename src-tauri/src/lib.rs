@@ -174,6 +174,8 @@ pub fn run() {
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
             commands::session::list_sessions,
+            commands::session::search_sessions,
+            commands::session::refresh_session_search_index,
             commands::session::set_session_alias,
             commands::session::delete_session_alias,
             commands::session::resume_session,

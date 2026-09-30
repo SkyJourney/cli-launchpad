@@ -246,9 +246,10 @@ fn candidate_dirs() -> Vec<PathBuf> {
                     .join("bin"),
             );
         }
-        if let Ok(profile) = std::env::var("USERPROFILE") {
-            dirs.push(PathBuf::from(profile).join(".local").join("bin"));
-        }
+        dirs.extend(windows_user_install_dirs(
+            std::env::var_os("USERPROFILE"),
+            std::env::var_os("GROK_BIN_DIR"),
+        ));
     }
 
     // `/usr/local/bin`, Volta and nvm all follow the same layout on Linux
@@ -262,6 +263,23 @@ fn candidate_dirs() -> Vec<PathBuf> {
 
         #[cfg(target_os = "macos")]
         dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    }
+    dirs
+}
+
+#[cfg(windows)]
+fn windows_user_install_dirs(
+    user_profile: Option<std::ffi::OsString>,
+    grok_bin_dir: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(grok_bin_dir) = grok_bin_dir {
+        dirs.push(PathBuf::from(grok_bin_dir));
+    }
+    if let Some(user_profile) = user_profile {
+        let profile = PathBuf::from(user_profile);
+        dirs.push(profile.join(".grok").join("bin"));
+        dirs.push(profile.join(".local").join("bin"));
     }
     dirs
 }
@@ -314,6 +332,21 @@ mod tests {
             first_output_line(b"\r\ncodex-cli 0.147.0\r\nextra\r\n").as_deref(),
             Some("codex-cli 0.147.0")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn known_windows_install_dirs_include_grok_defaults_and_override() {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+
+        let dirs = super::windows_user_install_dirs(
+            Some(OsString::from(r"C:\Users\tester")),
+            Some(OsString::from(r"D:\custom\grok")),
+        );
+        assert_eq!(dirs[0], PathBuf::from(r"D:\custom\grok"));
+        assert_eq!(dirs[1], PathBuf::from(r"C:\Users\tester\.grok\bin"));
+        assert_eq!(dirs[2], PathBuf::from(r"C:\Users\tester\.local\bin"));
     }
 
     #[cfg(unix)]

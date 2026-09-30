@@ -4,7 +4,7 @@
 
 ## 当前产品方向
 
-CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 CLI 会话工作台。主窗口以项目和内置 PTY 终端为中心，让用户在一个窗口中切换项目、查看并排列 Claude Code、Codex 与 Antigravity CLI 会话。
+CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 CLI 会话工作台。主窗口以项目和内置 PTY 终端为中心，让用户在一个窗口中切换项目、查看并排列 Claude Code、Codex、Antigravity 与 Grok Build CLI 会话。
 
 核心对象彼此独立：
 
@@ -13,7 +13,7 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 - **CLI 对话**是 CLI 自身的历史会话；如果能够可靠识别，则与 PTY 会话关联。
 - **布局**描述终端面板的空间排列。布局预设可以引用会话，但不拥有会话，也不负责终止 PTY。
 
-产品保持轻量，范围继续限定在 `claude`、`codex`、`agy` 三项 CLI。0.3.0 不建设通用 CLI 管理器、额度聚合、Agent 编排、worktree 管理或远程运行平台。
+产品保持轻量，0.3.0 目标范围限定在 `claude`、`codex`、`agy`、`grok` 四项 CLI。Grok Build 通过独立 G1 关卡接入；不建设通用 CLI 管理器、额度聚合、Agent 编排、worktree 管理或远程运行平台。
 
 ## 0.2.4 基线
 
@@ -44,7 +44,16 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 - Windows 阶段完成托盘、退出确认、窄窗口适配和终端尺寸安全边界。布局持久化与命名预设留给 M3。
 - 验收：Windows 用户可在同一工作区交互操作多个项目的 CLI 会话；会话切换、分栏和项目高亮不会误关或串写其他 PTY。macOS/Linux 实机对齐仍按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)纳入 M5。
 
+### G1：Grok Build CLI 接入（独立里程碑）
+
+- 在 M2 后、M3 前，把 Grok Build 纳入 0.3.0 四 CLI 工作台；G1 是独立接入门禁，不改写 M1/M2 已完成时的验收记录。
+- 对齐官方 `grok` 命令的 Windows 检测、安装、更新、默认项目启动、`GB` 标题、会话 metadata 读取、项目内可重建搜索索引和 `--resume <session-id>` 恢复。
+- 普通启动不开放自定义参数；只读取官方会话 summary metadata，不读取正文，也不调用可能混入远端结果的 `grok sessions search`。
+- 验收：Windows 上完成检测、官方安装/更新计划与版本回读、PTY 输入输出/退出、当前项目会话列表/搜索/恢复以及错误和损坏数据测试；macOS/Linux 实机仍归 M5 对齐。
+
 ### M3：全局布局保存与会话恢复
+
+**依赖：** M2、G1。
 
 - 持久化跨项目混排的全局工作区布局和可选命名布局预设；布局只引用 M2 已建立的独立 PTY 会话。
 - 保存分栏树、比例、标签关联、焦点和默认标题；布局恢复不自动启动 CLI。
@@ -53,24 +62,19 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 ### M4：现有能力接入与数据迁移
 
+**依赖：** M2、M3、G1。
+
 - 将会话历史、CLI 检测、安装更新、执行任务、配置备份和桌面设置接入新工作台。
 - 定义旧版 SQLite、配置 bundle 和窗口状态升级路径。
 - 保留旧数据库参数数据但不再用于启动；旧配置导入忽略参数字段，新配置导出不包含参数字段。
-- 验收：旧版用户项目、会话别名和桌面设置可升级；原有三项 CLI 功能在新工作区内有明确入口。
+- 验收：旧版用户项目、会话别名和桌面设置可升级；四项 CLI 功能在新工作区内有明确入口。
 
 ### M5：跨平台验收与 0.3.0 发布
 
-- Windows M1–M4 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、项目切换、异常终止、安装包及升级路径。
+- Windows M1–M4 与 G1 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、项目切换、异常终止、安装包及升级路径。
 - 更新用户文档、截图、发布说明和已知限制。
-- 验收：三个平台具备可重复的发布检查记录，关键 PTY 生命周期和旧数据迁移均通过人工验收。
+- 验收：三个平台具备可重复的发布检查记录，四项 CLI 的关键 PTY 生命周期和旧数据迁移均通过人工验收。
 
 ## 0.3.0 之后
-
-### Grok Build CLI 接入（独立里程碑，编号与版本待定）
-
-- 在 0.3.0 之后作为独立里程碑评估和接入 Grok Build，不纳入当前 0.3.0 或现有三个 CLI 的交付范围。
-- 产品交互按 Claude Code、Codex 与 Antigravity 的工作台方式对齐：检测状态、内置 PTY 启动、项目归属和可用的历史会话恢复能力。
-- 开始实施前先核实 Grok Build 的官方命令、安装与更新来源、Windows 支持，以及会话历史/恢复能力；只实现官方工具实际支持的能力，不预设命令名或恢复机制。
-- 独立里程碑文档见 [`Grok Build CLI 接入`](milestones/grok-build-cli.md)。
 
 根据 0.3.0 使用反馈再评估后台 PTY 守护进程、跨设备签名与公证、更多布局预设等能力。应用自身自动更新和远程 Agent 编排不属于当前承诺范围。

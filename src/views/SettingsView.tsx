@@ -19,7 +19,7 @@ import {
 } from "../hooks/useExecutionTasks";
 import { formatUtcDateTime, hasUpdate } from "../lib/format";
 import { qk } from "../lib/queryKeys";
-import { TOOLS } from "../lib/tools";
+import { isManagedUpdateAllowed, TOOLS } from "../lib/tools";
 import {
   clearCache,
   clearLaunchHistory,
@@ -103,10 +103,13 @@ export function SettingsView() {
   const [actionErrors, setActionErrors] = useState<
     Partial<Record<ToolKey, string>>
   >({});
-  const popoverAnchorRefs = useRef({
+  const popoverAnchorRefs = useRef<
+    Record<ToolKey, ReturnType<typeof createRef<HTMLDivElement>>>
+  >({
     claude: createRef<HTMLDivElement>(),
     codex: createRef<HTMLDivElement>(),
     antigravity: createRef<HTMLDivElement>(),
+    grok: createRef<HTMLDivElement>(),
   }).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
@@ -158,9 +161,8 @@ export function SettingsView() {
       }),
       queryClient.fetchQuery({
         queryKey: qk.latestVersions(),
-        queryFn: () => fetchLatestVersions(true),
+        queryFn: () => fetchLatestVersions(true, true),
       }),
-
     ]);
     await queryClient.invalidateQueries({ queryKey: qk.cacheStats() });
   };
@@ -320,8 +322,13 @@ export function SettingsView() {
             ? null
             : hasUpdate(status?.version ?? null, latestVersion);
           const isMissing = availability === "missing";
-          const canInstall = !cliStatus.isFetching && isMissing;
-          const canUpdate = updatable === true;
+          const updateAvailable = updatable === true;
+          const canInstall =
+            tool.settingsActions && !cliStatus.isFetching && isMissing;
+          const canUpdate =
+            tool.settingsActions &&
+            updateAvailable &&
+            isManagedUpdateAllowed(tool.key, latestEntry);
           const activeTask = activeTaskByTool.get(tool.key);
           const reconciliationKind = executionReconciliations.data[tool.key];
           const isReconciling = reconciliationKind != null;
@@ -348,7 +355,7 @@ export function SettingsView() {
                     ? t("settings.refreshingVersion")
                     : t(CLI_STATUS_META[availability].labelKey)}
                 </span>
-                {canUpdate && busyKind == null && (
+                {updateAvailable && busyKind == null && (
                   <span className="update-flag">
                     {t("settings.updateAvailable")}
                   </span>
@@ -438,6 +445,27 @@ export function SettingsView() {
                         <code className="readonly-args">
                           {pendingAction.plan.preview}
                         </code>
+                        {tool.key === "grok" &&
+                          pendingAction.kind === "install" && (
+                            <div className="cli-install-effects">
+                              <p className="muted">
+                                {t("settings.grokInstallEffectsHeading")}
+                              </p>
+                              <ul>
+                                <li>{t("settings.grokInstallEffectPath")}</li>
+                                <li>
+                                  {t("settings.grokInstallEffectChannel")}
+                                </li>
+                                <li>{t("settings.grokInstallEffectFiles")}</li>
+                                <li>
+                                  {t("settings.grokInstallEffectPathEnv")}
+                                </li>
+                                <li>
+                                  {t("settings.grokInstallEffectNetwork")}
+                                </li>
+                              </ul>
+                            </div>
+                          )}
                         <p className="muted">{t("settings.commandNotice")}</p>
                         {actionError && (
                           <p className="error">
@@ -483,6 +511,22 @@ export function SettingsView() {
                 </span>
               </div>
 
+              {!tool.settingsActions && (
+                <p className="muted cli-action-message">
+                  {t("settings.managementComingSoon")}
+                </p>
+              )}
+
+              {tool.key === "grok" &&
+                availability === "available" &&
+                !latest.isFetching &&
+                !latestEntry?.managedUpdateAllowed && (
+                  <p className="muted cli-action-message">
+                    {latestEntry?.managementMessage ??
+                      t("settings.grokUpdateSourceUnknown")}
+                  </p>
+                )}
+
               {actionError && !pendingAction && (
                 <p className="error cli-action-message">
                   {t("settings.prepareFailed", {
@@ -508,7 +552,9 @@ export function SettingsView() {
       <section className="shell-config">
         <div className="section-heading">{t("settings.closeBehavior")}</div>
         <p className="muted">
-          {/Macintosh|Mac OS X/i.test(navigator.userAgent) ? t("settings.closeDescriptionMac") : t("settings.closeDescriptionOther")}
+          {/Macintosh|Mac OS X/i.test(navigator.userAgent)
+            ? t("settings.closeDescriptionMac")
+            : t("settings.closeDescriptionOther")}
         </p>
         <div className="model-presets">
           {CLOSE_BEHAVIOR_OPTIONS.map((option) => (

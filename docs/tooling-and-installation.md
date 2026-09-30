@@ -2,11 +2,12 @@
 
 ## 范围
 
-本设计只覆盖 CLI Launchpad 的三个核心工具：
+0.3.0 G1 完成后，本设计覆盖 CLI Launchpad 的四个核心工具：
 
 - Claude Code CLI：`claude`
 - Codex CLI：`codex`
 - Antigravity CLI：官方主命令 `agy`
+- Grok Build CLI：官方命令 `grok`（独立里程碑 G1）
 
 不检测、不安装、不管理其他 CLI。
 
@@ -28,7 +29,7 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 | Rust 工具链         | 已安装，但当前普通 PowerShell PATH 未直接暴露 `rustup`、`rustc`、`cargo` |
 | VS Build Tools 2022 | 已安装，MSVC `14.44.35207`                                               |
 
-`pnpm`、`node`、`winget`、Rust 和 VS 工具链是开发与打包依赖，不属于应用内面向用户的一键安装范围。应用内检测和安装只面向 `claude`、`codex`、`agy`。
+`pnpm`、`node`、`winget`、Rust 和 VS 工具链是开发与打包依赖，不属于应用内面向用户的一键安装范围。应用内检测、启动和管理只服务已确认的四项 CLI；Grok Build 按 G1 分阶段接入，当前状态见 [G1 里程碑](milestones/grok-build-cli.md)。
 
 ## 官方依据
 
@@ -37,6 +38,8 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 - Claude Code CLI 官方命令为 `claude`。Windows 可使用 `winget install Anthropic.ClaudeCode`；macOS 使用 `curl -fsSL https://claude.ai/install.sh | bash`。
 - Codex CLI 官方命令为 `codex`。Windows 优先使用官方 PowerShell 独立安装器；macOS 使用 `curl -fsSL https://chatgpt.com/codex/install.sh | sh`；当前 CLI 提供 `codex update`。Windows 下由应用固定通过 Windows PowerShell 5.1 执行该更新命令，避免 PowerShell 7 环境缺少安装脚本依赖的 cmdlet。
 - Antigravity CLI 官方命令为 `agy`。Windows 使用官方 PowerShell installer；macOS 使用 `curl -fsSL https://antigravity.google/cli/install.sh | bash`。
+- Grok Build CLI 官方命令为 `grok`。Windows 官方安装器为 `https://x.ai/cli/install.ps1`，Launchpad 固定 stable 通道；默认目录为当前用户目录下的 `.grok/bin`，支持 `GROK_BIN_DIR`。安装脚本会视情况替换 `grok.exe`/`agent.exe`、写入用户级 PATH 与 Grok CLI 配置，并生成 PowerShell 补全。若环境含 `GROK_DEPLOYMENT_KEY`，还会请求并写入托管部署配置。脚本从 x.ai 获取版本和二进制，必要时回退 Google Cloud Storage。CLI 支持 `grok update`、`grok update --check`，以及 `grok --resume <session-id>`。
+- Grok 官方会话位于 `~/.grok/sessions/`（可由 `GROK_HOME` 覆盖）；Launchpad 只读取官方文档描述的 `summary.json` metadata。官方 `grok sessions search` 可能混合本地与远端结果，因此工作台只实现本地 metadata 搜索。
 - Antigravity 官方 release manifest 的 macOS 平台名为 `darwin_arm64` 与 `darwin_amd64`。
 
 后续实现时，如果官方安装命令变化，应先更新本文档，再调整安装清单。
@@ -46,7 +49,7 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 每个工具应定义：
 
 ```text
-id: claude | codex | antigravity
+id: claude | codex | antigravity | grok
 display_name: 用户可见名称
 commands: 候选命令列表
 version_args: 版本检测参数
@@ -83,6 +86,7 @@ Get-Command claude
 Get-Command codex
 Get-Command agy
 Get-Command antigravity
+Get-Command grok
 ```
 
 如果 PATH 不可见，可以补充检查常见用户级目录，但补充检查只用于提示，不应绕过用户配置直接执行未知路径：
@@ -93,6 +97,8 @@ Get-Command antigravity
 %LOCALAPPDATA%\Microsoft\WinGet\Links
 %LOCALAPPDATA%\agy\bin
 %LOCALAPPDATA%\Programs\OpenAI\Codex\bin
+%USERPROFILE%\.grok\bin\grok.exe
+%GROK_BIN_DIR%\grok.exe（仅在环境变量存在时）
 ```
 
 被动检测只解析路径，不执行候选程序。用户点击重新检测或安装/更新完成后，
@@ -112,7 +118,7 @@ GUI 应用从 Finder 或 Dock 启动时不能假设继承交互式 zsh 的完整
 ~/.nvm/versions/node/*/bin
 ```
 
-前三项覆盖三个 CLI 当前官方原生安装器与 Homebrew；Volta/NVM 只用于兼容
+这些目录覆盖已有官方原生安装器与 Homebrew 的常见位置；Volta/NVM 只用于兼容
 既有 Codex npm 安装。扫描 NVM 时只接受既有 `versions/node/<version>/bin`
 目录中的目标文件，不执行 Shell 初始化脚本，也不通过 `zsh -lc` 加载用户配置。
 候选必须是普通文件或指向普通文件的符号链接，并解析为完整路径。
@@ -168,13 +174,14 @@ args:
   - --accept-source-agreements
 ```
 
-三个目标 CLI 的 Windows 安装清单：
+四个目标 CLI 的 Windows 安装清单：
 
 | 工具        | 首选安装方式              | 命令模型                                                                                                  |
 | ----------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Claude Code | `winget` 官方包           | `winget install --id Anthropic.ClaudeCode --exact --accept-package-agreements --accept-source-agreements` |
 | Codex       | 官方 PowerShell installer | `irm https://chatgpt.com/codex/install.ps1 \| iex`                                                        |
 | Antigravity | 官方 PowerShell installer | `irm https://antigravity.google/cli/install.ps1 \| iex`                                                   |
+| Grok Build  | 官方 PowerShell installer | `irm https://x.ai/cli/install.ps1 \| iex`                                                                 |
 
 如果某个 CLI 没有稳定的官方包或官方安装命令，不应伪造安装命令。此时只展示官方手动安装说明。
 
@@ -182,18 +189,19 @@ args:
 
 macOS 安装清单：
 
-| 工具        | 解释器      | 固定官方命令                                                   |
-| ----------- | ----------- | -------------------------------------------------------------- |
-| Claude Code | `/bin/bash` | `curl -fsSL https://claude.ai/install.sh \| bash`              |
-| Codex       | `/bin/sh`   | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`        |
-| Antigravity | `/bin/bash` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
+| 工具        | 解释器      | 固定官方命令                                                                                  |
+| ----------- | ----------- | --------------------------------------------------------------------------------------------- |
+| Claude Code | `/bin/bash` | `curl -fsSL https://claude.ai/install.sh \| bash`                                             |
+| Codex       | `/bin/sh`   | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`                                       |
+| Antigravity | `/bin/bash` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`                                |
+| Grok Build  | `/bin/bash` | `curl -fsSL https://x.ai/cli/install.sh \| bash`（在 M5 跨平台对齐前不纳入 Windows 实施门禁） |
 
 实现层把解释器作为 `program`，把 `-c` 和对应命令常量作为参数数组。网络脚本
-字符串只能从内置三工具清单产生，不允许追加用户输入；预览必须原样展示 URL、
-解释器和管道风险。三个官方安装器均校验下载产物摘要并安装到用户级目录，不要求
-应用请求管理员权限。
+字符串只能从内置四工具清单产生，不允许追加用户输入；预览必须原样展示 URL、
+解释器和管道风险。这些安装计划以当前用户权限运行，不要求应用请求管理员权限。
+Grok Windows 主程序通过 HTTPS 下载；安装脚本对其附带的 MinGit 压缩包单独校验 SHA-256。
 
-安装来源必须绑定到内置三工具清单，不允许用户把任意 CLI 或任意包名加入一键安装流程。
+安装来源必须绑定到内置四工具清单，不允许用户把任意 CLI 或任意包名加入一键安装流程。
 
 ## 更新模型
 
@@ -201,11 +209,12 @@ macOS 安装清单：
 
 最新版本查询：
 
-| 工具        | 最新版本来源                                      |
-| ----------- | ------------------------------------------------- |
-| Claude Code | `downloads.claude.ai/claude-code-releases/latest` |
-| Codex       | `releases.openai.com/codex/channels/latest`       |
-| Antigravity | 官方安装器使用的当前平台 release manifest         |
+| 工具        | 最新版本来源                                                                                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `downloads.claude.ai/claude-code-releases/latest`                                                                |
+| Codex       | `releases.openai.com/codex/channels/latest`                                                                      |
+| Antigravity | 官方安装器使用的当前平台 release manifest                                                                        |
+| Grok Build  | 用户显式刷新时运行官方 `grok update --check --json` 并解析 `latestVersion`；自动刷新复用缓存，无法解析则显示未知 |
 
 最新版本查询涉及网络，失败时降级为"无法获取最新版本"，仍展示当前版本，不阻塞界面。
 
@@ -216,6 +225,13 @@ macOS 安装清单：
 | Claude Code | `claude update` | 沿用现有结构化计划                               |
 | Codex       | `codex update`  | 固定使用 Windows PowerShell 5.1 托管并透传退出码 |
 | Antigravity | `agy update`    | 沿用现有结构化计划                               |
+| Grok Build  | `grok update`   | 仅用于确认由官方原生安装器管理的安装             |
+
+Grok 也提供官方 npm 包 `@xai-official/grok`，但本应用 G1 只托管官方原生安装器。
+只有官方 CLI 检查 JSON 明确报告 `installer=internal`，且当前程序位于
+`%USERPROFILE%\.grok\bin`、`GROK_BIN_DIR` 或对应 Unix 用户目录时，应用内更新才可用；
+计划生成和任务启动时都会复核。npm、未知来源或路径不匹配时仍可启动已解析 CLI，
+但更新按钮禁用并显示原安装渠道指引，不能盲目运行 `grok update` 或调用其他包管理器。
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。Codex 的 Windows
 更新计划先解析 CLI 完整路径，再在最终 PowerShell 边界进行字面量转义；命令主体
@@ -235,6 +251,7 @@ macOS 安装清单：
 - 每个任务最多保存 1 MiB 日志，默认保留最近 50 条任务，旧记录连同日志自动裁剪。
 - 任务历史只记录内置安装清单生成的结构化命令计划，不开放任意命令执行入口。
 - 前端按 CLI 独立维护计划、确认、创建和错误状态；任务结束后先回读本机版本，并在此期间隐藏旧版本计算出的更新入口。
+- Grok 安装/更新任务结束后额外刷新官方 update-check JSON，回读当前/最新版本和安装来源；更新来源校验、计划生成和任务执行均由 Rust 后端负责，不能依赖前端传入的来源标记。
 
 ## UI 建议
 
@@ -245,6 +262,7 @@ macOS 安装清单：
 | Claude Code | 已安装 | `2.1.150` | `...` | 重新检测         |
 | Codex       | 已安装 | `0.133.0` | `...` | 重新检测         |
 | Antigravity | 未安装 | -         | -     | 查看官方安装命令 |
+| Grok Build  | 未安装 | -         | -     | 查看官方安装命令 |
 
 启动按钮应根据状态调整：
 

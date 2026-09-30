@@ -8,6 +8,7 @@ use tauri::State;
 pub async fn fetch_latest_versions(
     cache: State<'_, CacheDb>,
     force: Option<bool>,
+    refresh_grok: Option<bool>,
 ) -> Result<Vec<LatestVersion>, AppError> {
     const KEY: &str = "latest-versions";
     if !force.unwrap_or(false) {
@@ -22,9 +23,12 @@ pub async fn fetch_latest_versions(
             connection, KEY,
         )?)
     })?;
-    let mut fetched = tauri::async_runtime::spawn_blocking(version_service::fetch_all_latest)
-        .await
-        .map_err(|error| AppError::msg(error.to_string()))?;
+    let refresh_grok = refresh_grok.unwrap_or(false);
+    let mut fetched = tauri::async_runtime::spawn_blocking(move || {
+        version_service::fetch_all_latest(refresh_grok)
+    })
+    .await
+    .map_err(|error| AppError::msg(error.to_string()))?;
     if let Some(stale) = stale.as_deref() {
         for entry in &mut fetched {
             if entry.latest.is_none() {
@@ -51,6 +55,12 @@ pub async fn fetch_latest_versions(
 
 /// Return the structured command without executing it, for UI preview/confirm.
 #[tauri::command]
-pub fn get_install_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan, AppError> {
-    Ok(install_service::plan(tool_key, kind)?)
+pub async fn get_install_plan(
+    tool_key: ToolKey,
+    kind: InstallKind,
+) -> Result<InstallPlan, AppError> {
+    tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
+        .await
+        .map_err(|error| AppError::msg(error.to_string()))?
+        .map_err(Into::into)
 }

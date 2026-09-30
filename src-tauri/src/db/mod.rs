@@ -6,4 +6,5 @@ pub mod execution_task_repo;
 pub mod launch_history_repo;
 pub mod pty_session_repo;
 pub mod session_alias_repo;
+pub mod session_search_repo;
 pub mod tool_repo;

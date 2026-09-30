@@ -2,6 +2,7 @@ import {
   type InfiniteData,
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -21,11 +22,20 @@ import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { formatRelativeMs } from "../lib/format";
 import { qk } from "../lib/queryKeys";
+import {
+  getVisibleSearchResults,
+  hasMoreSearchResults,
+  nextSearchVisibleCount,
+  shouldRefreshSessionSearchIndex,
+  shouldSearchSessions,
+} from "../lib/sessionSearch";
 import { TOOLS } from "../lib/tools";
 import {
   deleteSessionAlias,
   listSessionPage,
   openProjectDirectory,
+  refreshSessionSearchIndex,
+  searchSessions,
   setSessionAlias,
   type SessionPage,
   type SessionInfo,
@@ -33,6 +43,7 @@ import {
 } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
 import { usePtyWorkspace } from "../components/PtyWorkspace";
+import { SearchInput } from "../components/SearchInput";
 
 interface ProjectDetailViewProps {
   directoryId: number;
@@ -55,6 +66,12 @@ export function ProjectDetailView({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [aliasError, setAliasError] = useState<string | null>(null);
+  const [sessionSearch, setSessionSearch] = useState("");
+  const [debouncedSessionSearch, setDebouncedSessionSearch] = useState("");
+  const [visibleSearchCount, setVisibleSearchCount] = useState(10);
+  const [previousDirectoryId, setPreviousDirectoryId] = useState<number | null>(
+    null,
+  );
 
   useEffect(() => {
     const narrowViewport = window.matchMedia("(max-width: 1120px)");
@@ -68,35 +85,153 @@ export function ProjectDetailView({
   }, [setContextPanelOpen]);
 
   const directoryId = directory?.id ?? null;
-  const claudeSessions = useProjectSessions(directoryId, active, "claude");
-  const codexSessions = useProjectSessions(directoryId, active, "codex");
+  const projectChanged = previousDirectoryId !== directoryId;
+  const normalizedSessionSearch = sessionSearch.trim();
+  const searchingSessions = normalizedSessionSearch.length > 0;
+  const claudeSessions = useProjectSessions(
+    directoryId,
+    active && !searchingSessions,
+    "claude",
+  );
+  const codexSessions = useProjectSessions(
+    directoryId,
+    active && !searchingSessions,
+    "codex",
+  );
   const antigravitySessions = useProjectSessions(
     directoryId,
-    active,
+    active && !searchingSessions,
     "antigravity",
   );
+  const grokSessions = useProjectSessions(
+    directoryId,
+    active && !searchingSessions,
+    "grok",
+  );
+  const searchIndexQuery = useQuery({
+    queryKey: qk.sessionSearchIndex(directoryId),
+    queryFn: () => refreshSessionSearchIndex(directoryId as number),
+    enabled: shouldRefreshSessionSearchIndex(
+      active && !projectChanged,
+      directoryId,
+    ),
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const searchReady =
+    normalizedSessionSearch === debouncedSessionSearch &&
+    !projectChanged &&
+    searchIndexQuery.isSuccess &&
+    !searchIndexQuery.isFetching;
+  const sessionSearchQuery = useQuery({
+    queryKey: qk.sessionSearch(
+      directoryId,
+      debouncedSessionSearch,
+      searchIndexQuery.dataUpdatedAt,
+    ),
+    queryFn: () =>
+      searchSessions(directoryId as number, debouncedSessionSearch),
+    enabled: shouldSearchSessions({
+      active,
+      projectChanged,
+      directoryId,
+      indexReady: searchIndexQuery.isSuccess && !searchIndexQuery.isFetching,
+      query: debouncedSessionSearch,
+    }),
+    staleTime: Infinity,
+    gcTime: 0,
+  });
   const sessionQueries = [
     claudeSessions,
     codexSessions,
     antigravitySessions,
+    grokSessions,
   ] as const;
-  const sessionItems = sessionQueries
+  const regularSessionItems = sessionQueries
     .flatMap((query) => query.data?.pages.flatMap((page) => page.items) ?? [])
     .sort(
       (left, right) => (right.lastActiveMs ?? 0) - (left.lastActiveMs ?? 0),
     );
-  const sessionsLoading = sessionQueries.some((query) => query.isLoading);
-  const sessionsFetching = sessionQueries.some((query) => query.isFetching);
-  const sessionsError = sessionQueries.find((query) => query.isError);
-  const sessionsHaveNextPage = sessionQueries.some(
+  const regularSessionsLoading = sessionQueries.some(
+    (query) => query.isLoading,
+  );
+  const regularSessionsFetching = sessionQueries.some(
+    (query) => query.isFetching,
+  );
+  const regularSessionsError = sessionQueries.find((query) => query.isError);
+  const regularSessionsHaveNextPage = sessionQueries.some(
     (query) => query.hasNextPage,
   );
-  const sessionsFetchingNextPage = sessionQueries.some(
+  const regularSessionsFetchingNextPage = sessionQueries.some(
     (query) => query.isFetchingNextPage,
   );
-  const sessionsNextPageError = sessionQueries.find(
+  const regularSessionsNextPageError = sessionQueries.find(
     (query) => query.isFetchNextPageError,
   );
+  const searchSessionItems = sessionSearchQuery.data?.items ?? [];
+  const sessionItems = searchingSessions
+    ? searchReady
+      ? getVisibleSearchResults(searchSessionItems, visibleSearchCount)
+      : []
+    : regularSessionItems;
+  const sessionsLoading = searchingSessions
+    ? !searchReady || searchIndexQuery.isLoading || sessionSearchQuery.isLoading
+    : regularSessionsLoading;
+  const sessionsFetching =
+    regularSessionsFetching ||
+    searchIndexQuery.isFetching ||
+    sessionSearchQuery.isFetching;
+  const sessionsError = searchingSessions
+    ? (searchIndexQuery.error ?? sessionSearchQuery.error)
+    : regularSessionsError?.error;
+  const sessionsHaveNextPage = searchingSessions
+    ? searchReady &&
+      hasMoreSearchResults(searchSessionItems, visibleSearchCount)
+    : regularSessionsHaveNextPage;
+  const sessionsFetchingNextPage = searchingSessions
+    ? false
+    : regularSessionsFetchingNextPage;
+  const sessionsNextPageError = searchingSessions
+    ? null
+    : regularSessionsNextPageError?.error;
+  const incompleteSearchTools = sessionSearchQuery.data?.incompleteTools ?? [];
+
+  useEffect(() => {
+    const timeout = window.setTimeout(
+      () => setDebouncedSessionSearch(normalizedSessionSearch),
+      250,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [normalizedSessionSearch]);
+
+  useEffect(() => {
+    if (previousDirectoryId === directoryId) return;
+    const previousId = previousDirectoryId;
+    if (previousId != null && previousId !== directoryId) {
+      queryClient.removeQueries({
+        queryKey: qk.sessionSearches(previousId),
+        exact: false,
+      });
+    }
+    setPreviousDirectoryId(directoryId);
+    setSessionSearch("");
+    setDebouncedSessionSearch("");
+    setVisibleSearchCount(10);
+  }, [directoryId, previousDirectoryId, queryClient]);
+
+  useEffect(() => {
+    setVisibleSearchCount(10);
+    if (normalizedSessionSearch) return;
+
+    setDebouncedSessionSearch("");
+    if (directoryId != null) {
+      queryClient.removeQueries({
+        queryKey: qk.sessionSearches(directoryId),
+        exact: false,
+      });
+    }
+  }, [directoryId, normalizedSessionSearch, queryClient]);
 
   const openPathMutation = useMutation({
     mutationFn: () => openProjectDirectory(directoryId as number),
@@ -145,6 +280,10 @@ export function ProjectDetailView({
       setAliasDraft("");
       setAliasError(null);
       void queryClient.invalidateQueries({ queryKey, exact: true });
+      void queryClient.invalidateQueries({
+        queryKey: qk.sessionSearches(variables.directoryId),
+        exact: false,
+      });
     },
     onError: (error) => setAliasError(String(error)),
   });
@@ -166,6 +305,16 @@ export function ProjectDetailView({
   const runResume = (session: SessionInfo) =>
     runEmbeddedLaunch(session.toolKey, session.sessionId);
   const refreshSessions = () => {
+    const refreshIndex = searchIndexQuery.refetch();
+    if (normalizedSessionSearch) {
+      void refreshIndex.then(() =>
+        queryClient.invalidateQueries({
+          queryKey: qk.sessionSearches(directoryId),
+          exact: false,
+        }),
+      );
+      return;
+    }
     for (const tool of TOOLS) {
       const queryKey = qk.sessions(directoryId, tool.key);
       queryClient.setQueryData<InfiniteData<SessionPage, string | null>>(
@@ -316,11 +465,41 @@ export function ProjectDetailView({
               />
             </button>
           </div>
+          <SearchInput
+            className="session-history-search"
+            value={sessionSearch}
+            onChange={setSessionSearch}
+            placeholder={t("projectDetail.searchPlaceholder")}
+            ariaLabel={t("projectDetail.searchSessions")}
+            maxLength={200}
+            onClear={() => setSessionSearch("")}
+            clearLabel={t("projectDetail.clearSearch")}
+          />
+          {searchingSessions &&
+            searchReady &&
+            incompleteSearchTools.length > 0 && (
+              <p className="muted session-search-warning">
+                {t("projectDetail.searchIncomplete", {
+                  tools: incompleteSearchTools
+                    .map(
+                      (toolKey) =>
+                        TOOLS.find((tool) => tool.key === toolKey)?.label ??
+                        toolKey,
+                    )
+                    .join(", "),
+                })}
+              </p>
+            )}
           {sessionsError && sessionItems.length === 0 ? (
             <p className="error">
-              {t("projectDetail.sessionsFailed", {
-                error: String(sessionsError.error),
-              })}
+              {t(
+                searchingSessions
+                  ? "projectDetail.searchFailed"
+                  : "projectDetail.sessionsFailed",
+                {
+                  error: String(sessionsError),
+                },
+              )}
             </p>
           ) : sessionsLoading && sessionItems.length === 0 ? (
             <p className="muted">{t("projectDetail.reading")}</p>
@@ -461,7 +640,7 @@ export function ProjectDetailView({
               {sessionsNextPageError && (
                 <p className="error session-page-error">
                   {t("projectDetail.loadMoreFailed", {
-                    error: String(sessionsNextPageError.error),
+                    error: String(sessionsNextPageError),
                   })}
                 </p>
               )}
@@ -470,11 +649,15 @@ export function ProjectDetailView({
                   className="ghost-button session-load-more"
                   disabled={sessionsFetchingNextPage}
                   onClick={() => {
-                    void Promise.all(
-                      sessionQueries
-                        .filter((query) => query.hasNextPage)
-                        .map((query) => query.fetchNextPage()),
-                    );
+                    if (searchingSessions) {
+                      setVisibleSearchCount(nextSearchVisibleCount);
+                    } else {
+                      void Promise.all(
+                        sessionQueries
+                          .filter((query) => query.hasNextPage)
+                          .map((query) => query.fetchNextPage()),
+                      );
+                    }
                   }}
                 >
                   {sessionsFetchingNextPage
@@ -484,7 +667,11 @@ export function ProjectDetailView({
               )}
             </div>
           ) : (
-            <p className="muted">{t("projectDetail.noSessions")}</p>
+            <p className="muted">
+              {searchingSessions
+                ? t("projectDetail.noSearchResults")
+                : t("projectDetail.noSessions")}
+            </p>
           )}
         </section>
       </div>

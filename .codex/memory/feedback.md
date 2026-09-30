@@ -22,10 +22,10 @@ commit: 3ad8ce1
 
 ## 不要扩展为通用 CLI 管理器
 
-**结论：** 项目只围绕 `claude`、`codex`、`agy`，不要检测、安装或启动其他 CLI。
-**Why：** 用户明确纠正过范围，核心功能是快速打开这三个 CLI 的 PowerShell 窗口。
+**结论：** 项目只围绕 `claude`、`codex`、`agy`、`grok` 四项已确认 CLI，不建设通用 CLI 管理器。
+**Why：** 用户明确拒绝扩展为通用管理器，同时通过独立 G1 里程碑批准 Grok Build 加入产品范围。
 **How to apply：** 不主动加入 Gemini、Qwen、GitHub CLI、uv 等工具的检测或安装逻辑。
-**See Also：** [[decisions.md#只聚焦三项核心-CLI]]
+**See Also：** [[decisions.md#只聚焦四项核心-CLI]]
 
 ## 不再关注 Gemini CLI
 

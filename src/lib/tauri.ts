@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type ToolKey = "antigravity" | "codex" | "claude";
+export type ToolKey = "antigravity" | "codex" | "claude" | "grok";
 
 export interface Directory {
   id: number;
@@ -104,6 +104,16 @@ export interface SessionInfo {
 export interface SessionPage {
   items: SessionInfo[];
   nextCursor: string | null;
+}
+
+export interface SessionSearchResults {
+  items: SessionInfo[];
+  incompleteTools: ToolKey[];
+}
+
+export interface SessionSearchIndexRefresh {
+  incompleteTools: ToolKey[];
+  indexedSessions: number;
 }
 
 export interface PtySession {
@@ -218,6 +228,8 @@ export interface LatestVersion {
   latest: string | null;
   error: string | null;
   fromCache: boolean;
+  managedUpdateAllowed: boolean;
+  managementMessage: string | null;
 }
 
 export type BackupReason =
@@ -332,8 +344,11 @@ export function clearLaunchHistory() {
 }
 
 // Version & install/update
-export function fetchLatestVersions(force = false) {
-  return invoke<LatestVersion[]>("fetch_latest_versions", { force });
+export function fetchLatestVersions(force = false, refreshGrok = false) {
+  return invoke<LatestVersion[]>("fetch_latest_versions", {
+    force,
+    refreshGrok,
+  });
 }
 
 export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
@@ -483,6 +498,19 @@ export function listSessionPage(
     toolKey,
     cursor,
     limit,
+  });
+}
+
+export function searchSessions(directoryId: number, query: string) {
+  return invoke<SessionSearchResults>("search_sessions", {
+    directoryId,
+    query,
+  });
+}
+
+export function refreshSessionSearchIndex(directoryId: number) {
+  return invoke<SessionSearchIndexRefresh>("refresh_session_search_index", {
+    directoryId,
   });
 }
 

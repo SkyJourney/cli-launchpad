@@ -56,8 +56,8 @@ export function SvgAssetIcon({
   );
 }
 
-export function createSvgAssetIcon(src: string) {
+export function createSvgAssetIcon(src: string, monochrome = false) {
   return function StaticSvgIcon({ size }: { size?: number | string }) {
-    return <SvgAssetIcon src={src} size={size} />;
+    return <SvgAssetIcon src={src} size={size} monochrome={monochrome} />;
   };
 }

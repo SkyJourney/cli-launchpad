@@ -22,4 +22,18 @@ export const qk = {
     directoryId,
     toolKey,
   ],
+  sessionSearches: (directoryId: number | null) => [
+    "sessions",
+    "search",
+    directoryId,
+  ],
+  sessionSearchIndex: (directoryId: number | null) => [
+    "sessionSearchIndex",
+    directoryId,
+  ],
+  sessionSearch: (
+    directoryId: number | null,
+    query: string,
+    indexRevision?: number,
+  ) => ["sessions", "search", directoryId, query, indexRevision],
 };

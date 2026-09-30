@@ -25,7 +25,7 @@
 - Node 包管理器统一使用 pnpm，仓库中应只维护 `pnpm-lock.yaml`。
 - Rust 工具链采用 stable MSVC，Windows 构建依赖包含 Visual Studio Build Tools 2022、MSVC C++ x64/x86 编译工具、Windows SDK 和 WebView2 Runtime。
 - 各平台应用标识使用统一的圆角正方形图形，Windows 不使用圆形专属变体。
-- 产品当前只聚焦三个 CLI：Claude Code CLI（`claude`）、Codex CLI（`codex`）、Antigravity CLI（官方主命令 `agy`）。
+- 0.3.0 目标范围聚焦四个 CLI：Claude Code（`claude`）、Codex（`codex`）、Antigravity（官方主命令 `agy`）和 Grok Build（`grok`）；Grok Build 由独立 G1 里程碑接入。
 - `antigravity` 仅作为保守兼容探测命令，不作为推荐启动命令。
 - 其他 CLI 不进入当前检测、安装或快速启动范围。
 - Antigravity 是 Google 新品牌下的目标 CLI，不再关注 Gemini CLI。
@@ -37,7 +37,7 @@
 - 除非明确是设备本地 UI 状态，否则用户数据保存在 SQLite 中。
 - 启动逻辑放在 Rust services 中，不放在 React 组件里。
 - 避免临时拼接命令字符串。应先构造参数列表，只在 Shell 边界做必要转义。
-- 功能设计优先服务 `claude`、`codex`、`agy` 三个核心 CLI，不扩展为通用 CLI 管理器。
+- 功能设计只服务 `claude`、`codex`、`agy`、`grok` 四个已确认 CLI，不扩展为通用 CLI 管理器。
 
 ## 文档关系
 
@@ -45,11 +45,11 @@
 
 1. `README.md`：项目概览、依赖、运行和打包入口。
 2. `AGENTS.md`：协作规则、当前状态、架构边界和执行约束。
-3. `docs/product-requirements.md`：产品目标、MVP、三项 CLI 范围、非目标。
+3. `docs/product-requirements.md`：产品目标、MVP、四项 CLI 范围、非目标。
 4. `docs/adr-0001-technology-stack.md`：技术栈选择及其原因。
 5. `docs/architecture.md`：分层结构、启动组合、全局 CLI 状态、会话读取、检测安装边界。
 6. `docs/ui-design.md`：大窗口工作台设计、项目/PTY/CLI 对话/布局关系、会话历史数据源。
-7. `docs/tooling-and-installation.md`：`claude`、`codex`、`agy` 的检测、安装和更新设计。
+7. `docs/tooling-and-installation.md`：`claude`、`codex`、`agy`、`grok` 的检测、安装和更新设计。
 8. `docs/roadmap.md` 与 `docs/milestones/0.3.0/`：目标版本路线图及分阶段验收条件。
 
 文档之间的关系：
@@ -60,14 +60,14 @@
 - `adr-0001-technology-stack.md` 解释为什么选择当前技术栈。
 - `architecture.md` 解释模块边界和关键技术路径。
 - `ui-design.md` 定义工作台布局、终端视图和会话交互。
-- `tooling-and-installation.md` 细化三项 CLI 的检测、安装、更新和 UI 状态设计。
+- `tooling-and-installation.md` 细化四项 CLI 的检测、安装、更新和 UI 状态设计。
 - `roadmap.md` 记录 0.3.0 转型目标与优先级；里程碑文档定义阶段验收，不覆盖需求和架构文档。
 
 ## 执行顺序
 
 实现或调整功能时按以下顺序推进：
 
-1. 先确认需求是否仍在 `claude`、`codex`、`agy` 范围内。
+1. 先确认需求是否仍在 `claude`、`codex`、`agy`、`grok` 范围内。
 2. 如涉及新模块、架构变化或数据流变化，先更新或对齐 `docs/product-requirements.md` 与 `docs/architecture.md`。
 3. 如涉及技术栈或长期约束变化，再更新 ADR。
 4. 先设计 Rust service、Tauri command、SQLite schema 和 platform helper 的边界，再实现 React UI。
@@ -155,4 +155,4 @@ Linux 打包产出 deb、rpm、AppImage 三种格式（`pnpm tauri:build:linux`�
 - `xdg-utils`（提供 `xdg-open`）：`tauri-plugin-opener` 的运行时依赖，打包时会校验，缺失会导致 AppImage 打包失败（精简版 CI 镜像，例如 ARM64 Runner，可能不预装）
 - AppImage 打包若报 FUSE 错误，补装 `libfuse2t64`（新发行版）或 `libfuse2`（旧发行版），CI 里已按此顺序尝试
 
-Linux 终端探测与启动（`platform/terminal.rs`、`platform/terminal_launch.rs`）已实现：优先探测 `xdg-terminal-exec`（委托桌面环境默认终端），其次 `x-terminal-emulator`（Debian alternatives），再回退到 Ghostty/kitty/WezTerm（参数格式与 macOS 分支一致）与 xterm。CLI 安装脚本（`services/install_service.rs`）复用与 macOS 相同的官方脚本 URL（claude.ai、chatgpt.com/codex、antigravity.google 均原生支持 Linux）。Antigravity 官方版本查询（`services/version_service.rs`）已补齐 `linux_amd64`/`linux_arm64` 清单映射。Linux 不需要 macOS 那套一次性 `.command` 载荷机制，终端参数或 `-e` 内联脚本直接完成传参。
+Linux 终端探测与启动（`platform/terminal.rs`、`platform/terminal_launch.rs`）已实现：优先探测 `xdg-terminal-exec`（委托桌面环境默认终端），其次 `x-terminal-emulator`（Debian alternatives），再回退到 Ghostty/kitty/WezTerm（参数格式与 macOS 分支一致）与 xterm。既有三个 CLI 的安装脚本（`services/install_service.rs`）复用与 macOS 相同的官方 URL（claude.ai、chatgpt.com/codex、antigravity.google）。Grok Build 的 Linux 官方安装路径与终端行为将在 G1 后、M5 跨平台对齐时验证。Antigravity 官方版本查询（`services/version_service.rs`）已补齐 `linux_amd64`/`linux_arm64` 清单映射。Linux 不需要 macOS 那套一次性 `.command` 载荷机制，终端参数或 `-e` 内联脚本直接完成传参。

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/icon/v3/macos/icon-512.png" width="96" height="96" alt="CLI Launchpad 圆角正方形产品标识">
   <h1>CLI Launchpad</h1>
-  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台 CLI 会话工作台。</p>
+  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台 CLI 会话工作台；0.3.0 目标增加 Grok Build。</p>
   <p>
     <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4"><img src="https://img.shields.io/badge/version-0.2.4-2856d8" alt="Version 0.2.4"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
@@ -18,7 +18,7 @@
   </p>
 </div>
 
-CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。正在规划的 0.3.0 将转型为以项目和内置终端会话为中心的轻量工作台。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
+CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。0.3.0 正在转型为以项目和内置终端会话为中心的轻量工作台，并通过独立里程碑接入 Grok Build。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
 
 ## 下载
 
@@ -27,14 +27,14 @@ CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity
 
 发布产物统一使用 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]` 命名：
 
-| 平台                  | 文件名示例                                        | 说明                              |
-| --------------------- | -------------------------------------------------- | --------------------------------- |
-| Windows x64           | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe` | NSIS 在线安装包；按需下载 WebView2 |
-| Windows x64 离线版    | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`| 内置 WebView2，体积较大           |
-| macOS Apple Silicon   | `CLI.Launchpad_<版本>_macos_arm64.dmg`              | 适用于 M 系列芯片                 |
-| macOS Intel           | `CLI.Launchpad_<版本>_macos_x64.dmg`                | 适用于 Intel 芯片                 |
-| Linux x64             | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}` | 三种格式任选，适用于 x86_64       |
-| Linux arm64           | `CLI.Launchpad_<版本>_linux_arm64.{deb,rpm,AppImage}`| 三种格式任选，适用于 ARM64        |
+| 平台                | 文件名示例                                            | 说明                               |
+| ------------------- | ----------------------------------------------------- | ---------------------------------- |
+| Windows x64         | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe`   | NSIS 在线安装包；按需下载 WebView2 |
+| Windows x64 离线版  | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`  | 内置 WebView2，体积较大            |
+| macOS Apple Silicon | `CLI.Launchpad_<版本>_macos_arm64.dmg`                | 适用于 M 系列芯片                  |
+| macOS Intel         | `CLI.Launchpad_<版本>_macos_x64.dmg`                  | 适用于 Intel 芯片                  |
+| Linux x64           | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}`   | 三种格式任选，适用于 x86_64        |
+| Linux arm64         | `CLI.Launchpad_<版本>_linux_arm64.{deb,rpm,AppImage}` | 三种格式任选，适用于 ARM64         |
 
 每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
 Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
@@ -254,9 +254,10 @@ src-tauri/src/platform/       平台相关启动逻辑
 ## 0.3.0 工作台目标
 
 - 在大窗口工作台中按项目导航和切换 CLI 终端。
-- 在应用内 PTY 中运行 Claude Code、Codex 和 Antigravity CLI。
+- 在应用内 PTY 中运行 Claude Code、Codex、Antigravity 和 Grok Build CLI。
+- 0.3.0 目标通过独立 G1 里程碑增加 Grok Build CLI（`grok`）。
 - 每个 PTY 独立归属项目和工具；CLI 对话可选关联。
 - 支持多终端标签和分栏，布局预设只记录排列方式，不拥有或终止终端会话。
-- 保留现有会话历史与恢复、模型参数、CLI 管理、执行任务、配置备份和桌面能力。
+- 保留会话历史与恢复、安装更新、执行任务、配置备份和桌面能力；会话历史支持基于可重建本地 metadata 索引的项目内搜索。
 
 分阶段范围和验收条件见 [0.3.0 路线图](docs/roadmap.md) 与 [里程碑文档](docs/milestones/0.3.0/README.md)。

@@ -11,6 +11,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
 pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
+    if tool_key == ToolKey::Grok && kind == InstallKind::Update {
+        return grok_update_plan();
+    }
+
     #[cfg(windows)]
     if tool_key == ToolKey::Codex && kind == InstallKind::Update {
         return codex_windows_update_plan();
@@ -22,12 +26,17 @@ pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
             ToolKey::Claude => ("claude", vec!["update"], "Claude Code 内置更新命令"),
             ToolKey::Codex => ("codex", vec!["update"], "Codex 内置更新命令"),
             ToolKey::Antigravity => ("agy", vec!["update"], "Antigravity CLI 内置更新命令"),
+            ToolKey::Grok => return Err(anyhow!("Grok Build 更新来源未经验证，不能创建更新计划")),
         },
     };
 
     let program = resolve_program(program_name)?;
     let args: Vec<String> = args.into_iter().map(str::to_string).collect();
-    let preview = format!("{program} {}", args.join(" "));
+    let preview = if tool_key == ToolKey::Grok && kind == InstallKind::Install {
+        grok_install_preview(&program)
+    } else {
+        format!("{program} {}", args.join(" "))
+    };
 
     Ok(InstallPlan {
         tool_key,
@@ -109,15 +118,77 @@ fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &
             ],
             "Antigravity 官方 PowerShell 安装脚本",
         ),
+        ToolKey::Grok => (
+            "powershell",
+            vec![
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex",
+            ],
+            "xAI Grok Build 官方 Windows PowerShell 安装脚本（固定 stable 通道）",
+        ),
     })
+}
+
+fn grok_update_plan() -> Result<InstallPlan> {
+    let path = detect::resolve_executable_path(&ToolKey::Grok.command_candidates())
+        .ok_or_else(|| anyhow!("未检测到可运行的 Grok Build CLI"))?;
+    let check =
+        crate::services::version_service::inspect_grok_update_check(std::path::Path::new(&path))
+            .map_err(anyhow::Error::msg)?;
+    crate::services::version_service::validate_grok_native_update_source(
+        std::path::Path::new(&path),
+        check.installer.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    Ok(grok_update_plan_for(&path))
+}
+
+fn grok_update_plan_for(path: &str) -> InstallPlan {
+    InstallPlan {
+        tool_key: ToolKey::Grok,
+        kind: InstallKind::Update,
+        program: path.to_string(),
+        args: vec!["update".to_string()],
+        source: "Grok Build 官方原生安装器（CLI 来源标记与安装路径均已核验）".to_string(),
+        preview: format!("{} update", quote_command_path(path)),
+    }
+}
+
+fn quote_command_path(path: &str) -> String {
+    if path.chars().any(char::is_whitespace) {
+        format!("\"{}\"", path.replace('"', "\\\""))
+    } else {
+        path.to_string()
+    }
+}
+
+fn grok_install_preview(program: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!(
+            "{} -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex\"",
+            quote_command_path(program)
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        format!(
+            "{} -c \"export GROK_CHANNEL=stable; curl -fsSL https://x.ai/cli/install.sh | bash\"",
+            quote_command_path(program)
+        )
+    }
 }
 
 /// Official install scripts detect the OS themselves (`uname -s` for
 /// darwin/linux), so macOS and Linux share the exact same URLs and
 /// interpreters; only the human-readable source label differs.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn unix_install_command(tool_key: ToolKey) -> (&'static str, Vec<&'static str>) {
-    match tool_key {
+fn unix_install_command(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>)> {
+    Ok(match tool_key {
         ToolKey::Claude => (
             "/bin/bash",
             vec!["-c", "curl -fsSL https://claude.ai/install.sh | bash"],
@@ -133,27 +204,36 @@ fn unix_install_command(tool_key: ToolKey) -> (&'static str, Vec<&'static str>) 
                 "curl -fsSL https://antigravity.google/cli/install.sh | bash",
             ],
         ),
-    }
+        ToolKey::Grok => (
+            "/bin/bash",
+            vec![
+                "-c",
+                "export GROK_CHANNEL=stable; curl -fsSL https://x.ai/cli/install.sh | bash",
+            ],
+        ),
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    let (program, args) = unix_install_command(tool_key);
+    let (program, args) = unix_install_command(tool_key)?;
     let source = match tool_key {
         ToolKey::Claude => "Anthropic Claude Code 官方 macOS 安装脚本",
         ToolKey::Codex => "OpenAI Codex 官方 macOS 安装脚本",
         ToolKey::Antigravity => "Google Antigravity 官方 macOS 安装脚本",
+        ToolKey::Grok => "xAI Grok Build 官方 macOS 安装脚本",
     };
     Ok((program, args, source))
 }
 
 #[cfg(target_os = "linux")]
 fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    let (program, args) = unix_install_command(tool_key);
+    let (program, args) = unix_install_command(tool_key)?;
     let source = match tool_key {
         ToolKey::Claude => "Anthropic Claude Code 官方 Linux 安装脚本",
         ToolKey::Codex => "OpenAI Codex 官方 Linux 安装脚本",
         ToolKey::Antigravity => "Google Antigravity 官方 Linux 安装脚本",
+        ToolKey::Grok => "xAI Grok Build 官方 Linux 安装脚本",
     };
     Ok((program, args, source))
 }
@@ -268,6 +348,34 @@ mod tests {
         let plan = plan(ToolKey::Antigravity, InstallKind::Install).unwrap();
         assert!(plan.program.to_ascii_lowercase().contains("powershell"));
         assert!(plan.preview.contains("antigravity.google/cli/install.ps1"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn grok_install_uses_fixed_official_windows_script_and_preview() {
+        let plan = plan(ToolKey::Grok, InstallKind::Install).unwrap();
+        assert_eq!(plan.tool_key, ToolKey::Grok);
+        assert_eq!(plan.kind, InstallKind::Install);
+        assert!(plan.args.ends_with(&[
+            "$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex".to_string()
+        ]));
+        assert!(plan.source.contains("xAI Grok Build 官方"));
+        assert!(plan.preview.contains(
+            "-Command \"$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex\""
+        ));
+        assert!(plan.source.contains("固定 stable 通道"));
+    }
+
+    #[test]
+    fn grok_update_plan_uses_the_verified_binary_without_a_shell() {
+        let plan = grok_update_plan_for(r"C:\Users\test user\.grok\bin\grok.exe");
+        assert_eq!(plan.program, r"C:\Users\test user\.grok\bin\grok.exe");
+        assert_eq!(plan.args, vec!["update"]);
+        assert_eq!(
+            plan.preview,
+            r#""C:\Users\test user\.grok\bin\grok.exe" update"#
+        );
+        assert!(plan.source.contains("来源标记与安装路径均已核验"));
     }
 
     #[cfg(target_os = "macos")]
