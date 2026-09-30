@@ -20,7 +20,9 @@ use uuid::Uuid;
 use crate::{
     db::pty_session_repo,
     models::{
-        pty_session::{PtyEvent, PtyFrontendStage, PtySession, PtySizeUpdate},
+        pty_session::{
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySizeUpdate, PtyTerminalSnapshot,
+        },
         tool::ToolKey,
     },
     platform::execution_process::{attach_pty_or_terminate, ProcessTree},
@@ -31,6 +33,8 @@ use crate::{
 const READ_CHUNK_BYTES: usize = 16 * 1024;
 const OUTPUT_HIGH_WATERMARK: usize = 192 * 1024;
 const OUTPUT_LOW_WATERMARK: usize = 64 * 1024;
+const HANDOFF_PAUSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const MAX_HANDOFF_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct PtySessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
@@ -48,18 +52,38 @@ impl Default for PtySessionManager {
 
 struct ManagedSession {
     session_id: String,
+    directory_id: i64,
+    tool_key: ToolKey,
+    working_directory: String,
+    started_at_ms: i64,
     master: Mutex<Box<dyn MasterPty + Send>>,
     last_size: Mutex<(u16, u16)>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     process_tree: Mutex<Option<ProcessTree>>,
     flow: Arc<OutputFlow>,
+    event_route: Mutex<EventRoute>,
+    pending_handoff: Mutex<Option<PendingHandoff>>,
     first_output_logged: AtomicBool,
     output_chunks: AtomicU64,
     output_bytes: AtomicU64,
     acknowledgement_calls: AtomicU64,
     last_acknowledged_sequence: AtomicU64,
     termination_requested: std::sync::atomic::AtomicBool,
+}
+
+struct EventRoute {
+    window_label: String,
+    channel: Channel<PtyEvent>,
+}
+
+struct PendingHandoff {
+    token: String,
+    source_window_label: String,
+    sequence: u64,
+    snapshot: Option<PtyTerminalSnapshot>,
+    target_window_label: Option<String>,
+    target_channel: Option<Channel<PtyEvent>>,
 }
 
 struct OutputFlow {
@@ -72,6 +96,8 @@ struct OutputFlowState {
     pending_bytes: usize,
     sent: BTreeMap<u64, usize>,
     next_sequence: u64,
+    paused: bool,
+    pause_deadline: Option<std::time::Instant>,
     closed: bool,
 }
 
@@ -85,6 +111,12 @@ impl OutputFlow {
 
     fn reserve(&self, bytes: usize) -> Option<u64> {
         let mut state = self.state.lock().ok()?;
+        while state.paused && !state.closed {
+            state = self.wait_for_resume(state).ok()?;
+        }
+        if state.closed {
+            return None;
+        }
         state.next_sequence = state.next_sequence.checked_add(1)?;
         let sequence = state.next_sequence;
         state.pending_bytes = state.pending_bytes.saturating_add(bytes);
@@ -96,16 +128,94 @@ impl OutputFlow {
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
-        while state.pending_bytes >= OUTPUT_HIGH_WATERMARK && !state.closed {
+        loop {
+            if state.closed {
+                return false;
+            }
+            if state.paused {
+                state = match self.wait_for_resume(state) {
+                    Ok(state) => state,
+                    Err(_) => return false,
+                };
+                continue;
+            }
+            if state.pending_bytes < OUTPUT_HIGH_WATERMARK {
+                return true;
+            }
             let Ok(next) = self.changed.wait(state) else {
                 return false;
             };
             state = next;
-            if state.pending_bytes <= OUTPUT_LOW_WATERMARK {
-                break;
+            if state.pending_bytes > OUTPUT_LOW_WATERMARK {
+                continue;
             }
         }
-        !state.closed
+    }
+
+    fn pause(&self) -> Result<u64> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
+        if state.closed {
+            return Err(anyhow!("PTY 会话已经结束"));
+        }
+        if state.paused {
+            return Err(anyhow!("PTY 会话正在进行其他窗口交接"));
+        }
+        state.paused = true;
+        state.pause_deadline = Some(std::time::Instant::now() + HANDOFF_PAUSE_TIMEOUT);
+        Ok(state.next_sequence)
+    }
+
+    fn is_paused_at(&self, sequence: u64) -> bool {
+        self.state
+            .lock()
+            .map(|state| {
+                state.paused
+                    && !state.closed
+                    && state.next_sequence == sequence
+                    && state
+                        .pause_deadline
+                        .is_some_and(|deadline| std::time::Instant::now() < deadline)
+            })
+            .unwrap_or(false)
+    }
+
+    fn resume(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.paused = false;
+            state.pause_deadline = None;
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait_for_resume<'a>(
+        &self,
+        mut state: std::sync::MutexGuard<'a, OutputFlowState>,
+    ) -> Result<std::sync::MutexGuard<'a, OutputFlowState>> {
+        while state.paused && !state.closed {
+            let Some(deadline) = state.pause_deadline else {
+                state = self
+                    .changed
+                    .wait(state)
+                    .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
+                continue;
+            };
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                state.paused = false;
+                state.pause_deadline = None;
+                self.changed.notify_all();
+                break;
+            }
+            let (next, _) = self
+                .changed
+                .wait_timeout(state, deadline - now)
+                .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
+            state = next;
+        }
+        Ok(state)
     }
 
     fn acknowledge(&self, sequence: u64) -> Result<()> {
@@ -147,6 +257,63 @@ impl OutputFlow {
     }
 }
 
+impl ManagedSession {
+    fn send_event(&self, event: PtyEvent) -> Result<(), String> {
+        let route = self
+            .event_route
+            .lock()
+            .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
+        route
+            .channel
+            .send(event)
+            .map_err(|error| format!("PTY 输出通道不可用：{error}"))
+    }
+
+    fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
+        let route = self
+            .event_route
+            .lock()
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        if route.window_label != window_label {
+            return Err(AppError::msg("该终端当前由另一个窗口控制"));
+        }
+        Ok(())
+    }
+
+    fn metadata(&self) -> PtySession {
+        PtySession {
+            session_id: self.session_id.clone(),
+            directory_id: self.directory_id,
+            tool_key: self.tool_key,
+            working_directory: self.working_directory.clone(),
+            state: "running".to_string(),
+            started_at_ms: self.started_at_ms,
+            ended_at_ms: None,
+            exit_code: None,
+        }
+    }
+}
+
+fn is_supported_workspace_window(window_label: &str) -> bool {
+    window_label == "main"
+        || window_label
+            .strip_prefix("terminal-")
+            .is_some_and(|suffix| !suffix.is_empty())
+}
+
+fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppError> {
+    validate_size(PtySizeUpdate {
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+    if snapshot.data.len() > MAX_HANDOFF_SNAPSHOT_BYTES {
+        return Err(AppError::msg("终端画面过大，暂时无法移动到独立窗口"));
+    }
+    Ok(())
+}
+
 impl PtySessionManager {
     pub fn create(
         &self,
@@ -156,6 +323,7 @@ impl PtySessionManager {
         tool_key: ToolKey,
         resume_session_id: Option<&str>,
         size: PtySizeUpdate,
+        window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         validate_size(size)?;
@@ -220,12 +388,21 @@ impl PtySessionManager {
         let killer = child.clone_killer();
         let session = Arc::new(ManagedSession {
             session_id: session_id.clone(),
+            directory_id,
+            tool_key,
+            working_directory: payload.directory.clone(),
+            started_at_ms: now,
             master: Mutex::new(pair.master),
             last_size: Mutex::new((size.cols, size.rows)),
             writer: Mutex::new(writer),
             killer: Mutex::new(killer),
             process_tree: Mutex::new(Some(process_tree)),
             flow: Arc::new(OutputFlow::new()),
+            event_route: Mutex::new(EventRoute {
+                window_label: window_label.to_string(),
+                channel: on_event,
+            }),
+            pending_handoff: Mutex::new(None),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -243,7 +420,7 @@ impl PtySessionManager {
             }
         }
 
-        if let Err(error) = spawn_output_reader(Arc::clone(&session), reader, on_event.clone()) {
+        if let Err(error) = spawn_output_reader(Arc::clone(&session), reader) {
             self.fail_session_start(connection, &session, error.to_string());
             return Err(AppError::msg(format!("创建 PTY 输出线程失败：{error}")));
         }
@@ -251,7 +428,6 @@ impl PtySessionManager {
             Arc::clone(&session),
             child,
             app.clone(),
-            on_event,
             self.session_map_handle(),
         ) {
             self.fail_session_start(connection, &session, error.to_string());
@@ -322,8 +498,9 @@ impl PtySessionManager {
             .ok_or_else(|| AppError::msg("PTY 会话不存在或已结束"))
     }
 
-    pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), AppError> {
+    pub fn write(&self, session_id: &str, window_label: &str, data: &[u8]) -> Result<(), AppError> {
         let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
         let mut writer = session
             .writer
             .lock()
@@ -333,9 +510,15 @@ impl PtySessionManager {
         Ok(())
     }
 
-    pub fn resize(&self, session_id: &str, size: PtySizeUpdate) -> Result<(), AppError> {
+    pub fn resize(
+        &self,
+        session_id: &str,
+        window_label: &str,
+        size: PtySizeUpdate,
+    ) -> Result<(), AppError> {
         validate_size(size)?;
         let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
         let mut last_size = session
             .last_size
             .lock()
@@ -359,7 +542,12 @@ impl PtySessionManager {
         Ok(())
     }
 
-    pub fn acknowledge(&self, session_id: &str, sequence: u64) -> Result<(), AppError> {
+    pub fn acknowledge(
+        &self,
+        session_id: &str,
+        window_label: &str,
+        sequence: u64,
+    ) -> Result<(), AppError> {
         let session = self
             .sessions
             .lock()
@@ -372,6 +560,7 @@ impl PtySessionManager {
             // left to release and is safe to ignore.
             return Ok(());
         };
+        session.ensure_owner(window_label)?;
         if let Err(error) = session.flow.acknowledge(sequence) {
             log::warn!(
                 "PTY output acknowledgement failed session_id={} sequence={} error={error}",
@@ -392,9 +581,11 @@ impl PtySessionManager {
     pub fn report_frontend_stage(
         &self,
         session_id: &str,
+        window_label: &str,
         stage: PtyFrontendStage,
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
         log::info!(
             "PTY frontend stage session_id={} stage={}",
             session.session_id,
@@ -403,8 +594,9 @@ impl PtySessionManager {
         Ok(())
     }
 
-    pub fn terminate(&self, session_id: &str) -> Result<(), AppError> {
+    pub fn terminate(&self, session_id: &str, window_label: &str) -> Result<(), AppError> {
         let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
         session
             .termination_requested
             .store(true, std::sync::atomic::Ordering::Release);
@@ -452,6 +644,197 @@ impl PtySessionManager {
                 let _ = killer.kill();
             }
         }
+        Ok(())
+    }
+
+    pub fn begin_handoff(
+        &self,
+        session_id: &str,
+        window_label: &str,
+    ) -> Result<PtyHandoff, AppError> {
+        let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
+        let mut pending = session
+            .pending_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+        if let Some(transfer) = pending.as_ref() {
+            if session.flow.is_paused_at(transfer.sequence) {
+                return Err(AppError::msg("该终端正在进行窗口交接"));
+            }
+            *pending = None;
+            session.flow.resume();
+        }
+        let sequence = session.flow.pause()?;
+        let token = Uuid::new_v4().to_string();
+        *pending = Some(PendingHandoff {
+            token: token.clone(),
+            source_window_label: window_label.to_string(),
+            sequence,
+            snapshot: None,
+            target_window_label: None,
+            target_channel: None,
+        });
+        Ok(PtyHandoff { token, sequence })
+    }
+
+    pub fn stage_handoff_snapshot(
+        &self,
+        session_id: &str,
+        window_label: &str,
+        token: &str,
+        sequence: u64,
+        snapshot: PtyTerminalSnapshot,
+    ) -> Result<(), AppError> {
+        validate_handoff_snapshot(&snapshot)?;
+        let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
+        let mut pending = session
+            .pending_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+        let transfer = pending
+            .as_mut()
+            .filter(|transfer| {
+                transfer.token == token
+                    && transfer.source_window_label == window_label
+                    && transfer.sequence == sequence
+            })
+            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
+        if !session.flow.is_paused_at(sequence) {
+            return Err(AppError::msg("终端输出已恢复，请重新发起窗口交接"));
+        }
+        transfer.snapshot = Some(snapshot);
+        Ok(())
+    }
+
+    pub fn complete_handoff(
+        &self,
+        session_id: &str,
+        target_window_label: &str,
+        token: &str,
+        on_event: Channel<PtyEvent>,
+    ) -> Result<PtySession, AppError> {
+        if !is_supported_workspace_window(target_window_label) {
+            return Err(AppError::msg("目标窗口不允许接管终端"));
+        }
+        let session = self.get(session_id)?;
+        let mut pending = session
+            .pending_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+        let transfer = pending
+            .as_mut()
+            .filter(|transfer| transfer.token == token)
+            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
+        if !session.flow.is_paused_at(transfer.sequence) {
+            return Err(AppError::msg("终端窗口交接超时，请重试"));
+        }
+        let snapshot = transfer
+            .snapshot
+            .clone()
+            .ok_or_else(|| AppError::msg("终端画面尚未准备好"))?;
+        if transfer.target_channel.is_some() {
+            return Err(AppError::msg("目标窗口已经准备接管此终端"));
+        }
+        let sequence = transfer.sequence;
+        let event = PtyEvent::Snapshot {
+            session_id: session_id.to_string(),
+            sequence,
+            data: snapshot.data,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+        };
+        on_event
+            .send(event)
+            .map_err(|error| AppError::msg(format!("新窗口终端尚未就绪：{error}")))?;
+        transfer.target_window_label = Some(target_window_label.to_string());
+        transfer.target_channel = Some(on_event);
+        Ok(session.metadata())
+    }
+
+    pub fn finalize_handoff(
+        &self,
+        session_id: &str,
+        target_window_label: &str,
+        token: &str,
+        size: PtySizeUpdate,
+    ) -> Result<PtySession, AppError> {
+        if !is_supported_workspace_window(target_window_label) {
+            return Err(AppError::msg("目标窗口不允许接管终端"));
+        }
+        validate_size(size)?;
+        let session = self.get(session_id)?;
+        let mut pending = session
+            .pending_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+        let transfer = pending
+            .as_mut()
+            .filter(|transfer| {
+                transfer.token == token
+                    && transfer.target_window_label.as_deref() == Some(target_window_label)
+            })
+            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?;
+        if !session.flow.is_paused_at(transfer.sequence) {
+            return Err(AppError::msg("终端窗口交接超时，请重试"));
+        }
+        if transfer.target_channel.is_none() {
+            return Err(AppError::msg("目标窗口尚未准备好"));
+        }
+        let mut last_size = session
+            .last_size
+            .lock()
+            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
+        if *last_size != (size.cols, size.rows) {
+            session
+                .master
+                .lock()
+                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
+                .resize(to_pty_size(size))
+                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
+            *last_size = (size.cols, size.rows);
+        }
+        drop(last_size);
+        let channel = transfer
+            .target_channel
+            .take()
+            .ok_or_else(|| AppError::msg("目标窗口尚未准备好"))?;
+        let mut route = session
+            .event_route
+            .lock()
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        if route.window_label != transfer.source_window_label {
+            return Err(AppError::msg("终端控制权已经转移"));
+        }
+        route.window_label = target_window_label.to_string();
+        route.channel = channel;
+        drop(route);
+        *pending = None;
+        session.flow.resume();
+        Ok(session.metadata())
+    }
+
+    pub fn cancel_handoff(
+        &self,
+        session_id: &str,
+        window_label: &str,
+        token: &str,
+    ) -> Result<(), AppError> {
+        let session = self.get(session_id)?;
+        session.ensure_owner(window_label)?;
+        let mut pending = session
+            .pending_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+        let Some(transfer) = pending.as_ref() else {
+            return Ok(());
+        };
+        if transfer.token != token || transfer.source_window_label != window_label {
+            return Err(AppError::msg("终端窗口交接令牌无效"));
+        }
+        *pending = None;
+        session.flow.resume();
         Ok(())
     }
 
@@ -544,7 +927,6 @@ fn stop_spawned_child(process_tree: &ProcessTree, child: &mut Box<dyn PtyChild +
 fn spawn_output_reader(
     session: Arc<ManagedSession>,
     mut reader: Box<dyn Read + Send>,
-    on_event: Channel<PtyEvent>,
 ) -> std::io::Result<()> {
     thread::Builder::new()
         .name(format!("pty-output-{}", session.session_id))
@@ -571,10 +953,10 @@ fn spawn_output_reader(
                             sequence,
                             data_base64: BASE64.encode(&buffer[..bytes_read]),
                         };
-                        if on_event.send(event).is_err() {
+                        if let Err(error) = session.send_event(event) {
                             log::warn!(
-                                "PTY output channel closed session_id={}",
-                                session.session_id
+                                "PTY output channel closed session_id={} error={error}",
+                                session.session_id,
                             );
                             session.flow.close();
                             if let Ok(tree) = session.process_tree.lock() {
@@ -641,7 +1023,6 @@ fn spawn_child_monitor(
     session: Arc<ManagedSession>,
     mut child: Box<dyn PtyChild + Send + Sync>,
     app: AppHandle,
-    on_event: Channel<PtyEvent>,
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
 ) -> std::io::Result<()> {
     thread::Builder::new()
@@ -660,7 +1041,7 @@ fn spawn_child_monitor(
                     )
                 }
                 Err(error) => {
-                    let _ = on_event.send(PtyEvent::Failed {
+                    let _ = session.send_event(PtyEvent::Failed {
                         session_id: session.session_id.clone(),
                         message: format!("等待 PTY 退出失败：{error}"),
                     });
@@ -695,7 +1076,7 @@ fn spawn_child_monitor(
                     }
                 }
             }
-            let _ = on_event.send(PtyEvent::Exited {
+            let _ = session.send_event(PtyEvent::Exited {
                 session_id: session.session_id.clone(),
                 state: state.to_string(),
                 exit_code,
@@ -772,6 +1153,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
 
     #[test]
     fn output_acknowledgement_releases_pending_capacity() {
@@ -789,6 +1171,67 @@ mod tests {
         let flow = OutputFlow::new();
         flow.reserve(10).unwrap();
         assert!(flow.acknowledge(2).is_err());
+    }
+
+    #[test]
+    fn handoff_pauses_new_output_after_a_stable_sequence_watermark() {
+        let flow = Arc::new(OutputFlow::new());
+        assert_eq!(flow.reserve(10), Some(1));
+        let watermark = flow.pause().unwrap();
+        assert_eq!(watermark, 1);
+
+        let (sender, receiver) = mpsc::channel();
+        let reader_flow = Arc::clone(&flow);
+        let reader = thread::spawn(move || sender.send(reader_flow.reserve(20)).unwrap());
+        assert!(receiver
+            .recv_timeout(std::time::Duration::from_millis(25))
+            .is_err());
+
+        flow.resume();
+        assert_eq!(
+            receiver.recv_timeout(std::time::Duration::from_secs(1)),
+            Ok(Some(2))
+        );
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn handoff_pause_expires_to_prevent_a_stalled_terminal() {
+        let flow = OutputFlow::new();
+        let watermark = flow.pause().unwrap();
+        {
+            let mut state = flow.state.lock().unwrap();
+            state.pause_deadline = Some(std::time::Instant::now());
+        }
+        assert!(!flow.is_paused_at(watermark));
+        assert_eq!(flow.reserve(5), Some(1));
+    }
+
+    #[test]
+    fn handoff_window_labels_are_restricted_to_workspace_windows() {
+        assert!(is_supported_workspace_window("main"));
+        assert!(is_supported_workspace_window("terminal-abcd-1234"));
+        assert!(!is_supported_workspace_window("settings"));
+        assert!(!is_supported_workspace_window("terminal-"));
+    }
+
+    #[test]
+    fn handoff_snapshot_is_bounded_and_requires_safe_dimensions() {
+        let valid = PtyTerminalSnapshot {
+            data: "screen".to_string(),
+            cols: 120,
+            rows: 40,
+        };
+        assert!(validate_handoff_snapshot(&valid).is_ok());
+
+        let oversized = PtyTerminalSnapshot {
+            data: "x".repeat(MAX_HANDOFF_SNAPSHOT_BYTES + 1),
+            ..valid.clone()
+        };
+        assert!(validate_handoff_snapshot(&oversized).is_err());
+
+        let invalid_dimensions = PtyTerminalSnapshot { cols: 0, ..valid };
+        assert!(validate_handoff_snapshot(&invalid_dimensions).is_err());
     }
 
     #[test]

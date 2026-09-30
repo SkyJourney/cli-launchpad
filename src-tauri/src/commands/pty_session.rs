@@ -1,9 +1,11 @@
-use tauri::{ipc::Channel, State};
+use tauri::{ipc::Channel, State, WebviewWindow};
 
 use crate::{
     db::pty_session_repo,
     models::{
-        pty_session::{PtyEvent, PtyFrontendStage, PtySession, PtySizeUpdate},
+        pty_session::{
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySizeUpdate, PtyTerminalSnapshot,
+        },
         tool::ToolKey,
     },
     services::{pty_session_service::PtySessionManager, session_service},
@@ -20,6 +22,7 @@ pub async fn create_pty_session(
     resume_session_id: Option<String>,
     size: PtySizeUpdate,
     on_event: Channel<PtyEvent>,
+    window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
     if let Some(session_id) = resume_session_id.as_deref() {
         let path = with_conn(&db, |connection| {
@@ -37,6 +40,7 @@ pub async fn create_pty_session(
             tool_key,
             resume_session_id.as_deref(),
             size,
+            window.label(),
             on_event,
         )
     })
@@ -45,45 +49,103 @@ pub async fn create_pty_session(
 #[tauri::command]
 pub fn write_pty_session(
     state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
     session_id: String,
     data: String,
 ) -> Result<(), AppError> {
-    state.write(&session_id, data.as_bytes())
+    state.write(&session_id, window.label(), data.as_bytes())
 }
 
 #[tauri::command]
 pub fn resize_pty_session(
     state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
     session_id: String,
     size: PtySizeUpdate,
 ) -> Result<(), AppError> {
-    state.resize(&session_id, size)
+    state.resize(&session_id, window.label(), size)
 }
 
 #[tauri::command]
 pub fn acknowledge_pty_output(
     state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
     session_id: String,
     sequence: u64,
 ) -> Result<(), AppError> {
-    state.acknowledge(&session_id, sequence)
+    state.acknowledge(&session_id, window.label(), sequence)
 }
 
 #[tauri::command]
 pub fn report_pty_frontend_stage(
     state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
     session_id: String,
     stage: PtyFrontendStage,
 ) -> Result<(), AppError> {
-    state.report_frontend_stage(&session_id, stage)
+    state.report_frontend_stage(&session_id, window.label(), stage)
 }
 
 #[tauri::command]
 pub fn terminate_pty_session(
     state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
     session_id: String,
 ) -> Result<(), AppError> {
-    state.terminate(&session_id)
+    state.terminate(&session_id, window.label())
+}
+
+#[tauri::command]
+pub fn begin_pty_handoff(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+) -> Result<PtyHandoff, AppError> {
+    state.begin_handoff(&session_id, window.label())
+}
+
+#[tauri::command]
+pub fn stage_pty_handoff_snapshot(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+    token: String,
+    sequence: u64,
+    snapshot: PtyTerminalSnapshot,
+) -> Result<(), AppError> {
+    state.stage_handoff_snapshot(&session_id, window.label(), &token, sequence, snapshot)
+}
+
+#[tauri::command]
+pub fn complete_pty_handoff(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+    token: String,
+    on_event: Channel<PtyEvent>,
+) -> Result<PtySession, AppError> {
+    state.complete_handoff(&session_id, window.label(), &token, on_event)
+}
+
+#[tauri::command]
+pub fn finalize_pty_handoff(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+    token: String,
+    size: PtySizeUpdate,
+) -> Result<PtySession, AppError> {
+    state.finalize_handoff(&session_id, window.label(), &token, size)
+}
+
+#[tauri::command]
+pub fn cancel_pty_handoff(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+    token: String,
+) -> Result<(), AppError> {
+    state.cancel_handoff(&session_id, window.label(), &token)
 }
 
 #[tauri::command]

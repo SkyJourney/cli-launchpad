@@ -6,14 +6,14 @@
 
 macOS/Linux 实机对齐安排在 Windows 版 M1–M4 完成之后，任务统一记录在[跨平台对齐待办](cross-platform-alignment.md)；它不阻塞 Windows 阶段推进，但属于 M5 发布门禁。
 
-| 编号 | 里程碑 | 依赖 | 验收文档 |
-| --- | --- | --- | --- |
-| M0 | 产品方向、架构边界与视觉标识 | 无 | [M0](M0-product-and-brand.md) |
-| M1 | 内置 PTY 核心闭环 | M0 | [M1](M1-pty-foundation.md) |
-| M2 | 跨项目共享终端工作台 | M1 | [M2](M2-workspace-shell.md) |
-| M3 | 全局布局保存与会话恢复 | M2 | [M3](M3-sessions-and-layouts.md) |
-| M4 | 现有能力接入与数据迁移 | M2、M3 | [M4](M4-feature-integration.md) |
-| M5 | 跨平台验收与 0.3.0 发布 | M1–M4 | [M5](M5-release-readiness.md) |
+| 编号 | 里程碑                       | 依赖   | 验收文档                         |
+| ---- | ---------------------------- | ------ | -------------------------------- |
+| M0   | 产品方向、架构边界与视觉标识 | 无     | [M0](M0-product-and-brand.md)    |
+| M1   | 内置 PTY 核心闭环            | M0     | [M1](M1-pty-foundation.md)       |
+| M2   | 跨项目共享终端工作台         | M1     | [M2](M2-workspace-shell.md)      |
+| M3   | 全局布局保存与会话恢复       | M2     | [M3](M3-sessions-and-layouts.md) |
+| M4   | 现有能力接入与数据迁移       | M2、M3 | [M4](M4-feature-integration.md)  |
+| M5   | 跨平台验收与 0.3.0 发布      | M1–M4  | [M5](M5-release-readiness.md)    |
 
 ## 验收约定
 
@@ -24,8 +24,8 @@ macOS/Linux 实机对齐安排在 Windows 版 M1–M4 完成之后，任务统�
 ## 状态
 
 - M0：已完成（生命周期与内置 PTY 产品方向已定；产品、架构、UI、路线图及后续里程碑验收条件已对齐，品牌资源通过复核）。
-- M1：进行中（后端与单终端纵向集成、审查及自动化门禁已完成；继续完成 Windows 手工验收，跨平台实机验证转由 M5 统一执行）。
-- M2：进行中（初版工作台 Windows 实机验收通过；范围已扩展为左侧项目维护、参数入口移除和跨项目多标签/分栏共享区，正在实施）。
+- M1：已完成（Windows 开发、自动化门禁和用户手工验收通过；macOS/Linux 实机对齐转由 M5 统一执行）。
+- M2：Windows 阶段已完成（用户实机验收、最终代码审查及自动门禁通过；macOS/Linux 对齐留给 M5）。
 - M3：待开始（全局混合项目布局持久化、命名预设与重启后的已结束会话恢复入口）。
 - M4：待开始。
 - M5：待开始。

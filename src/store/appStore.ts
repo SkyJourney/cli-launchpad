@@ -45,14 +45,15 @@ interface AppState {
   selectedDirectoryId: number | null;
   contextPanelOpen: boolean;
   projectDialog: ProjectDialogState;
-  ptySessionsByDirectory: Record<number, PtySession>;
+  ptySessionsById: Record<string, PtySession>;
   setView: (view: ViewName) => void;
   setThemeMode: (mode: ThemeMode) => void;
   selectDirectory: (id: number | null) => void;
   openDirectory: (id: number) => void;
   setContextPanelOpen: (open: boolean) => void;
   setProjectDialog: (dialog: ProjectDialogState) => void;
-  setPtySession: (directoryId: number, session: PtySession | null) => void;
+  upsertPtySession: (session: PtySession) => void;
+  removePtySession: (sessionId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -61,7 +62,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedDirectoryId: initialDirectoryId,
   contextPanelOpen: getStoredContextPanelOpen(),
   projectDialog: null,
-  ptySessionsByDirectory: {},
+  ptySessionsById: {},
   setView: (view) => set({ view }),
   setThemeMode: (mode) => {
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
@@ -81,11 +82,20 @@ export const useAppStore = create<AppState>((set) => ({
     set({ contextPanelOpen: open });
   },
   setProjectDialog: (dialog) => set({ projectDialog: dialog }),
-  setPtySession: (directoryId, session) =>
+  upsertPtySession: (session) =>
     set((state) => {
-      const next = { ...state.ptySessionsByDirectory };
-      if (session) next[directoryId] = session;
-      else delete next[directoryId];
-      return { ptySessionsByDirectory: next };
+      return {
+        ptySessionsById: {
+          ...state.ptySessionsById,
+          [session.sessionId]: session,
+        },
+      };
+    }),
+  removePtySession: (sessionId) =>
+    set((state) => {
+      if (!state.ptySessionsById[sessionId]) return state;
+      const next = { ...state.ptySessionsById };
+      delete next[sessionId];
+      return { ptySessionsById: next };
     }),
 }));

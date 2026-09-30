@@ -124,8 +124,27 @@ export interface PtySizeUpdate {
   pixelHeight: number;
 }
 
+export interface PtyHandoff {
+  token: string;
+  sequence: number;
+}
+
+export interface PtyTerminalSnapshot {
+  data: string;
+  cols: number;
+  rows: number;
+}
+
 export type PtyEvent =
   | { type: "output"; sessionId: string; sequence: number; dataBase64: string }
+  | {
+      type: "snapshot";
+      sessionId: string;
+      sequence: number;
+      data: string;
+      cols: number;
+      rows: number;
+    }
   | {
       type: "exited";
       sessionId: string;
@@ -360,6 +379,48 @@ export function createPtySession(
     onEvent,
     resumeSessionId,
   });
+}
+
+export function beginPtyHandoff(sessionId: string) {
+  return invoke<PtyHandoff>("begin_pty_handoff", { sessionId });
+}
+
+export function stagePtyHandoffSnapshot(
+  sessionId: string,
+  token: string,
+  sequence: number,
+  snapshot: PtyTerminalSnapshot,
+) {
+  return invoke<void>("stage_pty_handoff_snapshot", {
+    sessionId,
+    token,
+    sequence,
+    snapshot,
+  });
+}
+
+export function completePtyHandoff(
+  sessionId: string,
+  token: string,
+  onEvent: Channel<PtyEvent>,
+) {
+  return invoke<PtySession>("complete_pty_handoff", {
+    sessionId,
+    token,
+    onEvent,
+  });
+}
+
+export function finalizePtyHandoff(
+  sessionId: string,
+  token: string,
+  size: PtySizeUpdate,
+) {
+  return invoke<PtySession>("finalize_pty_handoff", { sessionId, token, size });
+}
+
+export function cancelPtyHandoff(sessionId: string, token: string) {
+  return invoke<void>("cancel_pty_handoff", { sessionId, token });
 }
 
 export function writePtySession(sessionId: string, data: string) {

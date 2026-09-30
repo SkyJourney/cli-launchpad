@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "terminal-window",
+  "description": "独立终端窗口所需的终端、事件和窗口关闭能力。",
+  "windows": ["terminal-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
+  ]
+}

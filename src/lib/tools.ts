@@ -26,25 +26,29 @@ export const TOOLS: ToolMeta[] = [
   {
     key: "claude",
     label: "Claude Code",
-    shortLabel: "C",
+    shortLabel: "CC",
     icon: ClaudeCodeIcon,
     colorPrimary: "#D97757",
   },
   {
     key: "codex",
     label: "Codex",
-    shortLabel: "X",
+    shortLabel: "CDX",
     icon: CodexIcon,
     colorPrimary: "#ffffff",
   },
   {
     key: "antigravity",
     label: "Antigravity",
-    shortLabel: "A",
+    shortLabel: "AGY",
     icon: AntigravityIcon,
     colorPrimary: "#ffffff",
   },
 ];
+
+export function getTerminalTitleLabel(toolKey: ToolKey): string {
+  return TOOLS.find((tool) => tool.key === toolKey)?.shortLabel ?? toolKey;
+}
 
 /// An empty `Record<ToolKey, string>` derived from TOOLS, so the per-tool arg
 /// maps stay in sync with the tool list.

@@ -27,6 +27,13 @@ pub enum PtyEvent {
         sequence: u64,
         data_base64: String,
     },
+    Snapshot {
+        session_id: String,
+        sequence: u64,
+        data: String,
+        cols: u16,
+        rows: u16,
+    },
     Exited {
         session_id: String,
         state: String,
@@ -36,6 +43,21 @@ pub enum PtyEvent {
         session_id: String,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyHandoff {
+    pub token: String,
+    pub sequence: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyTerminalSnapshot {
+    pub data: String,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

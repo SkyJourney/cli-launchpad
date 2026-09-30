@@ -12,6 +12,11 @@ import { Toaster } from "sonner";
 import { FolderOpen, Plus } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
+import {
+  PtyWorkspaceProvider,
+  PtyWorkspaceRegion,
+} from "./components/PtyWorkspace";
+import { StandalonePtyWindow } from "./components/StandalonePtyWindow";
 const ProjectDetailView = lazy(() =>
   import("./views/ProjectDetailView").then((module) => ({
     default: module.ProjectDetailView,
@@ -27,10 +32,33 @@ import { confirmPtyExit } from "./lib/tauri";
 import { useDirectories } from "./hooks/queries";
 
 export function App() {
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get("detachedSessionId");
+  const handoffToken = params.get("handoffToken");
+  const instanceId = params.get("instanceId");
+  if (sessionId && handoffToken && instanceId) {
+    return (
+      <StandalonePtyWindow
+        sessionId={sessionId}
+        handoffToken={handoffToken}
+        instanceId={instanceId}
+        title={params.get("detachedTitle") ?? "CLI terminal"}
+      />
+    );
+  }
+  return (
+    <PtyWorkspaceProvider>
+      <AppContent />
+    </PtyWorkspaceProvider>
+  );
+}
+
+function AppContent() {
   const { t } = useTranslation();
   const view = useAppStore((state) => state.view);
   const themeMode = useAppStore((state) => state.themeMode);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
+  const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
   const projectDialog = useAppStore((state) => state.projectDialog);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectDirectory = useAppStore((state) => state.selectDirectory);
@@ -42,9 +70,6 @@ export function App() {
   const [exitRequest, setExitRequest] = useState<number | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
-  const [mountedDirectoryIds, setMountedDirectoryIds] = useState<number[]>(
-    () => (selectedDirectoryId == null ? [] : [selectedDirectoryId]),
-  );
   useExecutionTaskEvents();
   useThemeSync();
 
@@ -90,22 +115,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (selectedDirectoryId == null) return;
-    setMountedDirectoryIds((current) =>
-      current.includes(selectedDirectoryId)
-        ? current
-        : [...current, selectedDirectoryId],
-    );
-  }, [selectedDirectoryId]);
-
-  useEffect(() => {
     if (!directories) return;
-    setMountedDirectoryIds((current) =>
-      current.filter((id) =>
-        directories.some((directory) => directory.id === id),
-      ),
-    );
-
     if (validatedDirectoryState.current) return;
     validatedDirectoryState.current = true;
     if (
@@ -150,24 +160,21 @@ export function App() {
               </button>
             </div>
           )}
-          <Suspense fallback={null}>
-            {mountedDirectoryIds.map((directoryId) => (
-              <div
-                key={directoryId}
-                className="project-workspace-view"
-                hidden={
-                  view !== "detail" || selectedDirectoryId !== directoryId
-                }
-              >
+          <div
+            className={`shared-workbench${contextPanelOpen ? " context-open" : ""}`}
+            hidden={view !== "detail"}
+          >
+            <PtyWorkspaceRegion />
+            {selectedDirectoryId != null && (
+              <Suspense fallback={null}>
                 <ProjectDetailView
-                  directoryId={directoryId}
-                  active={
-                    view === "detail" && selectedDirectoryId === directoryId
-                  }
+                  key={selectedDirectoryId}
+                  directoryId={selectedDirectoryId}
+                  active={view === "detail"}
                 />
-              </div>
-            ))}
-          </Suspense>
+              </Suspense>
+            )}
+          </div>
           {view === "executions" && <ExecutionsView />}
           {view === "settings" && <SettingsView />}
           {view === "about" && <AboutView />}

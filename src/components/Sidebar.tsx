@@ -6,6 +6,7 @@ import {
   Info,
   Monitor,
   Moon,
+  PanelRight,
   Plus,
   Pin,
   PinOff,
@@ -74,9 +75,9 @@ export function Sidebar() {
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
-  const ptySessionsByDirectory = useAppStore(
-    (state) => state.ptySessionsByDirectory,
-  );
+  const ptySessionsById = useAppStore((state) => state.ptySessionsById);
+  const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
+  const setContextPanelOpen = useAppStore((state) => state.setContextPanelOpen);
   const queryClient = useQueryClient();
   const { data: directories } = useDirectories();
   const [showThemeMenu, setShowThemeMenu] = useState(false);
@@ -172,7 +173,19 @@ export function Sidebar() {
     <aside className="sidebar">
       <div className="brand">
         <AppLogo size={32} />
-        <span>CLI Launchpad</span>
+        <span className="brand-title">CLI Launchpad</span>
+        {view === "detail" && !contextPanelOpen && (
+          <button
+            type="button"
+            className="icon-button sidebar-context-panel-button"
+            title={t("projectDetail.showContextPanel")}
+            aria-label={t("projectDetail.showContextPanel")}
+            aria-expanded={false}
+            onClick={() => setContextPanelOpen(true)}
+          >
+            <PanelRight size={16} />
+          </button>
+        )}
       </div>
 
       <section
@@ -212,13 +225,17 @@ export function Sidebar() {
           {visibleDirectories.map((directory) => {
             const selected =
               selectedDirectoryId === directory.id && view === "detail";
-            const managedSession = ptySessionsByDirectory[directory.id];
-            const projectCliSessions =
-              managedSession?.state === "running"
-                ? TOOLS.filter(
-                    (tool) => tool.key === managedSession.toolKey,
-                  ).map((tool) => ({ tool, count: 1 }))
-                : [];
+            const projectSessions = Object.values(ptySessionsById).filter(
+              (session) =>
+                session.directoryId === directory.id &&
+                session.state === "running",
+            );
+            const projectCliSessions = TOOLS.flatMap((tool) => {
+              const count = projectSessions.filter(
+                (session) => session.toolKey === tool.key,
+              ).length;
+              return count > 0 ? [{ tool, count }] : [];
+            });
             return (
               <div
                 className="project-navigation-entry"

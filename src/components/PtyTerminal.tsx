@@ -4,30 +4,38 @@ import {
   writeText as writeClipboardText,
 } from "@tauri-apps/plugin-clipboard-manager";
 import { FitAddon } from "@xterm/addon-fit";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
 import {
   acknowledgePtyOutput,
+  beginPtyHandoff,
+  cancelPtyHandoff,
+  completePtyHandoff,
   createPtySession,
+  finalizePtyHandoff,
   resizePtySession,
   reportPtyFrontendStage,
+  stagePtyHandoffSnapshot,
   terminatePtySession,
   writePtySession,
+  type PtyHandoff,
   type PtyEvent,
   type PtyFrontendStage,
   type PtySession,
   type PtySizeUpdate,
+  type PtyTerminalSnapshot,
   type ToolKey,
 } from "../lib/tauri";
-import { TOOLS } from "../lib/tools";
+import { canTerminatePtySession } from "../lib/ptySessionLifecycle";
 import "@xterm/xterm/css/xterm.css";
 
 const MAX_PTY_COLUMNS = 500;
@@ -39,19 +47,63 @@ export interface PtyTerminalHandle {
     toolKey: ToolKey,
     resumeSessionId?: string,
   ): Promise<void>;
+  closeSession(confirm?: boolean): Promise<PtySessionCloseResult>;
+  captureHandoff(): Promise<PtyHandoff>;
+  cancelHandoff(token: string): Promise<void>;
+  attachHandoff(sessionId: string, token: string): Promise<PtySession>;
 }
 
+export type PtySessionCloseResult =
+  | "closed"
+  | "terminating"
+  | "cancelled"
+  | "pending";
+
 interface PtyTerminalProps {
+  active?: boolean;
+  visible?: boolean;
+  interactive?: boolean;
+  onFocus?: () => void;
   onSessionChange?: (session: PtySession | null) => void;
 }
 
 export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
-  function PtyTerminal({ onSessionChange }, ref) {
+  function PtyTerminal(
+    {
+      active = true,
+      visible = active,
+      interactive = true,
+      onFocus,
+      onSessionChange,
+    },
+    ref,
+  ) {
     const { t } = useTranslation();
     const hostRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitRef = useRef<FitAddon | null>(null);
+    const serializeRef = useRef<SerializeAddon | null>(null);
     const sessionRef = useRef<PtySession | null>(null);
+    const interactiveRef = useRef(interactive);
+    const paneInteractiveRef = useRef(interactive);
+    const visibleRef = useRef(visible);
+    const onFocusRef = useRef(onFocus);
+    const scheduleSendSizeRef = useRef<(() => void) | null>(null);
+    const handoffInProgressRef = useRef(false);
+    const lastWrittenSequenceRef = useRef(0);
+    const sequenceWaitersRef = useRef<
+      Array<{
+        sequence: number;
+        resolve: () => void;
+        reject: (reason: Error) => void;
+        timer: number;
+      }>
+    >([]);
+    const snapshotWaiterRef = useRef<{
+      resolve: () => void;
+      reject: (reason: Error) => void;
+      timer: number;
+    } | null>(null);
     const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
     const onSessionChangeRef = useRef(onSessionChange);
     const startingRef = useRef(false);
@@ -63,12 +115,51 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     const closingSessionRef = useRef<string | null>(null);
     const [session, setSession] = useState<PtySession | null>(null);
     const [starting, setStarting] = useState(false);
-    const [closingSessionId, setClosingSessionId] = useState<string | null>(
-      null,
-    );
     const [error, setError] = useState<string | null>(null);
+    const [handoffInProgress, setHandoffInProgress] = useState(false);
+
+    interactiveRef.current = interactive && !handoffInProgressRef.current;
+    paneInteractiveRef.current = interactive;
+    visibleRef.current = visible;
+    onFocusRef.current = onFocus;
 
     onSessionChangeRef.current = onSessionChange;
+
+    const markSequenceWritten = (sequence: number) => {
+      lastWrittenSequenceRef.current = Math.max(
+        lastWrittenSequenceRef.current,
+        sequence,
+      );
+      const remaining: typeof sequenceWaitersRef.current = [];
+      for (const waiter of sequenceWaitersRef.current) {
+        if (waiter.sequence <= lastWrittenSequenceRef.current) {
+          window.clearTimeout(waiter.timer);
+          waiter.resolve();
+        } else {
+          remaining.push(waiter);
+        }
+      }
+      sequenceWaitersRef.current = remaining;
+    };
+
+    const waitForWrittenSequence = (sequence: number) => {
+      if (lastWrittenSequenceRef.current >= sequence) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          sequenceWaitersRef.current = sequenceWaitersRef.current.filter(
+            (waiter) => waiter.resolve !== resolve,
+          );
+          reject(new Error(t("pty.handoffOutputTimeout")));
+        }, 8_000);
+        sequenceWaitersRef.current.push({ sequence, resolve, reject, timer });
+      });
+    };
+
+    const setHandoffBusy = (busy: boolean) => {
+      handoffInProgressRef.current = busy;
+      interactiveRef.current = paneInteractiveRef.current && !busy;
+      setHandoffInProgress(busy);
+    };
 
     useEffect(() => {
       const host = hostRef.current;
@@ -88,10 +179,13 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         },
       });
       const fit = new FitAddon();
+      const serialize = new SerializeAddon();
       terminal.loadAddon(fit);
+      terminal.loadAddon(serialize);
       terminal.open(host);
       terminalRef.current = terminal;
       fitRef.current = fit;
+      serializeRef.current = serialize;
 
       const sendSize = () => {
         if (!host.clientWidth || !host.clientHeight) return;
@@ -99,6 +193,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           fitTerminalToPtyBounds(fit, terminal);
           const active = sessionRef.current;
           if (
+            visibleRef.current &&
             active?.state === "running" &&
             terminal.cols > 0 &&
             terminal.rows > 0
@@ -129,12 +224,16 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         cancelAnimationFrame(resizeFrame);
         resizeFrame = requestAnimationFrame(sendSize);
       });
+      scheduleSendSizeRef.current = () => {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(sendSize);
+      };
       observer.observe(host);
       sendSize();
 
       const input = terminal.onData((data) => {
         const active = sessionRef.current;
-        if (active?.state === "running") {
+        if (interactiveRef.current && active?.state === "running") {
           void writePtySession(active.sessionId, data).catch((reason) =>
             setError(String(reason)),
           );
@@ -148,6 +247,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
       const isWindows = /Windows/i.test(navigator.userAgent);
       terminal.attachCustomKeyEventHandler((event) => {
+        if (!interactiveRef.current) return false;
         if (event.type !== "keydown" || event.isComposing) return true;
 
         const key = event.key.toLowerCase();
@@ -226,13 +326,28 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
 
       return () => {
         cancelAnimationFrame(resizeFrame);
+        scheduleSendSizeRef.current = null;
         observer.disconnect();
         input.dispose();
         terminal.dispose();
         terminalRef.current = null;
         fitRef.current = null;
+        serializeRef.current = null;
+        for (const waiter of sequenceWaitersRef.current) {
+          window.clearTimeout(waiter.timer);
+          waiter.reject(new Error("PTY terminal was disposed"));
+        }
+        sequenceWaitersRef.current = [];
       };
     }, []);
+
+    useEffect(() => {
+      if (!visible) return;
+      const frame = requestAnimationFrame(() => {
+        scheduleSendSizeRef.current?.();
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [visible]);
 
     useEffect(() => {
       const terminal = terminalRef.current;
@@ -240,8 +355,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       const running = session?.state === "running";
       terminal.options.cursorBlink = running;
       terminal.options.cursorInactiveStyle = running ? "outline" : "none";
-      if (!running) terminal.blur();
-    }, [session?.state]);
+      if (running && active && interactive) terminal.focus();
+      else terminal.blur();
+    }, [active, interactive, handoffInProgress, session?.state]);
 
     const updateSession = (
       next:
@@ -267,9 +383,76 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       return true;
     };
 
+    const bindChannel = (channel: Channel<PtyEvent>) => {
+      channel.onmessage = (event) => {
+        const terminal = terminalRef.current;
+        if (!terminal) return;
+        if (event.type === "snapshot") {
+          terminal.reset();
+          terminal.resize(event.cols, event.rows);
+          terminal.write(event.data, () => {
+            markSequenceWritten(event.sequence);
+            snapshotWaiterRef.current?.resolve();
+          });
+          return;
+        }
+        handlePtyEvent(
+          event,
+          terminal,
+          updateSession,
+          setError,
+          pendingExitRef.current,
+          reportFrontendStageOnce,
+          hostRef.current,
+          (sessionId) => {
+            if (closingSessionRef.current === sessionId) {
+              closingSessionRef.current = null;
+            }
+          },
+          markSequenceWritten,
+        );
+      };
+    };
+
+    const closeSession = useCallback(
+      async (confirm = true): Promise<PtySessionCloseResult> => {
+        if (startingRef.current) return "pending";
+        const currentSession = sessionRef.current;
+        if (!currentSession || currentSession.state !== "running") {
+          return "closed";
+        }
+        if (
+          !canTerminatePtySession(
+            currentSession.state,
+            handoffInProgressRef.current,
+          )
+        ) {
+          return "cancelled";
+        }
+        if (closingSessionRef.current === currentSession.sessionId) {
+          return "terminating";
+        }
+        if (confirm && !window.confirm(t("pty.confirmClose")))
+          return "cancelled";
+
+        setError(null);
+        closingSessionRef.current = currentSession.sessionId;
+        try {
+          await terminatePtySession(currentSession.sessionId);
+          return "terminating";
+        } catch (reason) {
+          closingSessionRef.current = null;
+          setError(String(reason));
+          return "cancelled";
+        }
+      },
+      [t],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
+        closeSession,
         async startSession(directoryId, toolKey, resumeSessionId) {
           const terminal = terminalRef.current;
           if (!terminal) {
@@ -285,6 +468,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           pendingInputRef.current = [];
           lastSentSizeRef.current = null;
           reportedFrontendStagesRef.current.clear();
+          lastWrittenSequenceRef.current = 0;
           terminal.reset();
           try {
             if (fitRef.current)
@@ -292,22 +476,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             const initialSize = sizeOf(terminal);
             lastSentSizeRef.current = initialSize;
             const channel = new Channel<PtyEvent>();
-            channel.onmessage = (event) =>
-              handlePtyEvent(
-                event,
-                terminal,
-                updateSession,
-                setError,
-                pendingExitRef.current,
-                reportFrontendStageOnce,
-                hostRef.current,
-                (sessionId) => {
-                  if (closingSessionRef.current === sessionId) {
-                    closingSessionRef.current = null;
-                    setClosingSessionId(null);
-                  }
-                },
-              );
+            bindChannel(channel);
             const created = await createPtySession(
               directoryId,
               toolKey,
@@ -331,7 +500,6 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               await writePtySession(created.sessionId, startupInput);
               reportFrontendStageOnce(created.sessionId, "startupInputFlushed");
             }
-            terminal.focus();
           } catch (reason) {
             pendingInputRef.current = [];
             lastSentSizeRef.current = null;
@@ -341,52 +509,122 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             setStarting(false);
           }
         },
+        async captureHandoff() {
+          const currentSession = sessionRef.current;
+          const terminal = terminalRef.current;
+          const serialize = serializeRef.current;
+          if (
+            !currentSession ||
+            currentSession.state !== "running" ||
+            !terminal ||
+            !serialize
+          ) {
+            throw new Error(t("pty.terminalNotReady"));
+          }
+          if (handoffInProgressRef.current) {
+            throw new Error(t("pty.handoffInProgress"));
+          }
+
+          setError(null);
+          setHandoffBusy(true);
+          let handoff: PtyHandoff | null = null;
+          try {
+            handoff = await beginPtyHandoff(currentSession.sessionId);
+            await waitForWrittenSequence(handoff.sequence);
+            const snapshot: PtyTerminalSnapshot = {
+              data: serialize.serialize(),
+              cols: terminal.cols,
+              rows: terminal.rows,
+            };
+            await stagePtyHandoffSnapshot(
+              currentSession.sessionId,
+              handoff.token,
+              handoff.sequence,
+              snapshot,
+            );
+            return handoff;
+          } catch (reason) {
+            if (handoff) {
+              await cancelPtyHandoff(
+                currentSession.sessionId,
+                handoff.token,
+              ).catch(() => undefined);
+            }
+            setHandoffBusy(false);
+            setError(String(reason));
+            throw reason;
+          }
+        },
+        async cancelHandoff(token) {
+          const currentSession = sessionRef.current;
+          try {
+            if (currentSession) {
+              await cancelPtyHandoff(currentSession.sessionId, token);
+            }
+          } finally {
+            setHandoffBusy(false);
+          }
+        },
+        async attachHandoff(sessionId, token) {
+          const terminal = terminalRef.current;
+          if (!terminal) {
+            throw new Error(t("pty.terminalNotReady"));
+          }
+          setHandoffBusy(true);
+          setError(null);
+          const channel = new Channel<PtyEvent>();
+          const snapshotReady = new Promise<void>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              snapshotWaiterRef.current = null;
+              reject(new Error(t("pty.handoffSnapshotTimeout")));
+            }, 8_000);
+            snapshotWaiterRef.current = {
+              resolve: () => {
+                window.clearTimeout(timer);
+                snapshotWaiterRef.current = null;
+                resolve();
+              },
+              reject: (reason) => {
+                window.clearTimeout(timer);
+                snapshotWaiterRef.current = null;
+                reject(reason);
+              },
+              timer,
+            };
+          });
+          void snapshotReady.catch(() => undefined);
+          bindChannel(channel);
+          try {
+            await completePtyHandoff(sessionId, token, channel);
+            await snapshotReady;
+            if (hostRef.current?.clientWidth && hostRef.current.clientHeight) {
+              if (fitRef.current) {
+                fitTerminalToPtyBounds(fitRef.current, terminal);
+              }
+            }
+            const nextSize = sizeOf(terminal);
+            const finalized = await finalizePtyHandoff(
+              sessionId,
+              token,
+              nextSize,
+            );
+            lastSentSizeRef.current = nextSize;
+            updateSession(finalized);
+            setHandoffBusy(false);
+            return finalized;
+          } catch (reason) {
+            snapshotWaiterRef.current?.reject(new Error(String(reason)));
+            setHandoffBusy(false);
+            setError(String(reason));
+            throw reason;
+          }
+        },
       }),
-      [starting, t],
+      [closeSession, starting, t],
     );
-
-    const closeSession = async () => {
-      if (!session || session.state !== "running") return;
-      if (!window.confirm(t("pty.confirmClose"))) return;
-      setError(null);
-      closingSessionRef.current = session.sessionId;
-      setClosingSessionId(session.sessionId);
-      try {
-        await terminatePtySession(session.sessionId);
-      } catch (reason) {
-        closingSessionRef.current = null;
-        setClosingSessionId(null);
-        setError(String(reason));
-      }
-    };
-
-    const toolName = session
-      ? TOOLS.find((tool) => tool.key === session.toolKey)?.label
-      : null;
 
     return (
       <section className="pty-panel" aria-label={t("pty.panelLabel")}>
-        {session && (
-          <header className="pty-panel-head">
-            <div className="pty-panel-title">
-              <strong>{toolName}</strong>
-              <span className={`pty-state pty-state-${session.state}`}>
-                {t(`pty.status.${session.state}`)}
-              </span>
-            </div>
-            {session.state === "running" && (
-              <button
-                className="icon-button"
-                aria-label={t("pty.close")}
-                title={t("pty.close")}
-                disabled={closingSessionId === session.sessionId}
-                onClick={() => void closeSession()}
-              >
-                <X size={15} />
-              </button>
-            )}
-          </header>
-        )}
         <div className="pty-terminal-wrap">
           {!session && !starting && (
             <div className="pty-empty">{t("pty.empty")}</div>
@@ -395,6 +633,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           <div
             ref={hostRef}
             className={`pty-terminal-host${session?.state === "running" ? "" : " pty-terminal-idle"}`}
+            onPointerDown={() => onFocusRef.current?.()}
           />
         </div>
         {error && <p className="error pty-error">{error}</p>}
@@ -444,7 +683,9 @@ function handlePtyEvent(
   reportFrontendStage: (sessionId: string, stage: PtyFrontendStage) => boolean,
   host: HTMLDivElement | null,
   onExited: (sessionId: string) => void,
+  onOutputProcessed: (sequence: number) => void,
 ) {
+  if (event.type === "snapshot") return;
   if (event.type === "output") {
     const isFirstOutput = reportFrontendStage(
       event.sessionId,
@@ -485,9 +726,9 @@ function handlePtyEvent(
         if (isFirstOutput) {
           reportFrontendStage(event.sessionId, "xtermWriteCompleted");
         }
-        void acknowledgePtyOutput(event.sessionId, event.sequence).catch(
-          (reason) => setError(String(reason)),
-        );
+        void acknowledgePtyOutput(event.sessionId, event.sequence)
+          .then(() => onOutputProcessed(event.sequence))
+          .catch((reason) => setError(String(reason)));
       });
     } catch (reason) {
       if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
