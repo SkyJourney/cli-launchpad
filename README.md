@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/icon/v3/macos/icon-512.png" width="96" height="96" alt="CLI Launchpad 圆角正方形产品标识">
   <h1>CLI Launchpad</h1>
-  <p>面向 Claude Code、Codex 与 Antigravity 的轻量级跨平台 CLI 会话工作台；0.3.0 目标增加 Grok Build。</p>
+  <p>面向 Claude Code、Codex、Antigravity、Grok Build 与 Hermes Agent CLI 的轻量级跨平台会话工作台。</p>
   <p>
     <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4"><img src="https://img.shields.io/badge/version-0.2.4-2856d8" alt="Version 0.2.4"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
@@ -18,7 +18,7 @@
   </p>
 </div>
 
-CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。0.3.0 正在转型为以项目和内置终端会话为中心的轻量工作台，并通过独立里程碑接入 Grok Build。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
+CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。0.3.0 正在转型为以项目和内置终端会话为中心的轻量工作台，并通过独立 G1、G2 里程碑接入 Grok Build 与 Hermes Agent CLI。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
 
 ## 下载
 
@@ -254,8 +254,8 @@ src-tauri/src/platform/       平台相关启动逻辑
 ## 0.3.0 工作台目标
 
 - 在大窗口工作台中按项目导航和切换 CLI 终端。
-- 在应用内 PTY 中运行 Claude Code、Codex、Antigravity 和 Grok Build CLI。
-- 0.3.0 目标通过独立 G1 里程碑增加 Grok Build CLI（`grok`）。
+- 在应用内 PTY 中运行 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent CLI。
+- 0.3.0 通过独立 G1、G2 里程碑分别接入 Grok Build（`grok`）和 Hermes Agent（`hermes`，窗口简称 `HA`）。
 - 每个 PTY 独立归属项目和工具；CLI 对话可选关联。
 - 支持多终端标签和分栏，布局预设只记录排列方式，不拥有或终止终端会话。
 - 保留会话历史与恢复、安装更新、执行任务、配置备份和桌面能力；会话历史支持基于可重建本地 metadata 索引的项目内搜索。

@@ -1,6 +1,6 @@
 # 工作台 UI 设计
 
-0.3.0 将 CLI Launchpad 从小窗口启动器重构为大窗口优先的轻量 CLI 会话工作台。左侧维护项目，中间完整留给跨项目共享的内置终端工作区，右侧放置四个 CLI 启动按钮和当前项目的历史会话；设置、执行任务和关于作为底部图标入口。
+0.3.0 将 CLI Launchpad 从小窗口启动器重构为大窗口优先的轻量 CLI 会话工作台。左侧维护项目，中间完整留给跨项目共享的内置终端工作区，右侧放置五个 CLI 启动按钮和当前项目的历史会话；设置、执行任务和关于作为底部图标入口。五项目标 CLI 为 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent；Grok 由 G1、Hermes 由 G2 接入。
 
 ## 设计原则
 
@@ -11,7 +11,7 @@
 - **终端可单独成窗：** 任一窗格标题可拖到其他窗格，或从右键菜单打开为独立窗口；独立窗口只显示一个终端。关闭独立窗口后，同一会话返回主工作区当前聚焦窗格。
 - **中央区纯粹：** 中央区域不显示项目标题或路径；分栏直接围绕 PTY 会话，不放项目管理或 CLI 启动表单。
 - **布局只做呈现：** 标签和分栏布局引用现存 PTY，不负责拥有、迁移或终止它们。
-- **轻量工作台：** 仅围绕 Claude Code、Codex、Antigravity、Grok Build 四项 CLI；不扩展为通用 IDE、Agent 编排器或 worktree 管理器。
+- **轻量工作台：** 仅围绕 Claude Code、Codex、Antigravity、Grok Build、Hermes Agent 五项 CLI；不扩展为通用 IDE、Agent 编排器或 worktree 管理器。
 - **不配置启动参数：** 普通 CLI 使用默认启动行为；会话恢复只由应用附加 CLI 所需的内部恢复参数。
 - **辅助能力不丢失：** 会话历史、版本更新、任务日志、备份和托盘仍可从工作台访问。
 
@@ -59,7 +59,7 @@ flowchart LR
 ## 终端工作区
 
 - 所有项目的 PTY 会话共享中央工作区，不因项目选择而过滤或替换其他项目的会话。
-- 每个窗格的标题栏显示该窗格关联会话的项目名、CLI 简称、序号和运行状态；会话切换项与其 PTY 终端在同一窗格内。默认标题为 `项目名-CC-01`、`项目名-CDX-01`、`项目名-AGY-01`；G1 接入后 Grok Build 使用 `项目名-GB-01`。序号按项目和 CLI 全局递增，独立窗口中的会话同样参与计数；简称只用于终端标题，其他界面保留完整 CLI 名称。
+- 每个窗格的标题栏显示该窗格关联会话的项目名、CLI 简称、序号和运行状态；会话切换项与其 PTY 终端在同一窗格内。默认标题为 `项目名-CC-01`、`项目名-CDX-01`、`项目名-AGY-01`；G1 接入后 Grok Build 使用 `项目名-GB-01`，G2 接入后 Hermes Agent 使用 `项目名-HA-01`。序号按项目和 CLI 全局递增，独立窗口中的会话同样参与计数；简称只用于终端标题，其他界面保留完整 CLI 名称。
 - 从活动标题或堆叠会话列表拖到另一窗格会移动同一 PTY，目标窗格随即激活，源窗格清空后仍保留；终端右键菜单可选择在独立窗口打开。独立窗口只承载一个 PTY，不允许分栏，标题栏提供“返回工作区”。
 - 关闭独立窗口时，将终端还回主工作区当前聚焦窗格；若跨 Tauri 窗口的标题拖放可用，拖回目标窗格直接落入该窗格，否则用“返回工作区”回收至当前聚焦窗格。两条路径都不终止或复制 PTY。
 - 独立窗口加载当前 xterm 屏幕快照后接管输入、尺寸调整和 PTY 输出。交接失败时保留原窗口和原 PTY；交接完成前不销毁源终端视图。
@@ -93,23 +93,24 @@ PTY 的 slot 实例 ID、PTY 会话 ID、CLI 对话 ID 和布局 ID 使用不同
 
 ## CLI 对话历史与恢复
 
-右侧项目上下文区按当前选中项目合并显示四项 CLI 的历史对话，并按最近活动时间排序。普通历史列表按 CLI 独立分页；列表项显示 CLI 品牌图标。会话搜索只匹配当前项目的可重建本地索引，字段与历史列表的实际显示标题对齐，并覆盖 CLI 提供的 summary、受限首条用户消息或 preview；不扫描完整对话正文。项目激活和手动刷新时有界更新 SQLite FTS5 trigram 索引，查询仅访问索引，1–2 个字符由短词回退处理。最多返回 2,000 条并仅暂存在前端内存；界面按 10 条显示，清除搜索或切换项目时释放搜索结果。索引仅写入独立缓存库，不保存项目路径；会话别名仍来自业务 SQLite。点击历史对话时，先验证会话归属当前项目，再调用对应 CLI 的原生恢复机制，在中央工作区当前聚焦窗格创建独立 PTY 会话项；不会把历史正文复制进应用数据库。
+右侧项目上下文区按当前选中项目合并显示五项 CLI 的历史对话，并按最近活动时间排序。普通历史列表按 CLI 独立分页；列表项显示 CLI 品牌图标。会话搜索只匹配当前项目的可重建本地索引，字段与历史列表的实际显示标题对齐，并覆盖 CLI 提供的 summary、受限首条用户消息或 preview；不扫描完整对话正文。项目激活和手动刷新时有界更新 SQLite FTS5 trigram 索引，查询仅访问索引，1–2 个字符由短词回退处理。最多返回 2,000 条并仅暂存在前端内存；界面按 10 条显示，清除搜索或切换项目时释放搜索结果。索引仅写入独立缓存库，不保存项目路径；会话别名仍来自业务 SQLite。点击历史对话时，先验证会话归属当前项目，再调用对应 CLI 的原生恢复机制，在中央工作区当前聚焦窗格创建独立 PTY 会话项；不会把历史正文复制进应用数据库。
 
-| CLI         | 会话事实来源                                      | 恢复方式                       |
-| ----------- | ------------------------------------------------- | ------------------------------ |
-| Claude Code | `sessions-index.json` 与项目目录内 JSONL          | `claude --resume <session-id>` |
-| Codex       | App Server `thread/list`，失败时回退本地 sessions | `codex resume <session-id>`    |
-| Antigravity | 本机摘要 SQLite 与 conversation metadata          | `agy --conversation=<uuid>`    |
-| Grok Build  | `~/.grok/sessions/` 下官方会话 summary metadata   | `grok --resume <session-id>`   |
+| CLI          | 会话事实来源                                           | 恢复方式                                        |
+| ------------ | ------------------------------------------------------ | ----------------------------------------------- |
+| Claude Code  | `sessions-index.json` 与项目目录内 JSONL               | `claude --resume <session-id>`                  |
+| Codex        | App Server `thread/list`，失败时回退本地 sessions      | `codex resume <session-id>`                     |
+| Antigravity  | 本机摘要 SQLite 与 conversation metadata               | `agy --conversation=<uuid>`                     |
+| Grok Build   | `~/.grok/sessions/` 下官方会话 summary metadata        | `grok --resume <session-id>`                    |
+| Hermes Agent | 当前有效 Hermes home 对应 Profile 的 `state.db` 元数据 | `hermes --resume <session-id> --no-restore-cwd` |
 
-历史按项目过滤，标题优先使用 CLI 原生摘要或名称；用户别名继续以 `tool_key + session_id` 稀疏保存。Grok 只读取 summary metadata，不读取 transcript 或 `updates.jsonl`；也不调用会合并远端结果的原生 `grok sessions search`。PTY 与 CLI 对话未能可靠匹配时，终端仍正常工作，只是不显示对话关联信息。
+历史按项目过滤，标题优先使用 CLI 原生摘要或名称；用户别名继续以 `tool_key + session_id` 稀疏保存。Grok 只读取 summary metadata，不读取 transcript 或 `updates.jsonl`；也不调用会合并远端结果的原生 `grok sessions search`。Hermes 遵循当前有效 home/Profile 解析结果，只读一个 `state.db` 中 `source=cli` 的会话元数据，不枚举或切换 Profile，不读取消息平台会话、全文 FTS 或完整正文；恢复参数固定当前项目目录。PTY 与 CLI 对话未能可靠匹配时，终端仍正常工作，只是不显示对话关联信息。
 
 ## 上下文面板
 
 右侧项目上下文区可折叠，当前负责启动目标和历史恢复，不承担中央终端布局：
 
 - 当前目标项目名称、打开目录和面板折叠操作。
-- Claude Code、Codex、Antigravity、Grok Build 四枚紧凑的独立启动按钮，检测为未安装时禁用。
+- Claude Code、Codex、Antigravity、Grok Build、Hermes Agent 五枚紧凑的独立启动按钮，检测为未安装时禁用。
 - 按最近活动时间合并排列的目标项目历史会话及内置恢复操作。
 - 历史区提供项目内搜索框；查询完整的本地标题/摘要元数据，结果分页显示，并随项目切换清空查询和结果。
 
@@ -144,4 +145,4 @@ Windows、macOS、Linux 安装包、应用内 Logo 和 README 使用统一圆角
 
 ## 0.2.x 迁移说明
 
-现有卡片主页、项目详情、参数编辑、设置、执行任务和关于视图是 0.2.x 基线设计。0.3.0 移除独立项目管理页和自定义参数编辑，将项目维护放入左侧弹窗，将四个内置 CLI 启动按钮与合并后的历史恢复放入右侧上下文区；任务、设置和关于改为侧栏底部图标入口。普通 CLI 启动不保留外部终端入口或命令预览；PTY 启动失败时直接显示错误。
+现有卡片主页、项目详情、参数编辑、设置、执行任务和关于视图是 0.2.x 基线设计。0.3.0 移除独立项目管理页和自定义参数编辑，将项目维护放入左侧弹窗，将五个内置 CLI 启动按钮与合并后的历史恢复放入右侧上下文区；任务、设置和关于改为侧栏底部图标入口。普通 CLI 启动不保留外部终端入口或命令预览；PTY 启动失败时直接显示错误。

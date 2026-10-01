@@ -2,8 +2,8 @@
 name: 参考资料
 description: 官方 CLI 文档调研摘要和外部依据
 type: reference
-last_updated: 2026-09-30
-commit: b01a015
+last_updated: 2026-10-01
+commit: 28a75bb
 ---
 
 # 参考资料
@@ -14,12 +14,14 @@ commit: b01a015
 - Codex CLI：官方命令为 `codex`。官方安装方式为 `npm i -g @openai/codex`，升级命令为 `npm i -g @openai/codex@latest`。
 - Antigravity CLI：官方命令为 `agy`。Windows 官方安装方式为 PowerShell：`irm https://antigravity.google/cli/install.ps1 | iex`。
 - Grok Build CLI：官方命令为 `grok`，Windows 官方安装器为 `https://x.ai/cli/install.ps1`；版本检查、安装来源和本地会话 metadata 的边界见 [G1 调研与验收文档](../../docs/milestones/grok-build-cli.md)。
+- Hermes Agent CLI：官方命令为 `hermes`，Windows 官方安装器为 `https://hermes-agent.nousresearch.com/install.ps1`。官方更新按源码安装或包管理渠道区分；`hermes update --check` 检查版本，`hermes update --plan` 预览影响。会话元数据位于当前有效 Hermes home 对应 Profile 的 SQLite `state.db`；G2 的过滤、恢复参数及不接入范围见 [G2 调研与验收文档](../../docs/milestones/hermes-agent-cli.md)。
+- Hermes 官方资料：[安装](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/installation.md)、[更新](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/updating.md)、[CLI](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/cli.md)、[会话管理](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md)、[会话存储](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md)。
 
 **See Also：** [[project_progress.md#已完成功能]]
 
 ## 使用方式
 
-这些资料用于维护 `docs/tooling-and-installation.md` 及已实现的四项 CLI 检测、安装和更新清单。若官方文档变化，应先更新 docs，再调整内置命令计划。
+这些资料用于维护 `docs/tooling-and-installation.md` 及五项目标 CLI 的检测、安装和更新清单；Hermes 的实装进度以 G2 阶段验收为准。若官方文档变化，应先更新 docs，再调整内置命令计划。
 
 ## 发布工具官方资料
 

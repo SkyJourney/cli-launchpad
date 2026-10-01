@@ -11,5 +11,12 @@ The SVG files in this directory are sourced from LobeHub's
 
 Source: https://github.com/lobehub/lobe-icons
 
+Hermes Agent's white-background avatar is sourced from LobeHub's
+`@lobehub/icons-static-avatar` package version `1.15.0`:
+
+- `hermesagent.webp` from `avatars/hermesagent.webp`
+
+Source: https://unpkg.com/@lobehub/icons-static-avatar@1.15.0/avatars/hermesagent.webp
+
 These assets are distributed under the MIT License. See `LICENSE.txt` in this
 directory.

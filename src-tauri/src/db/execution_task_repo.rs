@@ -244,6 +244,7 @@ mod tests {
             args: vec!["update".to_string()],
             source: "test".to_string(),
             preview: "C:\\codex.exe update".to_string(),
+            effects: None,
         }
     }
 

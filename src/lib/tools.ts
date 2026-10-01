@@ -1,73 +1,51 @@
-import type { ComponentType } from "react";
-import antigravityIcon from "../assets/icons/brands/antigravity.svg";
-import claudeCodeIcon from "../assets/icons/brands/claude-code.svg";
-import codexIcon from "../assets/icons/brands/codex.svg";
-import grokIcon from "../assets/icons/brands/grok.svg";
-import { createSvgAssetIcon } from "../components/SvgAssetIcon";
+import { antigravityAdapter } from "./cliAdapters/antigravity";
+import { claudeAdapter } from "./cliAdapters/claude";
+import { codexAdapter } from "./cliAdapters/codex";
+import { grokAdapter } from "./cliAdapters/grok";
+import { hermesAdapter } from "./cliAdapters/hermes";
+import type { CliAdapter } from "./cliAdapters/types";
 import type { LatestVersion, ToolKey } from "./tauri";
 
-type IconComponent = ComponentType<{ size?: number | string }>;
+export type ToolMeta = CliAdapter;
 
-const AntigravityIcon = createSvgAssetIcon(antigravityIcon);
-const ClaudeCodeIcon = createSvgAssetIcon(claudeCodeIcon);
-const CodexIcon = createSvgAssetIcon(codexIcon);
-const GrokIcon = createSvgAssetIcon(grokIcon, true);
+/// Display order across the app: Claude, Codex, Antigravity, Grok Build, Hermes Agent.
+const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = {
+  claude: claudeAdapter,
+  codex: codexAdapter,
+  antigravity: antigravityAdapter,
+  grok: grokAdapter,
+  hermes: hermesAdapter,
+};
 
-export interface ToolMeta {
-  key: ToolKey;
-  label: string;
-  shortLabel: string;
-  icon: IconComponent;
-  /// Display accent color when the tool has a verified brand asset.
-  colorPrimary?: string;
-  /// Whether installation and update actions are available in Settings.
-  settingsActions: boolean;
-}
-
-/// Display order across the app: Claude, Codex, Antigravity, Grok Build.
 export const TOOLS: ToolMeta[] = [
-  {
-    key: "claude",
-    label: "Claude Code",
-    shortLabel: "CC",
-    icon: ClaudeCodeIcon,
-    colorPrimary: "#D97757",
-    settingsActions: true,
-  },
-  {
-    key: "codex",
-    label: "Codex",
-    shortLabel: "CDX",
-    icon: CodexIcon,
-    colorPrimary: "#ffffff",
-    settingsActions: true,
-  },
-  {
-    key: "antigravity",
-    label: "Antigravity",
-    shortLabel: "AGY",
-    icon: AntigravityIcon,
-    colorPrimary: "#ffffff",
-    settingsActions: true,
-  },
-  {
-    key: "grok",
-    label: "Grok Build",
-    shortLabel: "GB",
-    icon: GrokIcon,
-    settingsActions: true,
-  },
+  CLI_ADAPTERS.claude,
+  CLI_ADAPTERS.codex,
+  CLI_ADAPTERS.antigravity,
+  CLI_ADAPTERS.grok,
+  CLI_ADAPTERS.hermes,
 ];
 
+export function getCliAdapter(toolKey: ToolKey): CliAdapter {
+  return CLI_ADAPTERS[toolKey];
+}
+
 export function getTerminalTitleLabel(toolKey: ToolKey): string {
-  return TOOLS.find((tool) => tool.key === toolKey)?.shortLabel ?? toolKey;
+  return getCliAdapter(toolKey).shortLabel;
 }
 
 export function isManagedUpdateAllowed(
   toolKey: ToolKey,
   latest: Pick<LatestVersion, "managedUpdateAllowed"> | undefined,
 ): boolean {
-  return toolKey !== "grok" || latest?.managedUpdateAllowed === true;
+  return getCliAdapter(toolKey).isManagedUpdateAllowed(latest);
+}
+
+export function getLatestUpdateAvailability(
+  toolKey: ToolKey,
+  currentVersion: string | null,
+  latest: LatestVersion | undefined,
+): boolean | null {
+  return getCliAdapter(toolKey).getUpdateAvailability(currentVersion, latest);
 }
 
 /// An empty `Record<ToolKey, string>` derived from TOOLS, so the per-tool arg

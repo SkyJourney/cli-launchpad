@@ -5,7 +5,8 @@ import type { ToolKey } from "./tauri";
 export const qk = {
   directories: () => ["directories"],
   cliStatus: () => ["cli-status"],
-  latestVersions: () => ["latest-versions"],
+  latestVersions: () => ["latest-version"],
+  latestVersion: (toolKey: ToolKey) => ["latest-version", toolKey],
   backups: () => ["backups"],
   launchHistory: () => ["launch-history"],
   cacheStats: () => ["cache-stats"],

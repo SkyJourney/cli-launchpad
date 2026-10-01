@@ -140,6 +140,8 @@ export const zh = {
     availableTitle: "已安装，可直接启动",
     missing: "未检测到",
     missingTitle: "未检测到，前往设置安装",
+    unknown: "检测失败",
+    unknownTitle: "检测失败，刷新后重试；当前不会启动或覆盖安装",
   },
   time: {
     neverStarted: "未曾启动",
@@ -250,8 +252,23 @@ export const zh = {
     latest: "最新：",
     unavailableWithError: "无法获取（{{error}}）",
     unknownRefresh: "未知；点击右上角重新检测",
+    hermesRefreshPrompt: "手动刷新以检查 main 分支",
+    hermesUpToDate: "已与 main 分支同步",
+    hermesUpdateBehind: "落后 main 分支 {{count}} 个提交",
+    hermesUpdateBehindUnknown: "main 分支有更新（落后提交数未知）",
+    hermesUpdateStatus: "更新状态：",
+    hermesInstallEffectsHeading: "官方安装器将执行以下操作：",
+    hermesInstallEffectRuntime:
+      "在当前用户下安装 Hermes CLI、受管 Python/Node 运行时及依赖。",
+    hermesInstallEffectData:
+      "在 %LOCALAPPDATA%\\hermes 准备源码、配置和用户数据目录；已有数据会由官方安装器处理。",
+    hermesInstallEffectPath:
+      "将 %LOCALAPPDATA%\\hermes\\bin 加入当前用户 PATH（如尚未配置）。",
+    hermesInstallEffectNetwork:
+      "从 Hermes 官方安装地址下载脚本，并联网获取源码与所需运行时、依赖。",
     checking: "查询中…",
     cachedSuffix: "（缓存）",
+    refreshFailedSuffix: "；本次查询失败：{{error}}",
     unavailable: "无法获取",
     managementComingSoon: "安装和更新入口将在后续接入。",
     prepareFailed: "操作准备失败：{{error}}",

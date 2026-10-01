@@ -1,6 +1,6 @@
 # G2：Hermes Agent CLI 接入
 
-**状态：** G2.1 已完成，G2.2 实施中，G2.3–G2.5 待推进
+**状态：** 实现与自动化门禁收尾中；Windows CLI 实机验收待确认
 **归属版本：** 0.3.0
 **依赖：** M3、G1
 **后续依赖：** M4、M5
@@ -15,7 +15,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 
 - Hermes Agent 的官方 CLI 主命令是 `hermes`，当前版本可用 `hermes --version` 查询。普通工作台启动在所选项目目录运行 `hermes`，不添加用户自定义参数。
 - Windows CLI 官方安装器为 `https://hermes-agent.nousresearch.com/install.ps1`。G2 使用官方 PowerShell 调用和 `-NonInteractive -Branch main -SkipBrowser -SkipComputerUse`，不触发交互式 setup/Gateway 配置，也不安装工作台不提供的可选浏览器和 computer-use 工具。源码安装默认将 CLI 入口放在 `%LOCALAPPDATA%\hermes\bin\`，安装代码位于 `%LOCALAPPDATA%\hermes\hermes-agent\`，用户数据默认放在 `%LOCALAPPDATA%\hermes\`；安装器仍会准备 uv/Python、PM 管理的运行时与基础依赖、launcher、数据目录并修改用户 PATH。确认页必须呈现命令来源及这些环境影响。[官方安装说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/installation.md) [Windows 安装参数](https://github.com/NousResearch/hermes-agent/blob/main/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/windows-native.md)
-- 官方更新流程依安装归属而异：源码受管安装使用 `hermes update`；`hermes update --check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，不能承诺零文件写入；`hermes update --plan` 是只读计划，会列出安装类型及跨 Profile 的运行服务、监督器和重启方式。`hermes update --install-id` 可补充检查来源身份与路径。MSIX、Microsoft Store 等包管理安装由所属渠道更新。`hermes update` 会拉取源码、准备依赖，并可能处理多个 Profile 和运行中的 Gateway；Launchpad 必须先核实安装归属、展示计划及影响，不能对包管理或来源不明的安装直接执行更新。[官方更新说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/updating.md)
+- 官方更新流程依安装归属而异：源码受管安装使用 `hermes update`；`hermes update --check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，不能承诺零文件写入；`hermes update --plan` 可用于了解安装类型及服务影响；`hermes update --install-id` 可辅助识别来源。MSIX、Microsoft Store 等包管理安装由所属渠道更新。`hermes update` 会拉取源码、准备依赖，并可能处理多个 Profile 和运行中的 Gateway。经过范围确认，Launchpad 只在状态查询阶段核实托管更新资格；用户确认更新后只执行完整路径的 `hermes update`，不额外展示计划或应用层预检，后续语义交由 Hermes CLI。[官方更新说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/updating.md)
 - 会话使用 Hermes home 中每 Profile 独立的 SQLite `state.db`。Windows 默认 home 为 `%LOCALAPPDATA%\hermes\`，显式 `HERMES_HOME` 与 Hermes 自身的活动 Profile 解析规则可能将当前 home 指向其他单一 Profile；`sessions` 表包含 `source`、`title`、`cwd`、`git_repo_root` 等字段，`messages` 表保存完整正文。官方 `hermes sessions list` 提供人类可读列表及 `--workspace` 过滤；当前官方文档未描述稳定的机器可读列表格式，因此不解析其表格文本。[官方会话存储说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md) [官方会话命令说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md)
 - G2 采用只读、有界的 SQLite 元数据读取：遵循当前有效 `HERMES_HOME`/Hermes 活动 Profile 解析结果，只打开一个 Profile 的 `state.db`；不枚举、管理或切换 Profile。仅纳入 `source=cli` 的交互式 CLI 会话，以 `git_repo_root` 或 `cwd` 规范化匹配当前项目；不读 Hermes FTS 索引，不扫描完整会话。可读取与历史卡片一致的短预览，但必须设置严格长度上限并纳入现有可重建搜索索引。
 - 指定会话恢复使用 `hermes --resume <validated-session-id> --no-restore-cwd`。会话 ID 必须来自已读取并再次验证归属的记录；`--no-restore-cwd` 保证 Hermes 不把 PTY 从用户所选项目切换到历史记录中的其他目录。[官方恢复参数说明](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md)
@@ -86,6 +86,14 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - Windows 实机按检测、安装计划、更新计划、PTY 启动、项目内历史、短预览搜索、别名恢复、布局/独立窗口和 CLI 退出逐项记录。除非用户明确要改动真实 Hermes 环境，不在验收中直接执行其真实安装或更新。
 
 **最终门禁：** G2.1–G2.5 的验收条件均有结果；失败或跳过项逐项记录；全部必需门禁通过且 Windows 手工验收确认后，方可关闭 G2 并进入 M4。
+
+### 实施与门禁记录
+
+- Hermes 能力已接入统一 Rust/前端 CLI 适配器注册表；适配器缺省能力、单项 panic/任务异常和单一历史源错误均按 CLI 隔离降级，不中断应用启动、其他 CLI 状态查询、索引或 PTY 生命周期。
+- Hermes 历史读取只读打开当前 home/Profile 的单个 `state.db`，限量扫描 `source=cli` 的记录并验证项目归属；短预览和扫描均有上限，缺失数据库返回空结果，锁定/损坏/无效 Profile 等错误保留旧索引并标记不完整。
+- 自动化审查与门禁结果：2026-10-02，Rust 212 项测试通过、`cargo check` 通过、前端 59 项测试通过、TypeScript 检查及 Vite 生产构建通过、格式和差异检查通过。生产构建仍报告已有的大型 bundle 提示；Rust 仍报告一个 macOS 专用字段在 Windows 构建未使用的警告。
+- 适配器安全回归包含 panic 转成单 CLI 错误、Hermes 无效 Profile 拒绝回退、数据库只读、项目隔离、缺失数据库、可选 schema 字段及超量扫描标记不完整。
+- 未验证：真实 Hermes 安装与更新；Windows Hermes TUI 输入/resize/退出、真实 Profile 数据、历史搜索/恢复、布局和独立窗口的手工验收。这些不由单元测试代替，Windows 实机检查完成前 G2 状态保持待用户验收。
 
 ## 测试覆盖要求
 

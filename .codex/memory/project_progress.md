@@ -2,8 +2,8 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-09-30
-commit: ddca86f
+last_updated: 2026-10-01
+commit: 28a75bb
 ---
 
 # 项目进度
@@ -81,7 +81,7 @@ commit: ddca86f
 - 正式跨设备分发达到规模后，评估 Apple Developer Program，并补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
 - 设计主业务数据库在启动前已损坏时的维护启动模式或恢复专用界面。
-- 后续评估 Linux 启动辅助；不扩大四项 CLI 产品范围。
+- 后续评估 Linux 启动辅助；不超出 0.3.0 已确认的五项目标 CLI 范围。
 
 ## G1.4 会话搜索索引
 
@@ -95,8 +95,16 @@ commit: ddca86f
 - G1 各阶段代码审查、修复复审、Rust 与前端最终门禁记录见 [G1 里程碑文档](../../docs/milestones/grok-build-cli.md)；用户已确认 G1.4 Windows 搜索验收通过。
 - 未实际执行 Grok 安装或更新命令，避免更改本机环境；macOS/Linux 真机检测、安装、PTY 与会话恢复仍按 M5 清单验证。
 
+## G2 Hermes Agent CLI 接入
+
+- 用户已确认在 M3 与 M4 之间插入 G2；官方 CLI、Windows 源码安装与更新所有权、当前有效 Hermes home 的会话 metadata 和恢复边界已调研并形成独立里程碑文档。
+- G2 范围是在 Windows 接入本地 `hermes` CLI，窗口简称 `HA`；不接入 Hermes Desktop、Gateway、消息平台、远程服务或 Profile 管理。Hermes 已进入完整 CLI 适配器注册：命令/平台计划、版本与更新语义、恢复参数、历史元数据、会话 ID 校验及前端 icon/display behavior 均由适配器声明，公共服务负责并行查询、缓存、执行任务、PTY 生命周期和统一检索。
+- Hermes 历史只读读取当前有效 home/Profile 的一个 `state.db`；按 `source=cli` 和项目归属过滤，限制扫描行数、路径/标题及短预览，并在无效 Profile、锁定或损坏数据源时按来源隔离降级。适配器 panic 和任务异常转为单 CLI unknown/error，不影响其他 CLI 或应用生命周期。
+- 2026-10-02 自动门禁：Rust 212 项测试、`cargo check`、前端 59 项测试、TypeScript 检查、Vite 生产构建、格式和差异检查通过。真实 Hermes 安装/更新及 Windows TUI、历史恢复与独立窗口实机验收未执行，关闭 G2 前仍需记录用户手工验收；M4 依赖 G2 验收，macOS/Linux 对齐由 M5 负责。
+- 文档入口：[G2 Hermes Agent CLI 里程碑](../../docs/milestones/hermes-agent-cli.md)。
+
 ## See Also
 
-- [[decisions.md#只聚焦四项核心-CLI]]
+- [[decisions.md#0.3.0-目标范围为五项-CLI]]
 - [[decisions.md#启动使用完整-CLI-路径与平台分层候选]]
 - [[reference.md#官方-CLI-资料]]

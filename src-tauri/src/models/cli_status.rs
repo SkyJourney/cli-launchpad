@@ -9,6 +9,8 @@ pub enum CliAvailability {
     Available,
     /// Not found anywhere we checked.
     Missing,
+    /// Detection failed. Do not offer installation or launch based on this result.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

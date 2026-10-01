@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Download, LoaderCircle, RefreshCw, Save, Upload } from "lucide-react";
 import clsx from "clsx";
@@ -17,9 +22,13 @@ import {
   useExecutionReconciliations,
   useExecutionTasks,
 } from "../hooks/useExecutionTasks";
-import { formatUtcDateTime, hasUpdate } from "../lib/format";
+import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
-import { isManagedUpdateAllowed, TOOLS } from "../lib/tools";
+import {
+  getLatestUpdateAvailability,
+  isManagedUpdateAllowed,
+  TOOLS,
+} from "../lib/tools";
 import {
   clearCache,
   clearLaunchHistory,
@@ -27,7 +36,7 @@ import {
   detectCliStatus,
   exportConfigToPath,
   exportDiagnosticsToPath,
-  fetchLatestVersions,
+  fetchLatestVersion,
   getCacheStats,
   getCloseBehavior,
   getInstallPlan,
@@ -62,6 +71,7 @@ interface PendingAction {
 export function SettingsView() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const isWindows = /Windows/i.test(navigator.userAgent);
   const cliStatus = useCliStatus(true);
   const executionTasks = useExecutionTasks();
   const executionReconciliations = useExecutionReconciliations();
@@ -72,15 +82,19 @@ export function SettingsView() {
   );
   const statusByTool = indexByTool(cliStatus.data);
 
-  const latest = useQuery({
-    queryKey: qk.latestVersions(),
-    queryFn: () => fetchLatestVersions(true, true),
-    staleTime: 1000 * 60 * 30,
-    refetchOnMount: "always",
+  const latestQueries = useQueries({
+    queries: TOOLS.map((tool) => ({
+      queryKey: qk.latestVersion(tool.key),
+      queryFn: () => fetchLatestVersion(tool.key, true),
+      staleTime: 1000 * 60 * 30,
+      refetchOnMount: "always" as const,
+    })),
   });
-  const latestByTool = new Map(
-    latest.data?.map((entry) => [entry.toolKey, entry]),
+  const latestQueryByTool = new Map<ToolKey, (typeof latestQueries)[number]>();
+  TOOLS.forEach((tool, index) =>
+    latestQueryByTool.set(tool.key, latestQueries[index]),
   );
+  const latestIsFetching = latestQueries.some((query) => query.isFetching);
 
   const closeBehavior = useQuery({
     queryKey: qk.closeBehavior(),
@@ -96,6 +110,9 @@ export function SettingsView() {
     Partial<Record<ToolKey, PendingAction>>
   >({});
   const planningToolKeysRef = useRef(new Set<ToolKey>());
+  const [planningToolKeys, setPlanningToolKeys] = useState<
+    ReadonlySet<ToolKey>
+  >(new Set());
   const creatingToolKeysRef = useRef(new Set<ToolKey>());
   const [creatingToolKeys, setCreatingToolKeys] = useState<
     ReadonlySet<ToolKey>
@@ -110,6 +127,7 @@ export function SettingsView() {
     codex: createRef<HTMLDivElement>(),
     antigravity: createRef<HTMLDivElement>(),
     grok: createRef<HTMLDivElement>(),
+    hermes: createRef<HTMLDivElement>(),
   }).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
@@ -159,10 +177,12 @@ export function SettingsView() {
         queryKey: qk.cliStatus(),
         queryFn: () => detectCliStatus(true),
       }),
-      queryClient.fetchQuery({
-        queryKey: qk.latestVersions(),
-        queryFn: () => fetchLatestVersions(true, true),
-      }),
+      ...TOOLS.map((tool) =>
+        queryClient.fetchQuery({
+          queryKey: qk.latestVersion(tool.key),
+          queryFn: () => fetchLatestVersion(tool.key, true),
+        }),
+      ),
     ]);
     await queryClient.invalidateQueries({ queryKey: qk.cacheStats() });
   };
@@ -227,6 +247,7 @@ export function SettingsView() {
     }
     clearActionError(toolKey);
     planningToolKeysRef.current.add(toolKey);
+    setPlanningToolKeys(new Set(planningToolKeysRef.current));
     try {
       const plan = await getInstallPlan(toolKey, kind);
       setPendingByTool((current) => ({
@@ -240,6 +261,7 @@ export function SettingsView() {
       }));
     } finally {
       planningToolKeysRef.current.delete(toolKey);
+      setPlanningToolKeys(new Set(planningToolKeysRef.current));
     }
   };
 
@@ -294,12 +316,12 @@ export function SettingsView() {
           onClick={() => {
             void refreshDetectedVersions();
           }}
-          disabled={cliStatus.isFetching || latest.isFetching}
+          disabled={cliStatus.isFetching || latestIsFetching}
         >
           <RefreshCw
             size={15}
             className={clsx({
-              spinning: cliStatus.isFetching || latest.isFetching,
+              spinning: cliStatus.isFetching || latestIsFetching,
             })}
           />
         </button>
@@ -314,19 +336,39 @@ export function SettingsView() {
         )}
         {TOOLS.map((tool) => {
           const status = statusByTool[tool.key];
-          const availability = status?.status ?? "missing";
-          const latestEntry = latestByTool.get(tool.key);
+          const availability = status?.status ?? "unknown";
+          const latestQuery = latestQueryByTool.get(tool.key);
+          const latestEntry = latestQuery?.data;
           const latestVersion = latestEntry?.latest ?? null;
-          const versionsRefreshing = cliStatus.isFetching || latest.isFetching;
-          const updatable = versionsRefreshing
-            ? null
-            : hasUpdate(status?.version ?? null, latestVersion);
+          const updatable = getLatestUpdateAvailability(
+            tool.key,
+            status?.version ?? null,
+            latestEntry,
+          );
+          const latestRefreshError =
+            latestEntry?.error ??
+            (latestQuery?.isError ? String(latestQuery.error) : null);
+          const latestIsCached = Boolean(
+            latestEntry?.fromCache ||
+            (latestEntry && (latestQuery?.isFetching || latestQuery?.isError)),
+          );
+          const latestStatusAnnotation = [
+            latestIsCached ? t("settings.cachedSuffix") : "",
+            latestRefreshError
+              ? t("settings.refreshFailedSuffix", {
+                  error: latestRefreshError,
+                })
+              : "",
+          ].join("");
           const isMissing = availability === "missing";
-          const updateAvailable = updatable === true;
+          const updateAvailable =
+            availability === "available" && updatable === true;
+          const actionsAvailable =
+            tool.settingsActions && tool.canManageSettings(isWindows);
           const canInstall =
-            tool.settingsActions && !cliStatus.isFetching && isMissing;
+            actionsAvailable && !cliStatus.isFetching && isMissing;
           const canUpdate =
-            tool.settingsActions &&
+            actionsAvailable &&
             updateAvailable &&
             isManagedUpdateAllowed(tool.key, latestEntry);
           const activeTask = activeTaskByTool.get(tool.key);
@@ -335,7 +377,9 @@ export function SettingsView() {
           const busyKind = activeTask?.kind ?? reconciliationKind;
           const actionKind = isMissing ? "install" : "update";
           const pendingAction = pendingByTool[tool.key];
+          const branchUpdateStatus = tool.latestStatusKind === "branch-update";
           const isCreatingTask = creatingToolKeys.has(tool.key);
+          const isPlanning = planningToolKeys.has(tool.key);
           const actionError = actionErrors[tool.key];
 
           return (
@@ -367,8 +411,8 @@ export function SettingsView() {
                   >
                     <button
                       onClick={() => void startAction(tool.key, actionKind)}
-                      disabled={busyKind != null}
-                      aria-busy={busyKind != null}
+                      disabled={busyKind != null || isPlanning}
+                      aria-busy={busyKind != null || isPlanning}
                       className={clsx(
                         "primary-button cli-status-action-button",
                         {
@@ -381,23 +425,27 @@ export function SettingsView() {
                           ? t("settings.taskActiveTitle")
                           : isReconciling
                             ? t("settings.refreshingVersionTitle")
-                            : undefined
+                            : isPlanning
+                              ? t("settings.preparing")
+                              : undefined
                       }
                     >
-                      {busyKind ? (
+                      {busyKind || isPlanning ? (
                         <LoaderCircle size={14} className="spinning" />
                       ) : (
                         <Download size={14} />
                       )}
                       {isReconciling
                         ? t("settings.refreshingVersion")
-                        : activeTask
-                          ? activeTask.kind === "install"
-                            ? t("settings.installing")
-                            : t("settings.updating")
-                          : isMissing
-                            ? t("settings.install")
-                            : t("settings.update")}
+                        : isPlanning
+                          ? t("settings.preparing")
+                          : activeTask
+                            ? activeTask.kind === "install"
+                              ? t("settings.installing")
+                              : t("settings.updating")
+                            : isMissing
+                              ? t("settings.install")
+                              : t("settings.update")}
                     </button>
                     {pendingAction && (
                       <AnchoredPopover
@@ -446,28 +494,22 @@ export function SettingsView() {
                         <code className="readonly-args">
                           {pendingAction.plan.preview}
                         </code>
-                        {tool.key === "grok" &&
-                          pendingAction.kind === "install" && (
+                        {pendingAction.kind === "install" &&
+                          tool.installEffects && (
                             <div className="cli-install-effects">
                               <p className="muted">
-                                {t("settings.grokInstallEffectsHeading")}
+                                {t(tool.installEffects.headingKey)}
                               </p>
                               <ul>
-                                <li>{t("settings.grokInstallEffectPath")}</li>
-                                <li>
-                                  {t("settings.grokInstallEffectChannel")}
-                                </li>
-                                <li>{t("settings.grokInstallEffectFiles")}</li>
-                                <li>
-                                  {t("settings.grokInstallEffectPathEnv")}
-                                </li>
-                                <li>
-                                  {t("settings.grokInstallEffectNetwork")}
-                                </li>
+                                {tool.installEffects.effectKeys.map((key) => (
+                                  <li key={key}>{t(key)}</li>
+                                ))}
                               </ul>
                             </div>
                           )}
-                        <p className="muted">{t("settings.commandNotice")}</p>
+                        {tool.showCommandNotice(pendingAction.kind) && (
+                          <p className="muted">{t("settings.commandNotice")}</p>
+                        )}
                         {actionError && (
                           <p className="error">
                             {t("settings.executeFailed", {
@@ -499,32 +541,50 @@ export function SettingsView() {
                           : t("settings.unknownRefresh")))}
                 </span>
                 <span>
-                  {t("settings.latest")}
-                  {latest.isFetching
+                  {branchUpdateStatus
+                    ? t("settings.hermesUpdateStatus")
+                    : t("settings.latest")}
+                  {latestQuery?.isFetching && !latestEntry
                     ? t("settings.checking")
-                    : latestVersion
-                      ? `${latestVersion}${latestEntry?.fromCache ? t("settings.cachedSuffix") : ""}`
-                      : latestEntry?.error
-                        ? t("settings.unavailableWithError", {
-                            error: latestEntry.error,
-                          })
-                        : t("settings.unavailable")}
+                    : branchUpdateStatus
+                      ? latestEntry?.updateAvailable === true
+                        ? latestEntry.commitsBehind == null
+                          ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
+                          : `${t("settings.hermesUpdateBehind", {
+                              count: latestEntry.commitsBehind,
+                            })}${latestStatusAnnotation}`
+                        : latestEntry?.updateAvailable === false
+                          ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
+                          : availability === "missing"
+                            ? "—"
+                            : latestRefreshError
+                              ? t("settings.unavailableWithError", {
+                                  error: latestRefreshError,
+                                })
+                              : t("settings.hermesRefreshPrompt")
+                      : latestVersion
+                        ? `${latestVersion}${latestStatusAnnotation}`
+                        : latestRefreshError
+                          ? t("settings.unavailableWithError", {
+                              error: latestRefreshError,
+                            })
+                          : t("settings.unavailable")}
                 </span>
               </div>
 
-              {!tool.settingsActions && (
+              {!actionsAvailable && (
                 <p className="muted cli-action-message">
                   {t("settings.managementComingSoon")}
                 </p>
               )}
 
-              {tool.key === "grok" &&
+              {tool.showManagementMessage &&
                 availability === "available" &&
-                !latest.isFetching &&
-                !latestEntry?.managedUpdateAllowed && (
+                !latestQuery?.isFetching &&
+                !latestEntry?.managedUpdateAllowed &&
+                latestEntry?.managementMessage && (
                   <p className="muted cli-action-message">
-                    {latestEntry?.managementMessage ??
-                      t("settings.grokUpdateSourceUnknown")}
+                    {latestEntry.managementMessage}
                   </p>
                 )}
 

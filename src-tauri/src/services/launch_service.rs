@@ -7,12 +7,12 @@ use crate::db::{app_setting_repo, directory_repo, launch_history_repo, tool_repo
 use crate::models::launch_history::LaunchAction;
 use crate::models::terminal::TerminalEnvironment;
 use crate::models::tool::ToolKey;
-use crate::platform::detect;
 #[cfg(target_os = "macos")]
 use crate::platform::terminal_launch::MACOS_COMMAND_DOCUMENT_PLACEHOLDER;
 use crate::platform::terminal_launch::{
     build_launch_plan, preview_plan, ComposedCommand, LaunchCandidate, LaunchPayload, LaunchPlan,
 };
+use crate::services::cli_adapters;
 use crate::services::storage_service::StoragePaths;
 
 #[cfg(windows)]
@@ -67,7 +67,7 @@ pub fn resume(
 ) -> Result<()> {
     let result = (|| {
         let mut payload = resolve_payload(conn, directory_id, tool_key)?;
-        apply_resume(&mut payload, tool_key, session_id);
+        apply_resume(&mut payload, tool_key, session_id)?;
         let preference = app_setting_repo::get_launch_target(conn)?;
         let launched = build_and_spawn(payload, environment, &preference, storage)?;
         directory_repo::touch_last_used(conn, directory_id)?;
@@ -225,27 +225,10 @@ fn record_and_log_result(
     }
 }
 
-fn apply_resume(payload: &mut LaunchPayload, tool_key: ToolKey, session_id: &str) {
-    match tool_key {
-        ToolKey::Claude => {
-            payload.tool_args.push("--resume".to_string());
-            payload.tool_args.push(session_id.to_string());
-        }
-        ToolKey::Codex => {
-            let mut args = vec!["resume".to_string(), session_id.to_string()];
-            args.extend(std::mem::take(&mut payload.tool_args));
-            payload.tool_args = args;
-        }
-        ToolKey::Antigravity => {
-            payload
-                .tool_args
-                .push(format!("--conversation={session_id}"));
-        }
-        ToolKey::Grok => {
-            payload.tool_args.push("--resume".to_string());
-            payload.tool_args.push(session_id.to_string());
-        }
-    }
+fn apply_resume(payload: &mut LaunchPayload, tool_key: ToolKey, session_id: &str) -> Result<()> {
+    payload.tool_args =
+        cli_adapters::resume_args(tool_key, session_id, std::mem::take(&mut payload.tool_args))?;
+    Ok(())
 }
 
 pub(crate) fn resolve_resume_payload(
@@ -255,7 +238,7 @@ pub(crate) fn resolve_resume_payload(
     session_id: &str,
 ) -> Result<LaunchPayload> {
     let mut payload = resolve_payload(conn, directory_id, tool_key)?;
-    apply_resume(&mut payload, tool_key, session_id);
+    apply_resume(&mut payload, tool_key, session_id)?;
     Ok(payload)
 }
 
@@ -288,7 +271,8 @@ fn resolve_payload_with(
 }
 
 fn resolve_tool_executable(tool_key: ToolKey) -> Result<String> {
-    detect::resolve_executable_path(tool_key.command_candidates())
+    cli_adapters::installed_path(cli_adapters::get(tool_key))
+        .map(|path| path.display().to_string())
         .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))
 }
 
@@ -355,6 +339,14 @@ mod tests {
                 ToolKey::Grok,
                 vec!["--resume".to_string(), "session-1".to_string()],
             ),
+            (
+                ToolKey::Hermes,
+                vec![
+                    "--resume".to_string(),
+                    "session-1".to_string(),
+                    "--no-restore-cwd".to_string(),
+                ],
+            ),
         ];
 
         for (tool_key, expected) in cases {
@@ -363,7 +355,7 @@ mod tests {
                 tool_executable: "cli".to_string(),
                 tool_args: Vec::new(),
             };
-            apply_resume(&mut payload, tool_key, "session-1");
+            apply_resume(&mut payload, tool_key, "session-1").unwrap();
             assert_eq!(payload.tool_args, expected);
         }
     }

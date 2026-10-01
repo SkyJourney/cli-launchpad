@@ -11,10 +11,10 @@ use crate::db::execution_task_repo;
 use crate::models::execution::{
     ExecutionLogChunk, ExecutionStatus, ExecutionStream, ExecutionTask,
 };
-use crate::models::install::{InstallKind, InstallPlan};
+use crate::models::install::InstallPlan;
 use crate::models::tool::ToolKey;
 use crate::platform::execution_process::ProcessTree;
-use crate::services::install_service;
+use crate::services::cli_adapters;
 use crate::{AppError, Db};
 
 pub const TASK_UPDATED_EVENT: &str = "execution-task-updated";
@@ -172,31 +172,32 @@ async fn run_task(
     }
     append_system_log(&app, &id, "任务已启动。\n");
 
-    if plan.tool_key == ToolKey::Grok && plan.kind == InstallKind::Update {
-        append_system_log(&app, &id, "正在后台校验 Grok Build 更新来源。\n");
-        let executable = plan.program.clone();
-        let verification = tokio::task::spawn_blocking(move || {
-            let path = std::path::Path::new(&executable);
-            let check = crate::services::version_service::inspect_grok_update_check(path)?;
-            crate::services::version_service::validate_grok_native_update_source(
-                path,
-                check.installer.as_deref(),
-            )
-        });
+    let preflight = match cli_adapters::execution_preflight_message(&plan) {
+        Ok(preflight) => preflight,
+        Err(error) => {
+            finish_failed(&app, &id, error);
+            return;
+        }
+    };
+    if let Some(message) = preflight {
+        append_system_log(&app, &id, &format!("{message}\n"));
+        let validation_plan = plan.clone();
+        let verification =
+            tokio::task::spawn_blocking(move || cli_adapters::validate_execution(&validation_plan));
         tokio::select! {
             biased;
             _ = &mut cancel => {
-                finish_cancelled(&app, &id, "用户在 Grok 更新来源校验期间终止了任务".to_string());
+                finish_cancelled(&app, &id, "用户在执行前校验期间终止了任务".to_string());
                 return;
             }
             result = verification => match result {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    finish_failed(&app, &id, format!("Grok Build 更新来源校验失败：{error}"));
+                    finish_failed(&app, &id, format!("CLI 执行前校验失败：{error}"));
                     return;
                 }
                 Err(error) => {
-                    finish_failed(&app, &id, format!("Grok Build 更新来源校验任务异常：{error}"));
+                    finish_failed(&app, &id, format!("CLI 执行前校验任务异常：{error}"));
                     return;
                 }
             }
@@ -211,7 +212,13 @@ async fn run_task(
         }
     };
 
-    let mut command = install_service::build_command(&plan);
+    let mut command = match cli_adapters::prepare_command(&plan) {
+        Ok(command) => command,
+        Err(error) => {
+            finish_failed(&app, &id, error.to_string());
+            return;
+        }
+    };
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

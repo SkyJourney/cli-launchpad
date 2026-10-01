@@ -39,6 +39,9 @@ pub struct InstallPlan {
     pub source: String,
     /// Human-readable command preview shown before execution.
     pub preview: String,
+    /// Optional read-only details that explain the effect of an operation.
+    #[serde(default)]
+    pub effects: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -46,6 +49,12 @@ pub struct InstallPlan {
 pub struct LatestVersion {
     pub tool_key: ToolKey,
     pub latest: Option<String>,
+    /// Branch-based update state for tools without a semantic latest version.
+    #[serde(default)]
+    pub update_available: Option<bool>,
+    /// Number of upstream commits behind the configured branch, when known.
+    #[serde(default)]
+    pub commits_behind: Option<u32>,
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
@@ -72,5 +81,7 @@ mod tests {
 
         assert!(!cached.managed_update_allowed);
         assert_eq!(cached.management_message, None);
+        assert_eq!(cached.update_available, None);
+        assert_eq!(cached.commits_behind, None);
     }
 }

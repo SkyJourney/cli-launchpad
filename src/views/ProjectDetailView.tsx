@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
@@ -69,6 +69,9 @@ export function ProjectDetailView({
   const [sessionSearch, setSessionSearch] = useState("");
   const [debouncedSessionSearch, setDebouncedSessionSearch] = useState("");
   const [visibleSearchCount, setVisibleSearchCount] = useState(10);
+  const [sessionQueriesByTool, setSessionQueriesByTool] = useState<
+    Partial<Record<ToolKey, ProjectSessionQuerySnapshot>>
+  >({});
   const [previousDirectoryId, setPreviousDirectoryId] = useState<number | null>(
     null,
   );
@@ -88,26 +91,16 @@ export function ProjectDetailView({
   const projectChanged = previousDirectoryId !== directoryId;
   const normalizedSessionSearch = sessionSearch.trim();
   const searchingSessions = normalizedSessionSearch.length > 0;
-  const claudeSessions = useProjectSessions(
-    directoryId,
-    active && !searchingSessions,
-    "claude",
+  const handleSessionQueryChange = useCallback(
+    (toolKey: ToolKey, query: ProjectSessionQuerySnapshot) => {
+      setSessionQueriesByTool((current) => ({ ...current, [toolKey]: query }));
+    },
+    [],
   );
-  const codexSessions = useProjectSessions(
-    directoryId,
-    active && !searchingSessions,
-    "codex",
-  );
-  const antigravitySessions = useProjectSessions(
-    directoryId,
-    active && !searchingSessions,
-    "antigravity",
-  );
-  const grokSessions = useProjectSessions(
-    directoryId,
-    active && !searchingSessions,
-    "grok",
-  );
+  const sessionQueries = TOOLS.flatMap((tool) => {
+    const query = sessionQueriesByTool[tool.key];
+    return query?.directoryId === directoryId ? [query] : [];
+  });
   const searchIndexQuery = useQuery({
     queryKey: qk.sessionSearchIndex(directoryId),
     queryFn: () => refreshSessionSearchIndex(directoryId as number),
@@ -142,12 +135,6 @@ export function ProjectDetailView({
     staleTime: Infinity,
     gcTime: 0,
   });
-  const sessionQueries = [
-    claudeSessions,
-    codexSessions,
-    antigravitySessions,
-    grokSessions,
-  ] as const;
   const regularSessionItems = sessionQueries
     .flatMap((query) => query.data?.pages.flatMap((page) => page.items) ?? [])
     .sort(
@@ -177,7 +164,8 @@ export function ProjectDetailView({
     : regularSessionItems;
   const sessionsLoading = searchingSessions
     ? !searchReady || searchIndexQuery.isLoading || sessionSearchQuery.isLoading
-    : regularSessionsLoading;
+    : regularSessionsLoading ||
+      (active && sessionQueries.length < TOOLS.length);
   const sessionsFetching =
     regularSessionsFetching ||
     searchIndexQuery.isFetching ||
@@ -369,6 +357,15 @@ export function ProjectDetailView({
       aria-label={t("projectDetail.context")}
       aria-hidden={!contextPanelOpen}
     >
+      {TOOLS.map((tool) => (
+        <ProjectSessionQuery
+          key={tool.key}
+          directoryId={directoryId}
+          enabled={active && !searchingSessions}
+          toolKey={tool.key}
+          onChange={handleSessionQueryChange}
+        />
+      ))}
       <header className="project-context-header">
         <div>
           <h2>{t("projectDetail.context")}</h2>
@@ -416,7 +413,7 @@ export function ProjectDetailView({
             aria-label={t("projectDetail.cliLaunchers")}
           >
             {TOOLS.map((tool) => {
-              const status = statusByTool[tool.key]?.status ?? "missing";
+              const status = statusByTool[tool.key]?.status ?? "unknown";
               const available = status === "available";
               const ToolIcon = tool.icon;
               return (
@@ -427,7 +424,9 @@ export function ProjectDetailView({
                   title={t(
                     available
                       ? "cliStatus.availableTitle"
-                      : "cliStatus.missingTitle",
+                      : status === "unknown"
+                        ? "cliStatus.unknownTitle"
+                        : "cliStatus.missingTitle",
                   )}
                   aria-label={t("projectDetail.launchTool", {
                     tool: tool.label,
@@ -692,4 +691,59 @@ function useProjectSessions(
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: enabled && directoryId != null,
   });
+}
+
+type ProjectSessionQuerySnapshot = Pick<
+  ReturnType<typeof useProjectSessions>,
+  | "data"
+  | "error"
+  | "isError"
+  | "isLoading"
+  | "isFetching"
+  | "hasNextPage"
+  | "isFetchingNextPage"
+  | "isFetchNextPageError"
+  | "fetchNextPage"
+> & { directoryId: number | null };
+
+function ProjectSessionQuery({
+  directoryId,
+  enabled,
+  toolKey,
+  onChange,
+}: {
+  directoryId: number | null;
+  enabled: boolean;
+  toolKey: ToolKey;
+  onChange: (toolKey: ToolKey, query: ProjectSessionQuerySnapshot) => void;
+}) {
+  const query = useProjectSessions(directoryId, enabled, toolKey);
+  useEffect(() => {
+    onChange(toolKey, {
+      directoryId,
+      data: query.data,
+      error: query.error,
+      isError: query.isError,
+      isLoading: query.isLoading,
+      isFetching: query.isFetching,
+      hasNextPage: query.hasNextPage,
+      isFetchingNextPage: query.isFetchingNextPage,
+      isFetchNextPageError: query.isFetchNextPageError,
+      fetchNextPage: query.fetchNextPage,
+    });
+  }, [
+    onChange,
+    directoryId,
+    query.data,
+    query.error,
+    query.fetchNextPage,
+    query.hasNextPage,
+    query.isError,
+    query.isFetchNextPageError,
+    query.isFetching,
+    query.isFetchingNextPage,
+    query.isLoading,
+    toolKey,
+  ]);
+  return null;
 }

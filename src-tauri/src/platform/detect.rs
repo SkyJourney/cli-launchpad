@@ -54,6 +54,13 @@ pub async fn which(command: &str) -> Option<PathBuf> {
 /// already resolved by detection; scripts use their Windows host explicitly so
 /// no shell lookup or current-directory execution is involved.
 pub async fn probe_version(path: &std::path::Path) -> Result<String, String> {
+    probe_version_with_env(path, &[]).await
+}
+
+pub(crate) async fn probe_version_with_env(
+    path: &std::path::Path,
+    environment: &[(String, std::ffi::OsString)],
+) -> Result<String, String> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -84,6 +91,9 @@ pub async fn probe_version(path: &std::path::Path) -> Result<String, String> {
             process
         }
     };
+    for (key, value) in environment {
+        process.env(key.as_str(), value);
+    }
     process.kill_on_drop(true);
     #[cfg(windows)]
     process.creation_flags(CREATE_NO_WINDOW);
@@ -187,13 +197,20 @@ fn pick_executable(stdout: &str) -> Option<String> {
 /// PATH first, then known per-user install dirs. Shared by the launch path so
 /// "available in detection" and "launchable" stay consistent.
 pub fn resolve_executable_path(candidates: &[&str]) -> Option<String> {
+    resolve_executable_path_with_dirs(candidates, &[])
+}
+
+pub fn resolve_executable_path_with_dirs(
+    candidates: &[&str],
+    additional_dirs: &[PathBuf],
+) -> Option<String> {
     for command in candidates {
         if let Some(path) = which_path_sync(command) {
             return Some(path);
         }
     }
     for command in candidates {
-        if let Some(path) = find_in_known_dirs(command) {
+        if let Some(path) = find_in_known_dirs_with(command, additional_dirs) {
             return Some(path.display().to_string());
         }
     }
@@ -203,8 +220,11 @@ pub fn resolve_executable_path(candidates: &[&str]) -> Option<String> {
 /// Look for an executable in known per-user install directories that may be
 /// absent from the current process PATH (npm global, WinGet links, ~/.local/bin).
 /// Used only to distinguish "installed but not on PATH" from "missing".
-pub fn find_in_known_dirs(command: &str) -> Option<PathBuf> {
-    for dir in candidate_dirs() {
+pub fn find_in_known_dirs_with(command: &str, additional_dirs: &[PathBuf]) -> Option<PathBuf> {
+    for dir in candidate_dirs()
+        .into_iter()
+        .chain(additional_dirs.iter().cloned())
+    {
         #[cfg(not(windows))]
         {
             let candidate = dir.join(command);
@@ -237,19 +257,8 @@ fn candidate_dirs() -> Vec<PathBuf> {
                     .join("WinGet")
                     .join("Links"),
             );
-            dirs.push(PathBuf::from(&local).join("agy").join("bin"));
-            dirs.push(
-                PathBuf::from(&local)
-                    .join("Programs")
-                    .join("OpenAI")
-                    .join("Codex")
-                    .join("bin"),
-            );
         }
-        dirs.extend(windows_user_install_dirs(
-            std::env::var_os("USERPROFILE"),
-            std::env::var_os("GROK_BIN_DIR"),
-        ));
+        dirs.extend(windows_user_install_dirs(std::env::var_os("USERPROFILE")));
     }
 
     // `/usr/local/bin`, Volta and nvm all follow the same layout on Linux
@@ -268,17 +277,10 @@ fn candidate_dirs() -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn windows_user_install_dirs(
-    user_profile: Option<std::ffi::OsString>,
-    grok_bin_dir: Option<std::ffi::OsString>,
-) -> Vec<PathBuf> {
+fn windows_user_install_dirs(user_profile: Option<std::ffi::OsString>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(grok_bin_dir) = grok_bin_dir {
-        dirs.push(PathBuf::from(grok_bin_dir));
-    }
     if let Some(user_profile) = user_profile {
         let profile = PathBuf::from(user_profile);
-        dirs.push(profile.join(".grok").join("bin"));
         dirs.push(profile.join(".local").join("bin"));
     }
     dirs
@@ -307,6 +309,7 @@ fn nvm_bin_dirs(home: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{first_output_line, pick_executable};
+    use crate::services::cli_adapters::hermes::version::HermesVersionProbeHome;
 
     #[test]
     fn prefers_cmd_over_extensionless_shim() {
@@ -334,19 +337,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hermes_version_probe_config_disables_passive_update_checks_and_cleans_up() {
+        let home = HermesVersionProbeHome::create().unwrap();
+        let path = home.path().to_path_buf();
+        let config = std::fs::read_to_string(path.join("config.yaml")).unwrap();
+
+        assert_eq!(config, "updates:\n  check: false\n");
+        drop(home);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hermes_version_probe_passes_isolated_home_to_cli() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hermes");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nif grep -Fq 'check: false' \"$HERMES_HOME/config.yaml\"; then echo 'Hermes Agent test'; else exit 7; fi\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let version =
+            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
+                .await
+                .unwrap();
+        assert_eq!(version, "Hermes Agent test");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn hermes_version_probe_passes_isolated_home_to_cli() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hermes.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\nfindstr /C:\"check: false\" \"%HERMES_HOME%\\config.yaml\" >nul\r\nif errorlevel 1 exit /b 7\r\necho Hermes Agent test\r\n",
+        )
+        .unwrap();
+
+        let version =
+            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
+                .await
+                .unwrap();
+        assert_eq!(version, "Hermes Agent test");
+    }
+
     #[cfg(windows)]
     #[test]
-    fn known_windows_install_dirs_include_grok_defaults_and_override() {
+    fn known_windows_install_dirs_include_user_local_bin() {
         use std::ffi::OsString;
         use std::path::PathBuf;
 
-        let dirs = super::windows_user_install_dirs(
-            Some(OsString::from(r"C:\Users\tester")),
-            Some(OsString::from(r"D:\custom\grok")),
-        );
-        assert_eq!(dirs[0], PathBuf::from(r"D:\custom\grok"));
-        assert_eq!(dirs[1], PathBuf::from(r"C:\Users\tester\.grok\bin"));
-        assert_eq!(dirs[2], PathBuf::from(r"C:\Users\tester\.local\bin"));
+        let dirs = super::windows_user_install_dirs(Some(OsString::from(r"C:\Users\tester")));
+        assert_eq!(dirs, vec![PathBuf::from(r"C:\Users\tester\.local\bin")]);
     }
 
     #[cfg(unix)]

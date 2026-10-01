@@ -39,6 +39,7 @@ import {
   applyPendingPtyExit,
   canTerminatePtySession,
 } from "../lib/ptySessionLifecycle";
+import { getCliAdapter } from "../lib/tools";
 import "@xterm/xterm/css/xterm.css";
 
 const MAX_PTY_COLUMNS = 500;
@@ -298,29 +299,22 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         const altV =
           event.altKey && !event.ctrlKey && !event.metaKey && key === "v";
         if (active?.state === "running") {
-          if (active.toolKey === "claude" && isWindows && altV) {
+          const pasteBehavior = getCliAdapter(active.toolKey).terminalPaste;
+          if (pasteBehavior.windowsAltV === "escape-v" && isWindows && altV) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u001bv").catch((reason) =>
               setError(String(reason)),
             );
             return false;
           }
-          if (
-            (active.toolKey === "codex" ||
-              (active.toolKey === "claude" && !isWindows)) &&
-            controlV
-          ) {
+          if (pasteBehavior.controlV === "control-v" && controlV) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u0016").catch((reason) =>
               setError(String(reason)),
             );
             return false;
           }
-          if (
-            controlV &&
-            ((active.toolKey === "claude" && isWindows) ||
-              active.toolKey === "antigravity")
-          ) {
+          if (pasteBehavior.controlV === "clipboard" && controlV) {
             return pasteTextFromClipboard();
           }
         }

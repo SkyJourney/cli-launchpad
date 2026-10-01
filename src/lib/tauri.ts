@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type ToolKey = "antigravity" | "codex" | "claude" | "grok";
+export type ToolKey = "antigravity" | "codex" | "claude" | "grok" | "hermes";
 
 export type WorkspaceLayoutNode =
   | {
@@ -281,6 +281,7 @@ export interface InstallPlan {
   args: string[];
   source: string;
   preview: string;
+  effects: string | null;
 }
 
 export type ExecutionStatus =
@@ -325,6 +326,8 @@ export interface ExecutionTaskDetail {
 export interface LatestVersion {
   toolKey: ToolKey;
   latest: string | null;
+  updateAvailable: boolean | null;
+  commitsBehind: number | null;
   error: string | null;
   fromCache: boolean;
   managedUpdateAllowed: boolean;
@@ -363,7 +366,7 @@ export interface CacheStats {
   newestEntryAtMs: number | null;
 }
 
-export type CliAvailability = "available" | "missing";
+export type CliAvailability = "available" | "missing" | "unknown";
 
 export interface CliStatus {
   toolKey: ToolKey;
@@ -443,10 +446,10 @@ export function clearLaunchHistory() {
 }
 
 // Version & install/update
-export function fetchLatestVersions(force = false, refreshGrok = false) {
-  return invoke<LatestVersion[]>("fetch_latest_versions", {
+export function fetchLatestVersion(toolKey: ToolKey, force = false) {
+  return invoke<LatestVersion>("fetch_latest_version", {
+    toolKey,
     force,
-    refreshGrok,
   });
 }
 

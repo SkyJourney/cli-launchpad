@@ -7,6 +7,7 @@ describe("terminal title CLI labels", () => {
     ["codex", "CDX"],
     ["antigravity", "AGY"],
     ["grok", "GB"],
+    ["hermes", "HA"],
   ] as const)("uses %s as %s", (toolKey, expectedLabel) => {
     expect(getTerminalTitleLabel(toolKey)).toBe(expectedLabel);
   });
@@ -27,6 +28,16 @@ describe("managed CLI updates", () => {
     expect(isManagedUpdateAllowed("claude", undefined)).toBe(true);
     expect(
       isManagedUpdateAllowed("codex", { managedUpdateAllowed: false }),
+    ).toBe(true);
+  });
+
+  it("requires a verified official source for Hermes updates", () => {
+    expect(isManagedUpdateAllowed("hermes", undefined)).toBe(false);
+    expect(
+      isManagedUpdateAllowed("hermes", { managedUpdateAllowed: false }),
+    ).toBe(false);
+    expect(
+      isManagedUpdateAllowed("hermes", { managedUpdateAllowed: true }),
     ).toBe(true);
   });
 });

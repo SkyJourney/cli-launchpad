@@ -26,10 +26,12 @@ describe("PTY workspace split tree", () => {
       { directoryId: 42, toolKey: "codex", sequence: 2 },
       { directoryId: 7, toolKey: "codex", sequence: 8 },
       { directoryId: 42, toolKey: "claude", sequence: 5 },
+      { directoryId: 42, toolKey: "hermes", sequence: 1 },
     ];
 
     expect(nextWorkspaceSessionSequence(allManagedSlots, 42, "codex")).toBe(3);
     expect(nextWorkspaceSessionSequence(allManagedSlots, 42, "agy")).toBe(1);
+    expect(nextWorkspaceSessionSequence(allManagedSlots, 42, "hermes")).toBe(2);
   });
 
   it("converts a saved ratio into pane sizes excluding the sash", () => {

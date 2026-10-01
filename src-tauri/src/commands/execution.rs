@@ -14,10 +14,11 @@ pub async fn start_execution_task(
     tool_key: ToolKey,
     kind: InstallKind,
 ) -> Result<ExecutionTask, AppError> {
-    let plan: InstallPlan =
-        tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
-            .await
-            .map_err(|error| AppError::msg(error.to_string()))??;
+    let plan: InstallPlan = tauri::async_runtime::spawn_blocking(move || {
+        install_service::execution_plan(tool_key, kind)
+    })
+    .await
+    .map_err(|error| AppError::msg(error.to_string()))??;
     manager.start(&app, plan)
 }
 

@@ -11,231 +11,51 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
 pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
-    if tool_key == ToolKey::Grok && kind == InstallKind::Update {
-        return grok_update_plan();
-    }
+    crate::services::cli_adapters::build_plan(tool_key, kind)
+}
 
-    #[cfg(windows)]
-    if tool_key == ToolKey::Codex && kind == InstallKind::Update {
-        return codex_windows_update_plan();
-    }
+pub fn execution_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
+    crate::services::cli_adapters::build_plan(tool_key, kind)
+}
 
-    let (program_name, args, source) = match kind {
-        InstallKind::Install => install_spec(tool_key)?,
-        InstallKind::Update => match tool_key {
-            ToolKey::Claude => ("claude", vec!["update"], "Claude Code 内置更新命令"),
-            ToolKey::Codex => ("codex", vec!["update"], "Codex 内置更新命令"),
-            ToolKey::Antigravity => ("agy", vec!["update"], "Antigravity CLI 内置更新命令"),
-            ToolKey::Grok => return Err(anyhow!("Grok Build 更新来源未经验证，不能创建更新计划")),
-        },
-    };
-
+pub(crate) fn simple_plan(
+    tool_key: ToolKey,
+    kind: InstallKind,
+    program_name: &str,
+    args: &[&str],
+    source: &str,
+) -> Result<InstallPlan> {
     let program = resolve_program(program_name)?;
-    let args: Vec<String> = args.into_iter().map(str::to_string).collect();
-    let preview = if tool_key == ToolKey::Grok && kind == InstallKind::Install {
-        grok_install_preview(&program)
-    } else {
-        format!("{program} {}", args.join(" "))
-    };
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let preview = format!("{program} {}", args.join(" "));
+    Ok(resolved_plan(
+        tool_key, kind, program, args, source, preview,
+    ))
+}
 
-    Ok(InstallPlan {
+pub(crate) fn resolved_plan(
+    tool_key: ToolKey,
+    kind: InstallKind,
+    program: String,
+    args: Vec<String>,
+    source: &str,
+    preview: String,
+) -> InstallPlan {
+    InstallPlan {
         tool_key,
         kind,
         program,
         args,
         source: source.to_string(),
         preview,
-    })
-}
-
-#[cfg(windows)]
-fn codex_windows_update_plan() -> Result<InstallPlan> {
-    let codex = resolve_program("codex")?;
-    let program = resolve_program("powershell")?;
-    let command = format!(
-        "$env:PSModulePath = @((Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\\Modules'), (Join-Path $env:ProgramFiles 'WindowsPowerShell\\Modules'), (Join-Path $PSHOME 'Modules')) -join [IO.Path]::PathSeparator; & {} update; exit $LASTEXITCODE",
-        quote_powershell_arg(&codex)
-    );
-    let args = vec![
-        "-NoProfile".to_string(),
-        "-NonInteractive".to_string(),
-        "-ExecutionPolicy".to_string(),
-        "Bypass".to_string(),
-        "-Command".to_string(),
-        command,
-    ];
-    let preview = format!("{program} {}", args.join(" "));
-
-    Ok(InstallPlan {
-        tool_key: ToolKey::Codex,
-        kind: InstallKind::Update,
-        program,
-        args,
-        source: "Codex 内置更新命令（Windows PowerShell 5.1，隔离模块路径）".to_string(),
-        preview,
-    })
-}
-
-#[cfg(windows)]
-fn quote_powershell_arg(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(windows)]
-fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    Ok(match tool_key {
-        ToolKey::Claude => (
-            "winget",
-            vec![
-                "install",
-                "--id",
-                "Anthropic.ClaudeCode",
-                "--exact",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
-            ],
-            "winget 官方包 Anthropic.ClaudeCode",
-        ),
-        ToolKey::Codex => (
-            "powershell",
-            vec![
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "irm https://chatgpt.com/codex/install.ps1 | iex",
-            ],
-            "OpenAI Codex 官方 Windows 安装器",
-        ),
-        ToolKey::Antigravity => (
-            "powershell",
-            vec![
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "irm https://antigravity.google/cli/install.ps1 | iex",
-            ],
-            "Antigravity 官方 PowerShell 安装脚本",
-        ),
-        ToolKey::Grok => (
-            "powershell",
-            vec![
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex",
-            ],
-            "xAI Grok Build 官方 Windows PowerShell 安装脚本（固定 stable 通道）",
-        ),
-    })
-}
-
-fn grok_update_plan() -> Result<InstallPlan> {
-    let path = detect::resolve_executable_path(&ToolKey::Grok.command_candidates())
-        .ok_or_else(|| anyhow!("未检测到可运行的 Grok Build CLI"))?;
-    Ok(grok_update_plan_for(&path))
-}
-
-fn grok_update_plan_for(path: &str) -> InstallPlan {
-    InstallPlan {
-        tool_key: ToolKey::Grok,
-        kind: InstallKind::Update,
-        program: path.to_string(),
-        args: vec!["update".to_string()],
-        source: "Grok Build 官方原生更新器（任务启动后校验 CLI 来源）".to_string(),
-        preview: format!("{} update", quote_command_path(path)),
+        effects: None,
     }
 }
 
-fn quote_command_path(path: &str) -> String {
-    if path.chars().any(char::is_whitespace) {
-        format!("\"{}\"", path.replace('"', "\\\""))
-    } else {
-        path.to_string()
-    }
-}
-
-fn grok_install_preview(program: &str) -> String {
-    #[cfg(windows)]
-    {
-        format!(
-            "{} -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex\"",
-            quote_command_path(program)
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        format!(
-            "{} -c \"export GROK_CHANNEL=stable; curl -fsSL https://x.ai/cli/install.sh | bash\"",
-            quote_command_path(program)
-        )
-    }
-}
-
-/// Official install scripts detect the OS themselves (`uname -s` for
-/// darwin/linux), so macOS and Linux share the exact same URLs and
-/// interpreters; only the human-readable source label differs.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn unix_install_command(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>)> {
-    Ok(match tool_key {
-        ToolKey::Claude => (
-            "/bin/bash",
-            vec!["-c", "curl -fsSL https://claude.ai/install.sh | bash"],
-        ),
-        ToolKey::Codex => (
-            "/bin/sh",
-            vec!["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
-        ),
-        ToolKey::Antigravity => (
-            "/bin/bash",
-            vec![
-                "-c",
-                "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-            ],
-        ),
-        ToolKey::Grok => (
-            "/bin/bash",
-            vec![
-                "-c",
-                "export GROK_CHANNEL=stable; curl -fsSL https://x.ai/cli/install.sh | bash",
-            ],
-        ),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    let (program, args) = unix_install_command(tool_key)?;
-    let source = match tool_key {
-        ToolKey::Claude => "Anthropic Claude Code 官方 macOS 安装脚本",
-        ToolKey::Codex => "OpenAI Codex 官方 macOS 安装脚本",
-        ToolKey::Antigravity => "Google Antigravity 官方 macOS 安装脚本",
-        ToolKey::Grok => "xAI Grok Build 官方 macOS 安装脚本",
-    };
-    Ok((program, args, source))
-}
-
-#[cfg(target_os = "linux")]
-fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    let (program, args) = unix_install_command(tool_key)?;
-    let source = match tool_key {
-        ToolKey::Claude => "Anthropic Claude Code 官方 Linux 安装脚本",
-        ToolKey::Codex => "OpenAI Codex 官方 Linux 安装脚本",
-        ToolKey::Antigravity => "Google Antigravity 官方 Linux 安装脚本",
-        ToolKey::Grok => "xAI Grok Build 官方 Linux 安装脚本",
-    };
-    Ok((program, args, source))
-}
-
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-fn install_spec(_tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &'static str)> {
-    Err(anyhow!("当前平台尚未配置 CLI 安装计划"))
-}
-
-fn resolve_program(program: &str) -> Result<String> {
+pub(crate) fn resolve_program(program: &str) -> Result<String> {
     #[cfg(windows)]
     if program.eq_ignore_ascii_case("powershell") {
         return Ok(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
@@ -260,13 +80,7 @@ pub(crate) fn build_command(plan: &InstallPlan) -> Command {
         command.args(&plan.args);
         command
     };
-    let mut command = configure_command(command);
-    if plan.tool_key == ToolKey::Grok && plan.kind == InstallKind::Update {
-        // pnpm's environment marker makes Grok select its npm updater even
-        // when the detected executable belongs to the official native install.
-        command.env_remove("npm_config_user_agent");
-    }
-    command
+    configure_command(command)
 }
 
 #[cfg(windows)]
@@ -343,7 +157,9 @@ mod tests {
     #[test]
     fn powershell_argument_escapes_single_quotes() {
         assert_eq!(
-            quote_powershell_arg("C:\\Tools\\O'Brien\\codex.exe"),
+            crate::services::cli_adapters::codex::platform::quote_powershell_arg(
+                "C:\\Tools\\O'Brien\\codex.exe"
+            ),
             "'C:\\Tools\\O''Brien\\codex.exe'"
         );
     }
@@ -374,7 +190,9 @@ mod tests {
 
     #[test]
     fn grok_update_plan_uses_the_detected_binary_without_a_shell() {
-        let plan = grok_update_plan_for(r"C:\Users\test user\.grok\bin\grok.exe");
+        let plan = crate::services::cli_adapters::grok::platform::grok_update_plan_for(
+            r"C:\Users\test user\.grok\bin\grok.exe",
+        );
         assert_eq!(plan.program, r"C:\Users\test user\.grok\bin\grok.exe");
         assert_eq!(plan.args, vec!["update"]);
         assert_eq!(
@@ -386,8 +204,10 @@ mod tests {
 
     #[test]
     fn grok_update_command_removes_pnpm_installer_hint() {
-        let plan = grok_update_plan_for(r"C:\Users\test user\.grok\bin\grok.exe");
-        let command = build_command(&plan);
+        let plan = crate::services::cli_adapters::grok::platform::grok_update_plan_for(
+            r"C:\Users\test user\.grok\bin\grok.exe",
+        );
+        let command = crate::services::cli_adapters::get(ToolKey::Grok).prepare_command(&plan);
 
         assert!(command.as_std().get_envs().any(|(key, value)| {
             key == std::ffi::OsStr::new("npm_config_user_agent") && value.is_none()

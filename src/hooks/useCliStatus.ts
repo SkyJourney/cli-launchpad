@@ -37,8 +37,14 @@ export const CLI_STATUS_META: Record<
   CliAvailability,
   {
     badgeClass: string;
-    labelKey: "cliStatus.available" | "cliStatus.missing";
-    titleKey: "cliStatus.availableTitle" | "cliStatus.missingTitle";
+    labelKey:
+      | "cliStatus.available"
+      | "cliStatus.missing"
+      | "cliStatus.unknown";
+    titleKey:
+      | "cliStatus.availableTitle"
+      | "cliStatus.missingTitle"
+      | "cliStatus.unknownTitle";
   }
 > = {
   available: {
@@ -50,5 +56,10 @@ export const CLI_STATUS_META: Record<
     badgeClass: "badge-missing",
     labelKey: "cliStatus.missing",
     titleKey: "cliStatus.missingTitle",
+  },
+  unknown: {
+    badgeClass: "badge-missing",
+    labelKey: "cliStatus.unknown",
+    titleKey: "cliStatus.unknownTitle",
   },
 };

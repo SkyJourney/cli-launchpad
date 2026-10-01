@@ -4,10 +4,10 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
-import { TOOLS } from "../lib/tools";
+import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
   detectCliStatus,
-  fetchLatestVersions,
+  fetchLatestVersion,
   listExecutionTasks,
   type ExecutionLogChunk,
   type ExecutionStatus,
@@ -97,11 +97,13 @@ export function useExecutionTaskEvents() {
                 queryFn: () => detectCliStatus(true),
               }),
             ];
-            if (task.toolKey === "grok") {
+            if (
+              getCliAdapter(task.toolKey).refreshLatestAfterExecution(task.kind)
+            ) {
               refreshes.push(
                 queryClient.fetchQuery({
-                  queryKey: qk.latestVersions(),
-                  queryFn: () => fetchLatestVersions(true, true),
+                  queryKey: qk.latestVersion(task.toolKey),
+                  queryFn: () => fetchLatestVersion(task.toolKey, true),
                 }),
               );
             }

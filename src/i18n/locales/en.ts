@@ -156,6 +156,8 @@ export const en = {
     availableTitle: "Installed and ready to launch",
     missing: "Not found",
     missingTitle: "Not found. Open Settings to install it",
+    unknown: "Check failed",
+    unknownTitle: "Check failed. Refresh to retry; launch and install are disabled",
   },
   time: {
     neverStarted: "Never launched",
@@ -270,8 +272,23 @@ export const en = {
     latest: "Latest: ",
     unavailableWithError: "Unavailable ({{error}})",
     unknownRefresh: "Unknown; detect again from the top right",
+    hermesRefreshPrompt: "Refresh manually to check the main branch",
+    hermesUpToDate: "Up to date with main",
+    hermesUpdateBehind: "{{count}} commits behind main",
+    hermesUpdateBehindUnknown: "Updates on main (commit count unavailable)",
+    hermesUpdateStatus: "Update status: ",
+    hermesInstallEffectsHeading: "The official installer will:",
+    hermesInstallEffectRuntime:
+      "Install Hermes CLI, its managed Python/Node runtimes, and dependencies for the current user.",
+    hermesInstallEffectData:
+      "Prepare source, configuration, and user data under %LOCALAPPDATA%\\hermes; the official installer handles existing data.",
+    hermesInstallEffectPath:
+      "Add %LOCALAPPDATA%\\hermes\\bin to the current user's PATH if it is not already configured.",
+    hermesInstallEffectNetwork:
+      "Download the script from the official Hermes installer address and fetch source, runtimes, and dependencies.",
     checking: "Checking…",
     cachedSuffix: " (cached)",
+    refreshFailedSuffix: "; refresh failed: {{error}}",
     unavailable: "Unavailable",
     managementComingSoon:
       "Install and update actions will be added in a later step.",

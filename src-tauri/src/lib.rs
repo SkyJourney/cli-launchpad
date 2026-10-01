@@ -233,7 +233,7 @@ pub fn run() {
             commands::execution::clear_execution_task,
             commands::execution::clear_execution_history,
             commands::cli_status::detect_cli_status,
-            commands::install::fetch_latest_versions,
+            commands::install::fetch_latest_version,
             commands::install::get_install_plan,
             commands::terminal::detect_terminal_environment,
             commands::terminal::get_launch_target,

@@ -79,16 +79,18 @@ workspace_layout_presets (M3, 多条命名快照)
 
 ## 全局 CLI 状态
 
-应用启动时检测当前已接入的 CLI，G1 完成后为四项工具提供统一全局状态，可手动刷新。打开设置页时同步刷新 Grok 官方最新版本；其他最新版本沿用缓存和手动刷新策略。前端引入轻量全局状态库（如 Zustand）持有该状态。
+应用启动时通过 CLI 适配器检测当前已接入的工具；G2 完成后范围为五项 CLI。进入设置页和手动刷新时，前端为每项 CLI 分别查询安装状态、当前版本与更新状态；单项查询的等待或失败不阻塞其余行。更新任务完成后只回读对应 CLI。当前版本、更新比较、缓存来源、最后检查时间和本次错误使用统一状态模型，具体命令与输出语义由适配器提供。
 
 ```text
 cli_status
   claude:  { status, path, version, latest_version, resolved_command }
   codex:   { status, path, version, latest_version, resolved_command }
   agy:     { status, path, version, latest_version, resolved_command }
+  grok:    { status, path, version, latest_version, resolved_command }
+  hermes:  { status, path, version, latest_version, resolved_command }
 ```
 
-状态只有两种：available（绿色，可启动可编辑）、missing（灰色，禁用）。由于启动一律走解析出的完整路径，"PATH 是否可见"不再单独建模——在 PATH 或已知目录找到全路径即为 available。详见 `docs/ui-design.md`。
+状态有三种：available（绿色，可启动可编辑）、missing（灰色，确认未安装）和 unknown（中性提示、禁用启动）。适配器检测异常、超时或崩溃时只将对应 CLI 标为 unknown，不把探测失败误报成未安装，也不阻塞其他 CLI。由于启动一律走解析出的完整路径，"PATH 是否可见"不再单独建模——在 PATH 或已知目录找到全路径即为 available。详见 `docs/ui-design.md`。
 
 ## Tauri commands 清单
 
@@ -109,7 +111,7 @@ PTY 工作台（0.3.0 目标）
 
 CLI 状态与版本
   detect_cli_status            被动检测安装与全路径；显式刷新时才执行 --version
-  fetch_latest_versions        从已接入 CLI 的官方来源查询最新版本
+  fetch_latest_version         按 tool_key 独立查询一个 CLI 的最新状态
   get_install_plan             返回结构化安装/更新命令（仅预览，不执行）
   start_execution_task         创建后台安装/更新任务
   list/get/cancel/clear_execution_task(s)  查询、终止与清理任务
@@ -239,16 +241,17 @@ TTL；过期后重新检测路径时，仅在可执行路径未变化的情况�
 
 ## 目标 CLI 范围
 
-0.3.0 G1 完成后支持四个核心 CLI：
+0.3.0 G1 完成后支持四个核心 CLI；G2 完成后扩展为五个：
 
-| 工具            | 默认命令 | 兼容命令      | 说明                                               |
-| --------------- | -------- | ------------- | -------------------------------------------------- |
-| Claude Code CLI | `claude` | 无            | 打开 Claude Code 工作会话                          |
-| Codex CLI       | `codex`  | 无            | 打开 Codex CLI 工作会话                            |
-| Antigravity CLI | `agy`    | `antigravity` | `agy` 是官方主命令，`antigravity` 仅作保守兼容探测 |
-| Grok Build CLI  | `grok`   | 无            | 官方 Grok Build 交互式 CLI                         |
+| 工具             | 默认命令 | 兼容命令      | 说明                                               |
+| ---------------- | -------- | ------------- | -------------------------------------------------- |
+| Claude Code CLI  | `claude` | 无            | 打开 Claude Code 工作会话                          |
+| Codex CLI        | `codex`  | 无            | 打开 Codex CLI 工作会话                            |
+| Antigravity CLI  | `agy`    | `antigravity` | `agy` 是官方主命令，`antigravity` 仅作保守兼容探测 |
+| Grok Build CLI   | `grok`   | 无            | 官方 Grok Build 交互式 CLI                         |
+| Hermes Agent CLI | `hermes` | 无            | G2 接入的本地交互式 Hermes CLI；窗口简称 `HA`      |
 
-其他 CLI 工具不进入当前检测、安装或启动设计。M1/M2 文档记录的是 Grok 接入前的阶段验收事实；G1 完成后，当前产品能力以四 CLI 为准。
+其他 CLI 工具不进入当前检测、安装或启动设计。M1/M2 文档记录的是后续独立 CLI 接入前的阶段验收事实；G1 完成后当前能力为四 CLI，G2 完成后以五 CLI 为准。
 
 ## 0.2.x 外部终端启动组合
 
@@ -356,14 +359,53 @@ Linux/macOS，因此 Linux 安装计划直接复用 macOS 分支的脚本 URL �
 `Info.plist` 复核 Bundle ID；需要直接启动的终端还要验证应用包内可执行文件，
 探测过程不执行候选应用。
 
-恢复会话通过 `resume_session`，按工具拼装恢复参数后复用同一组合逻辑（Claude `--resume <id>`、Codex `resume <id>`、Antigravity `--conversation=<id>`）。
+恢复会话通过 `resume_session`，按工具拼装恢复参数后复用同一组合逻辑（Claude `--resume <id>`、Codex `resume <id>`、Antigravity `--conversation=<id>`；G2 增加 Hermes `--resume <id> --no-restore-cwd`）。
+
+## CLI 适配器与生命周期
+
+按 `ToolKey` 注册 CLI 适配器，将五项 CLI 的产品差异收敛到一套稳定合约。适配器负责提供 CLI 专属定义和数据转换；公共层负责并发、缓存、持久化、PTY/窗口生命周期、统一检索及安全边界：
+
+```text
+CLI Adapter Registry (ToolKey)
+  product/presentation definition: name, short label, icon
+  management: detect, current version, update status, install/update plan
+  runtime: launch arguments, resume arguments, supported capabilities
+  history: source discovery, ownership validation, DTO normalization
+        |
+        v
+Shared Services
+  query lifecycle / per-tool cache / stale fallback
+  project validation / PTY lifecycle / workspace and independent windows
+  session indexing / search / deduplication / alias merge
+        |
+        v
+Platform primitives and persistent execution task manager
+  OS process, path, PTY and filesystem operations
+  structured command execution / per-tool task slot / logs / cancellation
+```
+
+- 管理能力由适配器声明命令候选、CLI 专属已知安装目录、安装来源、当前版本探测与解析、更新检查与比较语义，以及固定结构化安装/更新计划。Grok 安装来源校验、Hermes 官方更新语义、Codex Windows PowerShell 5.1 安装和更新封装均保留为对应 CLI 差异。
+- 运行时能力由适配器提供启动与恢复参数以及可选能力标记；项目目录归属校验、PTY 创建/尺寸/退出、会话窗口与独立窗口状态机仍由公共服务管理。关闭、移动窗格或应用布局不得由适配器创建或复制 PTY。
+- 历史适配器只负责定位各 CLI 的本地事实来源、读取所需 metadata、校验项目归属并映射到规范会话 DTO。公共历史服务、SQLite FTS 索引和搜索负责统一分页、查询、别名合并和去重，去重键为 `ToolKey + session_id`；适配器不各自建立检索引擎，也不把完整 transcript 或项目路径写入搜索缓存。
+- CLI 图标与名称属于展示能力，存放在前端适配器/注册表中，并使用与 Rust 相同的 `ToolKey`；不把 React 资源塞进 Rust CLI 适配器。公共 UI 负责选择展示，不复制各 CLI 的交互状态逻辑。
+- Rust 适配器按 CLI 组织公共实现与平台实现：`<cli>/common.rs` 放稳定的命令候选、命令语义、解析、参数和数据转换；`<cli>/platform.rs` 放安装/更新等平台命令计划，并通过平台条件分支覆盖确有操作系统差异的实现。只有平台差异需要独立维护时再拆成 `platform/{windows,macos,linux}`。共享路径解析、进程执行、PTY 和文件访问能力优先留在公共 platform primitives；不为每种 CLI 和每个平台复制一份无差异实现。
+- 适配器合约为可选能力提供安全默认值：未接入历史时返回空页、未配置安装/更新时明确报错、未配置状态查询时返回未知并附错误；一个适配器能力缺失不得阻塞其他 CLI 或主应用启动。接入新 CLI 时按阶段替换默认能力，不要求一次实现全部模块。
+- 公共协调器按 CLI 独立执行状态查询；路径探测、当前版本和更新状态查询可并行，单项慢响应或失败不得阻塞其他 CLI。前端查询 Hook 使用每 CLI 的缓存键与状态，支持设置页自动刷新、手动强制刷新和任务完成后的定向回读。
+- 统一状态至少包含安装状态与路径、当前版本及其探测错误、更新状态（可用/不可用/未知）、最新版本或提交差异、缓存来源与成功检查时间，以及最近一次查询错误。Hermes 等非语义版本工具通过适配器映射到同一更新状态模型。
+- Rust 持久缓存只保存成功的更新探测结果；失败时可一并返回最后成功数据与本次错误，但不得刷新成功缓存时间。没有可用历史结果时返回未知状态和错误，不推断为已是最新。
+- 适配器只生成受信任的结构化命令计划和受限执行准备信息，不接收任意命令或用户拼接参数。公共平台执行器负责进程启动、超时、输出通道和参数边界；环境修改仅在受控执行时临时应用，不持久化环境变量或密钥。
+- 安装/更新确认后仍进入现有 Rust `ExecutionTaskManager`。任务按 `ToolKey` 分槽：同一 CLI 同时最多运行一个任务，不同 CLI 可并行；管理器继续负责状态、日志、取消、平台进程树及 SQLite 历史，适配器不另建任务生命周期。
+- 适配器只服务产品范围内的五项 CLI，不是通用 CLI 自动发现或插件机制。新增 CLI 必须在固定 `ToolKey`、适配器和前端展示注册表中登记，不扩展为任意用户命令入口。
+- 每个 CLI 的可选能力都采用失败关闭、按工具隔离的兜底：缺少实现时返回结构化未知/不支持结果；panic、任务 JoinError、单个 SQLite 数据源损坏或超时均转为该工具或该数据源的错误，不向主状态协调器传播 panic，不取消其他 CLI 的并行任务。历史来源失败保留该来源最后成功的可重建索引并标记不完整；状态查询失败保留最后成功缓存并附加本次错误，且不得刷新成功时间。
+- 当前五项工具分别由 Rust `cli_adapters/{claude,codex,antigravity,grok,hermes}` 适配器与前端 `src/lib/cliAdapters/` 展示注册表提供专属行为。注册表按 `ToolKey` 做穷尽匹配；增加工具必须同时覆盖 Rust/TypeScript 类型、固定顺序、图标与名称注册，避免运行时缺项。操作系统差异留在平台模块；适配器不得拥有应用、PTY、窗格、独立窗口、索引或执行任务的生命周期。
 
 ## CLI 检测与安装
 
-CLI 检测区分两种状态（启动走全路径，不再区分 PATH 可见性）：
+CLI 检测区分三种状态（启动走全路径，不再区分 PATH 可见性）：
 
 - available：在当前 PATH 或已知安装目录解析到完整路径（含 `agy` → `antigravity` 兼容探测）。
 - missing：未找到。
+- unknown：检测适配器发生异常或不能可靠判断；仅禁用对应 CLI，不影响其他 CLI。
 
 安装能力不做自动静默执行。UI 必须先展示将要执行的安装命令、来源、权限影响和预计结果，由用户确认后再执行。
 
@@ -379,6 +421,7 @@ Windows 默认安装后端优先级：
 - Codex：Windows 官方 PowerShell 独立安装器，npm 作为备选安装方式。
 - Antigravity：`irm https://antigravity.google/cli/install.ps1 | iex`。
 - Grok Build：官方 Windows PowerShell 安装器 `https://x.ai/cli/install.ps1`，固定 stable 通道；安装前明确展示其会写入用户级 PATH 和 Grok CLI 配置。默认安装目录为当前用户目录下的 `.grok/bin`，同时尊重 `GROK_BIN_DIR`。
+- Hermes Agent：Windows CLI 官方源码安装器 `https://hermes-agent.nousresearch.com/install.ps1`；默认 CLI 入口为 `%LOCALAPPDATA%\hermes\bin\`，源码与用户数据位于 `%LOCALAPPDATA%\hermes\`。G2 只管理经核实的官方源码安装，确认前展示运行时、依赖、数据目录及安装器副作用；MSIX/Store 更新由所属渠道负责。
 
 macOS 使用官方原生安装脚本：
 
@@ -401,7 +444,7 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
 
 避免在业务层拼接自由字符串。
 
-安装通道只服务 `claude`、`codex`、`agy`、`grok` 四个目标 CLI，不扩展为通用包管理或通用 CLI 安装器。
+安装通道只服务 `claude`、`codex`、`agy`、`grok`、`hermes` 五个目标 CLI，不扩展为通用包管理或通用 CLI 安装器。
 
 ## 版本检测与更新
 
@@ -415,13 +458,15 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
   Claude：downloads.claude.ai 原生发布 latest 端点
   Codex：releases.openai.com Codex latest channel
   Antigravity：官方安装器使用的平台 manifest
-  Grok Build：打开设置页或用户显式刷新版本时运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；启动子进程时移除 pnpm 注入的 `npm_config_user_agent`，避免把官方原生安装误判为 npm 安装；Windows 官方 stable 二进制地址不作为版本号 API。
+  Grok Build：进入设置页或用户手动刷新版本时独立运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；启动子进程时移除 pnpm 注入的 `npm_config_user_agent`，避免把官方原生安装误判为 npm 安装；Windows 官方 stable 二进制地址不作为版本号 API。
+  Hermes Agent：进入设置页或手动刷新时，对已识别的官方 Windows 源码安装独立运行 `hermes update --check`，使用 CLI 默认更新目标并按落后提交数显示状态，不做语义版本比较；浅克隆可能只有“有更新”而没有精确提交数。检查不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata。读取 `hermes --version` 时使用临时 `HERMES_HOME` 禁用默认的被动更新网络检查，不更改用户配置。MSIX/Store 状态由所属更新渠道提供。
 
 更新命令（结构化参数，先预览后确认）
   Claude：claude update
   Codex：codex update
   Antigravity：agy update
   Grok Build：grok update（计划只定位可执行文件；任务启动后在后台复核 JSON 的 `installer=internal` 与 `.grok/bin` 或 `GROK_BIN_DIR` 路径，校验通过才执行；更新子进程移除 pnpm 注入的 `npm_config_user_agent`）
+  Hermes Agent：解析到的 Hermes CLI 完整路径加 `update` 参数（确认浮窗展示完整路径；默认分支、安装渠道及更新过程交由 Hermes CLI 处理，不重复读取计划或执行前复核）
 ```
 
 更新与安装走同一流程：预览命令、用户确认、输出日志、完成后主动探测当前
@@ -455,9 +500,9 @@ macOS 执行器在 spawn 前把任务命令放入新的 Unix process group。终
 随后回收根子进程与输出管道。非 Windows 平台不得继续使用空实现，否则取消
 任务会在 `child.wait()` 上无限等待。
 
-任务创建时只接受内置四工具清单生成的 `InstallPlan`，持久化工具、类型、来源、
+任务创建时只接受内置五工具清单生成的 `InstallPlan`，持久化工具、类型、来源、
 程序、参数数组和预览，不保存环境变量或自由命令。任务管理器按 `ToolKey` 保存
-活动任务：同一 CLI 内互斥，四个 CLI 之间可并行；每项任务持有独立取消信号和
+活动任务：同一 CLI 内互斥，五个 CLI 之间可并行；每项任务持有独立取消信号和
 平台进程树。日志按序号分别记录 `stdout`、`stderr`、`system`，通过 Tauri event 实时
 增量下发，同时写入 SQLite。每个任务日志上限 1 MiB，达到上限后写入截断标记；
 默认保留最近 50 个任务，裁剪时级联删除日志。执行中任务不可被历史清理。
@@ -476,14 +521,16 @@ Claude Code  ~/.claude/projects/<slug>/sessions-index.json + <uuid>.jsonl
 Codex        App Server thread/list，失败时回退 ~/.codex/sessions/**/rollout-*.jsonl
 Antigravity  ~/.gemini/antigravity-cli/conversation_summaries.db + conversation metadata
 Grok Build   ~/.grok/sessions/**/summary.json（目录受 GROK_HOME 配置影响）
+Hermes Agent %LOCALAPPDATA%\hermes\state.db（HERMES_HOME 可覆盖；每个 Profile 独立数据库）
 ```
 
 读取逻辑放在 service，解析出原始标题、时间、session id，并严格匹配当前项目目录或
 workspace URI。Claude 标题优先级为 `summary`、`firstPrompt`、首条用户消息；Codex 为
 `name`、`preview`、首条用户消息；Antigravity 为数据库 `title`、metadata `summary`、
 数据库 `preview`；Grok 仅从 summary metadata 取标题/摘要和 `cwd` 等归属字段，不读取
-`updates.jsonl` 或 transcript。读取故障会明确返回错误而不是伪装为空列表；恢复或修改别名前会再次
-验证 session 仍归属于当前目录。
+`updates.jsonl` 或 transcript。Hermes 遵循当前有效 home/Profile 解析结果，只读一个 `state.db` 的元数据，过滤
+`source=cli`，按 `git_repo_root`/`cwd` 匹配项目；只提取长度受限的列表预览，不读取其他来源、Profile 或全文 FTS。
+读取故障会明确返回错误而不是伪装为空列表；恢复或修改别名前会再次验证 session 仍归属于当前目录。
 
 路径身份比较遵守平台语义：Windows 规范化分隔符并忽略大小写；macOS 对存在
 路径优先使用 `canonicalize` 后比较，不将路径统一转为小写，对暂时不存在的路径
@@ -492,8 +539,8 @@ workspace URI。Claude 标题优先级为 `summary`、`firstPrompt`、首条用�
 
 列表默认每页 10 条，Claude、Antigravity 与 Grok 使用有界 offset cursor，Codex 透传并封装
 App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更多”按 10 条追加。项目级
-搜索读取可重建的 cache DB 索引，只匹配四个 CLI 实际展示的标题、summary 和受限首条用户消息/preview，
-不扫描完整正文；不调用 `grok sessions search`（官方定义的结果可能混合本地索引和远端会话）。项目激活或手动刷新时
+搜索读取可重建的 cache DB 索引，只匹配五个 CLI 实际展示的标题、summary 和受限首条用户消息/preview，
+不扫描完整正文；不调用 `grok sessions search`（官方定义的结果可能混合本地索引和远端会话），也不查询 Hermes 全文 FTS。项目激活或手动刷新时
 有界更新索引，FTS5 trigram 支持子串查询，1–2 个字符使用短词回退；每次查询最多返回 2,000 条匹配结果。
 前端只在内存中保留当前查询快照，并按 10 条递增显示。清除查询或切换项目时释放该快照；缓存索引按项目 ID
 隔离，不持久保存项目路径或完整对话正文。超过结果上限或来源读取不完整时，响应列出受影响的 CLI。
@@ -502,7 +549,7 @@ App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更�
 批量入库。列表读取到真实会话后才合并匹配别名，因此孤立记录不会生成虚假会话。删除别名
 即恢复 CLI 原始标题。
 
-恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume <id>`，Antigravity 用 `--conversation=<id>`，Grok Build 用 `--resume <id>`。恢复参数与普通启动共用命令组合与转义逻辑。
+恢复会话通过 `resume_session` command，按工具拼装恢复参数：Claude 用 `--resume <id>`，Codex 用 `resume <id>`，Antigravity 用 `--conversation=<id>`，Grok Build 用 `--resume <id>`，Hermes Agent 用 `--resume <id> --no-restore-cwd`。恢复参数与普通启动共用命令组合与转义逻辑。
 
 ## 安全边界
 

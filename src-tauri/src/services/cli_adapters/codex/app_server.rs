@@ -19,9 +19,12 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Send one stable request to a short-lived Codex App Server connection.
 /// A fresh process keeps lifecycle and failure isolation simple for infrequent
 /// history/model picker reads.
-pub async fn request(method: &str, params: Value) -> Result<Value> {
-    let executable = detect::resolve_executable_path(ToolKey::Codex.command_candidates())
-        .ok_or_else(|| anyhow!("未找到 Codex CLI，无法读取 App Server 数据"))?;
+pub(crate) async fn request(method: &str, params: Value) -> Result<Value> {
+    let executable = crate::services::cli_adapters::installed_path(
+        crate::services::cli_adapters::get(ToolKey::Codex),
+    )
+    .ok_or_else(|| anyhow!("未找到 Codex CLI，无法读取 App Server 数据"))?;
+    let executable = executable.display().to_string();
     let method = method.to_string();
 
     tokio::time::timeout(

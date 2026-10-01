@@ -4,7 +4,7 @@
 
 ## 当前产品方向
 
-CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 CLI 会话工作台。主窗口以项目和内置 PTY 终端为中心，让用户在一个窗口中切换项目、查看并排列 Claude Code、Codex、Antigravity 与 Grok Build CLI 会话。
+CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 CLI 会话工作台。主窗口以项目和内置 PTY 终端为中心，让用户在一个窗口中切换项目、查看并排列 Claude Code、Codex、Antigravity、Grok Build 与 Hermes Agent CLI 会话。
 
 核心对象彼此独立：
 
@@ -13,7 +13,7 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 - **CLI 对话**是 CLI 自身的历史会话；如果能够可靠识别，则与 PTY 会话关联。
 - **布局**描述终端面板的空间排列。布局预设可以引用会话，但不拥有会话，也不负责终止 PTY。
 
-产品保持轻量，0.3.0 目标范围限定在 `claude`、`codex`、`agy`、`grok` 四项 CLI。Grok Build 通过独立 G1 关卡接入；不建设通用 CLI 管理器、额度聚合、Agent 编排、worktree 管理或远程运行平台。
+产品保持轻量，0.3.0 目标范围限定在 `claude`、`codex`、`agy`、`grok`、`hermes` 五项 CLI；Grok Build 与 Hermes Agent 分别通过独立 G1、G2 关卡接入。不建设通用 CLI 管理器、额度聚合、Agent 编排、worktree 管理或远程运行平台。
 
 ## 0.2.4 基线
 
@@ -66,20 +66,29 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 - SQLite 备份包含当前布局与命名快照；JSON 配置导入/导出不包含，也不覆盖布局。
 - 验收：Windows 上恢复 pane tree、比例、标签、焦点和标题正确；布局应用不丢失运行会话；损坏布局、失效 session、项目删除或 ID 重用只生成局部占位项，其余窗格仍可用。
 
+### G2：Hermes Agent CLI 接入（独立里程碑）
+
+- 在 M3 完成后、M4 前，把 Hermes Agent CLI（`hermes`）作为第五项 CLI 纳入 0.3.0；终端标题简称为 `HA`。G2 不改写 M1–M3 已完成阶段的历史验收范围。
+- 对齐 Windows 官方 CLI 检测、源码安装与更新所有权、当前/可用版本状态、项目内 PTY 启动、会话 metadata、项目内搜索和 `--resume <session-id>` 恢复。
+- 会话从当前有效 Hermes home 对应 Profile 的 SQLite `state.db` 只读、有界读取；按 `source=cli` 与项目目录过滤，不扫描全文或 Hermes FTS 索引。恢复以 `--no-restore-cwd` 固定在当前项目目录。
+- Windows 安装使用官方非交互模式，并跳过工作台不提供的可选浏览器与 computer-use 工具；更新状态查询校验官方安装归属，确认更新后由 Hermes 自身以默认语义处理，Launchpad 只执行已解析完整路径的 `hermes update`。
+- 不接入 Hermes Desktop、Gateway、消息平台、远程服务或 Profile 管理；macOS/Linux 实机对齐留给 M5。
+- 验收：Windows 上完成检测、官方安装/更新来源保护、PTY 输入输出/退出、当前项目会话列表/搜索/别名/恢复以及错误和损坏数据库隔离验证。
+
 ### M4：现有能力接入与数据迁移
 
-**依赖：** M2、M3、G1。
+**依赖：** M2、M3、G1、G2。
 
 - 将会话历史、CLI 检测、安装更新、执行任务、配置备份和桌面设置接入新工作台。
 - 定义旧版 SQLite、配置 bundle 和窗口状态升级路径。
 - 保留旧数据库参数数据但不再用于启动；旧配置导入忽略参数字段，新配置导出不包含参数字段。
-- 验收：旧版用户项目、会话别名和桌面设置可升级；四项 CLI 功能在新工作区内有明确入口。
+- 验收：旧版用户项目、会话别名和桌面设置可升级；五项 CLI 功能在新工作区内有明确入口。
 
 ### M5：跨平台验收与 0.3.0 发布
 
-- Windows M1–M4 与 G1 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、项目切换、异常终止、安装包及升级路径。
+- Windows M1–M4、G1 与 G2 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、项目切换、异常终止、安装包及升级路径。
 - 更新用户文档、截图、发布说明和已知限制。
-- 验收：三个平台具备可重复的发布检查记录，四项 CLI 的关键 PTY 生命周期和旧数据迁移均通过人工验收。
+- 验收：三个平台具备可重复的发布检查记录，五项 CLI 的关键 PTY 生命周期和旧数据迁移均通过人工验收。
 
 ## 0.3.0 之后
 

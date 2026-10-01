@@ -9,7 +9,7 @@ import {
   upsertExecutionTask,
 } from "../hooks/useExecutionTasks";
 import { qk } from "../lib/queryKeys";
-import { TOOLS } from "../lib/tools";
+import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
   cancelExecutionTask,
   clearExecutionHistory,
@@ -434,12 +434,9 @@ export function ExecutionsView() {
                     </span>
                   )}
                   {logs.map((chunk) => {
-                    const displayStream =
-                      selectedTask.toolKey === "grok" &&
-                      selectedTask.kind === "update" &&
-                      chunk.stream === "stderr"
-                        ? "stdout"
-                        : chunk.stream;
+                    const displayStream = getCliAdapter(
+                      selectedTask.toolKey,
+                    ).displayExecutionStream(selectedTask.kind, chunk.stream);
 
                     return (
                       <div

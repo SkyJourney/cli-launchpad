@@ -1,7 +1,7 @@
 pub mod backup_service;
 pub mod cache_service;
+pub mod cli_adapters;
 pub mod cli_detect_service;
-pub mod codex_app_server;
 pub mod config_service;
 pub mod diagnostics_service;
 pub mod directory_service;

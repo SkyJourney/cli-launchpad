@@ -31,6 +31,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         11,
         include_str!("../../migrations/0011_workspace_layouts.sql"),
     ),
+    (12, include_str!("../../migrations/0012_hermes_agent.sql")),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -130,7 +131,7 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     #[test]
@@ -224,13 +225,13 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     #[test]
     fn workspace_layout_migration_adds_versioned_tables_without_project_foreign_keys() {
         let connection = memory_db();
-        assert_eq!(schema_version(&connection).unwrap(), 11);
+        assert_eq!(schema_version(&connection).unwrap(), 12);
 
         let current_columns: i64 = connection
             .query_row(
@@ -420,6 +421,87 @@ mod tests {
             2,
         )
         .expect("insert Grok pty");
+    }
+
+    #[test]
+    fn hermes_migration_preserves_existing_sessions_and_accepts_hermes() {
+        let connection = Connection::open_in_memory().expect("open in-memory db");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable fk");
+        for (version, sql) in &MIGRATIONS[..11] {
+            connection
+                .execute_batch(&format!(
+                    "BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;"
+                ))
+                .expect("apply migrations through workspace layouts");
+        }
+
+        let directory = crate::db::directory_repo::add(
+            &connection,
+            "existing project",
+            "C:\\Projects\\existing",
+            None,
+        )
+        .expect("insert directory");
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Claude,
+            "old-session",
+            "Existing alias",
+        )
+        .expect("insert existing alias");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "old-pty",
+            directory.id,
+            crate::models::tool::ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .expect("insert existing pty");
+
+        apply_migrations(&connection).expect("apply Hermes migration");
+
+        assert_eq!(schema_version(&connection).unwrap(), 12);
+        assert_eq!(
+            connection
+                .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
+                .expect("count tool identities"),
+            5
+        );
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Claude
+            )
+            .expect("read existing alias")
+            .get("old-session")
+            .map(String::as_str),
+            Some("Existing alias")
+        );
+        assert_eq!(
+            crate::db::pty_session_repo::list_for_directory(&connection, directory.id)
+                .expect("read existing pty")[0]
+                .session_id,
+            "old-pty"
+        );
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Hermes,
+            "hermes-session",
+            "Hermes alias",
+        )
+        .expect("insert Hermes alias");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "hermes-pty",
+            directory.id,
+            crate::models::tool::ToolKey::Hermes,
+            &directory.path,
+            2,
+        )
+        .expect("insert Hermes pty");
     }
 
     #[test]

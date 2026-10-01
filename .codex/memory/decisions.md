@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-09-30
-commit: ddca86f
+last_updated: 2026-10-01
+commit: 28a75bb
 ---
 
 # 项目决策
@@ -15,12 +15,12 @@ commit: ddca86f
 **How to apply：** 新功能应沿用 Tauri + React + Rust 架构，本地能力放在 Rust 层实现。
 **See Also：** [[project_overview.md#技术栈]]
 
-## 只聚焦四项核心 CLI
+## 0.3.0 目标范围为五项 CLI
 
-**结论：** 产品只支持 `claude`、`codex`、`agy`、`grok` 四个 CLI。
-**Why：** 核心功能是快速在项目目录中管理已确认的 AI CLI 会话，不是通用 CLI 工具管理器。
-**How to apply：** 检测、安装、启动、UI 状态和文档只围绕这四个工具展开。
-**See Also：** [[project_overview.md#核心-CLI-范围]] [[feedback.md#不要扩展为通用-CLI-管理器]] [[project_progress.md#已完成功能]]
+**结论：** 0.3.0 目标支持 `claude`、`codex`、`agy`、`grok`、`hermes` 五个 CLI；Grok 由 G1 接入，Hermes 由 G2 接入。
+**Why：** 核心功能是在项目目录中管理已确认的 AI CLI 会话，不是通用 CLI 工具管理器；新增 Hermes 已由用户作为独立 G2 里程碑明确批准。
+**How to apply：** 检测、安装、启动、UI 状态和文档只围绕上述五个目标工具展开；Hermes 限定为本地交互式 CLI，不接入 Gateway、消息平台、Desktop 或 Profile 管理。
+**See Also：** [[project_overview.md#核心-CLI-范围]] [[feedback.md#不要扩展为通用-CLI-管理器]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]]
 
 ## Antigravity 使用 agy 作为官方主命令
 
@@ -38,9 +38,9 @@ commit: ddca86f
 
 ## 安装与更新使用持久化后台任务
 
-**结论：** 四项 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；同一 CLI 内互斥，不同 CLI 可并行，每项任务拥有独立取消信号和平台进程树。
+**结论：** 五项目标 CLI 的安装与更新统一创建 Rust 后台任务，通过 Tauri 事件推送实时日志，并将任务状态和受限日志持久化到业务 SQLite；同一 CLI 内互斥，不同 CLI 可并行，每项任务拥有独立取消信号和平台进程树。
 **Why：** 缓冲式静默执行无法判断任务是否卡住，也无法可靠终止子进程或在重启后查看历史；同一 CLI 的安装和自更新会争用同一工具状态，但三个不同 CLI 已具备独立命令、日志和进程树边界，无需互相阻塞。
-**How to apply：** 任务管理器按 `ToolKey` 维护活动任务，每个 CLI 同时最多一个任务；只接受四项内置工具生成的结构化计划，不开放自由命令或保存环境变量；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 按 CLI 独立维护执行与版本回读状态，并使用“终止任务”表达强制结束进程树。
+**How to apply：** 任务管理器按 `ToolKey` 维护活动任务，每个 CLI 同时最多一个任务；只接受五项目标工具生成的结构化计划，不开放自由命令或保存环境变量；Hermes 更新入口按独立状态查询开放，任务使用已解析的 CLI 完整路径和单独的 `update` 参数，不指定分支或额外确认参数，也不重复读取应用侧更新计划，默认目标、安装渠道和更新交互交由 Hermes CLI；确认浮窗仅展示来源和完整路径命令；版本刷新期间保留已知缓存状态，失败时注明错误，无缓存时不猜测结果；默认保留最近 50 个任务，每项日志上限 1 MiB；启动时将遗留活动任务标记为意外中断；UI 按 CLI 独立维护执行与版本回读状态，并使用“终止任务”表达强制结束进程树。
 **See Also：** [[project_overview.md#执行任务边界]] [[project_progress.md#0.2.0-发布完成]] [[project_progress.md#Unreleased-累积更新]]
 
 ## 启动使用完整 CLI 路径与平台分层候选
@@ -52,10 +52,17 @@ commit: ddca86f
 
 ## 会话历史按需读取本地事实来源
 
-**结论：** 四项 CLI 普通历史列表均按查看时读取各自本地事实来源，每项 CLI 独立按 10 条分页；G1.4 的搜索索引独立按项目存入可重建缓存。
+**结论：** 普通历史列表按查看时读取各 CLI 本地事实来源，每项 CLI 独立按 10 条分页；G1.4 搜索索引独立按项目存入可重建缓存，G2 计划将 Hermes 的受限 SQLite metadata 纳入同一索引。
 **Why：** CLI 自有索引和会话存储是标题、时间及项目归属的权威来源，按需读取可避免缓存陈旧；Antigravity 新版本已在本机暴露可按 workspace 匹配的摘要库。
-**How to apply：** 列表读取后仍要按项目目录或 workspace URI 过滤，恢复前重新验证归属；普通列表不从搜索索引读取。索引不得保存项目路径或完整 transcript。
+**How to apply：** 列表读取后仍要按项目目录或 workspace URI 过滤，恢复前重新验证归属；普通列表不从搜索索引读取。Hermes 遵循当前有效 home/Profile 解析结果，只读单个数据库中的 `source=cli` 会话元数据；不枚举或切换其他 Profile，不查询 Hermes 全文 FTS；索引不得保存项目路径或完整 transcript。
 **See Also：** [[project_overview.md#会话与配置数据]]
+
+## CLI 差异由固定适配器提供，软件层拥有生命周期
+
+**结论：** 五个目标 CLI 的安装/检测、当前与更新状态解析、结构化命令计划、启动/恢复参数、会话事实读取及前端图标/标题等差异通过 `ToolKey` 适配器提供；公共服务拥有并发、缓存、执行任务、PTY/窗格/独立窗口、索引和统一搜索的生命周期。
+**Why：** 每个 CLI 的官方命令、安装渠道、版本语义和会话格式不同；若把差异分散在 React 与公共服务分支中，新接入会使单 CLI 故障容易影响全局并发和数据处理。
+**How to apply：** Rust 适配器位于 `src-tauri/src/services/cli_adapters/<cli>/`，按 common/platform/version/history 拆分，只实现该 CLI 能力；前端元数据位于 `src/lib/cliAdapters/<cli>.ts` 并由穷尽 `Record<ToolKey, ...>` 注册。默认能力安全关闭；单项 panic、JoinError、查询错误或数据源损坏转为该工具 unknown/error 或不完整来源，保留其他 CLI 的缓存/索引并继续生命周期。平台执行仍进入共享任务管理器，同 CLI 互斥、跨 CLI 并行。新增 CLI 不扩展为用户自定义插件。
+**See Also：** [[project_overview.md#CLI-适配器与公共生命周期]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]]
 
 ## 会话本地别名使用稀疏关联
 

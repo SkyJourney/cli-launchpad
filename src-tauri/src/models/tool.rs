@@ -7,16 +7,18 @@ pub enum ToolKey {
     Codex,
     Claude,
     Grok,
+    Hermes,
 }
 
 impl ToolKey {
     /// All tool keys, in display order. Single source for iteration so adding a
     /// tool only requires touching this list (plus its arms).
-    pub const ALL: [ToolKey; 4] = [
+    pub const ALL: [ToolKey; 5] = [
         ToolKey::Claude,
         ToolKey::Codex,
         ToolKey::Antigravity,
         ToolKey::Grok,
+        ToolKey::Hermes,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -25,6 +27,7 @@ impl ToolKey {
             ToolKey::Codex => "codex",
             ToolKey::Claude => "claude",
             ToolKey::Grok => "grok",
+            ToolKey::Hermes => "hermes",
         }
     }
 
@@ -34,18 +37,8 @@ impl ToolKey {
             "codex" => Some(ToolKey::Codex),
             "claude" => Some(ToolKey::Claude),
             "grok" => Some(ToolKey::Grok),
+            "hermes" => Some(ToolKey::Hermes),
             _ => None,
-        }
-    }
-
-    /// Candidate commands to resolve, in priority order. Antigravity's official
-    /// command is `agy`; `antigravity` is only a conservative compatibility probe.
-    pub fn command_candidates(self) -> &'static [&'static str] {
-        match self {
-            ToolKey::Claude => &["claude"],
-            ToolKey::Codex => &["codex"],
-            ToolKey::Antigravity => &["agy", "antigravity"],
-            ToolKey::Grok => &["grok"],
         }
     }
 }
@@ -55,11 +48,16 @@ mod tests {
     use super::ToolKey;
 
     #[test]
-    fn grok_key_round_trips_through_database_and_ipc_name() {
+    fn tool_keys_round_trip_through_database_and_ipc_names() {
         assert_eq!(ToolKey::Grok.as_str(), "grok");
         assert_eq!(serde_json::to_string(&ToolKey::Grok).unwrap(), "\"grok\"");
         assert_eq!(ToolKey::from_key("grok"), Some(ToolKey::Grok));
-        assert_eq!(ToolKey::Grok.command_candidates(), &["grok"]);
-        assert_eq!(ToolKey::ALL.len(), 4);
+        assert_eq!(ToolKey::Hermes.as_str(), "hermes");
+        assert_eq!(
+            serde_json::to_string(&ToolKey::Hermes).unwrap(),
+            "\"hermes\""
+        );
+        assert_eq!(ToolKey::from_key("hermes"), Some(ToolKey::Hermes));
+        assert_eq!(ToolKey::ALL.len(), 5);
     }
 }
