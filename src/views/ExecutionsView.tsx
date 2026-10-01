@@ -433,20 +433,29 @@ export function ExecutionsView() {
                       {t("executions.noOutput")}
                     </span>
                   )}
-                  {logs.map((chunk) => (
-                    <div
-                      className={clsx(
-                        "execution-log-chunk",
-                        `stream-${chunk.stream}`,
-                      )}
-                      key={chunk.sequence}
-                    >
-                      <span className="execution-stream-label">
-                        {t(`executions.stream.${chunk.stream}`)}
-                      </span>
-                      <pre>{chunk.content}</pre>
-                    </div>
-                  ))}
+                  {logs.map((chunk) => {
+                    const displayStream =
+                      selectedTask.toolKey === "grok" &&
+                      selectedTask.kind === "update" &&
+                      chunk.stream === "stderr"
+                        ? "stdout"
+                        : chunk.stream;
+
+                    return (
+                      <div
+                        className={clsx(
+                          "execution-log-chunk",
+                          `stream-${displayStream}`,
+                        )}
+                        key={chunk.sequence}
+                      >
+                        <span className="execution-stream-label">
+                          {t(`executions.stream.${displayStream}`)}
+                        </span>
+                        <pre>{chunk.content}</pre>
+                      </div>
+                    );
+                  })}
                   {selectedTask.logTruncated && (
                     <div className="execution-log-truncated">
                       {t("executions.truncated")}

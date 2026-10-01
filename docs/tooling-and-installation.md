@@ -36,7 +36,7 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 当前文档设计基于官方资料：
 
 - Claude Code CLI 官方命令为 `claude`。Windows 可使用 `winget install Anthropic.ClaudeCode`；macOS 使用 `curl -fsSL https://claude.ai/install.sh | bash`。
-- Codex CLI 官方命令为 `codex`。Windows 优先使用官方 PowerShell 独立安装器；macOS 使用 `curl -fsSL https://chatgpt.com/codex/install.sh | sh`；当前 CLI 提供 `codex update`。Windows 下由应用固定通过 Windows PowerShell 5.1 执行该更新命令，避免 PowerShell 7 环境缺少安装脚本依赖的 cmdlet。
+- Codex CLI 官方命令为 `codex`。Windows 优先使用官方 PowerShell 独立安装器；macOS 使用 `curl -fsSL https://chatgpt.com/codex/install.sh | sh`；当前 CLI 提供 `codex update`。Windows 下由应用固定通过 Windows PowerShell 5.1 执行该更新命令，并将 `PSModulePath` 限定为 Windows PowerShell 5.1 的标准模块目录，避免应用从 PowerShell 7 启动时把不兼容的模块路径继承给更新器。
 - Antigravity CLI 官方命令为 `agy`。Windows 使用官方 PowerShell installer；macOS 使用 `curl -fsSL https://antigravity.google/cli/install.sh | bash`。
 - Grok Build CLI 官方命令为 `grok`。Windows 官方安装器为 `https://x.ai/cli/install.ps1`，Launchpad 固定 stable 通道；默认目录为当前用户目录下的 `.grok/bin`，支持 `GROK_BIN_DIR`。安装脚本会视情况替换 `grok.exe`/`agent.exe`、写入用户级 PATH 与 Grok CLI 配置，并生成 PowerShell 补全。若环境含 `GROK_DEPLOYMENT_KEY`，还会请求并写入托管部署配置。脚本从 x.ai 获取版本和二进制，必要时回退 Google Cloud Storage。CLI 支持 `grok update`、`grok update --check`，以及 `grok --resume <session-id>`。
 - Grok 官方会话位于 `~/.grok/sessions/`（可由 `GROK_HOME` 覆盖）；Launchpad 只读取官方文档描述的 `summary.json` metadata。官方 `grok sessions search` 可能混合本地与远端结果，因此工作台只实现本地 metadata 搜索。
@@ -209,29 +209,31 @@ Grok Windows 主程序通过 HTTPS 下载；安装脚本对其附带的 MinGit �
 
 最新版本查询：
 
-| 工具        | 最新版本来源                                                                                                     |
-| ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| Claude Code | `downloads.claude.ai/claude-code-releases/latest`                                                                |
-| Codex       | `releases.openai.com/codex/channels/latest`                                                                      |
-| Antigravity | 官方安装器使用的当前平台 release manifest                                                                        |
-| Grok Build  | 用户显式刷新时运行官方 `grok update --check --json` 并解析 `latestVersion`；自动刷新复用缓存，无法解析则显示未知 |
+| 工具        | 最新版本来源                                                                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `downloads.claude.ai/claude-code-releases/latest`                                                                            |
+| Codex       | `releases.openai.com/codex/channels/latest`                                                                                  |
+| Antigravity | 官方安装器使用的当前平台 release manifest                                                                                    |
+| Grok Build  | 打开设置页或手动刷新时运行官方 `grok update --check --json` 并解析 `latestVersion`；后台自动刷新复用缓存，无法解析则显示未知 |
 
 最新版本查询涉及网络，失败时降级为"无法获取最新版本"，仍展示当前版本，不阻塞界面。
 
 更新命令清单：
 
-| 工具        | 更新命令        | Windows 执行环境                                 |
-| ----------- | --------------- | ------------------------------------------------ |
-| Claude Code | `claude update` | 沿用现有结构化计划                               |
-| Codex       | `codex update`  | 固定使用 Windows PowerShell 5.1 托管并透传退出码 |
-| Antigravity | `agy update`    | 沿用现有结构化计划                               |
-| Grok Build  | `grok update`   | 仅用于确认由官方原生安装器管理的安装             |
+| 工具        | 更新命令        | Windows 执行环境                                          |
+| ----------- | --------------- | --------------------------------------------------------- |
+| Claude Code | `claude update` | 沿用现有结构化计划                                        |
+| Codex       | `codex update`  | 固定使用 Windows PowerShell 5.1，隔离模块路径并透传退出码 |
+| Antigravity | `agy update`    | 沿用现有结构化计划                                        |
+| Grok Build  | `grok update`   | 任务创建后在后台校验官方原生安装来源，再执行更新          |
 
 Grok 也提供官方 npm 包 `@xai-official/grok`，但本应用 G1 只托管官方原生安装器。
 只有官方 CLI 检查 JSON 明确报告 `installer=internal`，且当前程序位于
 `%USERPROFILE%\.grok\bin`、`GROK_BIN_DIR` 或对应 Unix 用户目录时，应用内更新才可用；
-计划生成和任务启动时都会复核。npm、未知来源或路径不匹配时仍可启动已解析 CLI，
-但更新按钮禁用并显示原安装渠道指引，不能盲目运行 `grok update` 或调用其他包管理器。
+计划生成只定位本机 CLI，不执行网络检查；任务创建后再校验同一可执行文件报告的
+安装来源。npm、未知来源或路径不匹配时任务会失败且不会调用更新命令。运行
+`grok update` 时会移除 pnpm 注入的 `npm_config_user_agent`，避免官方原生安装
+被误判为 npm 安装。
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。Codex 的 Windows
 更新计划先解析 CLI 完整路径，再在最终 PowerShell 边界进行字面量转义；命令主体

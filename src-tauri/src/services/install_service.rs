@@ -53,7 +53,7 @@ fn codex_windows_update_plan() -> Result<InstallPlan> {
     let codex = resolve_program("codex")?;
     let program = resolve_program("powershell")?;
     let command = format!(
-        "& {} update; exit $LASTEXITCODE",
+        "$env:PSModulePath = @((Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\\Modules'), (Join-Path $env:ProgramFiles 'WindowsPowerShell\\Modules'), (Join-Path $PSHOME 'Modules')) -join [IO.Path]::PathSeparator; & {} update; exit $LASTEXITCODE",
         quote_powershell_arg(&codex)
     );
     let args = vec![
@@ -71,7 +71,7 @@ fn codex_windows_update_plan() -> Result<InstallPlan> {
         kind: InstallKind::Update,
         program,
         args,
-        source: "Codex 内置更新命令（Windows PowerShell 5.1）".to_string(),
+        source: "Codex 内置更新命令（Windows PowerShell 5.1，隔离模块路径）".to_string(),
         preview,
     })
 }
@@ -136,14 +136,6 @@ fn install_spec(tool_key: ToolKey) -> Result<(&'static str, Vec<&'static str>, &
 fn grok_update_plan() -> Result<InstallPlan> {
     let path = detect::resolve_executable_path(&ToolKey::Grok.command_candidates())
         .ok_or_else(|| anyhow!("未检测到可运行的 Grok Build CLI"))?;
-    let check =
-        crate::services::version_service::inspect_grok_update_check(std::path::Path::new(&path))
-            .map_err(anyhow::Error::msg)?;
-    crate::services::version_service::validate_grok_native_update_source(
-        std::path::Path::new(&path),
-        check.installer.as_deref(),
-    )
-    .map_err(anyhow::Error::msg)?;
     Ok(grok_update_plan_for(&path))
 }
 
@@ -153,7 +145,7 @@ fn grok_update_plan_for(path: &str) -> InstallPlan {
         kind: InstallKind::Update,
         program: path.to_string(),
         args: vec!["update".to_string()],
-        source: "Grok Build 官方原生安装器（CLI 来源标记与安装路径均已核验）".to_string(),
+        source: "Grok Build 官方原生更新器（任务启动后校验 CLI 来源）".to_string(),
         preview: format!("{} update", quote_command_path(path)),
     }
 }
@@ -268,7 +260,13 @@ pub(crate) fn build_command(plan: &InstallPlan) -> Command {
         command.args(&plan.args);
         command
     };
-    configure_command(command)
+    let mut command = configure_command(command);
+    if plan.tool_key == ToolKey::Grok && plan.kind == InstallKind::Update {
+        // pnpm's environment marker makes Grok select its npm updater even
+        // when the detected executable belongs to the official native install.
+        command.env_remove("npm_config_user_agent");
+    }
+    command
 }
 
 #[cfg(windows)]
@@ -327,8 +325,16 @@ mod tests {
             .ends_with("system32\\windowspowershell\\v1.0\\powershell.exe"));
         assert_eq!(plan.args[0], "-NoProfile");
         assert_eq!(plan.args[4], "-Command");
+        assert!(plan.args[5].starts_with("$env:PSModulePath = @("));
+        assert!(plan.args[5].contains("GetFolderPath('MyDocuments')"));
+        assert!(plan.args[5].contains("'WindowsPowerShell\\Modules'"));
+        assert!(plan.args[5].contains("(Join-Path $PSHOME 'Modules')"));
         assert!(plan.args[5].contains(" update; exit $LASTEXITCODE"));
+        assert!(!plan.args[5]
+            .to_ascii_lowercase()
+            .contains("\\powershell\\7\\"));
         assert!(plan.source.contains("Windows PowerShell 5.1"));
+        assert!(plan.source.contains("隔离模块路径"));
         assert!(plan.preview.contains("codex"));
         assert!(plan.preview.contains("update"));
     }
@@ -367,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn grok_update_plan_uses_the_verified_binary_without_a_shell() {
+    fn grok_update_plan_uses_the_detected_binary_without_a_shell() {
         let plan = grok_update_plan_for(r"C:\Users\test user\.grok\bin\grok.exe");
         assert_eq!(plan.program, r"C:\Users\test user\.grok\bin\grok.exe");
         assert_eq!(plan.args, vec!["update"]);
@@ -375,7 +381,17 @@ mod tests {
             plan.preview,
             r#""C:\Users\test user\.grok\bin\grok.exe" update"#
         );
-        assert!(plan.source.contains("来源标记与安装路径均已核验"));
+        assert!(plan.source.contains("任务启动后校验 CLI 来源"));
+    }
+
+    #[test]
+    fn grok_update_command_removes_pnpm_installer_hint() {
+        let plan = grok_update_plan_for(r"C:\Users\test user\.grok\bin\grok.exe");
+        let command = build_command(&plan);
+
+        assert!(command.as_std().get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("npm_config_user_agent") && value.is_none()
+        }));
     }
 
     #[cfg(target_os = "macos")]

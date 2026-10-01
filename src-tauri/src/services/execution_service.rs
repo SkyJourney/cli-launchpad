@@ -11,7 +11,7 @@ use crate::db::execution_task_repo;
 use crate::models::execution::{
     ExecutionLogChunk, ExecutionStatus, ExecutionStream, ExecutionTask,
 };
-use crate::models::install::InstallPlan;
+use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
 use crate::platform::execution_process::ProcessTree;
 use crate::services::install_service;
@@ -172,6 +172,37 @@ async fn run_task(
     }
     append_system_log(&app, &id, "任务已启动。\n");
 
+    if plan.tool_key == ToolKey::Grok && plan.kind == InstallKind::Update {
+        append_system_log(&app, &id, "正在后台校验 Grok Build 更新来源。\n");
+        let executable = plan.program.clone();
+        let verification = tokio::task::spawn_blocking(move || {
+            let path = std::path::Path::new(&executable);
+            let check = crate::services::version_service::inspect_grok_update_check(path)?;
+            crate::services::version_service::validate_grok_native_update_source(
+                path,
+                check.installer.as_deref(),
+            )
+        });
+        tokio::select! {
+            biased;
+            _ = &mut cancel => {
+                finish_cancelled(&app, &id, "用户在 Grok 更新来源校验期间终止了任务".to_string());
+                return;
+            }
+            result = verification => match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    finish_failed(&app, &id, format!("Grok Build 更新来源校验失败：{error}"));
+                    return;
+                }
+                Err(error) => {
+                    finish_failed(&app, &id, format!("Grok Build 更新来源校验任务异常：{error}"));
+                    return;
+                }
+            }
+        }
+    }
+
     let process_tree = match ProcessTree::new() {
         Ok(process_tree) => process_tree,
         Err(error) => {
@@ -329,6 +360,15 @@ fn finish_failed(app: &AppHandle, id: &str, message: String) {
     let manager = app.state::<ExecutionTaskManager>();
     if let Err(error) = manager.complete(app, id, ExecutionStatus::Failed, None, Some(&message)) {
         log::error!("unable to mark execution task failed task_id={id} error={error}");
+    }
+}
+
+fn finish_cancelled(app: &AppHandle, id: &str, message: String) {
+    append_system_log(app, id, &format!("任务已取消：{message}。\n"));
+    let manager = app.state::<ExecutionTaskManager>();
+    if let Err(error) = manager.complete(app, id, ExecutionStatus::Cancelled, None, Some(&message))
+    {
+        log::error!("unable to mark execution task cancelled task_id={id} error={error}");
     }
 }
 

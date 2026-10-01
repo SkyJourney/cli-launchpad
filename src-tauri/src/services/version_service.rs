@@ -249,7 +249,7 @@ fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {
     dirs
 }
 
-fn run_grok_update_check(path: &std::path::Path) -> Result<Output, String> {
+fn grok_update_check_command(path: &std::path::Path) -> Command {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -278,6 +278,11 @@ fn run_grok_update_check(path: &std::path::Path) -> Result<Output, String> {
     };
     process
         .args(["update", "--check", "--json"])
+        // pnpm sets this for child processes. Grok interprets it as evidence
+        // that Grok itself was installed by npm, then runs `npm view` instead
+        // of its native updater. Launchpad's pnpm environment must not alter
+        // the install source reported by the installed Grok binary.
+        .env_remove("npm_config_user_agent")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -286,8 +291,11 @@ fn run_grok_update_check(path: &std::path::Path) -> Result<Output, String> {
         use std::os::windows::process::CommandExt;
         process.creation_flags(0x0800_0000);
     }
+    process
+}
 
-    let mut child = process
+fn run_grok_update_check(path: &std::path::Path) -> Result<Output, String> {
+    let mut child = grok_update_check_command(path)
         .spawn()
         .map_err(|error| format!("无法启动 Grok Build 版本检查：{error}"))?;
     let deadline = Instant::now() + GROK_UPDATE_CHECK_TIMEOUT;
@@ -514,10 +522,19 @@ mod tests {
     }
 
     #[test]
-    fn grok_update_check_only_runs_for_explicit_refresh() {
+    fn grok_update_check_runs_only_when_requested_by_caller() {
         assert!(!should_check_tool(ToolKey::Grok, false));
         assert!(should_check_tool(ToolKey::Grok, true));
         assert!(should_check_tool(ToolKey::Codex, false));
+    }
+
+    #[test]
+    fn grok_update_check_ignores_pnpm_installer_hint() {
+        let command = grok_update_check_command(std::path::Path::new("grok"));
+
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("npm_config_user_agent") && value.is_none()
+        }));
     }
 
     #[test]
