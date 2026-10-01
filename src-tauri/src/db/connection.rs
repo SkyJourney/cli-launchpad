@@ -27,6 +27,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (8, include_str!("../../migrations/0008_session_aliases.sql")),
     (9, include_str!("../../migrations/0009_pty_sessions.sql")),
     (10, include_str!("../../migrations/0010_grok_build.sql")),
+    (
+        11,
+        include_str!("../../migrations/0011_workspace_layouts.sql"),
+    ),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -221,6 +225,127 @@ mod tests {
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn workspace_layout_migration_adds_versioned_tables_without_project_foreign_keys() {
+        let connection = memory_db();
+        assert_eq!(schema_version(&connection).unwrap(), 11);
+
+        let current_columns: i64 = connection
+            .query_row(
+                "select count(*) from pragma_table_info('workspace_state') where name in ('id', 'schema_version', 'revision', 'payload_json', 'updated_at_ms')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count current workspace columns");
+        let preset_columns: i64 = connection
+            .query_row(
+                "select count(*) from pragma_table_info('workspace_layout_presets') where name in ('id', 'name', 'schema_version', 'payload_json', 'created_at_ms', 'updated_at_ms')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count preset columns");
+        assert_eq!(current_columns, 5);
+        assert_eq!(preset_columns, 6);
+
+        let foreign_keys: i64 = connection
+            .query_row(
+                "select count(*) from pragma_foreign_key_list('workspace_state')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count workspace foreign keys");
+        assert_eq!(foreign_keys, 0);
+    }
+
+    #[test]
+    fn workspace_layout_migration_preserves_sessions_and_allows_orphaned_layout_references() {
+        let connection = Connection::open_in_memory().expect("open in-memory db");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable fk");
+        for (version, sql) in &MIGRATIONS[..10] {
+            connection
+                .execute_batch(&format!(
+                    "BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;"
+                ))
+                .expect("apply migration before workspace layouts");
+        }
+
+        let directory = crate::db::directory_repo::add(
+            &connection,
+            "layout project",
+            "C:\\Projects\\layout",
+            None,
+        )
+        .expect("insert directory");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "session-before-layout-migration",
+            directory.id,
+            crate::models::tool::ToolKey::Claude,
+            &directory.path,
+            10,
+        )
+        .expect("insert existing PTY metadata");
+        apply_migrations(&connection).expect("apply workspace layout migration");
+
+        let session_count: i64 = connection
+            .query_row(
+                "select count(*) from pty_sessions where session_id = 'session-before-layout-migration'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read preexisting PTY metadata");
+        assert_eq!(session_count, 1);
+
+        connection
+            .execute(
+                "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, 1, 0, '{}', 20)",
+                [],
+            )
+            .expect("insert layout without directory foreign key");
+        crate::db::pty_session_repo::mark_running_ended(&connection, 30)
+            .expect("end preexisting PTY");
+        crate::db::directory_repo::remove(&connection, directory.id)
+            .expect("remove project referenced by PTY metadata");
+
+        let layout_count: i64 = connection
+            .query_row("select count(*) from workspace_state", [], |row| row.get(0))
+            .expect("layout remains after project removal");
+        assert_eq!(layout_count, 1);
+    }
+
+    #[test]
+    fn workspace_layout_migration_enforces_preset_names_and_payload_size() {
+        let connection = memory_db();
+        connection
+            .execute(
+                "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-1', 'Team Workspace', 1, '{}', 1, 1)",
+                [],
+            )
+            .expect("insert first preset");
+        assert!(connection
+            .execute(
+                "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-2', 'team workspace', 1, '{}', 1, 1)",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-3', '   ', 1, '{}', 1, 1)",
+                [],
+            )
+            .is_err());
+
+        let oversized = "x".repeat(2 * 1024 * 1024 + 1);
+        assert!(connection
+            .execute(
+                "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-4', 'Too Large', 1, ?1, 1, 1)",
+                [&oversized],
+            )
+            .is_err());
     }
 
     #[test]

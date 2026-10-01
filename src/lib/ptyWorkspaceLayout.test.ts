@@ -6,17 +6,47 @@ import {
   containsWorkspaceSession,
   createWorkspacePane,
   findWorkspacePane,
+  isUsableWorkspaceSplitSizes,
   listWorkspacePanes,
   listVisibleWorkspaceSessionIds,
   moveWorkspaceSession,
+  nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   removeWorkspaceSession,
   setWorkspaceSplitRatio,
   splitAndMoveWorkspaceSession,
   splitWorkspacePane,
+  workspaceSplitSizes,
 } from "./ptyWorkspaceLayout";
 
 describe("PTY workspace split tree", () => {
+  it("counts detached sessions in the project and CLI window sequence", () => {
+    const allManagedSlots = [
+      { directoryId: 42, toolKey: "codex", sequence: 1 },
+      { directoryId: 42, toolKey: "codex", sequence: 2 },
+      { directoryId: 7, toolKey: "codex", sequence: 8 },
+      { directoryId: 42, toolKey: "claude", sequence: 5 },
+    ];
+
+    expect(nextWorkspaceSessionSequence(allManagedSlots, 42, "codex")).toBe(3);
+    expect(nextWorkspaceSessionSequence(allManagedSlots, 42, "agy")).toBe(1);
+  });
+
+  it("converts a saved ratio into pane sizes excluding the sash", () => {
+    expect(workspaceSplitSizes(0.7, 1008)).toEqual([700, 300]);
+    expect(workspaceSplitSizes(Number.NaN, 1008)).toEqual([500, 500]);
+    expect(workspaceSplitSizes(0.7, 4)).toEqual([0, 0]);
+  });
+
+  it("accepts only finite positive sizes for a two-pane resize", () => {
+    expect(isUsableWorkspaceSplitSizes([700, 300])).toBe(true);
+    expect(isUsableWorkspaceSplitSizes([0, 300])).toBe(false);
+    expect(isUsableWorkspaceSplitSizes([700, Number.POSITIVE_INFINITY])).toBe(
+      false,
+    );
+    expect(isUsableWorkspaceSplitSizes([700])).toBe(false);
+  });
+
   it("splits a pane recursively and keeps existing sessions in that pane", () => {
     const root = addSessionToWorkspacePane(
       createWorkspacePane("root"),
@@ -320,7 +350,7 @@ describe("PTY workspace split tree", () => {
     ).toBe("session-a");
   });
 
-  it("collapses an empty child pane after its final session exits", () => {
+  it("keeps an empty child pane after its final session exits", () => {
     const split = splitWorkspacePane(
       createWorkspacePane("root"),
       "root",
@@ -331,7 +361,13 @@ describe("PTY workspace split tree", () => {
     const withSession = addSessionToWorkspacePane(split, "pane-b", "session-a");
     const afterExit = removeWorkspaceSession(withSession, "session-a");
 
-    expect(afterExit).toEqual(createWorkspacePane("root"));
+    expect(listWorkspacePanes(afterExit).map((pane) => pane.id)).toEqual([
+      "root",
+      "pane-b",
+    ]);
+    expect(findWorkspacePane(afterExit, "pane-b")).toEqual(
+      createWorkspacePane("pane-b", 2),
+    );
   });
 
   it("lets the user close an unused empty pane without touching other sessions", () => {
@@ -423,7 +459,7 @@ describe("PTY workspace split tree", () => {
     expect(findWorkspacePane(afterCreatingPane, "pane-3")?.paneNumber).toBe(3);
   });
 
-  it("collapses nested empty branches while preserving remaining sessions", () => {
+  it("keeps all panes and sibling sessions when one of three sessions exits", () => {
     const firstSplit = splitWorkspacePane(
       createWorkspacePane("root"),
       "root",
@@ -439,7 +475,11 @@ describe("PTY workspace split tree", () => {
       "pane-c",
     );
     const populated = addSessionToWorkspacePane(
-      addSessionToWorkspacePane(nested, "pane-b", "session-b"),
+      addSessionToWorkspacePane(
+        addSessionToWorkspacePane(nested, "root", "session-a"),
+        "pane-b",
+        "session-b",
+      ),
       "pane-c",
       "session-c",
     );
@@ -448,8 +488,14 @@ describe("PTY workspace split tree", () => {
     expect(listWorkspacePanes(afterExit).map((pane) => pane.id)).toEqual([
       "root",
       "pane-b",
+      "pane-c",
     ]);
+    expect(containsWorkspaceSession(afterExit, "session-a")).toBe(true);
     expect(containsWorkspaceSession(afterExit, "session-b")).toBe(true);
+    expect(containsWorkspaceSession(afterExit, "session-c")).toBe(false);
+    expect(findWorkspacePane(afterExit, "pane-c")).toEqual(
+      createWorkspacePane("pane-c", 3),
+    );
   });
 
   it("records draggable split ratios and clamps invalid boundaries", () => {

@@ -614,11 +614,262 @@ pre,
   width: 100%;
 }
 
+.pty-workspace-toolbar {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  min-height: 34px;
+  padding: 0 2px 6px;
+}
+
+.pty-layout-toolbar-button {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 6px;
+  height: 29px;
+  justify-content: center;
+  padding: 0 9px;
+}
+
+.pty-layout-toolbar-button:hover,
+.pty-layout-toolbar-button[aria-expanded="true"] {
+  border-color: var(--color-primary-hover);
+  color: var(--color-primary);
+}
+
+.pty-layout-toolbar-button:focus-visible {
+  outline: 2px solid var(--color-primary-focus);
+  outline-offset: 2px;
+}
+
+.workspace-layout-popover .anchored-popover-header {
+  padding: 10px 12px 8px;
+}
+
+.workspace-layout-popover .anchored-popover-body {
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.workspace-layout-popover-heading,
+.workspace-layout-save-form,
+.workspace-layout-preset-main,
+.workspace-layout-confirmation {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace-layout-popover-heading {
+  justify-content: space-between;
+}
+
+.workspace-layout-popover-heading > span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.workspace-layout-save-form input,
+.workspace-layout-rename-form input {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  height: 29px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.workspace-layout-save-form input {
+  flex: 1 1 auto;
+}
+
+.workspace-layout-list {
+  display: grid;
+  gap: 5px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.workspace-layout-list > .muted {
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.workspace-layout-preset {
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+}
+
+.workspace-layout-preset-main > strong {
+  flex: 1 1 auto;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-layout-preset .icon-button {
+  border-radius: 6px;
+  flex-basis: 27px;
+  height: 27px;
+  width: 27px;
+}
+
+.workspace-layout-preset .icon-button.danger:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger-text);
+}
+
+.workspace-layout-rename-form {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-layout-rename-form input {
+  flex: 1 1 auto;
+}
+
+.workspace-layout-confirmation {
+  border-top: 1px solid var(--color-border-subtle);
+  flex-wrap: wrap;
+  font-size: 11px;
+  padding-top: 6px;
+}
+
+.workspace-layout-confirmation > span {
+  flex: 1 1 100%;
+}
+
+.pty-layout-action.is-primary {
+  background: var(--color-primary-button);
+  border-color: var(--color-primary-button);
+  color: var(--color-on-primary);
+}
+
+.pty-workspace-loading {
+  align-items: center;
+  color: var(--color-text-muted);
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.pty-workspace-recovery-notice {
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  color: var(--color-text-secondary);
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  padding: 8px 11px;
+}
+
+.pty-workspace-recovery-notice p {
+  margin: 0;
+}
+
+.pty-workspace-recovery-notice p + p,
+.pty-workspace-recovery-notice button {
+  margin-top: 8px;
+}
+
+.pty-layout-action {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.pty-layout-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.settings-view .primary-button:not(.cli-status-action-button),
+.settings-view .ghost-button {
+  font-size: 12px;
+  height: 32px;
+  padding: 0 10px;
+}
+
+.settings-view .preset-button {
+  font-size: 12px;
+  padding: 5px 11px;
+}
+
+.settings-view .cli-status-action-button {
+  font-size: 12px;
+}
+
+.settings-view .icon-button.refresh-button {
+  flex-basis: 32px;
+  height: 32px;
+  width: 32px;
+}
+
+.settings-view .backup-list.settings-history-list .backup-row {
+  padding: 8px 10px;
+}
+
+.settings-view .backup-list.settings-history-list strong {
+  font-size: 12px;
+}
+
+.settings-view .backup-list.settings-history-list .muted {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.settings-view .backup-list.settings-history-list .ghost-button {
+  font-size: 11px;
+  height: 28px;
+  padding: 0 9px;
+}
+
+.pty-workspace-split-host {
+  display: flex;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
 .pty-workspace-split {
   height: 100%;
   min-height: 0;
   min-width: 0;
   width: 100%;
+}
+
+.pty-workspace-tree {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .pty-workspace-pane {
@@ -1067,6 +1318,24 @@ pre,
   justify-content: center;
   padding: 24px;
   text-align: center;
+}
+
+.pty-restored-placeholder {
+  align-items: center;
+  color: var(--color-log-muted);
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+  padding: 24px;
+  text-align: center;
+}
+
+.pty-restored-placeholder p {
+  line-height: 1.6;
+  margin: 0;
+  max-width: 460px;
 }
 
 .empty-projects-state {
@@ -2413,6 +2682,12 @@ h1 {
   margin: 0;
 }
 
+.project-dialog-close-button {
+  flex-basis: 30px;
+  height: 30px;
+  width: 30px;
+}
+
 .project-dialog-form {
   display: grid;
   gap: 14px;
@@ -2490,7 +2765,10 @@ h1 {
 
 .project-dialog-choose-button {
   flex: 0 0 auto;
-  min-width: 124px;
+  font-size: 13px;
+  height: 34px;
+  min-width: 116px;
+  padding: 0 10px;
   white-space: nowrap;
 }
 
@@ -2498,6 +2776,20 @@ h1 {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.project-dialog-actions .ghost-button,
+.project-dialog-actions .primary-button {
+  font-size: 13px;
+  height: 34px;
+  padding: 0 11px;
+}
+
+.cli-update-confirmation-popover .anchored-popover-footer > .ghost-button,
+.cli-update-confirmation-popover .anchored-popover-footer > .primary-button {
+  font-size: 12px;
+  height: 30px;
+  padding: 0 9px;
 }
 
 .pty-preview-fields {
@@ -2721,9 +3013,10 @@ h1 {
 }
 
 .cli-status-action-button {
-  height: var(--control-height-compact);
-  min-width: 96px;
-  padding-inline: 11px;
+  height: 28px;
+  min-width: 84px;
+  padding-inline: 9px;
+  font-size: 13px;
 }
 
 .cli-status-action-button.is-running:disabled {

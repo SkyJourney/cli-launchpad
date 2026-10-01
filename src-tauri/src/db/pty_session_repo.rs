@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{pty_session::PtySession, tool::ToolKey};
 
@@ -63,6 +63,19 @@ pub fn list_for_directory(
     ))?;
     let rows = statement.query_map(params![directory_id], map_row)?;
     rows.collect()
+}
+
+pub fn get_by_id(
+    connection: &Connection,
+    session_id: &str,
+) -> rusqlite::Result<Option<PtySession>> {
+    connection
+        .query_row(
+            &format!("{SELECT} where session_id = ?1"),
+            params![session_id],
+            map_row,
+        )
+        .optional()
 }
 
 pub fn mark_running_ended(connection: &Connection, ended_at_ms: i64) -> rusqlite::Result<usize> {

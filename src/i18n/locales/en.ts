@@ -59,12 +59,61 @@ export const en = {
     paneLabel: "Terminal pane",
     paneNumber: "Pane-{{number}}",
     paneSessions: "Terminal sessions in this pane",
+    layoutLoading: "Restoring workspace…",
+    layoutNeedsReset:
+      "The workspace layout could not be read ({{reason}}). The original data is preserved and autosave is paused.",
+    layoutLoadFailed:
+      "Could not read the workspace layout: {{error}}. This run will not overwrite the original data.",
+    retryLayoutRead: "Retry reading",
+    resetLayout: "Reset workspace layout",
+    layoutResetPending: "Resetting…",
+    confirmLayoutReset:
+      "The workspace layout cannot be read. Resetting replaces the damaged layout with an empty workspace. Continue?",
+    layoutResetFailed: "Could not reset the workspace: {{error}}",
+    layoutSaveFailed:
+      "Could not save the workspace automatically: {{error}}. Terminals remain available.",
+    layouts: "Layouts",
+    namedLayouts: "Named layouts",
+    layoutNamePlaceholder: "Layout name",
+    saveLayout: "Save current layout",
+    applyLayout: "Apply",
+    layoutApplied: "Layout applied; running sessions were preserved",
+    renameLayout: "Rename layout",
+    overwriteLayout: "Overwrite with current layout",
+    deleteLayout: "Delete layout",
+    layoutSaved: "Layout saved",
+    layoutRenamed: "Layout renamed",
+    layoutOverwritten: "Layout updated",
+    layoutDeleted: "Layout deleted",
+    layoutActionFailed: "Layout action failed: {{error}}",
+    layoutChangedDuringApply:
+      "The workspace changed while applying the layout. Please try again.",
+    layoutPresetMissing:
+      "This named layout no longer exists. Refresh the list and try again.",
+    layoutsLoading: "Loading layouts…",
+    noNamedLayouts: "No saved layouts yet.",
+    confirmOverwriteLayout:
+      "Overwrite “{{name}}” with the current panes and sessions?",
+    confirmDeleteLayout: "Delete “{{name}}”?",
+    closeLayoutManager: "Close layout manager",
+    confirmLayoutAction: "Confirm",
+    projectUnavailable:
+      "This project could not be found, so the terminal cannot start.",
+    restoredEnded:
+      "This session has ended. The CLI will not start automatically; restore it later from session history.",
+    restoredMissingProject:
+      "The project linked to this session no longer exists.",
+    restoredProjectMismatch:
+      "The project path or identity changed, so this session cannot be confirmed as belonging to it.",
+    restoredMissingSession: "The session record no longer exists.",
+    restoredSessionMismatch:
+      "The session is no longer linked to this project or CLI.",
     previousSessions: "{{count}} earlier sessions",
     nextSessions: "{{count}} later sessions",
     previousSessionsHeading: "Earlier terminal sessions",
     nextSessionsHeading: "Later terminal sessions",
     emptyPane: "Empty pane",
-    empty: "Start a CLI to show its terminal here.",
+    empty: "Restore a session from history on the right, or start a CLI here.",
     starting: "Creating terminal session…",
     terminalNotReady: "The terminal is not ready yet. Try again shortly.",
     close: "Close terminal session",

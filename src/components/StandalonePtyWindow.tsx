@@ -6,9 +6,14 @@ import { useTranslation } from "react-i18next";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
 import { useThemeSync } from "../hooks/useThemeSync";
 import {
+  getPtySessionWindowStatus,
+  type PtySessionWindowStatus,
+} from "../lib/tauri";
+import {
   encodePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
+import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
 
 interface StandalonePtyWindowProps {
   sessionId: string;
@@ -34,22 +39,50 @@ export function StandalonePtyWindow({
 }: StandalonePtyWindowProps) {
   const { t } = useTranslation();
   const terminalRef = useRef<PtyTerminalHandle>(null);
-  const allowCloseRef = useRef(false);
+  const exitHandledRef = useRef(false);
   const returnInProgressRef = useRef(false);
   const returnAttemptRef = useRef(0);
   const currentReturnTokenRef = useRef(handoffToken);
   const returnTimeoutRef = useRef<number | null>(null);
   const handoffStartedRef = useRef(false);
+  const closeAfterExitRef = useRef<() => void>(() => undefined);
+  const closeAfterTransferRef = useRef<() => void>(() => undefined);
   const translationRef = useRef(t);
   translationRef.current = t;
   const [ready, setReady] = useState(false);
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useThemeSync();
 
+  const reconcileWindowStatus = useCallback(async () => {
+    let windowStatus: PtySessionWindowStatus;
+    try {
+      windowStatus = await getPtySessionWindowStatus(sessionId);
+    } catch (reason) {
+      console.warn("Failed to reconcile detached PTY status", reason);
+      return false;
+    }
+
+    const action = resolveDetachedWindowFailureAction(
+      terminalRef.current?.getSessionState(),
+      windowStatus,
+    );
+    if (action === "close-ended") {
+      closeAfterExitRef.current();
+      return true;
+    }
+    if (action === "close-transferred") {
+      closeAfterTransferRef.current();
+      return true;
+    }
+    return false;
+  }, [sessionId]);
+
   const requestReturn = useCallback(
     async (targetPaneId?: string) => {
-      if (!ready || returnInProgressRef.current) return;
+      if (returnInProgressRef.current) return;
       const attempt = ++returnAttemptRef.current;
       const isCurrentAttempt = () => returnAttemptRef.current === attempt;
       returnInProgressRef.current = true;
@@ -60,13 +93,16 @@ export function StandalonePtyWindow({
       returnTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentAttempt()) return;
         returnTimeoutRef.current = null;
-        returnAttemptRef.current += 1;
+        const timeoutAttempt = ++returnAttemptRef.current;
         if (token) {
           void terminal?.cancelHandoff(token).catch(() => undefined);
         }
-        setError(t("pty.returnFailed", { error: "主工作区响应超时" }));
-        returnInProgressRef.current = false;
-        setReturning(false);
+        void reconcileWindowStatus().then((handled) => {
+          if (returnAttemptRef.current !== timeoutAttempt || handled) return;
+          setError(t("pty.returnFailed", { error: "主工作区响应超时" }));
+          returnInProgressRef.current = false;
+          setReturning(false);
+        });
       }, RETURN_HANDOFF_TIMEOUT_MS);
       try {
         const handoff = await terminal?.captureHandoff();
@@ -92,6 +128,8 @@ export function StandalonePtyWindow({
           await terminal?.cancelHandoff(token).catch(() => undefined);
         }
         if (!isCurrentAttempt()) return;
+        if (await reconcileWindowStatus()) return;
+        if (!isCurrentAttempt()) return;
         if (returnTimeoutRef.current !== null) {
           window.clearTimeout(returnTimeoutRef.current);
           returnTimeoutRef.current = null;
@@ -102,32 +140,66 @@ export function StandalonePtyWindow({
         setReturning(false);
       }
     },
-    [instanceId, ready, sessionId, t],
+    [instanceId, reconcileWindowStatus, sessionId, t],
   );
   const requestReturnRef = useRef(requestReturn);
   requestReturnRef.current = requestReturn;
 
   const reportExited = useCallback(
     () =>
-      void emitTo("main", "pty-detached-exited", {
+      emitTo("main", "pty-detached-exited", {
         instanceId,
         sessionId,
         windowLabel: getCurrentWindow().label,
-      }).catch(() => undefined),
+      }).catch((reason) => {
+        console.warn("Failed to report detached PTY exit", reason);
+      }),
     [instanceId, sessionId],
   );
 
-  const handleSessionChange = useCallback(
-    (session: { state: string } | null) => {
-      if (session?.state !== "exited" && session?.state !== "terminated")
-        return;
-      reportExited();
-      window.setTimeout(() => {
-        allowCloseRef.current = true;
-        void getCurrentWindow().close();
-      }, 250);
+  const closeDetachedWindow = useCallback(
+    async (reportExit: boolean) => {
+      if (exitHandledRef.current) return;
+      exitHandledRef.current = true;
+      returnAttemptRef.current += 1;
+      returnInProgressRef.current = false;
+      setReturning(false);
+      if (returnTimeoutRef.current !== null) {
+        window.clearTimeout(returnTimeoutRef.current);
+        returnTimeoutRef.current = null;
+      }
+      if (reportExit) await reportExited();
+      await getCurrentWindow()
+        .destroy()
+        .catch((reason) =>
+          console.error("Failed to destroy detached PTY window", reason),
+        );
     },
     [reportExited],
+  );
+  const closeAfterExit = useCallback(
+    () => void closeDetachedWindow(true),
+    [closeDetachedWindow],
+  );
+  const closeAfterTransfer = useCallback(
+    () => void closeDetachedWindow(false),
+    [closeDetachedWindow],
+  );
+  closeAfterExitRef.current = closeAfterExit;
+  closeAfterTransferRef.current = closeAfterTransfer;
+
+  const handleSessionChange = useCallback(
+    (session: { state: string } | null) => {
+      if (
+        session?.state !== "exited" &&
+        session?.state !== "terminated" &&
+        session?.state !== "failed"
+      ) {
+        return;
+      }
+      closeAfterExitRef.current();
+    },
+    [],
   );
 
   useEffect(() => {
@@ -141,8 +213,38 @@ export function StandalonePtyWindow({
       try {
         const registeredListeners = await Promise.all([
           currentWindow.onCloseRequested((event) => {
-            if (allowCloseRef.current) return;
             event.preventDefault();
+            const terminalState = terminalRef.current?.getSessionState();
+            if (
+              terminalState === "exited" ||
+              terminalState === "terminated" ||
+              terminalState === "failed"
+            ) {
+              closeAfterExitRef.current();
+              return;
+            }
+            if (!readyRef.current && terminalState !== "running") {
+              void getPtySessionWindowStatus(sessionId)
+                .then((status) => {
+                  if (status === "ended") {
+                    closeAfterExitRef.current();
+                  } else if (status === "ownedByAnotherWindow") {
+                    emitTo("main", "pty-detached-failed", {
+                      instanceId,
+                      sessionId,
+                      windowLabel: currentWindow.label,
+                      message: "独立终端窗口在接管完成前关闭",
+                    }).catch(() => undefined);
+                    closeAfterTransferRef.current();
+                  } else {
+                    void requestReturnRef.current();
+                  }
+                })
+                .catch((reason) =>
+                  console.warn("Failed to inspect PTY before closing", reason),
+                );
+              return;
+            }
             void requestReturnRef.current();
           }),
           listen<WindowHandoffEvent>("pty-return-complete", (event) => {
@@ -152,8 +254,11 @@ export function StandalonePtyWindow({
               window.clearTimeout(returnTimeoutRef.current);
               returnTimeoutRef.current = null;
             }
-            allowCloseRef.current = true;
-            void currentWindow.close();
+            void currentWindow
+              .destroy()
+              .catch((reason) =>
+                console.error("Failed to destroy returned PTY window", reason),
+              );
           }),
           listen<WindowHandoffEvent>("pty-return-failed", (event) => {
             if (
@@ -199,8 +304,19 @@ export function StandalonePtyWindow({
         if (!terminal) {
           throw new Error(translationRef.current("pty.terminalNotReady"));
         }
-        await terminal.attachHandoff(sessionId, handoffToken);
+        const attachedSession = await terminal.attachHandoff(
+          sessionId,
+          handoffToken,
+        );
         if (disposed) return;
+        if (
+          attachedSession.state === "exited" ||
+          attachedSession.state === "terminated" ||
+          attachedSession.state === "failed"
+        ) {
+          closeAfterExitRef.current();
+          return;
+        }
         await emitTo("main", "pty-detached-ready", {
           instanceId,
           sessionId,
@@ -209,6 +325,28 @@ export function StandalonePtyWindow({
         if (!disposed) setReady(true);
       } catch (reason) {
         if (!disposed) {
+          let status: PtySessionWindowStatus | null = null;
+          try {
+            status = await getPtySessionWindowStatus(sessionId);
+          } catch (statusError) {
+            console.warn(
+              "Failed to inspect PTY after attach failure",
+              statusError,
+            );
+          }
+          if (disposed) return;
+          const action = resolveDetachedWindowFailureAction(
+            terminalRef.current?.getSessionState(),
+            status,
+          );
+          if (action === "close-ended") {
+            closeAfterExitRef.current();
+            return;
+          }
+          if (action === "close-transferred") {
+            closeAfterTransferRef.current();
+            return;
+          }
           setError(String(reason));
           await emitTo("main", "pty-detached-failed", {
             instanceId,
@@ -216,6 +354,7 @@ export function StandalonePtyWindow({
             windowLabel: currentWindow.label,
             message: String(reason),
           }).catch(() => undefined);
+          await currentWindow.destroy().catch(() => undefined);
         }
       }
     };

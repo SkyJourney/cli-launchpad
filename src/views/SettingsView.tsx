@@ -74,7 +74,7 @@ export function SettingsView() {
 
   const latest = useQuery({
     queryKey: qk.latestVersions(),
-    queryFn: () => fetchLatestVersions(true),
+    queryFn: () => fetchLatestVersions(true, true),
     staleTime: 1000 * 60 * 30,
     refetchOnMount: "always",
   });
@@ -385,9 +385,9 @@ export function SettingsView() {
                       }
                     >
                       {busyKind ? (
-                        <LoaderCircle size={15} className="spinning" />
+                        <LoaderCircle size={14} className="spinning" />
                       ) : (
-                        <Download size={15} />
+                        <Download size={14} />
                       )}
                       {isReconciling
                         ? t("settings.refreshingVersion")
@@ -407,6 +407,7 @@ export function SettingsView() {
                             ? t("settings.confirmInstall")
                             : t("settings.confirmUpdate")
                         }
+                        className="cli-update-confirmation-popover"
                         dismissible={!isCreatingTask}
                         onClose={() => clearPendingAction(tool.key)}
                         header={
@@ -656,7 +657,7 @@ export function SettingsView() {
             {t("settings.clearHistory")}
           </button>
         </div>
-        <div className="backup-list">
+        <div className="backup-list settings-history-list">
           {launchHistory.data?.map((event) => (
             <div className="backup-row" key={event.id}>
               <div>
@@ -729,7 +730,7 @@ export function SettingsView() {
             })}
           </p>
         )}
-        <div className="backup-list">
+        <div className="backup-list settings-history-list">
           {backups.data?.map((backup) => (
             <div className="backup-row" key={backup.id}>
               <div>

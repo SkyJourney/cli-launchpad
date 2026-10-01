@@ -4,7 +4,8 @@ use crate::{
     db::pty_session_repo,
     models::{
         pty_session::{
-            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySizeUpdate, PtyTerminalSnapshot,
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
+            PtySizeUpdate, PtyTerminalSnapshot,
         },
         tool::ToolKey,
     },
@@ -146,6 +147,18 @@ pub fn cancel_pty_handoff(
     token: String,
 ) -> Result<(), AppError> {
     state.cancel_handoff(&session_id, window.label(), &token)
+}
+
+#[tauri::command]
+pub fn get_pty_session_window_status(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+) -> Result<PtySessionWindowStatus, AppError> {
+    if !window.label().starts_with("terminal-") {
+        return Err(AppError::msg("只有独立终端窗口可以查询此状态"));
+    }
+    state.window_status(&session_id, window.label())
 }
 
 #[tauri::command]

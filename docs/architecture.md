@@ -43,11 +43,15 @@ claude / codex / agy / grok
 
 - Rust service 拥有 PTY 与子进程的创建、输入输出、尺寸调整、退出监控和终止；React 管理可见面板、焦点和布局。主工作区和独立窗口共享同一个 session ID 和 PTY，任一时刻只有一个窗口可写入或调整尺寸。关闭窗格标题中的会话关闭控件才终止对应 PTY；仅从布局移除引用或关闭独立窗口不终止会话。
 - 前端以递归 split tree 表示布局；split 节点记录方向和比例，pane 节点记录会话 ID 列表及活动会话。每个 pane 渲染标题栏和会话切换项；稳定的会话注册区持有 xterm 实例，并通过 portal 容器挂到所属 pane，树结构变化时保留原终端实例。分栏 sash 拖动结果回写运行期比例。Allotment 只负责布局与尺寸约束，不持有 PTY 生命周期。
-- 每个会话在布局树或独立窗口中恰好只有一个可见归属。PTY 退出事件从窗格会话列表、独立窗口和前端运行索引中移除该会话；退出导致变空的非根 pane 自动折叠，移动会话导致的空 pane 保留，根窗格保留为空状态。失败启动保留错误呈现以便用户识别。
+- 每个会话在布局树或独立窗口中恰好只有一个可见归属。PTY 退出事件从窗格会话列表、独立窗口和前端运行索引中移除该会话；窗格及分栏关系保留为空状态，供用户启动 CLI 或在指定窗格恢复历史会话。项目和 CLI 的窗口序号由工作区内全部 slot 共同维护，独立窗口 slot 也参与计数。失败启动保留错误呈现以便用户识别。
+- 独立窗口接管期间提前到达的 PTY 退出事件须与接管返回的 session 元数据合并，避免接管竞态留下无法操作的窗口；独立窗复用 `PtyTerminal` 的会话状态变化，CLI 自然退出后先通知主工作区清理对应 slot，再直接销毁独立窗。关闭或返回的接管竞态可查询 Rust 的权威归属：会话已结束则关闭并清理，控制权已转交则关闭旧窗口，仍由当前窗口控制则保留 PTY 并允许重试交接。
 - 每个 PTY 会话独立拥有稳定 ID、项目 ID、工具 key、工作目录、标题和运行状态；前端按 session ID 索引会话，不能再按项目 ID 只保存一个会话。
 - CLI 对话 ID 是可选关联，只有从 CLI 权威来源可靠匹配时才保存；应用不缓存 CLI 会话正文或原始摘要。
 - 多项目 PTY 在同一工作区中混排。项目选择只改变启动/恢复目标，并突出显示归属该项目的窗格/会话项；聚焦窗格或会话会同步其项目上下文。
 - M2 主工作区布局树只保存 PTY 面板引用、排列方向与尺寸比例；分隔条直接调整比例。拖动标题跨窗格、从标题菜单打开独立窗口，或将独立窗口标题拖回指定窗格时，仅转移视图归属；直接移动后清空的源窗格仍保留。M3 再持久化全局混合项目布局和可选布局预设；M2 不持久化独立窗口位置。布局的切换、编辑和删除不能直接终止 PTY。
+- M3 持久化自动保存的当前工作区和用户显式保存的命名快照。布局记录包含版本化递归树、稳定 slot 身份、可空的 PTY session UUID、活动标签、焦点、比例和标题状态；当前工作区另存 detached slot 元数据，命名快照不记录独立窗口位置。为已结束或失效引用保存足够的项目/工具/标题快照以显示占位项。slot 身份先于 PTY session ID 产生，二者必须分开保存和校验。Rust workspace layout service 只读写布局元数据，不操作 PTY 生命周期。
+- 应用启动先把旧运行状态标记为已结束，再读取、校验和恢复当前布局；hydration 完成前前端不得把空默认树自动保存覆盖数据库。恢复不重启 CLI，也不恢复终端输出或滚屏；已结束会话项从当前工作区移除，保留窗格树、编号、焦点和比例。应用命名快照时只调整主工作区呈现结构；快照外仍运行的主工作区 PTY 按稳定顺序追加到根 pane 并去重。独立窗口中的 PTY 和 detached slot 元数据保持原状，不参加窗格合并或重排，即使快照引用该 slot 也从目标 pane tree 中移除该引用，不触发交接；已结束会话项会被省略但不会收拢窗格。项目或会话身份失效的引用仍局部降级为诊断占位项。
+- 当前工作区的用户改动自动保存；命名布局是相互独立的快照。PTY 自然退出时仅移除对应会话项，保留其空窗格和分割关系，且不修改已保存快照；自动标题随项目重命名更新，自定义标题保留原值。
 - 跨窗口转移通过有序交接维护 xterm 画面：源窗口暂停输出派发并取得序号水位，等待此前输出写入完成后序列化终端缓冲；目标窗口恢复该快照，Rust PTY service 将事件通道切换至目标窗口并按序重放水位之后暂存的输出，再恢复实时输出。交接期间同一会话只有一个输入/尺寸控制方；失败时恢复源窗口订阅。输出暂存有明确上限，溢出时拒绝转移并恢复原视图，不丢弃或重启 PTY。
 - 独立终端窗口由 Tauri `WebviewWindow` 创建，启动参数只含已验证的 session ID 与一次性交接令牌；窗口启动后从 Rust 读取会话元数据，不信任 URL 中的项目、CLI 或路径。独立窗口只提供一个终端和“返回工作区”入口，不暴露分栏操作。关闭请求先完成交接并将 PTY 送回主窗口当前焦点 pane；若该 pane 已不存在则回退到根 pane。
 - 标题在主窗口内跨 pane 拖放使用 HTML 拖放；跨 Tauri WebView 的标题拖放作为 Windows 能力探测项。失败或不支持时，右键菜单的“返回工作区”保持完整功能，不以拖放 API 是否可用作为 PTY 生命周期的前提。
@@ -59,11 +63,15 @@ claude / codex / agy / grok
 projects
   └── pty_sessions (session_id, project_id, tool_key, cwd, title, cli_conversation_id?, state)
 
-workspace_layouts (M3)
-  └── pane tree (layout_id, pty_session_id, orientation, size_ratio)
+workspace_state (M3, 单条当前布局记录)
+  ├── versioned pane tree (pane/split IDs, pane number, slot_instance_id, pty_session_id?, project/tool/title snapshot, orientation, size_ratio, focus)
+  └── detached slot metadata (session view was in a standalone window)
+
+workspace_layout_presets (M3, 多条命名快照)
+  └── versioned pane tree (独立快照，不拥有 PTY)
 ```
 
-以上为目标概念模型；M2 实现运行期工作区布局，M3 验收 SQLite schema、数据迁移、命名布局与失效引用策略。
+以上为目标概念模型；具体 JSON DTO 和 SQL 字段由 M3 阶段 0 设计确认。M2 实现运行期工作区布局；M3 验收 SQLite schema、数据迁移、自动保存、命名快照、活跃 PTY 合并与失效引用策略。当前布局和命名快照都属于 SQLite 业务数据，包含在 SQLite 一致性备份中；JSON 配置 bundle 不导出也不覆盖这两类布局数据。
 
 ## 0.2.x 外部终端兼容启动架构
 
@@ -71,7 +79,7 @@ workspace_layouts (M3)
 
 ## 全局 CLI 状态
 
-应用启动时检测当前已接入的 CLI，G1 完成后为四项工具提供统一全局状态，可手动刷新。前端引入轻量全局状态库（如 Zustand）持有该状态。
+应用启动时检测当前已接入的 CLI，G1 完成后为四项工具提供统一全局状态，可手动刷新。打开设置页时同步刷新 Grok 官方最新版本；其他最新版本沿用缓存和手动刷新策略。前端引入轻量全局状态库（如 Zustand）持有该状态。
 
 ```text
 cli_status
@@ -130,8 +138,8 @@ commands 保持小而清晰，业务组合放在 services。
 
 - 系统托盘：核心 `tray-icon` 能力，菜单提供"显示主界面/退出"，左键双击托盘显示并聚焦窗口。
 - 关闭窗口行为：设置页可选"最小化到托盘"或"退出应用"，默认关闭到托盘；策略持久化到 SQLite，Rust 窗口事件直接执行该策略。
-- 0.3.0 生命周期：关闭到托盘不退出应用，PTY 保持运行；关闭行为设为退出或从托盘菜单显式退出时，活动 PTY 必须经过确认，确认后终止托管进程树，取消则不退出。异常退出/系统重启后不接管旧进程；启动时将持久化活动记录标记为已结束并恢复布局引用，不恢复终端输出或滚屏。
-- 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置，并排除可见性状态，避免关闭到托盘导致下次启动隐藏。
+- 0.3.0 生命周期：关闭到托盘不退出应用，PTY 保持运行；关闭行为设为退出或从托盘菜单显式退出时，活动 PTY 必须经过确认，确认后终止托管进程树，取消则不退出。异常退出/系统重启后不接管旧进程；启动时将持久化活动记录标记为已结束并从当前工作区移除对应会话项，保留窗格和分栏，不恢复终端输出或滚屏。项目或会话身份失效时仍显示局部诊断占位项。
+- 窗口状态持久化：`tauri-plugin-window-state` 在 Rust 层自动保存/恢复窗口尺寸与位置，并排除可见性状态，避免关闭到托盘导致下次启动隐藏。插件恢复后，启动校正按与窗口重叠最大的显示器工作区约束窗口；完全离屏时回退主显示器，再回退第一台可用显示器。校正保留显示器可容纳的窗口最小尺寸，并在小屏上降低最小值；最大化和全屏状态交由系统恢复。
 - 文件对话框：`tauri-plugin-dialog` 用于添加目录的文件夹选择器、配置导入导出的文件选择（capability 放行 `dialog:allow-open` / `dialog:allow-save`）。
 - 单实例：`tauri-plugin-single-instance` 阻止多个 GUI 进程并行写入同一业务数据库，二次启动改为聚焦现有主窗口。
 - macOS 生命周期：用户点击 Dock 图标重新激活应用时处理 `RunEvent::Reopen`，显示、取消最小化并聚焦主窗口；菜单栏状态项沿用“显示主界面/退出”入口，不依赖 Windows 双击语义。
@@ -192,7 +200,7 @@ schema 版本与日志内容，用于本地排障。
 
 ## 配置交换与启动历史
 
-可移植 JSON 配置 bundle 不再导出全局或项目级 CLI 参数；导入旧版 bundle 时忽略这些兼容字段。配置导入不接受 Shell 程序或初始化脚本。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不包含日志、缓存、备份、窗口位置、布局预设或外部 CLI 会话正文。SQLite 中 0.2.x 遗留的参数字段与记录暂时保留以兼容旧数据库和备份，但当前启动链不读取它们。
+可移植 JSON 配置 bundle 不再导出全局或项目级 CLI 参数；导入旧版 bundle 时忽略这些兼容字段。配置导入不接受 Shell 程序或初始化脚本。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不包含日志、缓存、备份、窗口位置、自动保存的当前工作区、命名布局快照或外部 CLI 会话正文；配置导入也不覆盖工作区布局。SQLite 备份包含当前工作区和命名布局。SQLite 中 0.2.x 遗留的参数字段与记录暂时保留以兼容旧数据库和备份，但当前启动链不读取它们。
 
 `launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
 类别，不持久化最终命令或参数文本。添加目录和实际发起启动时，Rust
@@ -407,13 +415,13 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
   Claude：downloads.claude.ai 原生发布 latest 端点
   Codex：releases.openai.com Codex latest channel
   Antigravity：官方安装器使用的平台 manifest
-  Grok Build：仅用户显式刷新版本时运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；Windows 官方 stable 二进制地址不作为版本号 API。
+  Grok Build：打开设置页或用户显式刷新版本时运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；启动子进程时移除 pnpm 注入的 `npm_config_user_agent`，避免把官方原生安装误判为 npm 安装；Windows 官方 stable 二进制地址不作为版本号 API。
 
 更新命令（结构化参数，先预览后确认）
   Claude：claude update
   Codex：codex update
   Antigravity：agy update
-  Grok Build：grok update（仅 JSON 报告 `installer=internal` 且可执行文件位于 `.grok/bin` 或 `GROK_BIN_DIR` 时；生成计划与启动任务前都复核）
+  Grok Build：grok update（计划只定位可执行文件；任务启动后在后台复核 JSON 的 `installer=internal` 与 `.grok/bin` 或 `GROK_BIN_DIR` 路径，校验通过才执行；更新子进程移除 pnpm 注入的 `npm_config_user_agent`）
 ```
 
 更新与安装走同一流程：预览命令、用户确认、输出日志、完成后主动探测当前

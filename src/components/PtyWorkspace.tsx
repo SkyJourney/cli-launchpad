@@ -1,13 +1,18 @@
 import clsx from "clsx";
-import { Allotment } from "allotment";
+import { Allotment, type AllotmentHandle } from "allotment";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   ChevronDown,
   ChevronRight,
+  Check,
   Columns2,
+  LayoutTemplate,
   Layers,
+  Pencil,
   Rows2,
+  Save,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -40,6 +45,8 @@ import {
   MIN_WORKSPACE_PANE_HEIGHT,
   MIN_WORKSPACE_PANE_WIDTH,
   minimumWorkspacePaneExtent,
+  isUsableWorkspaceSplitSizes,
+  nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   removeWorkspaceSession,
   setWorkspaceSplitRatio,
@@ -47,13 +54,43 @@ import {
   splitWorkspacePane,
   type SplitDirection,
   type WorkspacePane,
+  workspaceSplitSizes,
+  WORKSPACE_SASH_SIZE,
 } from "../lib/ptyWorkspaceLayout";
 import {
   encodePtySessionDrag,
   parsePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
-import type { PtySession, ToolKey } from "../lib/tauri";
+import {
+  getWorkspaceLayout,
+  createWorkspaceLayoutPreset,
+  deleteWorkspaceLayoutPreset,
+  listWorkspaceLayoutPresets,
+  planApplyWorkspaceLayoutPreset,
+  renameWorkspaceLayoutPreset,
+  updateWorkspaceLayoutPreset,
+  resetWorkspaceLayout,
+  saveWorkspaceLayout,
+  type Directory,
+  type PtySession,
+  type ToolKey,
+  type WorkspaceLayoutDocument,
+  type WorkspaceLayoutSlot,
+  type WorkspaceLayoutPresetSummary,
+  type WorkspaceSlotStateKind,
+  type WorkspaceSlotTitle,
+} from "../lib/tauri";
+import {
+  createWorkspaceLayoutDocument,
+  isWorkspaceApplyStateCurrent,
+  markWorkspaceSlotsRestored,
+  removeEndedWorkspaceSlots,
+  rehomeDetachedWorkspaceSlots,
+  restoreWorkspaceLayoutApplyPlan,
+  restoreWorkspaceRuntimeSnapshot,
+  WorkspaceLayoutSaveQueue,
+} from "../lib/workspaceLayoutPersistence";
 import { getTerminalTitleLabel, TOOLS } from "../lib/tools";
 import { useAppStore } from "../store/appStore";
 import { AnchoredPopover } from "./AnchoredPopover";
@@ -63,11 +100,23 @@ import "allotment/dist/style.css";
 interface PtyWorkspaceSlot {
   instanceId: string;
   directoryId: number;
+  directoryPath: string;
+  projectName: string;
   toolKey: ToolKey;
   sequence: number;
-  resumeSessionId?: string;
-  sessionId?: string;
+  title: WorkspaceSlotTitle;
+  resumeSessionId?: string | null;
+  sessionId?: string | null;
+  restoredState?: WorkspaceSlotStateKind;
 }
+
+type PtyWorkspaceHydrationStatus =
+  | "loading"
+  | "ready"
+  | "needsReset"
+  | "loadFailed";
+
+type SplitResizePhase = "change" | "dragEnd";
 
 interface DetachedWindowRecord {
   instanceId: string;
@@ -98,6 +147,11 @@ interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
   tree: WorkspaceNode;
   focusedPaneId: string;
+  hydrationStatus: PtyWorkspaceHydrationStatus;
+  hydrationError: string | null;
+  layoutSaveError: string | null;
+  layoutResetError: string | null;
+  layoutResetPending: boolean;
   portalTargets: Record<string, HTMLDivElement>;
   terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;
   launchSession: (
@@ -118,11 +172,20 @@ interface PtyWorkspaceContextValue {
     destinationPaneId: string,
     instanceId: string,
   ) => void;
+  detachedInstanceIds: Set<string>;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
   detachSession: (instanceId: string) => Promise<void>;
   closeEmptyPane: (paneId: string) => void;
-  updateSplitRatio: (splitId: string, sizes: number[]) => void;
+  updateSplitRatio: (
+    splitId: string,
+    sizes: number[],
+    phase: SplitResizePhase,
+  ) => void;
+  retryHydration: () => void;
+  resetWorkspace: () => Promise<void>;
+  applyWorkspaceLayoutPreset: (presetId: string) => Promise<void>;
+  getCurrentPresetLayout: () => WorkspaceLayoutDocument;
   removeSlot: (instanceId: string) => void;
   recordSession: (instanceId: string, session: PtySession | null) => void;
 }
@@ -132,7 +195,14 @@ const PtyWorkspaceContext = createContext<PtyWorkspaceContextValue | null>(
 );
 
 export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { data: directories } = useDirectories();
+  const [hydrationStatus, setHydrationStatus] =
+    useState<PtyWorkspaceHydrationStatus>("loading");
+  const [hydrationError, setHydrationError] = useState<string | null>(null);
+  const [layoutSaveError, setLayoutSaveError] = useState<string | null>(null);
+  const [layoutResetError, setLayoutResetError] = useState<string | null>(null);
+  const [layoutResetPending, setLayoutResetPending] = useState(false);
   const [initialPaneId] = useState<string>(() => crypto.randomUUID());
   const [slots, setSlots] = useState<PtyWorkspaceSlot[]>([]);
   const [tree, setTree] = useState<WorkspaceNode>(() =>
@@ -145,7 +215,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [detachedInstanceIds, setDetachedInstanceIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const detachedInstanceIdsRef = useRef(detachedInstanceIds);
   const terminalRefs = useRef(new Map<string, PtyTerminalHandle>());
+  const saveQueueRef = useRef<WorkspaceLayoutSaveQueue | null>(null);
+  const hydrationRequestRef = useRef(0);
+  const hydrationStatusRef = useRef(hydrationStatus);
+  const ratioSaveTimerRef = useRef<number | null>(null);
+  const splitResizeInProgressRef = useRef(false);
+  const persistLatestRef = useRef<(() => void) | null>(null);
   const slotsRef = useRef(slots);
   const treeRef = useRef(tree);
   const focusedPaneIdRef = useRef(focusedPaneId);
@@ -158,8 +235,207 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const activeView = useAppStore((state) => state.view);
 
   slotsRef.current = slots;
-  treeRef.current = tree;
+  if (!splitResizeInProgressRef.current) treeRef.current = tree;
   focusedPaneIdRef.current = focusedPaneId;
+  detachedInstanceIdsRef.current = detachedInstanceIds;
+  hydrationStatusRef.current = hydrationStatus;
+
+  const createSaveQueue = useCallback(
+    (revision: number) =>
+      new WorkspaceLayoutSaveQueue(
+        revision,
+        saveWorkspaceLayout,
+        (reason) => setLayoutSaveError(String(reason)),
+        () => setLayoutSaveError(null),
+      ),
+    [],
+  );
+
+  const persistWorkspaceSnapshot = useCallback(
+    (treeOverride?: WorkspaceNode) => {
+      if (hydrationStatusRef.current !== "ready") return;
+      const queue = saveQueueRef.current;
+      if (!queue) return;
+
+      const persistedSlots: WorkspaceLayoutSlot[] = slotsRef.current.map(
+        (slot) => toWorkspaceLayoutSlot(slot, directories ?? []),
+      );
+      queue.enqueue(
+        createWorkspaceLayoutDocument({
+          tree: treeOverride ?? treeRef.current,
+          focusedPaneId: focusedPaneIdRef.current,
+          slots: persistedSlots,
+          detachedSlotIds: [...detachedInstanceIdsRef.current].filter(
+            (instanceId) =>
+              !listWorkspacePanes(treeOverride ?? treeRef.current).some(
+                (pane) => pane.sessionIds.includes(instanceId),
+              ),
+          ),
+        }),
+      );
+    },
+    [directories],
+  );
+
+  persistLatestRef.current = () => persistWorkspaceSnapshot();
+
+  const hydrateWorkspace = useCallback(async () => {
+    const requestId = ++hydrationRequestRef.current;
+    setHydrationStatus("loading");
+    setHydrationError(null);
+    setLayoutResetError(null);
+    saveQueueRef.current = null;
+
+    try {
+      const read = await getWorkspaceLayout();
+      if (requestId !== hydrationRequestRef.current) return;
+      const revision = read.revision ?? 0;
+
+      if (read.status.status === "needsReset") {
+        setHydrationError(read.status.reason);
+        setHydrationStatus("needsReset");
+        return;
+      }
+
+      if (read.status.status === "ready") {
+        if (!read.layout) {
+          throw new Error("布局状态为可读取，但没有返回布局数据");
+        }
+        const restored = rehomeDetachedWorkspaceSlots(
+          restoreWorkspaceRuntimeSnapshot(read.layout),
+        );
+        const restoredSnapshot = removeEndedWorkspaceSlots({
+          ...restored,
+          slots: markWorkspaceSlotsRestored(restored.slots, read.slotStates),
+        });
+        const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
+
+        slotsRef.current = restoredSlots;
+        treeRef.current = restoredSnapshot.tree;
+        focusedPaneIdRef.current = restoredSnapshot.focusedPaneId;
+        setSlots(restoredSlots);
+        setTree(restoredSnapshot.tree);
+        setFocusedPaneId(restoredSnapshot.focusedPaneId);
+        setDetachedInstanceIds(new Set());
+        detachedInstanceIdsRef.current = new Set();
+      }
+
+      saveQueueRef.current = createSaveQueue(revision);
+      setLayoutSaveError(null);
+      setHydrationStatus("ready");
+    } catch (reason) {
+      if (requestId !== hydrationRequestRef.current) return;
+      setHydrationError(String(reason));
+      setHydrationStatus("loadFailed");
+    }
+  }, [createSaveQueue]);
+
+  useEffect(() => {
+    void hydrateWorkspace();
+    return () => {
+      hydrationRequestRef.current += 1;
+    };
+  }, [hydrateWorkspace]);
+
+  useEffect(() => {
+    if (hydrationStatus === "ready") persistWorkspaceSnapshot();
+  }, [
+    detachedInstanceIds,
+    focusedPaneId,
+    hydrationStatus,
+    persistWorkspaceSnapshot,
+    slots,
+    tree,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (ratioSaveTimerRef.current !== null) {
+        window.clearTimeout(ratioSaveTimerRef.current);
+      }
+      if (hydrationStatusRef.current === "ready") {
+        persistLatestRef.current?.();
+        void saveQueueRef.current?.flush();
+      }
+    },
+    [],
+  );
+
+  const retryHydration = useCallback(() => {
+    void hydrateWorkspace();
+  }, [hydrateWorkspace]);
+
+  const resetWorkspace = useCallback(async () => {
+    if (hydrationStatusRef.current !== "needsReset") return;
+    setLayoutResetPending(true);
+    setLayoutResetError(null);
+    try {
+      const revision = await resetWorkspaceLayout();
+      saveQueueRef.current = createSaveQueue(revision);
+      setHydrationError(null);
+      setLayoutSaveError(null);
+      setHydrationStatus("ready");
+    } catch (reason) {
+      setLayoutResetError(String(reason));
+      throw reason;
+    } finally {
+      setLayoutResetPending(false);
+    }
+  }, [createSaveQueue]);
+
+  const applyWorkspaceLayoutPreset = useCallback(
+    async (presetId: string) => {
+      if (hydrationStatusRef.current !== "ready") return;
+      const expectedState = {
+        tree: treeRef.current,
+        slots: slotsRef.current,
+        focusedPaneId: focusedPaneIdRef.current,
+        detachedSlotIds: detachedInstanceIdsRef.current,
+      };
+      const activeDetachedIds = [...detachedInstanceIdsRef.current];
+      let activeTree = expectedState.tree;
+      for (const instanceId of activeDetachedIds) {
+        activeTree = removeWorkspaceSession(activeTree, instanceId);
+      }
+      const activePanes = listWorkspacePanes(activeTree);
+      const activeLayout = createWorkspaceLayoutDocument({
+        tree: activeTree,
+        focusedPaneId: activePanes.some(
+          (pane) => pane.id === focusedPaneIdRef.current,
+        )
+          ? focusedPaneIdRef.current
+          : activePanes[0].id,
+        slots: slotsRef.current.map((slot) =>
+          toWorkspaceLayoutSlot(slot, directories ?? []),
+        ),
+        detachedSlotIds: activeDetachedIds,
+      });
+      const plan = await planApplyWorkspaceLayoutPreset(presetId, activeLayout);
+      if (
+        !isWorkspaceApplyStateCurrent(expectedState, {
+          tree: treeRef.current,
+          slots: slotsRef.current,
+          focusedPaneId: focusedPaneIdRef.current,
+          detachedSlotIds: detachedInstanceIdsRef.current,
+        })
+      ) {
+        throw new Error(t("pty.layoutChangedDuringApply"));
+      }
+      const restored = restoreWorkspaceLayoutApplyPlan(plan);
+      const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
+
+      slotsRef.current = restoredSlots;
+      treeRef.current = restored.tree;
+      focusedPaneIdRef.current = restored.focusedPaneId;
+      setSlots(restoredSlots);
+      setTree(restored.tree);
+      setFocusedPaneId(restored.focusedPaneId);
+      const nextDetachedIds = new Set(restored.detachedSlotIds);
+      detachedInstanceIdsRef.current = nextDetachedIds;
+      setDetachedInstanceIds(nextDetachedIds);
+    },
+    [directories, t],
+  );
 
   const commitTree = useCallback((next: WorkspaceNode) => {
     treeRef.current = next;
@@ -195,7 +471,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const activeSlot = slotsRef.current.find(
         (slot) => slot.instanceId === pane.activeSessionId,
       );
-      if (activeSlot) {
+      if (activeSlot && !isInvalidRestoredSlotState(activeSlot.restoredState)) {
         const state = useAppStore.getState();
         if (
           state.view !== "detail" ||
@@ -237,22 +513,25 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const launchSession = useCallback(
     (directoryId: number, toolKey: ToolKey, resumeSessionId?: string) => {
+      const directory = directories?.find((entry) => entry.id === directoryId);
+      if (!directory) {
+        toast.error(t("pty.projectUnavailable"));
+        return;
+      }
       const currentSlots = slotsRef.current;
-      const sequence =
-        Math.max(
-          0,
-          ...currentSlots
-            .filter(
-              (slot) =>
-                slot.directoryId === directoryId && slot.toolKey === toolKey,
-            )
-            .map((slot) => slot.sequence),
-        ) + 1;
+      const sequence = nextWorkspaceSessionSequence(
+        currentSlots,
+        directoryId,
+        toolKey,
+      );
       const slot: PtyWorkspaceSlot = {
         instanceId: crypto.randomUUID(),
         directoryId,
+        directoryPath: directory.path,
+        projectName: directory.name,
         toolKey,
         sequence,
+        title: { kind: "automatic" },
         resumeSessionId,
       };
       const nextSlots = [...currentSlots, slot];
@@ -272,7 +551,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       );
       setFocusedPane(targetPane.id);
     },
-    [commitTree, setFocusedPane],
+    [commitTree, directories, setFocusedPane, t],
   );
 
   const activateSession = useCallback(
@@ -288,7 +567,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const slot = slotsRef.current.find(
         (candidate) => candidate.instanceId === instanceId,
       );
-      if (slot) {
+      if (slot && !isInvalidRestoredSlotState(slot.restoredState)) {
         const state = useAppStore.getState();
         if (
           state.view !== "detail" ||
@@ -550,13 +829,22 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             findWorkspacePane(currentTree, payload.targetPaneId)) ||
           findWorkspacePane(currentTree, focusedPaneIdRef.current) ||
           listWorkspacePanes(currentTree)[0];
-        const nextTree = addSessionToWorkspacePane(
-          currentTree,
-          targetPane.id,
-          payload.instanceId,
+        const existingPane = listWorkspacePanes(currentTree).find((pane) =>
+          pane.sessionIds.includes(payload.instanceId),
         );
+        const nextTree = existingPane
+          ? activateWorkspaceSession(
+              currentTree,
+              existingPane.id,
+              payload.instanceId,
+            )
+          : addSessionToWorkspacePane(
+              currentTree,
+              targetPane.id,
+              payload.instanceId,
+            );
         commitTree(nextTree);
-        setFocusedPane(targetPane.id);
+        setFocusedPane(existingPane?.id ?? targetPane.id);
         detachedByInstanceRef.current.delete(payload.instanceId);
         setDetachedInstanceIds((current) => {
           const next = new Set(current);
@@ -595,6 +883,20 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         void handlePtyReturnRequest(event.payload);
       }),
       listen<DetachedWindowReadyEvent>("pty-detached-exited", (event) => {
+        const pending = pendingDetachedRef.current.get(
+          event.payload.instanceId,
+        );
+        if (
+          pending?.sessionId === event.payload.sessionId &&
+          pending.windowLabel === event.payload.windowLabel
+        ) {
+          pendingDetachedRef.current.delete(event.payload.instanceId);
+          window.clearTimeout(pending.timer);
+          pending.reject(new Error("PTY 在独立窗口接管完成前已退出"));
+          void pending.window.destroy().catch(() => undefined);
+          removeSlot(event.payload.instanceId);
+          return;
+        }
         const detached = detachedByInstanceRef.current.get(
           event.payload.instanceId,
         );
@@ -645,14 +947,36 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const updateSplitRatio = useCallback(
-    (splitId: string, sizes: number[]) => {
+    (splitId: string, sizes: number[], phase: SplitResizePhase) => {
       const total = sizes.reduce((sum, size) => sum + size, 0);
       if (sizes.length !== 2 || total <= 0 || !Number.isFinite(total)) return;
-      commitTree(
-        setWorkspaceSplitRatio(treeRef.current, splitId, sizes[0] / total),
+
+      const nextTree = setWorkspaceSplitRatio(
+        treeRef.current,
+        splitId,
+        sizes[0] / total,
       );
+      treeRef.current = nextTree;
+
+      if (phase === "dragEnd") {
+        splitResizeInProgressRef.current = false;
+        if (ratioSaveTimerRef.current !== null) {
+          window.clearTimeout(ratioSaveTimerRef.current);
+          ratioSaveTimerRef.current = null;
+        }
+        commitTree(nextTree);
+        return;
+      }
+
+      splitResizeInProgressRef.current = true;
+      if (ratioSaveTimerRef.current === null) {
+        ratioSaveTimerRef.current = window.setTimeout(() => {
+          ratioSaveTimerRef.current = null;
+          persistWorkspaceSnapshot();
+        }, 500);
+      }
     },
-    [commitTree],
+    [commitTree, persistWorkspaceSnapshot],
   );
 
   const recordSession = useCallback(
@@ -674,11 +998,38 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [removeSlot, upsertPtySession],
   );
 
+  const getCurrentPresetLayout = useCallback(() => {
+    let presetTree = treeRef.current;
+    for (const instanceId of detachedInstanceIdsRef.current) {
+      presetTree = removeWorkspaceSession(presetTree, instanceId);
+    }
+    const presetPanes = listWorkspacePanes(presetTree);
+    const paneSlotIds = new Set(presetPanes.flatMap((pane) => pane.sessionIds));
+    const currentFocusedPaneId = focusedPaneIdRef.current;
+    return createWorkspaceLayoutDocument({
+      tree: presetTree,
+      focusedPaneId: presetPanes.some(
+        (pane) => pane.id === currentFocusedPaneId,
+      )
+        ? currentFocusedPaneId
+        : presetPanes[0].id,
+      slots: slotsRef.current
+        .filter((slot) => paneSlotIds.has(slot.instanceId))
+        .map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
+      detachedSlotIds: [],
+    });
+  }, [directories]);
+
   const value = useMemo(
     () => ({
       slots,
       tree,
       focusedPaneId,
+      hydrationStatus,
+      hydrationError,
+      layoutSaveError,
+      layoutResetError,
+      layoutResetPending,
       portalTargets,
       terminalRefs,
       launchSession,
@@ -687,11 +1038,16 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       splitPane,
       splitAndMoveSession,
       moveSession,
+      detachedInstanceIds,
       hasDetachedSessions: detachedInstanceIds.size > 0,
       isManagedDetachedDrag,
       detachSession,
       closeEmptyPane,
       updateSplitRatio,
+      retryHydration,
+      resetWorkspace,
+      applyWorkspaceLayoutPreset,
+      getCurrentPresetLayout,
       removeSlot,
       recordSession,
     }),
@@ -699,6 +1055,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       slots,
       tree,
       focusedPaneId,
+      hydrationStatus,
+      hydrationError,
+      layoutSaveError,
+      layoutResetError,
+      layoutResetPending,
       portalTargets,
       terminalRefs,
       launchSession,
@@ -712,6 +1073,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       detachSession,
       closeEmptyPane,
       updateSplitRatio,
+      retryHydration,
+      resetWorkspace,
+      applyWorkspaceLayoutPreset,
+      getCurrentPresetLayout,
       removeSlot,
       recordSession,
     ],
@@ -720,17 +1085,19 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   return (
     <PtyWorkspaceContext.Provider value={value}>
       {children}
-      <PtySessionRegistry
-        slots={slots}
-        tree={tree}
-        focusedPaneId={focusedPaneId}
-        active={activeView === "detail"}
-        terminalRefs={terminalRefs}
-        onSessionChange={recordSession}
-        onPortalTarget={registerPortalTarget}
-        onFocusPane={focusPane}
-        detachedInstanceIds={detachedInstanceIds}
-      />
+      {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
+        <PtySessionRegistry
+          slots={slots}
+          tree={tree}
+          focusedPaneId={focusedPaneId}
+          active={activeView === "detail"}
+          terminalRefs={terminalRefs}
+          onSessionChange={recordSession}
+          onPortalTarget={registerPortalTarget}
+          onFocusPane={focusPane}
+          detachedInstanceIds={detachedInstanceIds}
+        />
+      )}
     </PtyWorkspaceContext.Provider>
   );
 }
@@ -749,6 +1116,11 @@ export function PtyWorkspaceRegion() {
     slots,
     tree,
     focusedPaneId,
+    hydrationStatus,
+    hydrationError,
+    layoutSaveError,
+    layoutResetError,
+    layoutResetPending,
     portalTargets,
     terminalRefs,
     focusPane,
@@ -756,18 +1128,60 @@ export function PtyWorkspaceRegion() {
     splitPane,
     splitAndMoveSession,
     moveSession,
+    detachedInstanceIds,
     hasDetachedSessions,
     isManagedDetachedDrag,
+    getCurrentPresetLayout,
     detachSession,
     closeEmptyPane,
     updateSplitRatio,
+    retryHydration,
+    resetWorkspace,
+    applyWorkspaceLayoutPreset,
     removeSlot,
   } = usePtyWorkspace();
   const { data: directories } = useDirectories();
   const ptySessionsById = useAppStore((state) => state.ptySessionsById);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
 
+  if (hydrationStatus === "loading") {
+    return (
+      <section
+        className="pty-workspace-region"
+        aria-label={t("pty.panelLabel")}
+      >
+        <div className="pty-workspace-loading" role="status">
+          {t("pty.layoutLoading")}
+        </div>
+      </section>
+    );
+  }
+
+  if (hydrationStatus === "loadFailed") {
+    return (
+      <section
+        className="pty-workspace-region"
+        aria-label={t("pty.panelLabel")}
+      >
+        <div className="pty-workspace-recovery-notice" role="alert">
+          <p>{t("pty.layoutLoadFailed", { error: hydrationError })}</p>
+          <button
+            type="button"
+            className="pty-layout-action"
+            onClick={retryHydration}
+          >
+            {t("pty.retryLayoutRead")}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   const closeSlot = async (slot: PtyWorkspaceSlot) => {
+    if (slot.restoredState) {
+      removeSlot(slot.instanceId);
+      return;
+    }
     const terminal = terminalRefs.current.get(slot.instanceId);
     if (!terminal) return;
     const result = await terminal.closeSession();
@@ -778,7 +1192,9 @@ export function PtyWorkspaceRegion() {
     if (targetSlots.length === 0) return;
     const runningCount = targetSlots.filter(
       (slot) =>
-        slot.sessionId && ptySessionsById[slot.sessionId]?.state === "running",
+        !slot.restoredState &&
+        slot.sessionId &&
+        ptySessionsById[slot.sessionId]?.state === "running",
     ).length;
     if (
       runningCount > 0 &&
@@ -789,6 +1205,7 @@ export function PtyWorkspaceRegion() {
 
     const results = await Promise.all(
       targetSlots.map(async (slot) => {
+        if (slot.restoredState) return { slot, result: "closed" as const };
         const terminal = terminalRefs.current.get(slot.instanceId);
         if (!terminal) return null;
         return { slot, result: await terminal.closeSession(false) };
@@ -815,34 +1232,370 @@ export function PtyWorkspaceRegion() {
 
   return (
     <section className="pty-workspace-region" aria-label={t("pty.panelLabel")}>
-      <WorkspaceTreeView
-        node={tree}
-        slots={slots}
-        focusedPaneId={focusedPaneId}
-        portalTargets={portalTargets}
-        canCloseEmptyPane={listWorkspacePanes(tree).length > 1}
-        selectedDirectoryId={selectedDirectoryId}
-        directories={directories ?? []}
-        ptySessionsById={ptySessionsById}
-        workspacePanes={workspacePanes}
-        onFocusPane={focusPane}
-        onActivateSession={activateSession}
-        onSplitPane={splitPane}
-        onSplitAndMoveSession={splitAndMoveSession}
-        onMoveSession={moveSession}
-        hasDetachedSessions={hasDetachedSessions}
-        isManagedDetachedDrag={isManagedDetachedDrag}
-        onDetachSession={(instanceId) => {
-          void detachSession(instanceId).catch((reason) =>
-            toast.error(String(reason)),
-          );
-        }}
-        onCloseEmptyPane={closeEmptyPane}
-        onSplitResize={updateSplitRatio}
-        onCloseSlot={closeSlot}
-        onCloseSlots={closeSlots}
-      />
+      {hydrationStatus === "needsReset" && (
+        <div className="pty-workspace-recovery-notice" role="status">
+          <p>{t("pty.layoutNeedsReset", { reason: hydrationError })}</p>
+          {layoutResetError && (
+            <p>{t("pty.layoutResetFailed", { error: layoutResetError })}</p>
+          )}
+          <button
+            type="button"
+            className="pty-layout-action"
+            disabled={layoutResetPending}
+            onClick={() => {
+              if (!window.confirm(t("pty.confirmLayoutReset"))) return;
+              void resetWorkspace().catch((reason) =>
+                toast.error(String(reason)),
+              );
+            }}
+          >
+            {layoutResetPending
+              ? t("pty.layoutResetPending")
+              : t("pty.resetLayout")}
+          </button>
+        </div>
+      )}
+      {hydrationStatus === "ready" && layoutSaveError && (
+        <div className="pty-workspace-recovery-notice" role="status">
+          {t("pty.layoutSaveFailed", { error: layoutSaveError })}
+        </div>
+      )}
+      {hydrationStatus === "ready" && (
+        <WorkspaceLayoutManager
+          getCurrentLayout={getCurrentPresetLayout}
+          onApply={applyWorkspaceLayoutPreset}
+        />
+      )}
+      <div className="pty-workspace-tree">
+        <WorkspaceTreeView
+          node={tree}
+          slots={slots}
+          focusedPaneId={focusedPaneId}
+          portalTargets={portalTargets}
+          canCloseEmptyPane={listWorkspacePanes(tree).length > 1}
+          selectedDirectoryId={selectedDirectoryId}
+          directories={directories ?? []}
+          ptySessionsById={ptySessionsById}
+          workspacePanes={workspacePanes}
+          onFocusPane={focusPane}
+          onActivateSession={activateSession}
+          onSplitPane={splitPane}
+          onSplitAndMoveSession={splitAndMoveSession}
+          onMoveSession={moveSession}
+          hasDetachedSessions={hasDetachedSessions}
+          isManagedDetachedDrag={isManagedDetachedDrag}
+          onDetachSession={(instanceId) => {
+            void detachSession(instanceId).catch((reason) =>
+              toast.error(String(reason)),
+            );
+          }}
+          onCloseEmptyPane={closeEmptyPane}
+          onSplitResize={updateSplitRatio}
+          onCloseSlot={closeSlot}
+          onCloseSlots={closeSlots}
+        />
+      </div>
     </section>
+  );
+}
+
+function WorkspaceLayoutManager({
+  getCurrentLayout,
+  onApply,
+}: {
+  getCurrentLayout: () => WorkspaceLayoutDocument;
+  onApply: (presetId: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [presets, setPresets] = useState<WorkspaceLayoutPresetSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    kind: "overwrite" | "delete";
+    id: string;
+  } | null>(null);
+
+  const refreshPresets = useCallback(async () => {
+    setLoading(true);
+    try {
+      setPresets(await listWorkspaceLayoutPresets());
+    } catch (reason) {
+      toast.error(t("pty.layoutActionFailed", { error: String(reason) }));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (open) void refreshPresets();
+  }, [open, refreshPresets]);
+
+  const runAction = useCallback(
+    async (action: () => Promise<void>, successMessage?: string) => {
+      setBusy(true);
+      try {
+        await action();
+        if (successMessage) toast.success(successMessage);
+      } catch (reason) {
+        toast.error(t("pty.layoutActionFailed", { error: String(reason) }));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [t],
+  );
+
+  const savePreset = () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    void runAction(async () => {
+      await createWorkspaceLayoutPreset(trimmedName, getCurrentLayout());
+      setName("");
+      await refreshPresets();
+    }, t("pty.layoutSaved"));
+  };
+
+  const applyPreset = (presetId: string) => {
+    void runAction(async () => {
+      await onApply(presetId);
+      setOpen(false);
+      setConfirmation(null);
+    }, t("pty.layoutApplied"));
+  };
+
+  const saveRename = (presetId: string) => {
+    const trimmedName = editingName.trim();
+    if (!trimmedName) return;
+    void runAction(async () => {
+      const renamed = await renameWorkspaceLayoutPreset(presetId, trimmedName);
+      if (!renamed) throw new Error(t("pty.layoutPresetMissing"));
+      setEditingId(null);
+      setEditingName("");
+      await refreshPresets();
+    }, t("pty.layoutRenamed"));
+  };
+
+  const confirmPresetAction = () => {
+    if (!confirmation) return;
+    const action = confirmation;
+    void runAction(
+      async () => {
+        if (action.kind === "overwrite") {
+          const updated = await updateWorkspaceLayoutPreset(
+            action.id,
+            getCurrentLayout(),
+          );
+          if (!updated) throw new Error("命名布局不存在");
+        } else {
+          const deleted = await deleteWorkspaceLayoutPreset(action.id);
+          if (!deleted) throw new Error("命名布局不存在");
+        }
+        setConfirmation(null);
+        await refreshPresets();
+      },
+      action.kind === "overwrite"
+        ? t("pty.layoutOverwritten")
+        : t("pty.layoutDeleted"),
+    );
+  };
+
+  const closePopover = useCallback(() => {
+    setOpen(false);
+    setConfirmation(null);
+    setEditingId(null);
+  }, []);
+
+  return (
+    <div className="pty-workspace-toolbar">
+      <button
+        ref={anchorRef}
+        type="button"
+        className="pty-layout-toolbar-button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <LayoutTemplate size={15} />
+        {t("pty.layouts")}
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <AnchoredPopover
+          anchorRef={anchorRef}
+          ariaLabel={t("pty.layouts")}
+          className="workspace-layout-popover"
+          onClose={closePopover}
+          preferredWidth={440}
+          header={
+            <div className="workspace-layout-popover-heading">
+              <span>{t("pty.namedLayouts")}</span>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={t("pty.closeLayoutManager")}
+                onClick={closePopover}
+              >
+                <X size={15} />
+              </button>
+            </div>
+          }
+        >
+          <form
+            className="workspace-layout-save-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              savePreset();
+            }}
+          >
+            <input
+              value={name}
+              maxLength={64}
+              placeholder={t("pty.layoutNamePlaceholder")}
+              aria-label={t("pty.layoutNamePlaceholder")}
+              onChange={(event) => setName(event.currentTarget.value)}
+            />
+            <button
+              type="submit"
+              className="pty-layout-action"
+              disabled={busy || !name.trim()}
+            >
+              <Save size={14} />
+              {t("pty.saveLayout")}
+            </button>
+          </form>
+          <div className="workspace-layout-list" aria-live="polite">
+            {loading ? (
+              <p className="muted">{t("pty.layoutsLoading")}</p>
+            ) : presets.length === 0 ? (
+              <p className="muted">{t("pty.noNamedLayouts")}</p>
+            ) : (
+              presets.map((preset) => (
+                <div className="workspace-layout-preset" key={preset.id}>
+                  <div className="workspace-layout-preset-main">
+                    {editingId === preset.id ? (
+                      <form
+                        className="workspace-layout-rename-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          saveRename(preset.id);
+                        }}
+                      >
+                        <input
+                          autoFocus
+                          value={editingName}
+                          maxLength={64}
+                          aria-label={t("pty.layoutNamePlaceholder")}
+                          onChange={(event) =>
+                            setEditingName(event.currentTarget.value)
+                          }
+                        />
+                        <button
+                          type="submit"
+                          className="icon-button"
+                          title={t("common.save")}
+                          disabled={busy || !editingName.trim()}
+                        >
+                          <Check size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          title={t("common.cancel")}
+                          onClick={() => setEditingId(null)}
+                        >
+                          <X size={15} />
+                        </button>
+                      </form>
+                    ) : (
+                      <strong title={preset.name}>{preset.name}</strong>
+                    )}
+                    <button
+                      type="button"
+                      className="pty-layout-action"
+                      disabled={busy || editingId === preset.id}
+                      onClick={() => applyPreset(preset.id)}
+                    >
+                      <LayoutTemplate size={14} />
+                      {t("pty.applyLayout")}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title={t("pty.renameLayout")}
+                      aria-label={t("pty.renameLayout")}
+                      disabled={busy || editingId !== null}
+                      onClick={() => {
+                        setEditingId(preset.id);
+                        setEditingName(preset.name);
+                      }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      title={t("pty.overwriteLayout")}
+                      aria-label={t("pty.overwriteLayout")}
+                      disabled={busy || editingId !== null}
+                      onClick={() =>
+                        setConfirmation({ kind: "overwrite", id: preset.id })
+                      }
+                    >
+                      <Save size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      title={t("pty.deleteLayout")}
+                      aria-label={t("pty.deleteLayout")}
+                      disabled={busy || editingId !== null}
+                      onClick={() =>
+                        setConfirmation({ kind: "delete", id: preset.id })
+                      }
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {confirmation?.id === preset.id && (
+                    <div className="workspace-layout-confirmation">
+                      <span>
+                        {confirmation.kind === "overwrite"
+                          ? t("pty.confirmOverwriteLayout", {
+                              name: preset.name,
+                            })
+                          : t("pty.confirmDeleteLayout", {
+                              name: preset.name,
+                            })}
+                      </span>
+                      <button
+                        type="button"
+                        className="pty-layout-action"
+                        disabled={busy}
+                        onClick={() => setConfirmation(null)}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="pty-layout-action is-primary"
+                        disabled={busy}
+                        onClick={confirmPresetAction}
+                      >
+                        {t("pty.confirmLayoutAction")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </AnchoredPopover>
+      )}
+    </div>
   );
 }
 
@@ -873,47 +1626,127 @@ interface WorkspaceTreeViewProps {
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
   onDetachSession: (instanceId: string) => void;
   onCloseEmptyPane: (paneId: string) => void;
-  onSplitResize: (splitId: string, sizes: number[]) => void;
+  onSplitResize: (
+    splitId: string,
+    sizes: number[],
+    phase: SplitResizePhase,
+  ) => void;
   onCloseSlot: (slot: PtyWorkspaceSlot) => void;
   onCloseSlots: (slots: PtyWorkspaceSlot[]) => void;
 }
 
 function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
   const { node, onSplitResize } = props;
+  const splitHostRef = useRef<HTMLDivElement | null>(null);
+  const allotmentRef = useRef<AllotmentHandle | null>(null);
+  const appliedSplitRatioRef = useRef<{
+    splitId: string;
+    ratio: number;
+  } | null>(null);
+  const applyingSplitRatioRef = useRef(false);
+  const splitId = node.kind === "split" ? node.id : null;
+  const splitDirection = node.kind === "split" ? node.direction : null;
+  const splitRatio = node.kind === "split" ? node.ratio : null;
+
+  useEffect(() => {
+    if (splitId === null || splitDirection === null || splitRatio === null) {
+      appliedSplitRatioRef.current = null;
+      return;
+    }
+
+    const applied = appliedSplitRatioRef.current;
+    if (
+      applied?.splitId === splitId &&
+      Math.abs(applied.ratio - splitRatio) < 0.0001
+    ) {
+      return;
+    }
+
+    // Allotment registers its pane views after the initial layout effect.
+    // Defer restored/preset ratios until the next frame so resize() never sees
+    // an uninitialized viewItems array.
+    const frame = window.requestAnimationFrame(() => {
+      if (splitId === null || splitDirection === null || splitRatio === null) {
+        return;
+      }
+
+      const host = splitHostRef.current;
+      const allotment = allotmentRef.current;
+      if (!host || !allotment) return;
+
+      const extent =
+        splitDirection === "horizontal" ? host.clientWidth : host.clientHeight;
+      if (extent <= WORKSPACE_SASH_SIZE) return;
+
+      const sizes = workspaceSplitSizes(splitRatio, extent);
+      if (!isUsableWorkspaceSplitSizes(sizes)) return;
+
+      applyingSplitRatioRef.current = true;
+      try {
+        allotment.resize(sizes);
+        appliedSplitRatioRef.current = { splitId, ratio: splitRatio };
+      } catch (error) {
+        // Keep the workspace mounted; preferredSize remains the safe fallback.
+        console.error("Failed to apply the workspace split ratio", error);
+      } finally {
+        applyingSplitRatioRef.current = false;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [splitDirection, splitId, splitRatio]);
+
   if (node.kind === "pane") return <WorkspacePaneView {...props} pane={node} />;
 
   const firstSize = String(Math.round(node.ratio * 10000) / 100) + "%";
   const secondSize = String(Math.round((1 - node.ratio) * 10000) / 100) + "%";
   return (
-    <Allotment
-      id={node.id}
-      className="pty-workspace-split"
-      vertical={node.direction === "vertical"}
-      proportionalLayout
-      separator
-      onDragEnd={(sizes) => onSplitResize(node.id, sizes)}
-    >
-      <Allotment.Pane
-        minSize={
-          node.direction === "horizontal"
-            ? MIN_WORKSPACE_PANE_WIDTH
-            : MIN_WORKSPACE_PANE_HEIGHT
-        }
-        preferredSize={firstSize}
+    <div ref={splitHostRef} className="pty-workspace-split-host">
+      <Allotment
+        ref={allotmentRef}
+        id={node.id}
+        className="pty-workspace-split"
+        vertical={node.direction === "vertical"}
+        proportionalLayout
+        separator
+        onChange={(sizes) => {
+          if (!applyingSplitRatioRef.current) {
+            onSplitResize(node.id, sizes, "change");
+          }
+        }}
+        onDragEnd={(sizes) => {
+          const total = sizes.reduce((sum, size) => sum + size, 0);
+          if (isUsableWorkspaceSplitSizes(sizes) && total > 0) {
+            appliedSplitRatioRef.current = {
+              splitId: node.id,
+              ratio: sizes[0] / total,
+            };
+          }
+          onSplitResize(node.id, sizes, "dragEnd");
+        }}
       >
-        <WorkspaceTreeView {...props} node={node.first} />
-      </Allotment.Pane>
-      <Allotment.Pane
-        minSize={
-          node.direction === "horizontal"
-            ? MIN_WORKSPACE_PANE_WIDTH
-            : MIN_WORKSPACE_PANE_HEIGHT
-        }
-        preferredSize={secondSize}
-      >
-        <WorkspaceTreeView {...props} node={node.second} />
-      </Allotment.Pane>
-    </Allotment>
+        <Allotment.Pane
+          minSize={
+            node.direction === "horizontal"
+              ? MIN_WORKSPACE_PANE_WIDTH
+              : MIN_WORKSPACE_PANE_HEIGHT
+          }
+          preferredSize={firstSize}
+        >
+          <WorkspaceTreeView {...props} node={node.first} />
+        </Allotment.Pane>
+        <Allotment.Pane
+          minSize={
+            node.direction === "horizontal"
+              ? MIN_WORKSPACE_PANE_WIDTH
+              : MIN_WORKSPACE_PANE_HEIGHT
+          }
+          preferredSize={secondSize}
+        >
+          <WorkspaceTreeView {...props} node={node.second} />
+        </Allotment.Pane>
+      </Allotment>
+    </div>
   );
 }
 
@@ -1029,9 +1862,10 @@ function WorkspacePaneView({
   const renderActiveTab = (slot: PtyWorkspaceSlot) => {
     const tool = TOOLS.find((entry) => entry.key === slot.toolKey)!;
     const ToolIcon = tool.icon;
-    const session = slot.sessionId
-      ? ptySessionsById[slot.sessionId]
-      : undefined;
+    const session =
+      !slot.restoredState && slot.sessionId
+        ? ptySessionsById[slot.sessionId]
+        : undefined;
     const title = workspaceSlotTitle(slot, directories);
 
     return (
@@ -1071,7 +1905,9 @@ function WorkspacePaneView({
           <span
             className={clsx("pty-pane-tab-status", {
               running: session?.state === "running",
-              failed: session?.state === "failed",
+              failed:
+                session?.state === "failed" ||
+                isInvalidRestoredSlotState(slot.restoredState),
             })}
             aria-hidden="true"
           />
@@ -1360,9 +2196,10 @@ function PaneSessionStack({
             {sessions.map((slot) => {
               const tool = TOOLS.find((entry) => entry.key === slot.toolKey)!;
               const ToolIcon = tool.icon;
-              const session = slot.sessionId
-                ? ptySessionsById[slot.sessionId]
-                : undefined;
+              const session =
+                !slot.restoredState && slot.sessionId
+                  ? ptySessionsById[slot.sessionId]
+                  : undefined;
               const title = workspaceSlotTitle(slot, directories);
 
               return (
@@ -1403,7 +2240,9 @@ function PaneSessionStack({
                     <span
                       className={clsx("pty-pane-tab-status", {
                         running: session?.state === "running",
-                        failed: session?.state === "failed",
+                        failed:
+                          session?.state === "failed" ||
+                          isInvalidRestoredSlotState(slot.restoredState),
                       })}
                       aria-hidden="true"
                     />
@@ -1489,7 +2328,10 @@ function PtySessionContextMenu({
   const [submenuPosition, setSubmenuPosition] = useState({ left: 8, top: 8 });
   const [position, setPosition] = useState({ left: x, top: y });
   const slot = slots.find((candidate) => candidate.instanceId === instanceId);
-  const session = slot?.sessionId ? ptySessionsById[slot.sessionId] : undefined;
+  const session =
+    slot?.sessionId && !slot.restoredState
+      ? ptySessionsById[slot.sessionId]
+      : undefined;
   const paneSlots = pane.sessionIds
     .map((sessionId) =>
       slots.find((candidate) => candidate.instanceId === sessionId),
@@ -1754,14 +2596,45 @@ function workspaceSlotTitle(
   slot: PtyWorkspaceSlot,
   directories: { id: number; name: string }[],
 ): string {
+  if (slot.title.kind === "custom") return slot.title.value;
   const directory = directories.find((entry) => entry.id === slot.directoryId);
   const toolLabel = getTerminalTitleLabel(slot.toolKey);
+  const projectName = directory?.name ?? slot.projectName;
   return (
-    (directory?.name ?? toolLabel) +
+    (projectName || toolLabel) +
     "-" +
     toolLabel +
     "-" +
     String(slot.sequence).padStart(2, "0")
+  );
+}
+
+function toWorkspaceLayoutSlot(
+  slot: PtyWorkspaceSlot,
+  directories: Directory[],
+): WorkspaceLayoutSlot {
+  const directory = directories.find((entry) => entry.id === slot.directoryId);
+  return {
+    instanceId: slot.instanceId,
+    directoryId: slot.directoryId,
+    directoryPath: directory?.path ?? slot.directoryPath,
+    projectName: directory?.name ?? slot.projectName,
+    toolKey: slot.toolKey,
+    sequence: slot.sequence,
+    sessionId: slot.sessionId ?? null,
+    resumeSessionId: slot.resumeSessionId ?? null,
+    title: { ...slot.title },
+  };
+}
+
+function isInvalidRestoredSlotState(
+  state: WorkspaceSlotStateKind | undefined,
+): boolean {
+  return (
+    state === "missingProject" ||
+    state === "projectIdentityMismatch" ||
+    state === "missingSession" ||
+    state === "sessionIdentityMismatch"
   );
 }
 
@@ -1879,10 +2752,15 @@ function PtySessionPortal({
   }, [assigned, target]);
 
   useEffect(() => {
+    if (slot.restoredState) return;
     const frame = window.requestAnimationFrame(() => {
       void terminalRefs.current
         .get(slot.instanceId)
-        ?.startSession(slot.directoryId, slot.toolKey, slot.resumeSessionId);
+        ?.startSession(
+          slot.directoryId,
+          slot.toolKey,
+          slot.resumeSessionId ?? undefined,
+        );
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
@@ -1890,18 +2768,47 @@ function PtySessionPortal({
     slot.directoryId,
     slot.toolKey,
     slot.resumeSessionId,
+    slot.restoredState,
     terminalRefs,
   ]);
 
   return createPortal(
-    <PtyTerminal
-      ref={setTerminalRef}
-      active={active}
-      visible={visible}
-      interactive={interactive}
-      onFocus={onFocusPane}
-      onSessionChange={(session) => onSessionChange(slot.instanceId, session)}
-    />,
+    slot.restoredState ? (
+      <RestoredWorkspaceSlotPlaceholder state={slot.restoredState} />
+    ) : (
+      <PtyTerminal
+        ref={setTerminalRef}
+        active={active}
+        visible={visible}
+        interactive={interactive}
+        onFocus={onFocusPane}
+        onSessionChange={(session) => onSessionChange(slot.instanceId, session)}
+      />
+    ),
     target,
+  );
+}
+
+function RestoredWorkspaceSlotPlaceholder({
+  state,
+}: {
+  state: WorkspaceSlotStateKind;
+}) {
+  const { t } = useTranslation();
+  const messageKey =
+    state === "missingProject"
+      ? "pty.restoredMissingProject"
+      : state === "projectIdentityMismatch"
+        ? "pty.restoredProjectMismatch"
+        : state === "missingSession"
+          ? "pty.restoredMissingSession"
+          : state === "sessionIdentityMismatch"
+            ? "pty.restoredSessionMismatch"
+            : "pty.restoredEnded";
+
+  return (
+    <div className="pty-restored-placeholder" role="status">
+      <p>{t(messageKey)}</p>
+    </div>
   );
 }

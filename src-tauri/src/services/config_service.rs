@@ -143,6 +143,50 @@ mod tests {
     }
 
     #[test]
+    fn config_bundle_excludes_workspace_layouts_and_import_does_not_replace_them() {
+        let db = seeded_db();
+        db.execute(
+            "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, 1, 4, '{\"tree\":\"current\"}', 10)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-1', 'Saved Layout', 1, '{\"tree\":\"named\"}', 10, 10)",
+            [],
+        )
+        .unwrap();
+
+        let exported = export_json(&db).unwrap();
+        let exported_value: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        assert!(exported_value.get("workspaceState").is_none());
+        assert!(exported_value.get("workspaceLayoutPresets").is_none());
+
+        import_json(
+            &db,
+            r#"{"version":4,"directories":[],"shellProfiles":[],"workspaceState":{"tree":"imported"},"workspaceLayoutPresets":[]}"#,
+        )
+        .unwrap();
+
+        let current_payload: String = db
+            .query_row(
+                "select payload_json from workspace_state where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (preset_name, preset_payload): (String, String) = db
+            .query_row(
+                "select name, payload_json from workspace_layout_presets where id = 'preset-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(current_payload, r#"{"tree":"current"}"#);
+        assert_eq!(preset_name, "Saved Layout");
+        assert_eq!(preset_payload, r#"{"tree":"named"}"#);
+    }
+
+    #[test]
     fn import_is_idempotent_on_existing_paths() {
         let db = seeded_db();
         let path = absolute_test_path("demo");

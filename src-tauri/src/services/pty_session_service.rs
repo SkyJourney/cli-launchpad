@@ -21,7 +21,8 @@ use crate::{
     db::pty_session_repo,
     models::{
         pty_session::{
-            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySizeUpdate, PtyTerminalSnapshot,
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
+            PtySizeUpdate, PtyTerminalSnapshot,
         },
         tool::ToolKey,
     },
@@ -496,6 +497,32 @@ impl PtySessionManager {
             .get(session_id)
             .cloned()
             .ok_or_else(|| AppError::msg("PTY 会话不存在或已结束"))
+    }
+
+    pub fn window_status(
+        &self,
+        session_id: &str,
+        window_label: &str,
+    ) -> Result<PtySessionWindowStatus, AppError> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?;
+        let Some(session) = sessions.get(session_id) else {
+            return Ok(session_window_status(None, window_label, true));
+        };
+        if session.flow.is_closed() {
+            return Ok(PtySessionWindowStatus::Ended);
+        }
+        let route = session
+            .event_route
+            .lock()
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        Ok(session_window_status(
+            Some(&route.window_label),
+            window_label,
+            false,
+        ))
     }
 
     pub fn write(&self, session_id: &str, window_label: &str, data: &[u8]) -> Result<(), AppError> {
@@ -1076,11 +1103,17 @@ fn spawn_child_monitor(
                     }
                 }
             }
-            let _ = session.send_event(PtyEvent::Exited {
+            if let Err(error) = session.send_event(PtyEvent::Exited {
                 session_id: session.session_id.clone(),
                 state: state.to_string(),
                 exit_code,
-            });
+            }) {
+                log::warn!(
+                    "failed to deliver PTY exit event session_id={} state={} error={error}",
+                    session.session_id,
+                    state
+                );
+            }
             log::info!(
                 "PTY session ended session_id={} state={} exit_code={exit_code:?} chunks={} bytes={} acknowledgement_calls={} last_acknowledged_sequence={} pending_bytes={}",
                 session.session_id,
@@ -1097,6 +1130,21 @@ fn spawn_child_monitor(
             drop(session);
         })
         .map(|_| ())
+}
+
+fn session_window_status(
+    owner_window_label: Option<&str>,
+    queried_window_label: &str,
+    ended: bool,
+) -> PtySessionWindowStatus {
+    if ended {
+        return PtySessionWindowStatus::Ended;
+    }
+    match owner_window_label {
+        None => PtySessionWindowStatus::Ended,
+        Some(owner) if owner == queried_window_label => PtySessionWindowStatus::Running,
+        Some(_) => PtySessionWindowStatus::OwnedByAnotherWindow,
+    }
 }
 
 fn configure_cli_environment(command: &mut CommandBuilder) {
@@ -1154,6 +1202,26 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn window_status_distinguishes_ended_owned_and_transferred_sessions() {
+        assert_eq!(
+            session_window_status(None, "terminal-a", false),
+            PtySessionWindowStatus::Ended
+        );
+        assert_eq!(
+            session_window_status(Some("terminal-a"), "terminal-a", false),
+            PtySessionWindowStatus::Running
+        );
+        assert_eq!(
+            session_window_status(Some("main"), "terminal-a", false),
+            PtySessionWindowStatus::OwnedByAnotherWindow
+        );
+        assert_eq!(
+            session_window_status(Some("terminal-a"), "terminal-a", true),
+            PtySessionWindowStatus::Ended
+        );
+    }
 
     #[test]
     fn output_acknowledgement_releases_pending_capacity() {

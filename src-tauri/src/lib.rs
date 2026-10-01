@@ -12,7 +12,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
-use tauri_plugin_window_state::StateFlags;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
@@ -101,11 +101,38 @@ pub fn run() {
             // Register after storage migration so prior window state is available
             // on the first launch under the stable Tauri identifier. Visibility
             // is deliberately excluded: closing to tray must not hide the next launch.
+            let window_state_flags = StateFlags::all().difference(StateFlags::VISIBLE);
             app.handle().plugin(
                 tauri_plugin_window_state::Builder::default()
-                    .with_state_flags(StateFlags::all().difference(StateFlags::VISIBLE))
+                    .skip_initial_state("main")
+                    .with_state_flags(window_state_flags)
                     .build(),
             )?;
+            if let Some(window) = app.get_webview_window("main") {
+                // Restore explicitly after the storage migration and before applying
+                // monitor bounds. The plugin's automatic restore runs on window-ready,
+                // which would otherwise happen after this setup hook's bounds correction.
+                if let Err(error) = window.restore_state(window_state_flags) {
+                    log::warn!("unable to restore main window state: {error}");
+                }
+                let window_config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|config| config.label == "main");
+                let min_width = window_config
+                    .and_then(|config| config.min_width)
+                    .unwrap_or(1.0);
+                let min_height = window_config
+                    .and_then(|config| config.min_height)
+                    .unwrap_or(1.0);
+                if let Err(error) = platform::window_geometry::constrain_restored_window(
+                    &window, min_width, min_height,
+                ) {
+                    log::warn!("unable to constrain restored main window bounds: {error}");
+                }
+            }
 
             let existing_database = paths.database_path.is_file();
             let connection = db::connection::open_database(&paths.database_path)
@@ -185,6 +212,7 @@ pub fn run() {
             commands::pty_session::complete_pty_handoff,
             commands::pty_session::finalize_pty_handoff,
             commands::pty_session::cancel_pty_handoff,
+            commands::pty_session::get_pty_session_window_status,
             commands::pty_session::write_pty_session,
             commands::pty_session::resize_pty_session,
             commands::pty_session::acknowledge_pty_output,
@@ -214,6 +242,16 @@ pub fn run() {
             commands::config::import_config_from_path,
             commands::app_setting::get_close_behavior,
             commands::app_setting::set_close_behavior,
+            commands::workspace_layout::get_workspace_layout,
+            commands::workspace_layout::save_workspace_layout,
+            commands::workspace_layout::reset_workspace_layout,
+            commands::workspace_layout::list_workspace_layout_presets,
+            commands::workspace_layout::get_workspace_layout_preset,
+            commands::workspace_layout::create_workspace_layout_preset,
+            commands::workspace_layout::update_workspace_layout_preset,
+            commands::workspace_layout::rename_workspace_layout_preset,
+            commands::workspace_layout::delete_workspace_layout_preset,
+            commands::workspace_layout::plan_apply_workspace_layout_preset,
         ])
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -292,7 +330,14 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     show_main_window(&window);
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                if let Err(error) =
+                    app.save_window_state(StateFlags::all().difference(StateFlags::VISIBLE))
+                {
+                    log::warn!("unable to save main window state before tray exit: {error}");
+                }
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

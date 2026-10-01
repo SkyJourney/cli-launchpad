@@ -11,3 +11,4 @@ pub mod pty_session;
 pub mod session;
 pub mod terminal;
 pub mod tool;
+pub mod workspace_layout;

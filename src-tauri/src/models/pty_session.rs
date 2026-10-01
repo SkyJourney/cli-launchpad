@@ -15,6 +15,14 @@ pub struct PtySession {
     pub exit_code: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PtySessionWindowStatus {
+    Running,
+    Ended,
+    OwnedByAnotherWindow,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(
     rename_all = "camelCase",

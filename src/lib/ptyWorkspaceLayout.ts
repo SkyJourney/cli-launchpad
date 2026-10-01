@@ -19,9 +19,33 @@ export interface WorkspaceSplit {
 
 export type WorkspaceNode = WorkspacePane | WorkspaceSplit;
 
+export interface WorkspaceSlotSequence {
+  directoryId: number;
+  toolKey: string;
+  sequence: number;
+}
+
 export const MIN_WORKSPACE_PANE_WIDTH = 220;
 export const MIN_WORKSPACE_PANE_HEIGHT = 150;
 export const WORKSPACE_SASH_SIZE = 8;
+
+export function nextWorkspaceSessionSequence(
+  slots: readonly WorkspaceSlotSequence[],
+  directoryId: number,
+  toolKey: string,
+): number {
+  return (
+    Math.max(
+      0,
+      ...slots
+        .filter(
+          (slot) =>
+            slot.directoryId === directoryId && slot.toolKey === toolKey,
+        )
+        .map((slot) => slot.sequence),
+    ) + 1
+  );
+}
 
 export function minimumWorkspacePaneExtent(direction: SplitDirection): number {
   const minimum =
@@ -29,6 +53,28 @@ export function minimumWorkspacePaneExtent(direction: SplitDirection): number {
       ? MIN_WORKSPACE_PANE_WIDTH
       : MIN_WORKSPACE_PANE_HEIGHT;
   return minimum * 2 + WORKSPACE_SASH_SIZE;
+}
+
+export function workspaceSplitSizes(
+  ratio: number,
+  extent: number,
+): [number, number] {
+  const boundedExtent = Number.isFinite(extent) ? Math.max(0, extent) : 0;
+  const availableExtent = Math.max(0, boundedExtent - WORKSPACE_SASH_SIZE);
+  const first = Math.round(availableExtent * clampSplitRatio(ratio));
+  return [first, availableExtent - first];
+}
+
+export function isUsableWorkspaceSplitSizes(
+  sizes: readonly number[],
+): sizes is [number, number] {
+  return (
+    sizes.length === 2 &&
+    Number.isFinite(sizes[0]) &&
+    Number.isFinite(sizes[1]) &&
+    sizes[0] > 0 &&
+    sizes[1] > 0
+  );
 }
 
 export function canSplitWorkspacePane(
@@ -230,12 +276,7 @@ export function removeWorkspaceSession(
   node: WorkspaceNode,
   sessionId: string,
 ): WorkspaceNode {
-  const next = removeSessionBranch(node, sessionId);
-  if (next) return next;
-  return createWorkspacePane(
-    node.kind === "pane" ? node.id : "workspace-root",
-    node.kind === "pane" ? node.paneNumber : 1,
-  );
+  return removeSessionBranch(node, sessionId);
 }
 
 export function removeEmptyWorkspacePane(
@@ -293,12 +334,14 @@ function updateWorkspacePane(
 function removeSessionBranch(
   node: WorkspaceNode,
   sessionId: string,
-): WorkspaceNode | null {
+): WorkspaceNode {
   if (node.kind === "pane") {
     const index = node.sessionIds.indexOf(sessionId);
     if (index < 0) return node;
     const sessionIds = node.sessionIds.filter((id) => id !== sessionId);
-    if (sessionIds.length === 0) return null;
+    if (sessionIds.length === 0) {
+      return { ...node, sessionIds, activeSessionId: null };
+    }
     const activeSessionId =
       node.activeSessionId === sessionId
         ? sessionIds[Math.min(index, sessionIds.length - 1)]
@@ -308,8 +351,6 @@ function removeSessionBranch(
 
   const first = removeSessionBranch(node.first, sessionId);
   const second = removeSessionBranch(node.second, sessionId);
-  if (!first) return second;
-  if (!second) return first;
   if (first === node.first && second === node.second) return node;
   return { ...node, first, second };
 }

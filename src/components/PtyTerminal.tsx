@@ -35,7 +35,10 @@ import {
   type PtyTerminalSnapshot,
   type ToolKey,
 } from "../lib/tauri";
-import { canTerminatePtySession } from "../lib/ptySessionLifecycle";
+import {
+  applyPendingPtyExit,
+  canTerminatePtySession,
+} from "../lib/ptySessionLifecycle";
 import "@xterm/xterm/css/xterm.css";
 
 const MAX_PTY_COLUMNS = 500;
@@ -51,6 +54,7 @@ export interface PtyTerminalHandle {
   captureHandoff(): Promise<PtyHandoff>;
   cancelHandoff(token: string): Promise<void>;
   attachHandoff(sessionId: string, token: string): Promise<PtySession>;
+  getSessionState(): PtySession["state"] | null;
 }
 
 export type PtySessionCloseResult =
@@ -453,6 +457,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       ref,
       () => ({
         closeSession,
+        getSessionState() {
+          return sessionRef.current?.state ?? null;
+        },
         async startSession(directoryId, toolKey, resumeSessionId) {
           const terminal = terminalRef.current;
           if (!terminal) {
@@ -487,15 +494,8 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             const earlyExit = pendingExitRef.current.get(created.sessionId);
             pendingExitRef.current.delete(created.sessionId);
             const startupInput = pendingInputRef.current.splice(0).join("");
-            updateSession(
-              earlyExit
-                ? {
-                    ...created,
-                    state: earlyExit.state,
-                    exitCode: earlyExit.exitCode,
-                  }
-                : created,
-            );
+            const resolvedSession = applyPendingPtyExit(created, earlyExit);
+            updateSession(resolvedSession);
             if (startupInput && !earlyExit && created.state === "running") {
               await writePtySession(created.sessionId, startupInput);
               reportFrontendStageOnce(created.sessionId, "startupInputFlushed");
@@ -609,9 +609,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               nextSize,
             );
             lastSentSizeRef.current = nextSize;
-            updateSession(finalized);
+            const earlyExit = pendingExitRef.current.get(sessionId);
+            pendingExitRef.current.delete(sessionId);
+            const resolvedSession = applyPendingPtyExit(finalized, earlyExit);
+            updateSession(resolvedSession);
             setHandoffBusy(false);
-            return finalized;
+            return resolvedSession;
           } catch (reason) {
             snapshotWaiterRef.current?.reject(new Error(String(reason)));
             setHandoffBusy(false);

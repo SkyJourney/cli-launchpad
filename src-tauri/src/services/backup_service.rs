@@ -241,6 +241,51 @@ mod tests {
     }
 
     #[test]
+    fn backup_and_restore_preserve_current_and_named_workspace_layouts() {
+        let (_directory, paths, mut connection) = setup();
+        connection
+            .execute(
+                "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, 1, 4, '{\"tree\":\"current\"}', 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values ('preset-1', 'Saved Layout', 1, '{\"tree\":\"named\"}', 10, 10)",
+                [],
+            )
+            .unwrap();
+
+        let backup = create(&connection, &paths, BackupReason::Manual).unwrap();
+        connection
+            .execute("delete from workspace_state", [])
+            .unwrap();
+        connection
+            .execute("delete from workspace_layout_presets", [])
+            .unwrap();
+
+        restore(&mut connection, &paths, &backup.id).unwrap();
+
+        let current_payload: String = connection
+            .query_row(
+                "select payload_json from workspace_state where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (preset_name, preset_payload): (String, String) = connection
+            .query_row(
+                "select name, payload_json from workspace_layout_presets where id = 'preset-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(current_payload, r#"{"tree":"current"}"#);
+        assert_eq!(preset_name, "Saved Layout");
+        assert_eq!(preset_payload, r#"{"tree":"named"}"#);
+    }
+
+    #[test]
     fn restore_creates_guard_backup_and_replaces_data() {
         let (_directory, paths, mut connection) = setup();
         directory_repo::add(&connection, "before", "C:\\before", None).unwrap();

@@ -108,13 +108,13 @@ export function ProjectMaintenanceDialog() {
           <h2 id="project-dialog-title">{title}</h2>
           <button
             type="button"
-            className="icon-button"
+            className="icon-button project-dialog-close-button"
             aria-label={t("common.cancel")}
             title={t("common.cancel")}
             disabled={mutation.isPending}
             onClick={() => setProjectDialog(null)}
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </header>
         {editing && !directory ? (

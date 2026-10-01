@@ -2,6 +2,100 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type ToolKey = "antigravity" | "codex" | "claude" | "grok";
 
+export type WorkspaceLayoutNode =
+  | {
+      kind: "pane";
+      id: string;
+      paneNumber: number;
+      sessionIds: string[];
+      activeSessionId: string | null;
+    }
+  | {
+      kind: "split";
+      id: string;
+      direction: "horizontal" | "vertical";
+      ratio: number;
+      first: WorkspaceLayoutNode;
+      second: WorkspaceLayoutNode;
+    };
+
+export type WorkspaceSlotTitle =
+  | { kind: "automatic" }
+  | { kind: "custom"; value: string };
+
+export interface WorkspaceLayoutSlot {
+  instanceId: string;
+  directoryId: number;
+  directoryPath: string;
+  projectName: string;
+  toolKey: ToolKey;
+  sequence: number;
+  sessionId: string | null;
+  resumeSessionId: string | null;
+  title: WorkspaceSlotTitle;
+}
+
+export interface WorkspaceLayoutDocument {
+  schemaVersion: number;
+  tree: WorkspaceLayoutNode;
+  focusedPaneId: string;
+  slots: WorkspaceLayoutSlot[];
+  detachedSlotIds: string[];
+}
+
+export type WorkspaceLayoutStateStatus =
+  | { status: "missing" }
+  | { status: "ready" }
+  | { status: "needsReset"; reason: string };
+
+export type WorkspaceSlotStateKind =
+  | "pending"
+  | "running"
+  | "ended"
+  | "missingProject"
+  | "projectIdentityMismatch"
+  | "missingSession"
+  | "sessionIdentityMismatch";
+
+export interface WorkspaceSlotState {
+  instanceId: string;
+  state: WorkspaceSlotStateKind;
+  currentProjectName: string | null;
+}
+
+export interface WorkspaceLayoutStateRead {
+  status: WorkspaceLayoutStateStatus;
+  revision: number | null;
+  schemaVersion: number | null;
+  updatedAtMs: number | null;
+  layout: WorkspaceLayoutDocument | null;
+  slotStates: WorkspaceSlotState[];
+}
+
+export interface WorkspaceLayoutSaveResult {
+  saved: boolean;
+  revision: number;
+}
+
+export interface WorkspaceLayoutPresetSummary {
+  id: string;
+  name: string;
+  schemaVersion: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface WorkspaceLayoutPreset {
+  summary: WorkspaceLayoutPresetSummary;
+  layout: WorkspaceLayoutDocument;
+  slotStates: WorkspaceSlotState[];
+}
+
+export interface WorkspaceLayoutApplyPlan {
+  layout: WorkspaceLayoutDocument;
+  slotStates: WorkspaceSlotState[];
+}
+
 export interface Directory {
   id: number;
   name: string;
@@ -126,6 +220,11 @@ export interface PtySession {
   endedAtMs: number | null;
   exitCode: number | null;
 }
+
+export type PtySessionWindowStatus =
+  | "running"
+  | "ended"
+  | "ownedByAnotherWindow";
 
 export interface PtySizeUpdate {
   cols: number;
@@ -380,6 +479,69 @@ export function clearExecutionHistory() {
 }
 
 // Embedded PTY sessions
+export function getWorkspaceLayout() {
+  return invoke<WorkspaceLayoutStateRead>("get_workspace_layout");
+}
+
+export function saveWorkspaceLayout(
+  revision: number,
+  layout: WorkspaceLayoutDocument,
+) {
+  return invoke<WorkspaceLayoutSaveResult>("save_workspace_layout", {
+    revision,
+    layout,
+  });
+}
+
+export function resetWorkspaceLayout() {
+  return invoke<number>("reset_workspace_layout");
+}
+
+export function listWorkspaceLayoutPresets() {
+  return invoke<WorkspaceLayoutPresetSummary[]>(
+    "list_workspace_layout_presets",
+  );
+}
+
+export function getWorkspaceLayoutPreset(id: string) {
+  return invoke<WorkspaceLayoutPreset>("get_workspace_layout_preset", { id });
+}
+
+export function createWorkspaceLayoutPreset(
+  name: string,
+  layout: WorkspaceLayoutDocument,
+) {
+  return invoke<WorkspaceLayoutPresetSummary>(
+    "create_workspace_layout_preset",
+    { name, layout },
+  );
+}
+
+export function updateWorkspaceLayoutPreset(
+  id: string,
+  layout: WorkspaceLayoutDocument,
+) {
+  return invoke<boolean>("update_workspace_layout_preset", { id, layout });
+}
+
+export function renameWorkspaceLayoutPreset(id: string, name: string) {
+  return invoke<boolean>("rename_workspace_layout_preset", { id, name });
+}
+
+export function deleteWorkspaceLayoutPreset(id: string) {
+  return invoke<boolean>("delete_workspace_layout_preset", { id });
+}
+
+export function planApplyWorkspaceLayoutPreset(
+  id: string,
+  activeLayout: WorkspaceLayoutDocument,
+) {
+  return invoke<WorkspaceLayoutApplyPlan>(
+    "plan_apply_workspace_layout_preset",
+    { id, activeLayout },
+  );
+}
+
 export function createPtySession(
   directoryId: number,
   toolKey: ToolKey,
@@ -436,6 +598,12 @@ export function finalizePtyHandoff(
 
 export function cancelPtyHandoff(sessionId: string, token: string) {
   return invoke<void>("cancel_pty_handoff", { sessionId, token });
+}
+
+export function getPtySessionWindowStatus(sessionId: string) {
+  return invoke<PtySessionWindowStatus>("get_pty_session_window_status", {
+    sessionId,
+  });
 }
 
 export function writePtySession(sessionId: string, data: string) {
