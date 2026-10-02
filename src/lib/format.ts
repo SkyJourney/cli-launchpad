@@ -36,7 +36,7 @@ export function formatUtcDateTime(value: string, language = "zh"): string {
     ? value
     : value.replace(" ", "T") + "Z";
   const date = new Date(normalized);
-  const locale = language.startsWith("zh") ? "zh-CN" : "en-US";
+  const locale = getIntlLocale(language);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
 }
 
@@ -79,7 +79,7 @@ export function hasUpdate(
 }
 
 function relativeFrom(then: number, language = "zh"): string {
-  const locale = language.startsWith("zh") ? "zh-CN" : "en-US";
+  const locale = getIntlLocale(language);
   const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   const diffSeconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (diffSeconds < 60) {
@@ -98,4 +98,10 @@ function relativeFrom(then: number, language = "zh"): string {
     return formatter.format(-diffDays, "day");
   }
   return new Date(then).toLocaleDateString(locale);
+}
+
+function getIntlLocale(language: string): string {
+  if (language.startsWith("zh")) return "zh-CN";
+  if (language.startsWith("pt")) return "pt-BR";
+  return language || "en-US";
 }

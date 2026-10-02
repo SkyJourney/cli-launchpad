@@ -1,32 +1,19 @@
 import {
-  Check,
   Ellipsis,
   FolderKanban,
   FolderOpen,
-  Info,
-  Monitor,
-  Moon,
   Plus,
   Pin,
   PinOff,
   Pencil,
-  Settings,
-  SquareTerminal,
-  Sun,
   Trash2,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import {
-  isExecutionActive,
-  useExecutionTasks,
-} from "../hooks/useExecutionTasks";
-import { getAppLanguage, setAppLanguage, type AppLanguage } from "../i18n";
-import { useAppStore, type ThemeMode } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
 import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
@@ -42,31 +29,10 @@ import { usePtyWorkspace } from "./PtyWorkspace";
 import { SearchInput } from "./SearchInput";
 import { ThemedScrollArea } from "./ThemedScrollArea";
 
-const THEME_OPTIONS: {
-  icon: LucideIcon;
-  labelKey: "theme.light" | "theme.dark" | "theme.system";
-  value: ThemeMode;
-}[] = [
-  { icon: Sun, labelKey: "theme.light", value: "light" },
-  { icon: Moon, labelKey: "theme.dark", value: "dark" },
-  { icon: Monitor, labelKey: "theme.system", value: "system" },
-];
-
-const LANGUAGE_OPTIONS: {
-  code: "ZH" | "EN";
-  labelKey: "language.zh" | "language.en";
-  value: AppLanguage;
-}[] = [
-  { code: "ZH", labelKey: "language.zh", value: "zh" },
-  { code: "EN", labelKey: "language.en", value: "en" },
-];
-
-export function Sidebar() {
+export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const { t } = useTranslation();
   const view = useAppStore((state) => state.view);
   const setView = useAppStore((state) => state.setView);
-  const themeMode = useAppStore((state) => state.themeMode);
-  const setThemeMode = useAppStore((state) => state.setThemeMode);
   const openDirectory = useAppStore((state) => state.openDirectory);
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
@@ -76,16 +42,11 @@ export function Sidebar() {
     usePtyWorkspace();
   const queryClient = useQueryClient();
   const { data: directories } = useDirectories();
-  const [showThemeMenu, setShowThemeMenu] = useState(false);
-  const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const [projectMenuDirectoryId, setProjectMenuDirectoryId] = useState<
     number | null
   >(null);
   const [projectSearch, setProjectSearch] = useState("");
-  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const languageButtonRef = useRef<HTMLButtonElement | null>(null);
   const projectMenuAnchors = useRef(new Map<number, HTMLButtonElement>());
-  const tasks = useExecutionTasks();
   const pinMutation = useMutation({
     mutationFn: ({ id, pinned }: { id: number; pinned: boolean }) =>
       setDirectoryPinned(id, pinned),
@@ -103,8 +64,6 @@ export function Sidebar() {
       }
     },
   });
-  const activeCount =
-    tasks.data?.filter((task) => isExecutionActive(task.status)).length ?? 0;
   const workspaceSessionIds = useMemo(() => {
     if (hydrationStatus !== "ready") return new Set<string>();
     const representedInstanceIds = new Set([
@@ -132,14 +91,6 @@ export function Sidebar() {
         return (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "");
       });
   }, [directories, projectSearch]);
-  const currentTheme =
-    THEME_OPTIONS.find((option) => option.value === themeMode) ??
-    THEME_OPTIONS[2];
-  const CurrentThemeIcon = currentTheme.icon;
-  const currentLanguage = getAppLanguage();
-  const currentLanguageOption =
-    LANGUAGE_OPTIONS.find((option) => option.value === currentLanguage) ??
-    LANGUAGE_OPTIONS[1];
   const projectMenuAnchorRef = useMemo(
     () => ({
       current:
@@ -179,7 +130,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside id="app-sidebar" className="sidebar" hidden={hidden}>
       <section
         className="project-navigation"
         aria-label={t("sidebar.projects")}
@@ -398,160 +349,6 @@ export function Sidebar() {
           </div>
         </AnchoredPopover>
       )}
-
-      <div className="sidebar-actions">
-        <button
-          ref={languageButtonRef}
-          type="button"
-          className={clsx("icon-button sidebar-language-button", {
-            active: showLanguageMenu,
-          })}
-          title={t("language.current", {
-            language: t(currentLanguageOption.labelKey),
-          })}
-          aria-label={t("language.current", {
-            language: t(currentLanguageOption.labelKey),
-          })}
-          aria-haspopup="menu"
-          aria-expanded={showLanguageMenu}
-          onClick={() => {
-            setShowThemeMenu(false);
-            setShowLanguageMenu((value) => !value);
-          }}
-        >
-          <span className="sidebar-language-code">
-            {currentLanguageOption.code}
-          </span>
-        </button>
-        {showLanguageMenu && (
-          <AnchoredPopover
-            anchorRef={languageButtonRef}
-            ariaLabel={t("language.select")}
-            className="preference-popover"
-            onClose={() => setShowLanguageMenu(false)}
-            preferredWidth={188}
-          >
-            <div className="preference-menu" role="menu">
-              {LANGUAGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={currentLanguage === option.value}
-                  className={clsx("preference-menu-item", {
-                    active: currentLanguage === option.value,
-                  })}
-                  onClick={() => {
-                    void setAppLanguage(option.value);
-                    setShowLanguageMenu(false);
-                  }}
-                >
-                  <span className="language-menu-code">{option.code}</span>
-                  <span>{t(option.labelKey)}</span>
-                  {currentLanguage === option.value && (
-                    <Check className="preference-menu-check" size={15} />
-                  )}
-                </button>
-              ))}
-            </div>
-          </AnchoredPopover>
-        )}
-        <button
-          ref={themeButtonRef}
-          type="button"
-          className={clsx("icon-button sidebar-theme-button", {
-            active: showThemeMenu,
-          })}
-          title={t("theme.current", {
-            mode: t(currentTheme.labelKey),
-          })}
-          aria-label={t("theme.current", {
-            mode: t(currentTheme.labelKey),
-          })}
-          aria-haspopup="menu"
-          aria-expanded={showThemeMenu}
-          onClick={() => {
-            setShowLanguageMenu(false);
-            setShowThemeMenu((value) => !value);
-          }}
-        >
-          <CurrentThemeIcon size={18} />
-        </button>
-        {showThemeMenu && (
-          <AnchoredPopover
-            anchorRef={themeButtonRef}
-            ariaLabel={t("theme.select")}
-            className="preference-popover"
-            onClose={() => setShowThemeMenu(false)}
-            preferredWidth={188}
-          >
-            <div className="preference-menu" role="menu">
-              {THEME_OPTIONS.map((option) => {
-                const ThemeIcon = option.icon;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={themeMode === option.value}
-                    className={clsx("preference-menu-item", {
-                      active: themeMode === option.value,
-                    })}
-                    onClick={() => {
-                      setThemeMode(option.value);
-                      setShowThemeMenu(false);
-                    }}
-                  >
-                    <ThemeIcon size={16} />
-                    <span>{t(option.labelKey)}</span>
-                    {themeMode === option.value && (
-                      <Check className="preference-menu-check" size={15} />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </AnchoredPopover>
-        )}
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "executions",
-          })}
-          title={t("sidebar.executions")}
-          aria-label={t("sidebar.executions")}
-          onClick={() => setView("executions")}
-        >
-          <SquareTerminal size={16} />
-          {activeCount > 0 && (
-            <span
-              className="nav-count"
-              aria-label={t("sidebar.activeTasks", { count: activeCount })}
-            >
-              {activeCount}
-            </span>
-          )}
-        </button>
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "settings",
-          })}
-          title={t("sidebar.settings")}
-          aria-label={t("sidebar.settings")}
-          onClick={() => setView("settings")}
-        >
-          <Settings size={16} />
-        </button>
-        <button
-          className={clsx("icon-button nav-item", {
-            active: view === "about",
-          })}
-          title={t("sidebar.about")}
-          aria-label={t("sidebar.about")}
-          onClick={() => setView("about")}
-        >
-          <Info size={16} />
-        </button>
-      </div>
     </aside>
   );
 }

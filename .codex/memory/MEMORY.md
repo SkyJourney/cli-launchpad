@@ -1,5 +1,5 @@
 # Memory Index
-> _Last synced: 2026-10-02 | Base commit: `8d4a751`_
+> _Last synced: 2026-10-02 | Base commit: `2e345ea`_
 
 ## 启动引导
 
@@ -13,8 +13,8 @@
 
 | 文件 | 描述 | 类型 | 引用 | Commit |
 | --- | --- | --- | --- | --- |
-| `decisions.md` | 当前关键架构、产品范围和发布策略决策 | project | 38* | `8d4a751` |
-| `project_overview.md` | 项目技术栈、界面、架构边界、工具链和五项目标 CLI 范围 | project | 26* | `8d4a751` |
+| `decisions.md` | 当前关键架构、产品范围和发布策略决策 | project | 39* | `2e345ea` |
+| `project_overview.md` | 项目技术栈、架构边界、工具链、国际化策略和五项目标 CLI 范围 | project | 27* | `2e345ea` |
 | `project_progress.md` | 当前项目进度、已发布里程碑和近期待办 | project | 17* | `8d4a751` |
 | `reference.md` | 官方 CLI 与发布工具资料摘要和外部依据 | reference | 10* | `8d4a751` |
 | `feedback.md` | 用户协作偏好和范围纠正 | feedback | 5* | `8d4a751` |

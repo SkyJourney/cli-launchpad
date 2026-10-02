@@ -11,6 +11,8 @@ export const en = {
   },
   sidebar: {
     projects: "Projects",
+    collapse: "Collapse sidebar",
+    expand: "Expand sidebar",
     addProject: "Add project",
     searchProjects: "Search projects by name",
     projectActions: "Actions for {{name}}",
@@ -137,6 +139,29 @@ export const en = {
     returnToWorkspace: "Return to workspace",
     returningToWorkspace: "Moving back to workspace…",
     returnFailed: "Could not return to workspace: {{error}}",
+    returnTimedOut: "The main workspace did not respond in time.",
+    detachedDefaultTitle: "CLI terminal",
+    detachedMoveUnavailable:
+      "This terminal cannot be moved to a separate window.",
+    detachedMoveNotRunning:
+      "Only a running terminal can be moved to a separate window.",
+    detachedStartTimedOut: "Starting the separate terminal window timed out.",
+    detachedCreateFailed: "Could not create the separate terminal window.",
+    detachedStartFailed: "Could not start the separate terminal window.",
+    detachedStateChanged:
+      "The separate terminal window state changed. Please try again.",
+    detachedSessionMissing:
+      "This terminal session could not be found in the main workspace.",
+    workspaceRestoring:
+      "The main workspace is still restoring terminals. Please try again shortly.",
+    detachedExitedBeforeReady:
+      "The PTY exited before the separate window took control.",
+    detachedClosedBeforeReady:
+      "The separate terminal window closed before taking control.",
+    layoutDataMissing:
+      "The layout was marked ready, but no layout data was returned.",
+    namedLayoutMissing:
+      "This named layout no longer exists. Refresh the list and try again.",
     closeCurrent: "Close this terminal",
     closeOthers: "Close other terminals in pane ({{count}})",
     closeAllInPane: "Close all terminals in pane ({{count}})",
@@ -418,7 +443,7 @@ export const en = {
     title: "About",
     version: "Version {{version}}",
     description:
-      "A lightweight desktop launcher for opening AI CLI work sessions in your regular project directories and managing session history, tool arguments, and versions.",
+      "A project-centered desktop workspace for five AI CLIs, with an embedded multi-pane terminal, session history and recovery, and reusable workspace layouts.",
     supportedCli: "Supported CLIs",
     repository: "Project repository",
     repositoryDescription:

@@ -9,9 +9,10 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
-import { FolderOpen, PanelRight, Plus } from "lucide-react";
+import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
 import type { CSSProperties } from "react";
 import { AppLogo } from "./components/AppLogo";
+import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
 import {
@@ -42,6 +43,7 @@ import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
 
 export function App() {
+  const { t } = useTranslation();
   useThemeSync();
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("detachedSessionId");
@@ -57,7 +59,7 @@ export function App() {
         handoffToken={handoffToken}
         instanceId={instanceId}
         toolKey={detachedToolKey}
-        title={params.get("detachedTitle") ?? "CLI terminal"}
+        title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
       />
     );
   }
@@ -73,6 +75,8 @@ function AppContent() {
   const view = useAppStore((state) => state.view);
   const themeMode = useAppStore((state) => state.themeMode);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
+  const sidebarOpen = useAppStore((state) => state.sidebarOpen);
+  const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
   const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
   const setContextPanelOpen = useAppStore((state) => state.setContextPanelOpen);
   const projectDialog = useAppStore((state) => state.projectDialog);
@@ -154,10 +158,30 @@ function AppContent() {
         <WindowTitlebar
           variant="main"
           leading={
-            <div className="window-titlebar-brand">
+            <div className="window-titlebar-brand" data-window-drag-handle>
               <AppLogo size={24} />
               <strong>CLI Launchpad</strong>
             </div>
+          }
+          children={
+            <>
+              <button
+                type="button"
+                className="icon-button window-titlebar-action-button"
+                title={
+                  sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")
+                }
+                aria-label={
+                  sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")
+                }
+                aria-expanded={sidebarOpen}
+                aria-controls="app-sidebar"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+              >
+                <PanelLeft size={16} />
+              </button>
+              <AppTitlebarUtilities />
+            </>
           }
           actions={
             view === "detail" ? (
@@ -186,8 +210,10 @@ function AppContent() {
             ) : null
           }
         />
-        <main className="app-shell">
-          <Sidebar />
+        <main
+          className={`app-shell${sidebarOpen ? "" : " app-shell-sidebar-collapsed"}`}
+        >
+          <Sidebar hidden={!sidebarOpen} />
           <section
             ref={workspaceRef}
             className={

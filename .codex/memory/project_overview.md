@@ -3,7 +3,7 @@ name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
 last_updated: 2026-10-02
-commit: 8d4a751
+commit: 2e345ea
 ---
 
 # 项目概览
@@ -13,7 +13,7 @@ CLI Launchpad 是一个轻量桌面工具，用于管理常用项目目录，并
 ## 技术栈
 
 - 桌面壳：Tauri 2。
-- 前端：React 19 + TypeScript + React Query + Zustand + i18next + Sonner，承载共享终端工作区、项目管理、执行任务、设置和关于视图，并统一管理中英文文案、主题状态和任务结果 Toast。
+- 前端：React 19 + TypeScript + React Query + Zustand + i18next + Sonner，承载共享终端工作区、项目管理、执行任务、设置和关于视图，并统一管理多语言文案、主题状态和任务结果 Toast。
 - 后端：Rust，负责 Tauri commands、启动编排、依赖检测、后台安装/更新任务、会话读取、SQLite 备份恢复、诊断导出和平台相关逻辑。
 - 数据：SQLite 保存业务配置、安全启动历史以及安装/更新任务历史；可重建缓存使用独立 SQLite 库。
 - Node 包管理器：pnpm，仓库只维护 `pnpm-lock.yaml`。
@@ -47,7 +47,12 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - Claude Code、Codex、Antigravity、Grok Build、Hermes Agent 与 GitHub 品牌图标使用仓库内本地素材；Hermes Agent 使用 LobeHub `@lobehub/icons-static-avatar` v1.15.0 的固定白底头像，避免深浅主题切换图标。授权信息统一维护在第三方声明中，避免运行时图标依赖与生产包资源解析差异。
 - 通用交互控件以 36 px 为高度基线；确认浮层根据窗口可用空间上下翻转并限制内部滚动。
 
-**See Also：** [[project_progress.md#0.2.1-发布完成]]
+## 国际化与翻译源语言
+
+- 当前界面支持简体中文、英文、西班牙语、德语、日语、法语、阿拉伯语、葡萄牙语、俄语和韩语。
+- 中文承载文案设计语义；日语、韩语直接从中文翻译；英文由中文准确翻译，并作为西班牙语、德语、法语和葡萄牙语的翻译源。阿拉伯语、俄语等其他语言以中文语义为准，可用英文交叉校对。
+
+**See Also：** [[decisions.md#多语言翻译按中文语义源和英文语源分层]] [[project_progress.md#0.2.1-发布完成]]
 
 ## 启动与检测边界
 

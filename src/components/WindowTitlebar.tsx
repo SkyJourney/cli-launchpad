@@ -58,18 +58,26 @@ export function WindowTitlebar({
     runWindowAction(() => getCurrentWindow().toggleMaximize());
   };
 
-  const onDragRegionMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0 ||
-      event.detail > 1 ||
-      event.target !== event.currentTarget
-    )
+  const isWindowDragSurface = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return false;
+    return (
+      (target === event.currentTarget &&
+        event.currentTarget.classList.contains(
+          "window-titlebar-drag-region",
+        )) ||
+      target.closest("[data-window-drag-handle]") !== null
+    );
+  };
+
+  const onDragSurfaceMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.detail > 1 || !isWindowDragSurface(event))
       return;
     runWindowAction(() => getCurrentWindow().startDragging());
   };
 
-  const onDragRegionDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
+  const onDragSurfaceDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!isWindowDragSurface(event)) return;
     event.preventDefault();
     toggleMaximized();
   };
@@ -79,15 +87,19 @@ export function WindowTitlebar({
       className={`window-titlebar window-titlebar-${variant}${isMacOS ? " window-titlebar-macos" : ""}`}
       aria-label={t("windowChrome.titlebar")}
     >
-      <div className="window-titlebar-leading">
+      <div
+        className="window-titlebar-leading"
+        onMouseDown={onDragSurfaceMouseDown}
+        onDoubleClick={onDragSurfaceDoubleClick}
+      >
         {leading}
         {children}
       </div>
       <div
         className="window-titlebar-drag-region"
         aria-hidden="true"
-        onMouseDown={onDragRegionMouseDown}
-        onDoubleClick={onDragRegionDoubleClick}
+        onMouseDown={onDragSurfaceMouseDown}
+        onDoubleClick={onDragSurfaceDoubleClick}
       />
       {actions && <div className="window-titlebar-actions">{actions}</div>}
       {!isMacOS && (

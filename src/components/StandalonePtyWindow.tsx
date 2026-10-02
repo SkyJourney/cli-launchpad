@@ -103,7 +103,7 @@ export function StandalonePtyWindow({
         }
         void reconcileWindowStatus().then((handled) => {
           if (returnAttemptRef.current !== timeoutAttempt || handled) return;
-          setError(t("pty.returnFailed", { error: "主工作区响应超时" }));
+          setError(t("pty.returnFailed", { error: t("pty.returnTimedOut") }));
           returnInProgressRef.current = false;
           setReturning(false);
         });
@@ -237,7 +237,9 @@ export function StandalonePtyWindow({
                       instanceId,
                       sessionId,
                       windowLabel: currentWindow.label,
-                      message: "独立终端窗口在接管完成前关闭",
+                      message: translationRef.current(
+                        "pty.detachedClosedBeforeReady",
+                      ),
                     }).catch(() => undefined);
                     closeAfterTransferRef.current();
                   } else {

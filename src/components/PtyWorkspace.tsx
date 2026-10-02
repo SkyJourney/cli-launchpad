@@ -292,7 +292,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
       if (read.status.status === "ready") {
         if (!read.layout) {
-          throw new Error("布局状态为可读取，但没有返回布局数据");
+          throw new Error(t("pty.layoutDataMissing"));
         }
         const restored = rehomeDetachedWorkspaceSlots(
           restoreWorkspaceRuntimeSnapshot(read.layout),
@@ -683,14 +683,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         !sessionId ||
         detachedByInstanceRef.current.has(instanceId)
       ) {
-        throw new Error("该终端当前无法移动到独立窗口");
+        throw new Error(t("pty.detachedMoveUnavailable"));
       }
       const currentSession = useAppStore.getState().ptySessionsById[sessionId];
       if (currentSession?.state !== "running") {
-        throw new Error("只有运行中的终端可以移动到独立窗口");
+        throw new Error(t("pty.detachedMoveNotRunning"));
       }
       const terminal = terminalRefs.current.get(instanceId);
-      if (!terminal) throw new Error("终端尚未准备好，请稍后重试");
+      if (!terminal) throw new Error(t("pty.terminalNotReady"));
 
       const handoff = await terminal.captureHandoff();
       const windowLabel = `terminal-${crypto.randomUUID()}`;
@@ -731,7 +731,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             const pending = pendingDetachedRef.current.get(instanceId);
             pendingDetachedRef.current.delete(instanceId);
             void pending?.window.destroy().catch(() => undefined);
-            reject(new Error("独立终端窗口启动超时"));
+            reject(new Error(t("pty.detachedStartTimedOut")));
           }, 15_000);
           pendingDetachedRef.current.set(instanceId, {
             ...detachedRecord,
@@ -746,7 +746,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             if (pending?.windowLabel !== windowLabel) return;
             pendingDetachedRef.current.delete(instanceId);
             window.clearTimeout(pending.timer);
-            reject(new Error(String(event.payload ?? "独立终端窗口创建失败")));
+            reject(
+              new Error(
+                event.payload == null
+                  ? t("pty.detachedCreateFailed")
+                  : String(event.payload),
+              ),
+            );
           });
         });
       } catch (reason) {
@@ -754,7 +760,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         throw reason;
       }
     },
-    [directories, terminalRefs],
+    [directories, t, terminalRefs],
   );
 
   const handleDetachedReady = useCallback(
@@ -791,10 +797,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!pending || !matchesDetachedWindow(pending, payload)) return;
       pendingDetachedRef.current.delete(payload.instanceId);
       window.clearTimeout(pending.timer);
-      pending.reject(new Error(payload.message || "独立终端窗口启动失败"));
+      pending.reject(
+        new Error(payload.message || t("pty.detachedStartFailed")),
+      );
       void pending.window.destroy().catch(() => undefined);
     },
-    [],
+    [t],
   );
 
   const handlePtyReturnRequest = useCallback(
@@ -809,7 +817,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         payload.instanceId,
       );
       if (knownDetached && !matchesDetachedWindow(knownDetached, payload)) {
-        fail("主工作区中找不到这个终端会话");
+        fail(t("pty.detachedSessionMissing"));
         return;
       }
       try {
@@ -829,11 +837,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           terminal = terminalRefs.current.get(payload.instanceId);
         }
         if (!slot || !terminal || hydrationStatusRef.current !== "ready") {
-          fail("主工作区仍在恢复终端，请稍后重试");
+          fail(t("pty.workspaceRestoring"));
           return;
         }
         if (slot.sessionId !== payload.sessionId) {
-          fail("主工作区中找不到这个终端会话");
+          fail(t("pty.detachedSessionMissing"));
           return;
         }
         let detached = detachedByInstanceRef.current.get(payload.instanceId);
@@ -843,7 +851,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             WebviewWindow.getByLabel(payload.windowLabel),
           ]);
           if (windowStatus !== "ownedByAnotherWindow" || !detachedWindow) {
-            fail("独立终端窗口状态已变化，请重试");
+            fail(t("pty.detachedStateChanged"));
             return;
           }
           detached = {
@@ -900,7 +908,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         fail(String(reason));
       }
     },
-    [commitTree, setFocusedPane, terminalRefs],
+    [commitTree, setFocusedPane, t, terminalRefs],
   );
 
   useEffect(() => {
@@ -924,7 +932,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         if (pending && matchesDetachedWindow(pending, event.payload)) {
           pendingDetachedRef.current.delete(event.payload.instanceId);
           window.clearTimeout(pending.timer);
-          pending.reject(new Error("PTY 在独立窗口接管完成前已退出"));
+          pending.reject(new Error(t("pty.detachedExitedBeforeReady")));
           void pending.window.destroy().catch(() => undefined);
           removeSlot(event.payload.instanceId);
           return;
@@ -949,6 +957,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     handleDetachedReady,
     handlePtyReturnRequest,
     removeSlot,
+    t,
   ]);
 
   const closeEmptyPane = useCallback(
@@ -1427,10 +1436,10 @@ function WorkspaceLayoutManager({
             action.id,
             getCurrentLayout(),
           );
-          if (!updated) throw new Error("命名布局不存在");
+          if (!updated) throw new Error(t("pty.namedLayoutMissing"));
         } else {
           const deleted = await deleteWorkspaceLayoutPreset(action.id);
-          if (!deleted) throw new Error("命名布局不存在");
+          if (!deleted) throw new Error(t("pty.namedLayoutMissing"));
         }
         setConfirmation(null);
         await refreshPresets();

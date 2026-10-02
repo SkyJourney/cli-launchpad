@@ -37,7 +37,10 @@
   --control-padding-inline-compact: 10px;
   --control-focus-outline: 2px solid var(--color-primary-focus);
   --font-mono: "Maple Launchpad Mono", monospace;
-  --font-ui: "Noto Sans SC Launchpad", sans-serif;
+  --font-ui:
+    "Noto Sans SC Launchpad", "Noto Sans Devanagari", "Noto Sans Arabic",
+    "Noto Sans Bengali", "Noto Nastaliq Urdu", "Nirmala UI", "Urdu Typesetting",
+    "Traditional Arabic", Vrinda, "Segoe UI", Arial, sans-serif;
   --color-canvas: #f5f7fb;
   --color-surface: #ffffff;
   --color-surface-subtle: #f1f3f7;
@@ -316,6 +319,13 @@ pre,
   min-width: 0;
 }
 
+.window-titlebar-utilities {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
 .window-titlebar-brand {
   align-items: center;
   display: flex;
@@ -492,6 +502,10 @@ pre,
   overflow: hidden;
 }
 
+.app-shell-sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* Sidebar */
 .sidebar {
   border-right: 1px solid var(--color-border);
@@ -502,6 +516,10 @@ pre,
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+.sidebar[hidden] {
+  display: none;
 }
 
 .project-navigation {
@@ -805,22 +823,6 @@ pre,
   flex: 0 0 auto;
 }
 
-.sidebar-actions {
-  align-items: center;
-  display: flex;
-  gap: 4px;
-  max-width: 260px;
-  margin-top: auto;
-  padding-top: 12px;
-  width: 100%;
-}
-
-.sidebar-actions > .icon-button {
-  flex: 1 1 0;
-  min-width: 0;
-  width: auto;
-}
-
 .preference-popover .anchored-popover-body {
   padding: 6px;
 }
@@ -828,6 +830,8 @@ pre,
 .preference-menu {
   display: grid;
   gap: 2px;
+  max-height: min(440px, calc(100vh - 96px));
+  overflow-y: auto;
 }
 
 .preference-menu-item {
@@ -858,7 +862,54 @@ pre,
   justify-self: end;
 }
 
-.sidebar-language-code,
+[dir="rtl"] .window-titlebar-controls {
+  margin-left: 8px;
+  margin-right: 0;
+}
+
+[dir="rtl"] .app-shell:not(.app-shell-sidebar-collapsed) .sidebar {
+  border-left: 1px solid var(--color-border);
+  border-right: 0;
+}
+
+[dir="rtl"] .project-navigation-item {
+  padding-left: 8px;
+  padding-right: 14px;
+  text-align: right;
+}
+
+[dir="rtl"] .project-navigation-item.pinned.active {
+  box-shadow: inset -3px 0 var(--color-pinned-accent);
+}
+
+[dir="rtl"] .project-navigation-session-list {
+  border-left: 0;
+  border-right: 1px solid var(--color-border);
+  margin-left: 0;
+  margin-right: 16px;
+  padding-left: 0;
+  padding-right: 6px;
+}
+
+[dir="rtl"] .project-navigation-scroll-area > .themed-scrollbar {
+  left: -8px;
+  right: auto;
+}
+
+[dir="rtl"] .preference-menu-item {
+  text-align: right;
+}
+
+[dir="rtl"] .preference-menu-check {
+  justify-self: start;
+}
+
+.pty-terminal-host,
+.pty-terminal-host * {
+  direction: ltr;
+}
+
+.titlebar-language-code,
 .language-menu-code {
   font-family: var(--font-mono);
   font-size: var(--font-size-caption);

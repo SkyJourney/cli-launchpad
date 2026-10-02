@@ -18,6 +18,7 @@ export type ProjectDialogState =
 
 const THEME_STORAGE_KEY = "cli-launchpad.theme";
 const LAST_DIRECTORY_STORAGE_KEY = "cli-launchpad.last-directory";
+const SIDEBAR_OPEN_STORAGE_KEY = "cli-launchpad.sidebar-open";
 const CONTEXT_PANEL_STORAGE_KEY = "cli-launchpad.context-panel-open";
 
 function getStoredThemeMode(): ThemeMode {
@@ -38,12 +39,17 @@ function getStoredContextPanelOpen(): boolean {
   return window.localStorage.getItem(CONTEXT_PANEL_STORAGE_KEY) !== "false";
 }
 
+function getStoredSidebarOpen(): boolean {
+  return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
+}
+
 const initialDirectoryId = getStoredDirectoryId();
 
 interface AppState {
   view: ViewName;
   themeMode: ThemeMode;
   selectedDirectoryId: number | null;
+  sidebarOpen: boolean;
   contextPanelOpen: boolean;
   projectDialog: ProjectDialogState;
   ptySessionsById: Record<string, PtySession>;
@@ -51,6 +57,7 @@ interface AppState {
   setThemeMode: (mode: ThemeMode) => void;
   selectDirectory: (id: number | null) => void;
   openDirectory: (id: number) => void;
+  setSidebarOpen: (open: boolean) => void;
   setContextPanelOpen: (open: boolean) => void;
   setProjectDialog: (dialog: ProjectDialogState) => void;
   upsertPtySession: (session: PtySession) => void;
@@ -61,6 +68,7 @@ export const useAppStore = create<AppState>((set) => ({
   view: initialDirectoryId == null ? "projects" : "detail",
   themeMode: getStoredThemeMode(),
   selectedDirectoryId: initialDirectoryId,
+  sidebarOpen: getStoredSidebarOpen(),
   contextPanelOpen: getStoredContextPanelOpen(),
   projectDialog: null,
   ptySessionsById: {},
@@ -77,6 +85,10 @@ export const useAppStore = create<AppState>((set) => ({
   openDirectory: (id) => {
     window.localStorage.setItem(LAST_DIRECTORY_STORAGE_KEY, String(id));
     set({ selectedDirectoryId: id, view: "detail" });
+  },
+  setSidebarOpen: (open) => {
+    window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(open));
+    set({ sidebarOpen: open });
   },
   setContextPanelOpen: (open) => {
     window.localStorage.setItem(CONTEXT_PANEL_STORAGE_KEY, String(open));
