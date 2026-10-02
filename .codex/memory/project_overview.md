@@ -2,13 +2,13 @@
 name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
-last_updated: 2026-10-01
-commit: 28a75bb
+last_updated: 2026-10-02
+commit: 4e1ee0a
 ---
 
 # 项目概览
 
-CLI Launchpad 是一个轻量桌面工具，用于管理常用项目目录，并在指定目录中快速打开 AI CLI 会话。项目不做通用 CLI 管理器，0.3.0 目标范围覆盖 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent 五项 CLI；G2 分阶段接入中，当前已完成 Hermes 工具身份、状态探测和项目启动入口，安装/更新与历史会话仍待后续阶段。
+CLI Launchpad 是一个轻量桌面工具，用于管理常用项目目录，并在指定目录中快速打开 AI CLI 会话。项目不做通用 CLI 管理器，0.3.0 目标范围覆盖 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent 五项 CLI；G2 的 Windows 实机验收已由用户于 2026-10-02 确认通过，真实 Hermes 安装/更新未执行且不属于 G2 关闭门禁。
 
 ## 技术栈
 
@@ -39,6 +39,8 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 ## 界面与本地素材
 
 - 界面支持简体中文、英文，以及浅色、深色、跟随系统三种主题；这些属于设备本地 UI 状态，不进入业务 SQLite。
+- G4 跨窗口主题同步由主窗口广播偏好变化；独立终端窗口先注册监听，再向主窗口请求当前偏好，按本窗口更新 DOM token 与原生窗口外观且不回环广播。
+- 全局滚动条以项目列表样式为基准：覆盖式 `ThemedScrollArea` 隐藏时不占内容宽度、滚动时显现并使用主题滑块；项目上下文共用该容器，全局原生溢出区共用主题色和细轨规格。
 - 全局 UI 内置 Noto Sans SC 可变字体，命令、路径、参数和日志继续使用 Maple Mono NF CN，不依赖系统字体安装。
 - Claude Code、Codex、Antigravity、Grok Build、Hermes Agent 与 GitHub 品牌图标使用仓库内本地素材；Hermes Agent 使用 LobeHub `@lobehub/icons-static-avatar` v1.15.0 的固定白底头像，避免深浅主题切换图标。授权信息统一维护在第三方声明中，避免运行时图标依赖与生产包资源解析差异。
 - 通用交互控件以 36 px 为高度基线；确认浮层根据窗口可用空间上下翻转并限制内部滚动。
@@ -73,6 +75,7 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 
 - Rust 适配器按 `ToolKey` 固定注册在 `src-tauri/src/services/cli_adapters/<cli>/`，分别封装 CLI 安装/检测/版本更新、启动/恢复参数与历史事实来源；common/platform/version/history 按实际差异拆分。
 - 前端 `src/lib/cliAdapters/<cli>.ts` 封装展示名称、短标题、图标、粘贴行为、更新状态映射和 CLI 特有提示，由 `src/lib/tools.ts` 使用穷尽 `Record<ToolKey, ...>` 统一注册。
+- G4 中前端展示顺序从穷尽注册表派生；Rust 未实现的历史读取/归属校验缺省能力显式失败，防止误报空结果。
 - 公共服务统一拥有检测并发、每 CLI 状态与版本缓存、持久化更新任务、PTY/窗格/独立窗口生命周期和会话检索/索引；适配器只提供命令与数据映射，不接管应用生命周期。
 - 缺失能力安全关闭；单适配器 panic、任务异常、查询超时或历史源损坏降级为单 CLI unknown/error/不完整结果，不应中止其他 CLI 工作或影响主窗口与应用启动。
 

@@ -59,5 +59,15 @@ mod tests {
         );
         assert_eq!(ToolKey::from_key("hermes"), Some(ToolKey::Hermes));
         assert_eq!(ToolKey::ALL.len(), 5);
+
+        for tool_key in ToolKey::ALL {
+            let serialized = serde_json::to_string(&tool_key).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ToolKey>(&serialized).unwrap(),
+                tool_key
+            );
+            assert_eq!(ToolKey::from_key(tool_key.as_str()), Some(tool_key));
+        }
+        assert_eq!(ToolKey::from_key("unknown"), None);
     }
 }

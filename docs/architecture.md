@@ -23,7 +23,7 @@ Platform helpers
 
 ## 0.3.0 PTY 工作台目标架构
 
-PTY 后端和输出流实施决策见 [ADR-0002](adr-0002-embedded-pty.md)。M1 使用 `portable-pty`、xterm.js/Fit addon 和带消费确认的 Tauri Channel；Windows 以 Job Object、Unix 以 PTY 进程组管理进程树。Rust PTY service 持有会话、输出读取和退出监控；UI 关闭或应用退出时由 service 执行有界清理。数据库仅保留会话元数据，启动时将遗留运行态标记为已结束。M1 的 Windows 验收先行，macOS/Linux 实机门禁补齐前不完成该里程碑。
+PTY 后端和输出流实施决策见 [ADR-0002](adr-0002-embedded-pty.md)。M1 使用 `portable-pty`、xterm.js/Fit addon 和带消费确认的 Tauri Channel；Windows 以 Job Object、Unix 以 PTY 进程组管理进程树。Rust PTY service 持有会话、输出读取和退出监控；UI 关闭或应用退出时由 service 执行有界清理。数据库仅保留会话元数据，启动时将遗留运行态标记为已结束。M1–G4 的 macOS/Linux 配置、目标平台编译和实机验收统一留待 M5 跨平台门禁。
 
 终端文本复制和粘贴通过 Tauri clipboard-manager 读写系统文本剪贴板，并只在用户快捷键触发时访问；剪贴板内容不会入库或写入诊断日志。图片内容留在操作系统剪贴板中，应用只将 Claude Code 或 Codex 对应的按键序列送入 PTY，不读取、编码或经 PTY 传输图片字节。Antigravity 图片粘贴能力未验证，不对其提供支持承诺。
 
@@ -58,6 +58,12 @@ claude / codex / agy / grok
 - PTY 输出使用有界、可背压的数据通道，避免高频 TUI 输出阻塞 Tauri IPC 或耗尽前端内存；具体传输机制和 PTY crate 在 M1 技术评审确认。
 - 数据库持久化 PTY 会话元数据；M2 的活动布局仅驻留当前应用运行期，M3 增加布局持久化，不持久化终端输出或滚屏。隐藏到托盘时应用及 PTY 继续运行；用户显式退出时，若有活动 PTY 先请求确认，确认后由 Rust 结束全部托管 PTY 再退出，取消则保留应用和会话。PTY 进程树必须受应用与平台进程隔离机制管理，应用异常退出时不得遗留失管子进程；M1 实现并验证，M5 跨平台复验。系统重启后不接管进程；旧会话元数据与布局恢复为已结束状态，可重新启动或通过 CLI 历史恢复，不能显示成仍在运行。
 - PTY service 必须为 Windows、macOS 与 Linux 提供一致的上层会话接口，并在平台层处理终端尺寸、信号/进程树、编码和环境差异。
+
+## 主题偏好与跨窗口同步
+
+主题偏好是设备本地 UI 状态，存放在前端状态持久化中，不进入业务 SQLite 或配置交换。主窗口负责广播用户偏好变化；独立终端窗口在注册变化监听后向主窗口请求当前偏好，主窗口按经验证的窗口标签定向回复。独立窗口只更新自身状态，不回写或再次广播，避免循环；其初始请求补足事件广播不保留历史的启动竞态。`useThemeSync` 负责将偏好解析为浅色/深色 DOM token，并同步当前原生窗口外观。主题语义色集中在 `src/styles.css`，xterm 使用终端专属 CSS token；CLI 品牌、终端 ANSI 与执行日志配色仍是明确例外。
+
+工作区中的 xterm 会话注册与 portal 由 `WorkspacePtySessionRegistry` 承载；`PtyWorkspace` 保留布局、焦点、项目上下文和跨窗口交接协调。终端运行辅助（fit 尺寸边界、PTY 事件消费、剪贴板空文本分类和 WebView2 可见 renderer 恢复）集中在 `ptyTerminalRuntime`，PTY 创建和会话权威仍由 Rust service 持有。纵向长内容使用 `ThemedScrollArea` 的覆盖式滚动条：沿用项目列表的主题色、静止隐藏、滚动显现和拖动滑块行为，不占内容宽度；其他原生溢出区共享全局细轨和主题色，xterm 保留自己的终端滚动规范。
 
 ```text
 projects

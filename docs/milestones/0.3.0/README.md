@@ -32,8 +32,8 @@ macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1–G4 完成之后，�
 - M2：Windows 阶段已完成（用户实机验收、最终代码审查及自动门禁通过；macOS/Linux 对齐留给 M5）。
 - G1：已完成。G1.1a 工具基础、G1.1b 状态/版本/展示、G1.2 安装/更新、G1.3 PTY 会话、G1.4 本地历史搜索及 Windows 手工验收通过；G1.5 最终复核和门禁通过。真实安装/更新未执行，macOS/Linux Grok 验证留待 M5。
 - M3：Windows 阶段已完成。阶段 0–7 实现、最终代码审查与门禁完成；命名布局应用保留主工作区运行 PTY，独立窗口保持独立且不参与窗格重排；主窗口大小/位置恢复有显示器边界保护。Windows 实机验收通过；macOS/Linux 对齐留给 M5。
-- G2：实现、代码审查与自动门禁完成。适配器框架、Hermes 检测/安装/更新、PTY 启动、历史检索/恢复已纳入统一边界；Windows Hermes CLI 实机验收仍需用户确认后关闭 G2，并解除 G3/G4 的验收前置。
-- G3：规划已建立；依赖 G2 Windows 实机验收。主工作区和独立终端窗口统一自定义标题栏，平台策略与验收门禁见 [G3 文档](G3-custom-window-chrome.md)。
-- G4：规划已建立；等待 G2、G3 Windows 实机验收后开工。范围、分阶段任务和门禁见 [G4 文档](G4-architecture-refactoring.md)。
+- G2：实现、代码审查与自动门禁完成；2026-10-02 用户确认 Windows 实机验收通过。适配器框架、Hermes 检测/安装/更新、PTY 启动、历史检索/恢复已纳入统一边界；macOS/Linux 对齐由 M5 统一验收。
+- G3：Windows 阶段实现、代码复核、自动门禁和用户实机验收已完成。主工作区和独立终端窗口统一自定义标题栏；macOS/Linux 窗口实机验收统一见 M5 清单，详见 [G3 文档](G3-custom-window-chrome.md)。
+- G4：已完成。自动门禁、最终代码审查和五类 Windows 实机验收通过；独立窗口画布无法单独视觉确认的范围与代码复用依据已记录。详见 [G4 文档](G4-architecture-refactoring.md)。
 - M4：待开始；依赖 G4 完成。
 - M5：待开始。

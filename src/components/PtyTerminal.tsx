@@ -16,7 +16,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  acknowledgePtyOutput,
   beginPtyHandoff,
   cancelPtyHandoff,
   completePtyHandoff,
@@ -39,11 +38,13 @@ import {
   applyPendingPtyExit,
   canTerminatePtySession,
 } from "../lib/ptySessionLifecycle";
+import {
+  fitTerminalToPtyBounds,
+  handlePtyEvent,
+  isClipboardTextUnavailable,
+} from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
 import "@xterm/xterm/css/xterm.css";
-
-const MAX_PTY_COLUMNS = 500;
-const MAX_PTY_ROWS = 300;
 
 export interface PtyTerminalHandle {
   startSession(
@@ -176,12 +177,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         fontFamily: '"Maple Mono NF CN", monospace',
         fontSize: 13,
         scrollback: 5000,
-        theme: {
-          background: "#101318",
-          foreground: "#e6e8eb",
-          cursor: "#e6e8eb",
-          selectionBackground: "#54627580",
-        },
+        theme: getTerminalTheme(),
       });
       const fit = new FitAddon();
       const serialize = new SerializeAddon();
@@ -337,6 +333,22 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         }
         sequenceWaitersRef.current = [];
       };
+    }, []);
+
+    useEffect(() => {
+      const terminal = terminalRef.current;
+      if (!terminal) return;
+
+      const updateTerminalTheme = () => {
+        terminal.options.theme = getTerminalTheme();
+      };
+      const observer = new MutationObserver(updateTerminalTheme);
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+
+      return () => observer.disconnect();
     }, []);
 
     useEffect(() => {
@@ -648,137 +660,16 @@ function sizeOf(terminal: Terminal): PtySizeUpdate {
   };
 }
 
-function fitTerminalToPtyBounds(fit: FitAddon, terminal: Terminal) {
-  fit.fit();
-  const cols = Math.min(MAX_PTY_COLUMNS, Math.max(1, terminal.cols));
-  const rows = Math.min(MAX_PTY_ROWS, Math.max(1, terminal.rows));
-  if (cols !== terminal.cols || rows !== terminal.rows) {
-    terminal.resize(cols, rows);
-  }
-}
+function getTerminalTheme(): NonNullable<Terminal["options"]["theme"]> {
+  const styles = getComputedStyle(document.documentElement);
+  const color = (token: string) =>
+    styles.getPropertyValue(token).trim() || undefined;
+  const foreground = color("--color-terminal-foreground");
 
-function isClipboardTextUnavailable(reason: unknown): boolean {
-  const message = String(reason).toLowerCase();
-  return (
-    message.includes("clipboard") &&
-    (message.includes("empty") ||
-      message.includes("not available in the requested format"))
-  );
-}
-
-function handlePtyEvent(
-  event: PtyEvent,
-  terminal: Terminal,
-  updateSession: (
-    session:
-      | PtySession
-      | null
-      | ((current: PtySession | null) => PtySession | null),
-  ) => void,
-  setError: (message: string | null) => void,
-  pendingExit: Map<string, Extract<PtyEvent, { type: "exited" }>>,
-  reportFrontendStage: (sessionId: string, stage: PtyFrontendStage) => boolean,
-  host: HTMLDivElement | null,
-  onExited: (sessionId: string) => void,
-  onOutputProcessed: (sequence: number) => void,
-) {
-  if (event.type === "snapshot") return;
-  if (event.type === "output") {
-    const isFirstOutput = reportFrontendStage(
-      event.sessionId,
-      "outputReceived",
-    );
-    const pendingTimer = isFirstOutput
-      ? window.setTimeout(() => {
-          reportFrontendStage(event.sessionId, "xtermWritePending");
-          resumeVisibleXtermRenderer(
-            terminal,
-            host,
-            event.sessionId,
-            reportFrontendStage,
-          );
-        }, 2000)
-      : undefined;
-    let bytes: Uint8Array;
-    try {
-      bytes = Uint8Array.from(atob(event.dataBase64), (character) =>
-        character.charCodeAt(0),
-      );
-    } catch (reason) {
-      if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
-      reportFrontendStage(event.sessionId, "outputDecodeFailed");
-      setError(String(reason));
-      return;
-    }
-
-    try {
-      resumeVisibleXtermRenderer(
-        terminal,
-        host,
-        event.sessionId,
-        reportFrontendStage,
-      );
-      terminal.write(bytes, () => {
-        if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
-        if (isFirstOutput) {
-          reportFrontendStage(event.sessionId, "xtermWriteCompleted");
-        }
-        void acknowledgePtyOutput(event.sessionId, event.sequence)
-          .then(() => onOutputProcessed(event.sequence))
-          .catch((reason) => setError(String(reason)));
-      });
-    } catch (reason) {
-      if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
-      reportFrontendStage(event.sessionId, "xtermWriteFailed");
-      setError(String(reason));
-    }
-  } else if (event.type === "exited") {
-    onExited(event.sessionId);
-    // The process can exit before create_pty_session returns its metadata.
-    // Keep that event until the returned session id is installed.
-    updateSession((current) =>
-      current?.sessionId === event.sessionId
-        ? { ...current, state: event.state, exitCode: event.exitCode }
-        : (() => {
-            pendingExit.set(event.sessionId, event);
-            return current;
-          })(),
-    );
-  } else {
-    setError(event.message);
-  }
-}
-
-function resumeVisibleXtermRenderer(
-  terminal: Terminal,
-  host: HTMLDivElement | null,
-  sessionId: string,
-  reportFrontendStage: (sessionId: string, stage: PtyFrontendStage) => boolean,
-) {
-  if (!host?.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) {
-    return;
-  }
-
-  // xterm 5.5 stores this service directly on Terminal. WebView2 can leave its
-  // IntersectionObserver pause latched for a visible pane, so recover only when
-  // the host has real on-screen geometry and the renderer reports itself paused.
-  const renderService = (
-    terminal as unknown as {
-      _renderService?: {
-        _isPaused?: boolean;
-        _pausedResizeTask?: { flush?: () => void };
-      };
-    }
-  )._renderService;
-  if (!renderService?._isPaused) return;
-
-  reportFrontendStage(sessionId, "rendererPaused");
-  try {
-    renderService._isPaused = false;
-    renderService._pausedResizeTask?.flush?.();
-    terminal.refresh(0, Math.max(0, terminal.rows - 1));
-    reportFrontendStage(sessionId, "rendererResumed");
-  } catch {
-    // The probe is best-effort and guarded for xterm internal API changes.
-  }
+  return {
+    background: color("--color-terminal-background"),
+    foreground,
+    cursor: foreground,
+    selectionBackground: color("--color-terminal-selection"),
+  };
 }

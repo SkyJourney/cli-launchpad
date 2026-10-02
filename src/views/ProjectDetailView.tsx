@@ -44,6 +44,7 @@ import {
 import { useAppStore } from "../store/appStore";
 import { usePtyWorkspace } from "../components/PtyWorkspace";
 import { SearchInput } from "../components/SearchInput";
+import { ThemedScrollArea } from "../components/ThemedScrollArea";
 
 interface ProjectDetailViewProps {
   directoryId: number;
@@ -396,7 +397,15 @@ export function ProjectDetailView({
           </button>
         </div>
       </header>
-      <div className="project-context-body">
+      <ThemedScrollArea
+        className="project-context-scroll-area"
+        viewportClassName="project-context-body"
+        viewportProps={{
+          role: "region",
+          "aria-label": t("projectDetail.context"),
+          tabIndex: 0,
+        }}
+      >
         {openPathError && (
           <p className="error">
             {t("projectDetail.openPathFailed", { error: openPathError })}
@@ -673,7 +682,7 @@ export function ProjectDetailView({
             </p>
           )}
         </section>
-      </div>
+      </ThemedScrollArea>
     </aside>
   );
 }

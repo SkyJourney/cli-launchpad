@@ -139,6 +139,50 @@ mod tests {
     }
 
     #[test]
+    fn tool_key_enum_and_database_constraints_accept_the_same_values() {
+        let connection = memory_db();
+        let directory = crate::db::directory_repo::add(
+            &connection,
+            "tool key contract",
+            "C:\\Projects\\tool-key-contract",
+            None,
+        )
+        .expect("insert directory");
+
+        for (index, tool_key) in crate::models::tool::ToolKey::ALL.into_iter().enumerate() {
+            crate::db::session_alias_repo::save(
+                &connection,
+                tool_key,
+                &format!("{}-session", tool_key.as_str()),
+                "contract",
+            )
+            .expect("database should accept every Rust tool key as an alias");
+            crate::db::pty_session_repo::insert_running(
+                &connection,
+                &format!("session-{index}"),
+                directory.id,
+                tool_key,
+                &directory.path,
+                index as i64,
+            )
+            .expect("database should accept every Rust tool key as a PTY identity");
+        }
+
+        assert!(connection
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('unknown', 'unknown-session', 'contract', 0)",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "insert into pty_sessions (session_id, directory_id, tool_key, working_directory, state, started_at_ms) values ('unknown-session', ?1, 'unknown', ?2, 'running', 0)",
+                rusqlite::params![directory.id, directory.path],
+            )
+            .is_err());
+    }
+
+    #[test]
     fn migrations_seed_default_close_behavior() {
         let connection = memory_db();
         let value: String = connection

@@ -323,17 +323,6 @@ pub async fn session_belongs_to_directory(
     .map_err(|error| anyhow!("{} 会话归属验证适配器异常：{error}", tool_key.as_str()))?
 }
 
-pub(crate) async fn list_empty_sessions_page(
-    cursor: Option<String>,
-    limit: usize,
-) -> Result<SessionPage> {
-    page_local(Vec::new(), cursor.as_deref(), limit)
-}
-
-pub(crate) async fn empty_session_belongs_to_directory() -> Result<bool> {
-    Ok(false)
-}
-
 pub(crate) fn home_dir() -> Result<PathBuf> {
     std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))

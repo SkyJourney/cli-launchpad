@@ -22,6 +22,24 @@ export type DetachedWindowFailureAction =
   | "close-transferred"
   | "keep-open";
 
+export interface DetachedWindowIdentity {
+  instanceId: string;
+  sessionId: string;
+  windowLabel: string;
+}
+
+export function matchesDetachedWindow(
+  expected: DetachedWindowIdentity | null | undefined,
+  received: DetachedWindowIdentity,
+): boolean {
+  return Boolean(
+    expected &&
+    expected.instanceId === received.instanceId &&
+    expected.sessionId === received.sessionId &&
+    expected.windowLabel === received.windowLabel,
+  );
+}
+
 export function resolveDetachedWindowFailureAction(
   localState: PtySession["state"] | null | undefined,
   windowStatus: PtySessionWindowStatus | null | undefined,

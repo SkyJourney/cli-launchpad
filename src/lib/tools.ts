@@ -17,13 +17,7 @@ const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = {
   hermes: hermesAdapter,
 };
 
-export const TOOLS: ToolMeta[] = [
-  CLI_ADAPTERS.claude,
-  CLI_ADAPTERS.codex,
-  CLI_ADAPTERS.antigravity,
-  CLI_ADAPTERS.grok,
-  CLI_ADAPTERS.hermes,
-];
+export const TOOLS: ToolMeta[] = Object.values(CLI_ADAPTERS);
 
 export function getCliAdapter(toolKey: ToolKey): CliAdapter {
   return CLI_ADAPTERS[toolKey];
@@ -46,16 +40,4 @@ export function getLatestUpdateAvailability(
   latest: LatestVersion | undefined,
 ): boolean | null {
   return getCliAdapter(toolKey).getUpdateAvailability(currentVersion, latest);
-}
-
-/// An empty `Record<ToolKey, string>` derived from TOOLS, so the per-tool arg
-/// maps stay in sync with the tool list.
-export function emptyToolMap(): Record<ToolKey, string> {
-  return TOOLS.reduce(
-    (acc, tool) => {
-      acc[tool.key] = "";
-      return acc;
-    },
-    {} as Record<ToolKey, string>,
-  );
 }

@@ -58,14 +58,12 @@ pub trait CliAdapter: Sync {
 
     fn list_sessions(
         &self,
-        directory_path: String,
-        cursor: Option<String>,
-        limit: usize,
+        _directory_path: String,
+        _cursor: Option<String>,
+        _limit: usize,
     ) -> AdapterFuture<Result<SessionPage>> {
-        let _ = directory_path;
-        Box::pin(crate::services::session_service::list_empty_sessions_page(
-            cursor, limit,
-        ))
+        let tool_key = self.tool_key();
+        Box::pin(async move { anyhow::bail!("{} 尚未实现会话历史读取", tool_key.as_str()) })
     }
 
     fn search_index_source(
@@ -85,11 +83,11 @@ pub trait CliAdapter: Sync {
 
     fn session_belongs_to_directory(
         &self,
-        directory_path: String,
-        session_id: String,
+        _directory_path: String,
+        _session_id: String,
     ) -> AdapterFuture<Result<bool>> {
-        let _ = (directory_path, session_id);
-        Box::pin(crate::services::session_service::empty_session_belongs_to_directory())
+        let tool_key = self.tool_key();
+        Box::pin(async move { anyhow::bail!("{} 尚未实现会话归属校验", tool_key.as_str()) })
     }
 
     fn prepare_command(&self, plan: &InstallPlan) -> tokio::process::Command {
@@ -210,5 +208,29 @@ mod tests {
 
         assert!(error.to_string().contains("hermes"));
         assert!(error.to_string().contains("测试"));
+    }
+
+    struct MissingHistoryAdapter;
+
+    impl CliAdapter for MissingHistoryAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_history_capabilities_return_errors_instead_of_empty_success() {
+        let adapter = MissingHistoryAdapter;
+        assert!(adapter
+            .list_sessions("project".to_string(), None, 10)
+            .await
+            .is_err());
+        assert!(adapter
+            .session_belongs_to_directory("project".to_string(), "session".to_string())
+            .await
+            .is_err());
+        let index = adapter.search_index_source("project".to_string()).await;
+        assert!(index.incomplete);
+        assert!(index.documents.is_none());
     }
 }

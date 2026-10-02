@@ -41,7 +41,6 @@ import {
   canSplitWorkspacePane,
   createWorkspacePane,
   findWorkspacePane,
-  listVisibleWorkspaceSessionIds,
   listWorkspacePanes,
   moveWorkspaceSession,
   MIN_WORKSPACE_PANE_HEIGHT,
@@ -64,6 +63,7 @@ import {
   parsePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
+import { matchesDetachedWindow } from "../lib/ptySessionLifecycle";
 import {
   getPtySessionWindowStatus,
   getWorkspaceLayout,
@@ -82,7 +82,6 @@ import {
   type WorkspaceLayoutSlot,
   type WorkspaceLayoutPresetSummary,
   type WorkspaceSlotStateKind,
-  type WorkspaceSlotTitle,
 } from "../lib/tauri";
 import {
   createWorkspaceLayoutDocument,
@@ -97,21 +96,12 @@ import {
 import { getTerminalTitleLabel, TOOLS } from "../lib/tools";
 import { useAppStore } from "../store/appStore";
 import { AnchoredPopover } from "./AnchoredPopover";
-import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
+import type { PtyTerminalHandle } from "./PtyTerminal";
+import {
+  WorkspacePtySessionRegistry,
+  type PtyWorkspaceSlot,
+} from "./WorkspacePtySessionRegistry";
 import "allotment/dist/style.css";
-
-interface PtyWorkspaceSlot {
-  instanceId: string;
-  directoryId: number;
-  directoryPath: string;
-  projectName: string;
-  toolKey: ToolKey;
-  sequence: number;
-  title: WorkspaceSlotTitle;
-  resumeSessionId?: string | null;
-  sessionId?: string | null;
-  restoredState?: WorkspaceSlotStateKind;
-}
 
 type PtyWorkspaceHydrationStatus =
   | "loading"
@@ -770,11 +760,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const handleDetachedReady = useCallback(
     (payload: DetachedWindowReadyEvent) => {
       const pending = pendingDetachedRef.current.get(payload.instanceId);
-      if (
-        !pending ||
-        pending.sessionId !== payload.sessionId ||
-        pending.windowLabel !== payload.windowLabel
-      ) {
+      if (!pending || !matchesDetachedWindow(pending, payload)) {
         return;
       }
       window.clearTimeout(pending.timer);
@@ -802,7 +788,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const handleDetachedFailed = useCallback(
     (payload: DetachedWindowReadyEvent & { message?: string }) => {
       const pending = pendingDetachedRef.current.get(payload.instanceId);
-      if (!pending || pending.windowLabel !== payload.windowLabel) return;
+      if (!pending || !matchesDetachedWindow(pending, payload)) return;
       pendingDetachedRef.current.delete(payload.instanceId);
       window.clearTimeout(pending.timer);
       pending.reject(new Error(payload.message || "独立终端窗口启动失败"));
@@ -822,11 +808,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const knownDetached = detachedByInstanceRef.current.get(
         payload.instanceId,
       );
-      if (
-        knownDetached &&
-        (knownDetached.sessionId !== payload.sessionId ||
-          knownDetached.windowLabel !== payload.windowLabel)
-      ) {
+      if (knownDetached && !matchesDetachedWindow(knownDetached, payload)) {
         fail("主工作区中找不到这个终端会话");
         return;
       }
@@ -939,10 +921,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         const pending = pendingDetachedRef.current.get(
           event.payload.instanceId,
         );
-        if (
-          pending?.sessionId === event.payload.sessionId &&
-          pending.windowLabel === event.payload.windowLabel
-        ) {
+        if (pending && matchesDetachedWindow(pending, event.payload)) {
           pendingDetachedRef.current.delete(event.payload.instanceId);
           window.clearTimeout(pending.timer);
           pending.reject(new Error("PTY 在独立窗口接管完成前已退出"));
@@ -953,10 +932,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         const detached = detachedByInstanceRef.current.get(
           event.payload.instanceId,
         );
-        if (
-          detached?.sessionId === event.payload.sessionId &&
-          detached.windowLabel === event.payload.windowLabel
-        ) {
+        if (matchesDetachedWindow(detached, event.payload)) {
           removeSlot(event.payload.instanceId);
         }
       }),
@@ -1139,7 +1115,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     <PtyWorkspaceContext.Provider value={value}>
       {children}
       {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
-        <PtySessionRegistry
+        <WorkspacePtySessionRegistry
           slots={slots}
           tree={tree}
           focusedPaneId={focusedPaneId}
@@ -2696,180 +2672,5 @@ function isInvalidRestoredSlotState(
     state === "projectIdentityMismatch" ||
     state === "missingSession" ||
     state === "sessionIdentityMismatch"
-  );
-}
-
-function PtySessionRegistry({
-  slots,
-  tree,
-  focusedPaneId,
-  active,
-  detachedInstanceIds,
-  terminalRefs,
-  onSessionChange,
-  onPortalTarget,
-  onFocusPane,
-}: {
-  slots: PtyWorkspaceSlot[];
-  tree: WorkspaceNode;
-  focusedPaneId: string;
-  active: boolean;
-  detachedInstanceIds: Set<string>;
-  terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;
-  onSessionChange: (instanceId: string, session: PtySession | null) => void;
-  onPortalTarget: (instanceId: string, target: HTMLDivElement | null) => void;
-  onFocusPane: (paneId: string) => void;
-}) {
-  const activeSessionId = findWorkspacePane(
-    tree,
-    focusedPaneId,
-  )?.activeSessionId;
-  const panes = listWorkspacePanes(tree);
-  const visibleSessionIds = new Set(listVisibleWorkspaceSessionIds(tree));
-
-  return (
-    <div className="pty-session-registry" hidden aria-hidden="true">
-      {slots.map((slot) => {
-        const pane = panes.find((candidate) =>
-          candidate.sessionIds.includes(slot.instanceId),
-        );
-        return (
-          <PtySessionPortal
-            key={slot.instanceId}
-            slot={slot}
-            assigned={Boolean(pane)}
-            active={
-              active &&
-              pane?.id === focusedPaneId &&
-              activeSessionId === slot.instanceId
-            }
-            visible={
-              active &&
-              visibleSessionIds.has(slot.instanceId) &&
-              !detachedInstanceIds.has(slot.instanceId)
-            }
-            interactive={
-              active &&
-              pane?.id === focusedPaneId &&
-              activeSessionId === slot.instanceId &&
-              !detachedInstanceIds.has(slot.instanceId)
-            }
-            terminalRefs={terminalRefs}
-            onSessionChange={onSessionChange}
-            onPortalTarget={onPortalTarget}
-            onFocusPane={pane ? () => onFocusPane(pane.id) : undefined}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function PtySessionPortal({
-  slot,
-  assigned,
-  active,
-  visible,
-  interactive,
-  terminalRefs,
-  onSessionChange,
-  onPortalTarget,
-  onFocusPane,
-}: {
-  slot: PtyWorkspaceSlot;
-  assigned: boolean;
-  active: boolean;
-  visible: boolean;
-  interactive: boolean;
-  terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;
-  onSessionChange: (instanceId: string, session: PtySession | null) => void;
-  onPortalTarget: (instanceId: string, target: HTMLDivElement | null) => void;
-  onFocusPane?: () => void;
-}) {
-  const [target] = useState(() => {
-    const element = document.createElement("div");
-    element.className = "pty-pane-session";
-    element.dataset.instanceId = slot.instanceId;
-    return element;
-  });
-  const setTerminalRef = useCallback(
-    (terminal: PtyTerminalHandle | null) => {
-      if (terminal) terminalRefs.current.set(slot.instanceId, terminal);
-      else terminalRefs.current.delete(slot.instanceId);
-    },
-    [slot.instanceId, terminalRefs],
-  );
-
-  useLayoutEffect(() => {
-    onPortalTarget(slot.instanceId, target);
-    return () => {
-      target.remove();
-      onPortalTarget(slot.instanceId, null);
-    };
-  }, [onPortalTarget, slot.instanceId, target]);
-
-  useLayoutEffect(() => {
-    if (!assigned) target.hidden = true;
-  }, [assigned, target]);
-
-  useEffect(() => {
-    if (slot.restoredState) return;
-    const frame = window.requestAnimationFrame(() => {
-      void terminalRefs.current
-        .get(slot.instanceId)
-        ?.startSession(
-          slot.directoryId,
-          slot.toolKey,
-          slot.resumeSessionId ?? undefined,
-        );
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [
-    slot.instanceId,
-    slot.directoryId,
-    slot.toolKey,
-    slot.resumeSessionId,
-    slot.restoredState,
-    terminalRefs,
-  ]);
-
-  return createPortal(
-    slot.restoredState ? (
-      <RestoredWorkspaceSlotPlaceholder state={slot.restoredState} />
-    ) : (
-      <PtyTerminal
-        ref={setTerminalRef}
-        active={active}
-        visible={visible}
-        interactive={interactive}
-        onFocus={onFocusPane}
-        onSessionChange={(session) => onSessionChange(slot.instanceId, session)}
-      />
-    ),
-    target,
-  );
-}
-
-function RestoredWorkspaceSlotPlaceholder({
-  state,
-}: {
-  state: WorkspaceSlotStateKind;
-}) {
-  const { t } = useTranslation();
-  const messageKey =
-    state === "missingProject"
-      ? "pty.restoredMissingProject"
-      : state === "projectIdentityMismatch"
-        ? "pty.restoredProjectMismatch"
-        : state === "missingSession"
-          ? "pty.restoredMissingSession"
-          : state === "sessionIdentityMismatch"
-            ? "pty.restoredSessionMismatch"
-            : "pty.restoredEnded";
-
-  return (
-    <div className="pty-restored-placeholder" role="status">
-      <p>{t(messageKey)}</p>
-    </div>
   );
 }

@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import type { ThemeMode } from "../lib/themeMode";
 import type { PtySession } from "../lib/tauri";
+
+export type { ThemeMode } from "../lib/themeMode";
 
 export type ViewName =
   | "projects"
@@ -7,8 +10,6 @@ export type ViewName =
   | "executions"
   | "settings"
   | "about";
-
-export type ThemeMode = "light" | "dark" | "system";
 
 export type ProjectDialogState =
   | { mode: "add" }

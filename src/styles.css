@@ -6,7 +6,6 @@
   --font-size-control: 13px;
   --font-size-body: 14px;
   --font-size-subheading: 15px;
-  --font-size-heading: 16px;
   --font-size-title: 18px;
   --font-size-dialog-title: 19px;
   --font-size-display: 22px;
@@ -81,6 +80,16 @@
   --color-danger: #d92d20;
   --color-danger-fill: #b42318;
   --color-danger-text: #b42318;
+  --color-terminal-background: #101318;
+  --color-terminal-foreground: #e6e8eb;
+  --color-terminal-selection: #54627580;
+  --color-terminal-scrollbar-thumb: #4b5563;
+  --color-terminal-scrollbar-thumb-hover: #667085;
+  --color-elevation-shadow: rgb(15 23 42 / 20%);
+  --color-dialog-backdrop: rgb(15 23 42 / 52%);
+  --color-dialog-shadow: rgb(15 23 42 / 32%);
+  --color-primary-hover-shadow: rgb(34 81 209 / 8%);
+  --color-primary-focus-shadow: rgb(59 110 246 / 18%);
   --color-info-bg: #f0f9ff;
   --color-info-border: #7dd3fc;
   --color-info-text: #0369a1;
@@ -187,6 +196,35 @@
   --color-log-danger: #fca5a5;
   --color-log-warning: #fcd34d;
   --color-popover-shadow: rgb(0 0 0 / 42%);
+  --color-elevation-shadow: rgb(0 0 0 / 42%);
+  --color-dialog-backdrop: rgb(0 0 0 / 62%);
+  --color-dialog-shadow: rgb(0 0 0 / 58%);
+  --color-primary-hover-shadow: rgb(82 122 240 / 14%);
+  --color-primary-focus-shadow: rgb(82 122 240 / 24%);
+}
+
+/* All native overflow regions share the project-list scrollbar palette. */
+:where(*) {
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+:where(*)::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+:where(*)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:where(*)::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+:where(*)::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
 }
 
 * {
@@ -365,8 +403,8 @@ pre,
 }
 
 .window-control-close:hover {
-  background: #c42b1c;
-  color: #fff;
+  background: var(--button-danger-background-hover);
+  color: var(--button-danger-foreground);
 }
 
 .window-resize-handles {
@@ -568,43 +606,60 @@ pre,
   position: relative;
 }
 
-.project-navigation-list {
-  align-content: start;
-  display: grid;
-  inset: 0;
-  gap: 2px;
-  grid-auto-rows: max-content;
+.themed-scroll-area {
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  position: absolute;
-  scrollbar-width: none;
+  min-width: 0;
+  position: relative;
 }
 
-.project-navigation-list::-webkit-scrollbar {
+.themed-scroll-viewport {
+  height: 100%;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  position: absolute;
+  scrollbar-width: none;
+  width: 100%;
+}
+
+.themed-scroll-viewport::-webkit-scrollbar {
   display: none;
   height: 0;
   width: 0;
 }
 
-.project-navigation-scrollbar {
+.project-navigation-list {
+  align-content: start;
+  display: grid;
+  gap: 2px;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+.themed-scrollbar {
   bottom: 3px;
   opacity: 0;
   pointer-events: none;
   position: absolute;
-  right: -12px;
+  right: 3px;
   top: 3px;
   transition: opacity 140ms ease;
   width: 6px;
   z-index: 2;
 }
 
-.project-navigation-scrollbar.visible {
+.project-navigation-scrollbar {
+  right: -12px;
+}
+
+.themed-scrollbar.visible {
   opacity: 1;
   pointer-events: auto;
 }
 
-.project-navigation-scrollbar-thumb {
+.themed-scrollbar-thumb {
   background: var(--color-scrollbar-thumb);
   border-radius: 999px;
   cursor: grab;
@@ -615,11 +670,11 @@ pre,
   width: 100%;
 }
 
-.project-navigation-scrollbar-thumb:hover {
+.themed-scrollbar-thumb:hover {
   background: var(--color-scrollbar-thumb-hover);
 }
 
-.project-navigation-scrollbar-thumb:active {
+.themed-scrollbar-thumb:active {
   cursor: grabbing;
 }
 
@@ -1341,7 +1396,7 @@ pre,
   background: var(--color-surface);
   border: 1px solid var(--color-primary-border);
   border-radius: 7px;
-  box-shadow: 0 3px 14px rgb(0 0 0 / 20%);
+  box-shadow: 0 3px 14px var(--color-elevation-shadow);
   color: var(--text-body-color);
   font-size: var(--font-size-control-compact);
   font-weight: var(--font-weight-semibold);
@@ -1572,7 +1627,7 @@ pre,
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
   border-radius: 9px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 24%);
+  box-shadow: 0 10px 28px var(--color-popover-shadow);
   color: var(--text-body-color);
   display: grid;
   gap: 2px;
@@ -1641,7 +1696,7 @@ pre,
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
   border-radius: 8px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 24%);
+  box-shadow: 0 10px 28px var(--color-popover-shadow);
   display: grid;
   gap: 2px;
   max-height: calc(100vh - 16px);
@@ -2062,12 +2117,12 @@ h1 {
 
 .project-card:hover {
   border-color: var(--color-primary-border);
-  box-shadow: 0 4px 14px rgba(34, 81, 209, 0.08);
+  box-shadow: 0 4px 14px var(--color-primary-hover-shadow);
 }
 
 .project-card:focus-visible {
   border-color: var(--color-primary-focus);
-  box-shadow: 0 0 0 3px rgba(59, 110, 246, 0.18);
+  box-shadow: 0 0 0 3px var(--color-primary-focus-shadow);
   outline: none;
 }
 
@@ -2219,14 +2274,16 @@ h1 {
   white-space: nowrap;
 }
 
+.project-context-scroll-area {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .project-context-body {
   display: flex;
-  flex: 1 1 auto;
   flex-direction: column;
   gap: 14px;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
   padding: 14px 12px;
 }
 
@@ -2933,7 +2990,7 @@ h1 {
 }
 
 .pty-terminal-wrap {
-  background: #101318;
+  background: var(--color-terminal-background);
   height: 420px;
   min-height: 260px;
   position: relative;
@@ -2957,7 +3014,8 @@ h1 {
 }
 
 .pty-terminal-host .xterm .xterm-viewport {
-  scrollbar-color: #4b5563 #101318;
+  scrollbar-color: var(--color-terminal-scrollbar-thumb)
+    var(--color-terminal-background);
   scrollbar-width: thin;
 }
 
@@ -2966,17 +3024,17 @@ h1 {
 }
 
 .pty-terminal-host .xterm .xterm-viewport::-webkit-scrollbar-track {
-  background: #101318;
+  background: var(--color-terminal-background);
 }
 
 .pty-terminal-host .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #4b5563;
-  border: 2px solid #101318;
+  background: var(--color-terminal-scrollbar-thumb);
+  border: 2px solid var(--color-terminal-background);
   border-radius: 999px;
 }
 
 .pty-terminal-host .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: #667085;
+  background: var(--color-terminal-scrollbar-thumb-hover);
 }
 
 .pty-terminal-host .xterm .xterm-viewport::-webkit-scrollbar-button {
@@ -3063,7 +3121,7 @@ h1 {
 }
 
 .pty-empty {
-  color: #a9b0bb;
+  color: var(--color-text-muted);
   font-family: var(--font-mono);
   font-size: var(--font-size-control-compact);
   left: 24px;
@@ -3080,7 +3138,7 @@ h1 {
 
 .app-exit-overlay {
   align-items: center;
-  background: #0008;
+  background: var(--color-dialog-backdrop);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -3093,7 +3151,7 @@ h1 {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 14px;
-  box-shadow: 0 18px 60px #0005;
+  box-shadow: 0 18px 60px var(--color-dialog-shadow);
   display: grid;
   gap: 12px;
   max-width: 440px;
@@ -3115,7 +3173,7 @@ h1 {
 
 .project-dialog-backdrop {
   align-items: center;
-  background: #0008;
+  background: var(--color-dialog-backdrop);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -3128,7 +3186,7 @@ h1 {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 14px;
-  box-shadow: 0 18px 60px #0005;
+  box-shadow: 0 18px 60px var(--color-dialog-shadow);
   display: grid;
   gap: 18px;
   max-width: 560px;
@@ -3969,7 +4027,7 @@ h1 {
 
   .shared-workbench.context-open .project-context-panel {
     bottom: 0;
-    box-shadow: 0 14px 40px rgb(15 23 42 / 24%);
+    box-shadow: 0 14px 40px var(--color-popover-shadow);
     position: absolute;
     right: 0;
     top: 0;

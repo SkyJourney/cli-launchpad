@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPendingPtyExit,
   canTerminatePtySession,
+  matchesDetachedWindow,
   resolveDetachedWindowFailureAction,
 } from "./ptySessionLifecycle";
 
@@ -78,5 +79,41 @@ describe("detached PTY window failure recovery", () => {
     expect(resolveDetachedWindowFailureAction("running", "running")).toBe(
       "keep-open",
     );
+  });
+});
+
+describe("detached PTY event identity", () => {
+  const identity = {
+    instanceId: "instance-1",
+    sessionId: "session-1",
+    windowLabel: "terminal-window-1",
+  };
+
+  it("accepts an event from the matching instance, session, and window", () => {
+    expect(matchesDetachedWindow(identity, { ...identity })).toBe(true);
+  });
+
+  it.each([
+    {
+      instanceId: "instance-2",
+      sessionId: "session-1",
+      windowLabel: "terminal-window-1",
+    },
+    {
+      instanceId: "instance-1",
+      sessionId: "session-2",
+      windowLabel: "terminal-window-1",
+    },
+    {
+      instanceId: "instance-1",
+      sessionId: "session-1",
+      windowLabel: "terminal-window-2",
+    },
+  ])("rejects stale or mismatched event identity %#", (received) => {
+    expect(matchesDetachedWindow(identity, received)).toBe(false);
+  });
+
+  it("rejects events when the owner has no pending or detached record", () => {
+    expect(matchesDetachedWindow(undefined, identity)).toBe(false);
   });
 });

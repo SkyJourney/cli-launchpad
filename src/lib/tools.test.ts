@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { getTerminalTitleLabel, isManagedUpdateAllowed } from "./tools";
+import {
+  getCliAdapter,
+  getTerminalTitleLabel,
+  isManagedUpdateAllowed,
+  TOOLS,
+} from "./tools";
+
+describe("CLI adapter registry", () => {
+  it("keeps each built-in adapter registered once in product display order", () => {
+    expect(TOOLS.map((tool) => tool.key)).toEqual([
+      "claude",
+      "codex",
+      "antigravity",
+      "grok",
+      "hermes",
+    ]);
+    for (const tool of TOOLS) {
+      expect(getCliAdapter(tool.key)).toBe(tool);
+      expect(tool.label).toBeTruthy();
+      expect(tool.shortLabel).toBeTruthy();
+      expect(tool.icon).toBeTruthy();
+    }
+  });
+});
 
 describe("terminal title CLI labels", () => {
   it.each([

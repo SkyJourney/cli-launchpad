@@ -1,6 +1,6 @@
 # G2：Hermes Agent CLI 接入
 
-**状态：** 实现、代码审查与自动化门禁完成；Windows CLI 实机验收待确认
+**状态：** 实现、代码审查、自动化门禁与 Windows CLI 实机验收完成（用户确认，2026-10-02）
 **归属版本：** 0.3.0
 **依赖：** M3、G1
 **后续依赖：** M4、M5
@@ -29,7 +29,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - 设置页版本查询对已识别的官方 Windows 默认源码安装只运行一次 `hermes update --check`；托管资格由解析到的执行文件完整路径和默认源码 checkout 位置确认，不再为一次查询串行运行 `--install-id` 与 `--plan`。更新任务不重复读取计划或校验来源，直接运行完整路径的 `hermes update`，由官方 CLI 处理默认更新目标、安装渠道与更新过程。
 - 普通启动使用 `hermes` 与当前项目目录；PTY 创建、输入输出、尺寸同步、自然退出、独立窗口及窗格行为复用现有共享生命周期。
 - 右侧项目上下文区展示当前项目 Hermes 会话，按 10 条分页，支持稀疏别名、可重建的本地搜索索引和安全恢复。遵循 Hermes 当前有效 home/Profile 解析结果，只读一个 Profile；不枚举或管理命名 Profile。
-- G2 验收以 Windows 为准。macOS/Linux 安装、路径、SQLite、PTY 和会话恢复适配留给 M5。
+- G2 验收以 Windows 为准。macOS/Linux 安装、路径、SQLite、PTY 和会话恢复实机验收统一列入 [M5 跨平台对齐清单](0.3.0/cross-platform-alignment.md)。
 
 ## 非目标
 
@@ -37,7 +37,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - 不管理 Hermes 命名 Profile；不枚举其 `state.db`，也不替用户切换 Hermes 配置。
 - 不调用 `hermes sessions export`、全文 `session_search` 或 FTS 表；不读取、复制或长期保存完整对话正文。
 - 不展示或接受任意 Hermes 启动参数，不提供外部终端，不把 Hermes 接入通用 CLI 插件框架。
-- G2 不要求 macOS/Linux 实机验收；平台对齐属于 M5。
+- G2 不要求 macOS/Linux 实机验收；平台对齐属于 M5，具体检查项只在 [M5 跨平台对齐清单](0.3.0/cross-platform-alignment.md)维护。
 
 ## 实施计划与阶段门禁
 
@@ -85,7 +85,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - 复跑 Rust 格式、测试和编译，前端格式、测试和生产构建，以及文档引用、依赖顺序和差异检查。
 - Windows 实机按检测、安装计划、更新计划、PTY 启动、项目内历史、短预览搜索、别名恢复、布局/独立窗口和 CLI 退出逐项记录。除非用户明确要改动真实 Hermes 环境，不在验收中直接执行其真实安装或更新。
 
-**最终门禁：** G2.1–G2.5 的验收条件均有结果；失败或跳过项逐项记录；全部必需门禁通过且 Windows 手工验收确认后，方可关闭 G2 并进入 M4。
+**最终门禁：** G2.1–G2.5 的验收条件均有结果；失败或跳过项逐项记录；全部必需门禁通过且 Windows 手工验收确认后，方可关闭 G2 并进入后续里程碑。Windows 手工验收已由用户于 2026-10-02 确认通过。
 
 ### 实施与门禁记录
 
@@ -93,7 +93,8 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - Hermes 历史读取只读打开当前 home/Profile 的单个 `state.db`，限量扫描 `source=cli` 的记录并验证项目归属；短预览和扫描均有上限，缺失数据库返回空结果，锁定/损坏/无效 Profile 等错误保留旧索引并标记不完整。
 - 自动化审查与门禁结果：2026-10-02，Rust 212 项测试通过、`cargo check` 通过、前端 62 项测试通过、TypeScript 检查及 Vite 生产构建通过、格式和差异检查通过。版本状态查询已覆盖同一 CLI 有活动任务时暂停查询、隐藏旧缓存、完成后定向强制刷新。生产构建仍报告已有的大型 bundle 提示；Rust 仍报告一个 macOS 专用字段在 Windows 构建未使用的警告。
 - 适配器安全回归包含 panic 转成单 CLI 错误、Hermes 无效 Profile 拒绝回退、数据库只读、项目隔离、缺失数据库、可选 schema 字段及超量扫描标记不完整。
-- 未验证：真实 Hermes 安装与更新；Windows Hermes TUI 输入/resize/退出、真实 Profile 数据、历史搜索/恢复、布局和独立窗口的手工验收。这些不由单元测试代替，Windows 实机检查完成前 G2 状态保持待用户验收。
+- 用户于 2026-10-02 确认 G2 Windows 实机验收通过；未执行真实 Hermes 安装与更新，避免改变本机环境。此项不是 G2 通过条件。
+- macOS/Linux Hermes 安装、PTY、当前 home/Profile 历史读取和恢复验证统一纳入 [M5 跨平台对齐清单](0.3.0/cross-platform-alignment.md)。
 
 ## 测试覆盖要求
 
