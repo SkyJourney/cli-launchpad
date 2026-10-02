@@ -650,8 +650,8 @@ pre,
   z-index: 2;
 }
 
-.project-navigation-scrollbar {
-  right: -12px;
+.project-navigation-scroll-area > .themed-scrollbar {
+  right: -8px;
 }
 
 .themed-scrollbar.visible {
