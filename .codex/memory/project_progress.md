@@ -3,7 +3,7 @@ name: 项目进度
 description: 当前完成状态和近期待办
 type: project
 last_updated: 2026-10-02
-commit: fee0586
+commit: 8d4a751
 ---
 
 # 项目进度
@@ -19,7 +19,7 @@ commit: fee0586
 - Windows 分发配置已完成：NSIS、静态 CRT、在线/离线 WebView2 两种安装包及归档脚本。
 - 相关架构、产品、UI、安装与里程碑文档均已补齐；后续事实应以当前实现和最新文档为准。
 
-**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]] [[project_overview.md#桌面体验与分发]]
+**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]] [[project_overview.md#桌面体验与分发]] [[reference.md#官方-CLI-资料]]
 
 ## 可靠性治理完成
 
@@ -29,7 +29,7 @@ commit: fee0586
 - 日志与诊断导出、事务化参数保存、原子文件导出及会话隐私缓存治理已落地。
 - 五阶段修复已完成并通过 Rust 测试、编译检查、前端生产构建与 Windows NSIS release 构建。
 
-**See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话搜索-metadata-只进入独立可重建缓存]]
+**See Also：** [[decisions.md#业务数据使用稳定用户目录并提供一致性恢复点]] [[decisions.md#会话搜索-metadata-只进入独立可重建缓存]] [[project_overview.md#存储与可靠性边界]]
 
 ## 0.2.0 发布完成
 
@@ -57,7 +57,7 @@ commit: fee0586
 - `v0.2.1` 已通过 GitHub Actions 四目标手动预检，并由 Tag 流水线自动发布 Windows 在线/离线 NSIS、macOS ARM64/Intel DMG 与 SHA-256 校验文件。
 - 本地 GitHub CLI 已使用现有 SSH Git 协议和独立 OAuth API 认证完成验证，可读取、触发和监控 release workflow 及 Release。
 
-**See Also：** [[decisions.md#Git-Tag-驱动四目标自动发布]] [[project_overview.md#界面与本地素材]] [[project_overview.md#桌面体验与分发]]
+**See Also：** [[decisions.md#Git-Tag-驱动跨平台自动发布]] [[project_overview.md#界面与本地素材]] [[project_overview.md#桌面体验与分发]] [[reference.md#发布工具官方资料]]
 
 ## 0.2.2 发布完成
 
@@ -89,6 +89,8 @@ commit: fee0586
 - Rust 160 项测试、`cargo check`、格式检查、前端 Prettier 检查、37 项测试、生产构建与 `git diff --check` 均通过。
 - Windows 开发版手工验收已由用户确认全部通过；G1.5 最终审查与门禁完成后，G1 里程碑整体关闭。
 
+**See Also：** [[decisions.md#会话搜索-metadata-只进入独立可重建缓存]]
+
 ## G1 Grok Build CLI 接入（Windows 阶段完成）
 
 - Grok Build 已纳入四项 CLI 工作台，支持 Windows 检测、版本读取、官方安装/更新计划、内置 PTY 启动、summary metadata 历史读取、别名、会话恢复与项目隔离搜索。
@@ -102,6 +104,8 @@ commit: fee0586
 - Hermes 历史只读读取当前有效 home/Profile 的一个 `state.db`；按 `source=cli` 和项目归属过滤，限制扫描行数、路径/标题及短预览，并在无效 Profile、锁定或损坏数据源时按来源隔离降级。适配器 panic 和任务异常转为单 CLI unknown/error，不影响其他 CLI 或应用生命周期。
 - 2026-10-02 自动门禁：Rust 212 项测试、`cargo check`、前端 59 项测试、TypeScript 检查、Vite 生产构建、格式和差异检查通过。用户已确认 G2 Windows 实机验收通过；真实 Hermes 安装/更新未执行，避免更改本机环境，这不是 G2 门禁。macOS/Linux 对齐由 M5 负责。
 - 文档入口：[G2 Hermes Agent CLI 里程碑](../../docs/milestones/hermes-agent-cli.md)。
+
+**See Also：** [[decisions.md#0.3.0-目标范围为五项-CLI]] [[decisions.md#CLI-差异由固定适配器提供，软件层拥有生命周期]] [[project_overview.md#CLI-适配器与公共生命周期]]
 
 ## G4 主题、生命周期与适配边界治理（已完成）
 

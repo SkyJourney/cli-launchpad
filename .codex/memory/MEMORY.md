@@ -1,5 +1,5 @@
 # Memory Index
-> _Last synced: 2026-10-02 | Base commit: `fee0586`_
+> _Last synced: 2026-10-02 | Base commit: `8d4a751`_
 
 ## 启动引导
 
@@ -13,9 +13,11 @@
 
 | 文件 | 描述 | 类型 | 引用 | Commit |
 | --- | --- | --- | --- | --- |
-| `decisions.md` | 当前关键架构、产品范围和发布策略决策 | project | 28* | `28a75bb` |
-| `project_overview.md` | 项目技术栈、界面、架构边界、工具链和五项目标 CLI 范围 | project | 17* | `fee0586` |
-| `project_progress.md` | 当前项目进度、已发布里程碑和近期待办 | project | 16* | `fee0586` |
-| `reference.md` | 官方 CLI 与发布工具资料摘要和外部依据 | reference | 5* | `28a75bb` |
-| `feedback.md` | 用户协作偏好和范围纠正 | feedback | 4* | `28a75bb` |
-| `lint_report.md` | 记忆健康检查报告 | lint | 0 | `fee0586` |
+| `decisions.md` | 当前关键架构、产品范围和发布策略决策 | project | 38* | `8d4a751` |
+| `project_overview.md` | 项目技术栈、界面、架构边界、工具链和五项目标 CLI 范围 | project | 26* | `8d4a751` |
+| `project_progress.md` | 当前项目进度、已发布里程碑和近期待办 | project | 17* | `8d4a751` |
+| `reference.md` | 官方 CLI 与发布工具资料摘要和外部依据 | reference | 10* | `8d4a751` |
+| `feedback.md` | 用户协作偏好和范围纠正 | feedback | 5* | `8d4a751` |
+| `synthesis_release-tag-cross-platform.md` | 手动预检、Tag 门禁与当前跨平台发布矩阵 | synthesis | 5* | `8d4a751` |
+| `synthesis_scope_fixed-five-clis.md` | 五项目标 CLI 范围的背景、取舍和适用边界 | synthesis | 3* | `8d4a751` |
+| `lint_report.md` | 记忆健康检查报告 | lint | 0 | `8d4a751` |

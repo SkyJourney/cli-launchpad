@@ -3,7 +3,7 @@ name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
 last_updated: 2026-10-02
-commit: fee0586
+commit: 8d4a751
 ---
 
 # 项目概览
@@ -32,9 +32,11 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - Codex CLI：官方命令 `codex`。
 - Antigravity CLI：官方主命令 `agy`。
 - Grok Build：官方命令 `grok`，详细接入边界见 [[reference.md#官方-CLI-资料]] 和 `docs/milestones/grok-build-cli.md`。
-- Hermes Agent：官方命令 `hermes`，由 G2 规划接入；仅支持本地交互式 CLI，窗口简称 `HA`，范围和验收要求见 `docs/milestones/hermes-agent-cli.md`。
+- Hermes Agent：官方命令 `hermes`，已由 G2 接入并通过 Windows 实机验收；仅支持本地交互式 CLI，窗口简称 `HA`，范围和验收记录见 `docs/milestones/hermes-agent-cli.md`。
 
 `antigravity` 仅作为保守兼容探测命令，不作为推荐启动命令。Gemini CLI 不进入检测、安装或启动范围。
+
+**See Also：** [[decisions.md#0.3.0-目标范围为五项-CLI]] [[synthesis_scope_fixed-five-clis.md#结论]] [[feedback.md#不要扩展为通用-CLI-管理器]] [[reference.md#官方-CLI-资料]]
 
 ## 界面与本地素材
 
@@ -108,10 +110,10 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - Windows 分发使用 NSIS；支持在线/离线 WebView2 两类安装包，并静态链接 MSVC CRT。
 - `build:installers` 同时归档在线与离线 x64 安装包；在线版可用于本机静默覆盖安装，覆盖后业务数据保持不变。
 - macOS 分别构建 Apple Silicon 与 Intel DMG，不生成 Universal 包；当前使用 ad hoc 签名且未公证。
-- GitHub Actions 以相同矩阵构建四类正式产物。手动触发用于发版预检并保留 Actions Artifact；版本 Tag 在全部 target 成功后生成 `SHA256SUMS.txt` 和 GitHub Release。
+- GitHub Actions 以六个构建目标覆盖 Windows 在线/离线 NSIS、Linux x64/arm64 deb/rpm/AppImage 和 macOS ARM64/Intel DMG。手动触发用于预检并保留 Actions Artifact；匹配版本的 Tag 在所有构建成功后生成 `SHA256SUMS.txt` 和 GitHub Release。
 - 图标资源已生成，Windows 打包使用 `src-tauri/icons/icon.ico`。
 
-**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]] [[decisions.md#Git-Tag-驱动四目标自动发布]] [[project_progress.md#0.2.1-发布完成]]
+**See Also：** [[decisions.md#Windows-内部分发使用-NSIS-双安装包策略]] [[decisions.md#关闭窗口策略由-Rust-执行并持久化为业务配置]] [[decisions.md#Git-Tag-驱动跨平台自动发布]] [[project_progress.md#0.2.1-发布完成]] [[synthesis_release-tag-cross-platform.md#结论]]
 
 ## See Also
 

@@ -2,8 +2,8 @@
 name: 协作反馈
 description: 用户协作偏好、范围纠正和执行约束
 type: feedback
-last_updated: 2026-10-01
-commit: 28a75bb
+last_updated: 2026-10-02
+commit: 8d4a751
 ---
 
 # 协作反馈
@@ -25,7 +25,7 @@ commit: 28a75bb
 **结论：** 0.3.0 目标只围绕 `claude`、`codex`、`agy`、`grok`、`hermes` 五项已确认 CLI，不建设通用 CLI 管理器。
 **Why：** 用户明确拒绝扩展为通用管理器，并通过 G1、G2 分别批准 Grok Build 和 Hermes Agent 加入产品范围。
 **How to apply：** 不主动加入 Gemini、Qwen、GitHub CLI、uv 等工具的检测或安装逻辑；Hermes 仅按 G2 范围接入本地 CLI。
-**See Also：** [[decisions.md#0.3.0-目标范围为五项-CLI]]
+**See Also：** [[decisions.md#0.3.0-目标范围为五项-CLI]] [[project_overview.md#核心-CLI-范围]]
 
 ## 不再关注 Gemini CLI
 

@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-10-01
-commit: 28a75bb
+last_updated: 2026-10-02
+commit: 8d4a751
 ---
 
 # 项目决策
@@ -17,9 +17,10 @@ commit: 28a75bb
 
 ## 0.3.0 目标范围为五项 CLI
 
-**结论：** 0.3.0 目标支持 `claude`、`codex`、`agy`、`grok`、`hermes` 五个 CLI；Grok 由 G1 接入，Hermes 由 G2 接入。
-**Why：** 核心功能是在项目目录中管理已确认的 AI CLI 会话，不是通用 CLI 工具管理器；新增 Hermes 已由用户作为独立 G2 里程碑明确批准。
-**How to apply：** 检测、安装、启动、UI 状态和文档只围绕上述五个目标工具展开；Hermes 限定为本地交互式 CLI，不接入 Gateway、消息平台、Desktop 或 Profile 管理。
+**结论：** 0.3.0 目标范围固定为 `claude`、`codex`、`agy`、`grok`、`hermes` 五项 CLI；不建设通用 CLI 管理器。
+**Why：** 产品聚焦项目目录中的 CLI 会话工作流；Grok 与 Hermes 分别通过 G1、G2 独立关卡批准接入。范围演进与边界分析见 [[synthesis_scope_fixed-five-clis.md#结论]]。
+**How to apply：** 检测、安装、启动、UI 状态和文档围绕五项工具展开；Hermes 限定为本地交互式 CLI，不接入 Gateway、消息平台、Desktop 或 Profile 管理。
+**Synthesized：** [[synthesis_scope_fixed-five-clis.md]]
 **See Also：** [[project_overview.md#核心-CLI-范围]] [[feedback.md#不要扩展为通用-CLI-管理器]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]]
 
 ## Antigravity 使用 agy 作为官方主命令
@@ -48,6 +49,7 @@ commit: 28a75bb
 **结论：** CLI 启动前解析为完整路径；Windows 优先保留 Windows Terminal Profile，并按 Profile 原生追加、PowerShell 命令续接、保留外观替换命令、PowerShell 7、Windows PowerShell、CMD 建立分层候选。
 **Why：** 桌面进程继承的 PATH 可能落后于用户安装状态，开发沙箱还可能传入残缺 PATH、`NO_COLOR` 或 `TERM=dumb`；固定替换 Shell 会丢失用户 Profile 的参数、初始化和样式，而只依赖单一终端又无法覆盖未安装 Windows Terminal 或 Profile 命令不兼容的机器。
 **How to apply：** 终端探测与启动计划放在 Rust platform/services；设置页持久化 `auto`、指定 Profile 或直接 Shell 目标；启动参数先结构化建模，只在最终 Shell 边界编码；进程创建失败时继续尝试安全候选。启动终端前移除非交互配色变量，Windows 子终端补入注册环境中当前进程缺失的 Machine/User PATH 项。CMD 只作为最终受控兜底，不直接拼接不可信字符串。配置导入不接受外部可执行 Shell 字段或初始化脚本。
+**See Also：** [[project_overview.md#启动与检测边界]] [[project_progress.md#0.2.0-发布完成]]
 **See Also：** [[project_overview.md#启动与检测边界]]
 
 ## 会话历史按需读取本地事实来源
@@ -99,9 +101,10 @@ commit: 28a75bb
 **How to apply：** 托盘菜单固定提供显示主界面和退出，左键双击显示主界面；配置导入或数据库恢复后同步刷新运行时策略。
 **See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#已完成功能]]
 
-## Git Tag 驱动四目标自动发布
+## Git Tag 驱动跨平台自动发布
 
-**结论：** 正式版本使用与应用版本一致的 `v*.*.*` Git Tag 触发 GitHub Actions，同时构建 Windows x64 在线/离线 NSIS 与 macOS ARM64/Intel DMG；全部目标成功后才生成校验和并发布 GitHub Release。手动触发只生成限时 Artifact，不创建 Release。
-**Why：** 本地只能完整实测当前主机架构，直接打 Tag 会把跨平台配置错误带入正式发布；先以同一矩阵手动预检，可以在不产生 Release 的前提下验证所有 target，并让正式发布具备一致、可审计的产物来源。
-**How to apply：** 发版前先完成本地调试和版本一致性检查，再手动运行 release workflow；四目标全部通过后创建 Tag。macOS 暂用 ad hoc 签名且不公证，待项目规模需要时再引入 Developer ID 与 notarization secrets。
-**See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#0.2.1-发布完成]] [[reference.md#发布工具官方资料]]
+**结论：** 正式发布由匹配版本的 `v*.*.*` Tag 驱动；当前工作流覆盖六个构建目标，只有全部成功才生成校验和并发布。手动触发用于预检，不创建 Release。
+**Why：** 单机验证无法覆盖所有平台和架构；独立预检能在正式发布前验证同一构建矩阵，Tag 发布则提供可审计且完整的跨平台产物。当前矩阵和门禁分析见 [[synthesis_release-tag-cross-platform.md#结论]]。
+**How to apply：** 先运行手动预检，再创建与版本文件一致且指向 `main` 历史的 Tag；保留 Windows 双 NSIS、Linux x64/arm64 三格式包及 macOS ARM64/Intel DMG 的六个构建目标。平台签名与公证按当前发布约定执行。
+**Synthesized：** [[synthesis_release-tag-cross-platform.md]]
+**See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#0.2.1-发布完成]] [[reference.md#发布工具官方资料]] [[synthesis_release-tag-cross-platform.md#结论]]

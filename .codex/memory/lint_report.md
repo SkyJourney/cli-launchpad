@@ -3,50 +3,46 @@ name: 记忆健康检查报告
 description: 项目记忆结构、引用、矛盾和过期状态检查结果
 type: lint
 last_updated: 2026-10-02
-commit: fee0586
+commit: 8d4a751
 ---
 
 # Memory Lint Report
-> _Last checked: 2026-10-02 | Base commit: `fee0586`_
+> _Last checked: 2026-10-02 | Base commit: `8d4a751`_
 
 ## 健康概览
 
 - 记忆目录：`.codex/memory/`
-- 索引文件：6
-- 磁盘记忆文件：6
+- 索引文件：8
+- 磁盘记忆文件：8
 - 孤儿：0
 - 幽灵：0
 - 断链：0
+- 章节级反向链接缺失：0
 - 合并残留：0
-- NEED-HUMAN：1 类（9 条章节级反向链接）
-- 记忆事实与当前项目阶段一致：G4 已完成，M4 前置条件已满足，macOS/Linux 对齐与验收归入 M5。
+- NEED-HUMAN：0
+- 阶段状态一致：G4 已完成，M4 前置条件已满足，macOS/Linux 对齐与验收归入 M5。
+- 发布矩阵已依据当前工作流更新为六个构建目标；早期 0.2.1 的四目标记录保留为历史验收事实。
 
 ## AUTO-FIX 已执行
 
-- 将 `MEMORY.md` 同步基线更新为 `fee0586`，刷新概览、进度与 lint 报告提交元数据。
-- 重算索引反向引用数并按数量排序。
-- 确认当前无孤儿、幽灵、断链或合并残留标记。
+- 审查原报告列出的 9 条反向链接，确认目标关系合理并补齐；全量章节扫描另发现 3 条同类缺口，一并补齐。复查后 0 条缺失。
+- 创建五项 CLI 范围和跨平台 Tag 发布两份 synthesis，并在原决策处保留摘要及 `Synthesized` 回链。
+- 对照 `.github/workflows/release.yml` 和 M5 文档，将过期的“四目标”当前发布矩阵修正为六目标；历史阶段记录仍保持其当时事实。
+- 重算 `MEMORY.md` 引用数、加入 synthesis 文件，并按引用数及类型排序。
+- 检查目标文件与章节锚点，当前没有断链、孤儿、幽灵或合并残留。
 
 ## 条目级高频引用 Top
 
-- `decisions.md#0.3.0-目标范围为五项-CLI`：被 `feedback.md`、`project_overview.md`、`project_progress.md` 三个不同源文件引用，是 synthesis 候选。
-- `decisions.md#Git-Tag-驱动四目标自动发布`：被 `project_overview.md`、`project_progress.md`、`reference.md` 三个不同源文件引用，是 synthesis 候选。
-- 其他 decisions/feedback 条目均未达到三个不同源文件的引用阈值。
+- `decisions.md#0.3.0-目标范围为五项-CLI`：已综合整理至 `synthesis_scope_fixed-five-clis.md`，原决策保留结论与链接。
+- `decisions.md#Git-Tag-驱动跨平台自动发布`：已综合整理至 `synthesis_release-tag-cross-platform.md`，原决策保留当前门禁摘要与链接。
+- 其他 decisions/feedback 条目未达到三个不同源文件的引用阈值。
 
 ## NEED-HUMAN
 
-### 章节级反向链接补齐
-
-- **位置：** `decisions.md#0.3.0-目标范围为五项-CLI` → `project_overview.md#核心-CLI-范围`；`decisions.md#Antigravity-使用-agy-作为官方主命令` → `reference.md#官方-CLI-资料`；`decisions.md#安装命令必须来自官方来源` → `reference.md#官方-CLI-资料`；`project_overview.md#存储与可靠性边界` → `project_progress.md#可靠性治理完成`；`project_overview.md#See-Also` → `feedback.md#不要扩展为通用-CLI-管理器`；`project_progress.md#0.2.0-发布完成` 与 `project_progress.md#See-Also` → `decisions.md#启动使用完整-CLI-路径与平台分层候选`；`reference.md#官方-CLI-资料` → `project_progress.md#已完成功能`；`reference.md#发布工具官方资料` → `project_progress.md#0.2.1-发布完成`。
-- **Q1：** 上述引用目标是否仍是正确的事实归属？（是/否）
-- **Q2：** 是否需要在目标章节内补齐这 9 条反向链接？（是/否）
-- **Q3：** 是否允许后续一次性调整现有 `See Also` 布局以满足章节级双链校验？（是/否）
-- **决策矩阵：** Q1 否 → 删除或改向错误引用；Q1 是且 Q2 是 → 在目标章节补充反链并重新 lint；Q1 是且 Q2 否 → 保留文件级关联并接受该例外；Q3 是 → 可在一次独立记忆整理中统一处理反链。
+- 无。
 
 ## 未执行项或跳过项
 
-- 9 条章节级反向链接超过自动补链阈值（5），保留为 NEED-HUMAN，未自动修改。
-- 两项决策达到高频引用阈值；未创建 `synthesis_*.md`，创建需用户确认。
-- 未找到 `synonyms.md`，因此仅检查直接数值、版本及明确互斥结论；未发现矛盾。
-- 未修改 `AGENTS.md`：现有启动引导已指向 `.codex/memory/`，必读锚点与实际索引一致。
+- 未创建 `synonyms.md`；检查限于明确版本、数值及互斥结论，未发现冲突。
+- 已按用户确认更新 `AGENTS.md` 的选读锚点，加入 `synthesis_*.md`；必读锚点保持与索引一致。
 - 未修改业务代码或产品文档。

@@ -8,7 +8,7 @@
 
 1. 读取 `.codex/memory/MEMORY.md` 获取文件清单、类型和引用计数。
 2. **必读锚点**：`decisions.md`、`feedback.md`、`project_overview.md`、`project_progress.md`。
-3. **选读锚点**：`reference.md`、`lint_report.md`。
+3. **选读锚点**：`reference.md`、`synthesis_*.md`、`lint_report.md`。
 4. 若仓库使用 `.claude/memory/`，直接读取该目录；不要复制到 `.codex/memory/`。
 
 ### 权威优先级
