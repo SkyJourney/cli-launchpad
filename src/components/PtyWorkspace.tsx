@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Allotment, type AllotmentHandle } from "allotment";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
 import {
   ChevronDown,
   ChevronRight,
@@ -32,6 +33,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
+import { getWindowChromeOptions } from "../lib/windowChrome";
 import {
   type WorkspaceNode,
   activateWorkspaceSession,
@@ -63,6 +65,7 @@ import {
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
 import {
+  getPtySessionWindowStatus,
   getWorkspaceLayout,
   createWorkspaceLayoutPreset,
   deleteWorkspaceLayoutPreset,
@@ -710,10 +713,22 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       childUrl.searchParams.set("handoffToken", handoff.token);
       childUrl.searchParams.set("instanceId", instanceId);
       childUrl.searchParams.set("detachedTitle", title);
+      childUrl.searchParams.set("detachedToolKey", slot.toolKey);
 
       try {
         await new Promise<void>((resolve, reject) => {
+          const { trafficLightPosition, ...chromeOptions } =
+            getWindowChromeOptions(navigator.userAgent);
           const child = new WebviewWindow(windowLabel, {
+            ...chromeOptions,
+            ...(trafficLightPosition
+              ? {
+                  trafficLightPosition: new LogicalPosition(
+                    trafficLightPosition.x,
+                    trafficLightPosition.y,
+                  ),
+                }
+              : {}),
             url: `${childUrl.pathname}${childUrl.search}${childUrl.hash}`,
             title,
             width: 1100,
@@ -798,30 +813,68 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const handlePtyReturnRequest = useCallback(
     async (payload: PtyReturnRequestEvent) => {
-      const detached = detachedByInstanceRef.current.get(payload.instanceId);
       const fail = (message: string) =>
         void emitTo(payload.windowLabel, "pty-return-failed", {
           instanceId: payload.instanceId,
           token: payload.token,
           message,
         }).catch(() => undefined);
+      const knownDetached = detachedByInstanceRef.current.get(
+        payload.instanceId,
+      );
       if (
-        !detached ||
-        detached.sessionId !== payload.sessionId ||
-        detached.windowLabel !== payload.windowLabel
+        knownDetached &&
+        (knownDetached.sessionId !== payload.sessionId ||
+          knownDetached.windowLabel !== payload.windowLabel)
       ) {
         fail("主工作区中找不到这个终端会话");
         return;
       }
-      const slot = slotsRef.current.find(
-        (candidate) => candidate.instanceId === payload.instanceId,
-      );
-      const terminal = terminalRefs.current.get(payload.instanceId);
-      if (!slot || !terminal) {
-        fail("主工作区终端尚未准备好");
-        return;
-      }
       try {
+        const deadline = Date.now() + 10_000;
+        let slot = slotsRef.current.find(
+          (candidate) => candidate.instanceId === payload.instanceId,
+        );
+        let terminal = terminalRefs.current.get(payload.instanceId);
+        while (
+          (!slot || !terminal || hydrationStatusRef.current !== "ready") &&
+          Date.now() < deadline
+        ) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+          slot = slotsRef.current.find(
+            (candidate) => candidate.instanceId === payload.instanceId,
+          );
+          terminal = terminalRefs.current.get(payload.instanceId);
+        }
+        if (!slot || !terminal || hydrationStatusRef.current !== "ready") {
+          fail("主工作区仍在恢复终端，请稍后重试");
+          return;
+        }
+        if (slot.sessionId !== payload.sessionId) {
+          fail("主工作区中找不到这个终端会话");
+          return;
+        }
+        let detached = detachedByInstanceRef.current.get(payload.instanceId);
+        if (!detached) {
+          const [windowStatus, detachedWindow] = await Promise.all([
+            getPtySessionWindowStatus(payload.sessionId),
+            WebviewWindow.getByLabel(payload.windowLabel),
+          ]);
+          if (windowStatus !== "ownedByAnotherWindow" || !detachedWindow) {
+            fail("独立终端窗口状态已变化，请重试");
+            return;
+          }
+          detached = {
+            instanceId: payload.instanceId,
+            sessionId: payload.sessionId,
+            windowLabel: payload.windowLabel,
+            window: detachedWindow,
+          };
+          detachedByInstanceRef.current.set(payload.instanceId, detached);
+          setDetachedInstanceIds((current) =>
+            new Set(current).add(payload.instanceId),
+          );
+        }
         await terminal.attachHandoff(payload.sessionId, payload.token);
         const currentTree = treeRef.current;
         const targetPane =
@@ -1110,6 +1163,22 @@ export function usePtyWorkspace() {
   return workspace;
 }
 
+export function WorkspaceLayoutControls() {
+  const {
+    hydrationStatus,
+    getCurrentPresetLayout,
+    applyWorkspaceLayoutPreset,
+  } = usePtyWorkspace();
+
+  if (hydrationStatus !== "ready") return null;
+  return (
+    <WorkspaceLayoutManager
+      getCurrentLayout={getCurrentPresetLayout}
+      onApply={applyWorkspaceLayoutPreset}
+    />
+  );
+}
+
 export function PtyWorkspaceRegion() {
   const { t } = useTranslation();
   const {
@@ -1131,13 +1200,11 @@ export function PtyWorkspaceRegion() {
     detachedInstanceIds,
     hasDetachedSessions,
     isManagedDetachedDrag,
-    getCurrentPresetLayout,
     detachSession,
     closeEmptyPane,
     updateSplitRatio,
     retryHydration,
     resetWorkspace,
-    applyWorkspaceLayoutPreset,
     removeSlot,
   } = usePtyWorkspace();
   const { data: directories } = useDirectories();
@@ -1259,12 +1326,6 @@ export function PtyWorkspaceRegion() {
         <div className="pty-workspace-recovery-notice" role="status">
           {t("pty.layoutSaveFailed", { error: layoutSaveError })}
         </div>
-      )}
-      {hydrationStatus === "ready" && (
-        <WorkspaceLayoutManager
-          getCurrentLayout={getCurrentPresetLayout}
-          onApply={applyWorkspaceLayoutPreset}
-        />
       )}
       <div className="pty-workspace-tree">
         <WorkspaceTreeView
@@ -1415,7 +1476,7 @@ function WorkspaceLayoutManager({
       <button
         ref={anchorRef}
         type="button"
-        className="pty-layout-toolbar-button"
+        className="pty-layout-toolbar-button window-titlebar-compact-button"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >

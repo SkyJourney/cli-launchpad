@@ -1,5 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 15
+        }
+      }
+    ]
+  },
   "bundle": {
     "targets": ["dmg"]
   }

@@ -3,8 +3,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ArrowLeft, Terminal as TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { ToolKey } from "../lib/tauri";
+import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
-import { useThemeSync } from "../hooks/useThemeSync";
+import { WindowResizeHandles, WindowTitlebar } from "./WindowTitlebar";
 import {
   getPtySessionWindowStatus,
   type PtySessionWindowStatus,
@@ -19,6 +21,7 @@ interface StandalonePtyWindowProps {
   sessionId: string;
   handoffToken: string;
   instanceId: string;
+  toolKey?: ToolKey;
   title: string;
 }
 
@@ -35,10 +38,12 @@ export function StandalonePtyWindow({
   sessionId,
   handoffToken,
   instanceId,
+  toolKey,
   title,
 }: StandalonePtyWindowProps) {
   const { t } = useTranslation();
   const terminalRef = useRef<PtyTerminalHandle>(null);
+  const ToolIcon = TOOLS.find((tool) => tool.key === toolKey)?.icon;
   const exitHandledRef = useRef(false);
   const returnInProgressRef = useRef(false);
   const returnAttemptRef = useRef(0);
@@ -54,7 +59,6 @@ export function StandalonePtyWindow({
   readyRef.current = ready;
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useThemeSync();
 
   const reconcileWindowStatus = useCallback(async () => {
     let windowStatus: PtySessionWindowStatus;
@@ -375,7 +379,23 @@ export function StandalonePtyWindow({
 
   return (
     <main className="standalone-pty-window">
-      <header className="standalone-pty-header">
+      <WindowTitlebar
+        variant="standalone"
+        actions={
+          <button
+            type="button"
+            className="ghost-button standalone-pty-return window-titlebar-compact-button"
+            disabled={!ready || returning}
+            onClick={() => void requestReturnRef.current()}
+            title={t("pty.returnToWorkspace")}
+          >
+            <ArrowLeft size={15} />
+            {returning
+              ? t("pty.returningToWorkspace")
+              : t("pty.returnToWorkspace")}
+          </button>
+        }
+      >
         <div
           className="standalone-pty-title"
           draggable={ready && !returning}
@@ -393,22 +413,10 @@ export function StandalonePtyWindow({
             event.dataTransfer.setData("text/plain", payload);
           }}
         >
-          <TerminalIcon size={16} />
+          {ToolIcon ? <ToolIcon size={16} /> : <TerminalIcon size={16} />}
           <strong>{title}</strong>
         </div>
-        <button
-          type="button"
-          className="ghost-button standalone-pty-return"
-          disabled={!ready || returning}
-          onClick={() => void requestReturnRef.current()}
-          title={t("pty.returnToWorkspace")}
-        >
-          <ArrowLeft size={15} />
-          {returning
-            ? t("pty.returningToWorkspace")
-            : t("pty.returnToWorkspace")}
-        </button>
-      </header>
+      </WindowTitlebar>
       <div className="standalone-pty-content">
         {!ready && !error && (
           <p className="standalone-pty-status">{t("pty.starting")}</p>
@@ -421,6 +429,7 @@ export function StandalonePtyWindow({
         />
         {error && <p className="error standalone-pty-error">{error}</p>}
       </div>
+      <WindowResizeHandles />
     </main>
   );
 }

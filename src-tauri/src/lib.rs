@@ -23,6 +23,10 @@ pub struct Db(pub Mutex<Connection>);
 pub struct CacheDb(pub Mutex<Connection>);
 pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
 
+fn persistent_window_state_flags() -> StateFlags {
+    StateFlags::all().difference(StateFlags::VISIBLE | StateFlags::DECORATIONS)
+}
+
 pub fn update_close_behavior_state(
     state: &State<'_, CloseBehaviorState>,
     close_behavior: CloseBehavior,
@@ -101,7 +105,7 @@ pub fn run() {
             // Register after storage migration so prior window state is available
             // on the first launch under the stable Tauri identifier. Visibility
             // is deliberately excluded: closing to tray must not hide the next launch.
-            let window_state_flags = StateFlags::all().difference(StateFlags::VISIBLE);
+            let window_state_flags = persistent_window_state_flags();
             app.handle().plugin(
                 tauri_plugin_window_state::Builder::default()
                     .skip_initial_state("main")
@@ -109,11 +113,25 @@ pub fn run() {
                     .build(),
             )?;
             if let Some(window) = app.get_webview_window("main") {
+                // Window-state files written by older app versions can contain
+                // `decorated: true`; enforce the Windows custom chrome before
+                // restoring size and position so stale state cannot revive it.
+                #[cfg(target_os = "windows")]
+                if let Err(error) = window.set_decorations(false) {
+                    log::warn!("unable to disable main window decorations: {error}");
+                }
+
                 // Restore explicitly after the storage migration and before applying
                 // monitor bounds. The plugin's automatic restore runs on window-ready,
                 // which would otherwise happen after this setup hook's bounds correction.
                 if let Err(error) = window.restore_state(window_state_flags) {
                     log::warn!("unable to restore main window state: {error}");
+                }
+                #[cfg(target_os = "windows")]
+                match window.is_decorated() {
+                    Ok(false) => log::info!("main window native decorations are disabled"),
+                    Ok(true) => log::error!("main window still has native decorations enabled"),
+                    Err(error) => log::warn!("unable to verify main window decorations: {error}"),
                 }
                 let window_config = app
                     .config()
@@ -333,9 +351,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => {
-                if let Err(error) =
-                    app.save_window_state(StateFlags::all().difference(StateFlags::VISIBLE))
-                {
+                if let Err(error) = app.save_window_state(persistent_window_state_flags()) {
                     log::warn!("unable to save main window state before tray exit: {error}");
                 }
                 app.exit(0);

@@ -9,13 +9,21 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
-import { FolderOpen, Plus } from "lucide-react";
+import { FolderOpen, PanelRight, Plus } from "lucide-react";
+import type { CSSProperties } from "react";
+import { AppLogo } from "./components/AppLogo";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
 import {
   PtyWorkspaceProvider,
   PtyWorkspaceRegion,
+  WorkspaceLayoutControls,
+  usePtyWorkspace,
 } from "./components/PtyWorkspace";
+import {
+  WindowResizeHandles,
+  WindowTitlebar,
+} from "./components/WindowTitlebar";
 import { StandalonePtyWindow } from "./components/StandalonePtyWindow";
 const ProjectDetailView = lazy(() =>
   import("./views/ProjectDetailView").then((module) => ({
@@ -26,22 +34,29 @@ import { SettingsView } from "./views/SettingsView";
 import { ExecutionsView } from "./views/ExecutionsView";
 import { AboutView } from "./views/AboutView";
 import { useExecutionTaskEvents } from "./hooks/useExecutionTasks";
+import { indexByTool, useCliStatus } from "./hooks/useCliStatus";
 import { useThemeSync } from "./hooks/useThemeSync";
 import { type ViewName, useAppStore } from "./store/appStore";
 import { confirmPtyExit } from "./lib/tauri";
 import { useDirectories } from "./hooks/queries";
+import { TOOLS } from "./lib/tools";
 
 export function App() {
+  useThemeSync();
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("detachedSessionId");
   const handoffToken = params.get("handoffToken");
   const instanceId = params.get("instanceId");
+  const detachedToolKey = TOOLS.find(
+    (tool) => tool.key === params.get("detachedToolKey"),
+  )?.key;
   if (sessionId && handoffToken && instanceId) {
     return (
       <StandalonePtyWindow
         sessionId={sessionId}
         handoffToken={handoffToken}
         instanceId={instanceId}
+        toolKey={detachedToolKey}
         title={params.get("detachedTitle") ?? "CLI terminal"}
       />
     );
@@ -59,6 +74,7 @@ function AppContent() {
   const themeMode = useAppStore((state) => state.themeMode);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
+  const setContextPanelOpen = useAppStore((state) => state.setContextPanelOpen);
   const projectDialog = useAppStore((state) => state.projectDialog);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectDirectory = useAppStore((state) => state.selectDirectory);
@@ -71,7 +87,6 @@ function AppContent() {
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   useExecutionTaskEvents();
-  useThemeSync();
 
   useEffect(() => {
     const suppressNativeContextMenu = (event: MouseEvent) =>
@@ -135,51 +150,89 @@ function AppContent() {
 
   return (
     <>
-      <main className="app-shell">
-        <Sidebar />
-        <section
-          ref={workspaceRef}
-          className={
-            view === "detail" ? "workspace workspace-workbench" : "workspace"
-          }
-          onScroll={(event) => {
-            scrollPositions.current[view] = event.currentTarget.scrollTop;
-          }}
-        >
-          {view === "projects" && (
-            <div className="empty-projects-state">
-              <FolderOpen size={42} />
-              <h1>{t("emptyProjects.title")}</h1>
-              <p>{t("emptyProjects.description")}</p>
-              <button
-                className="primary-button"
-                onClick={() => setProjectDialog({ mode: "add" })}
-              >
-                <Plus size={16} />
-                {t("emptyProjects.addProject")}
-              </button>
+      <div className="app-window-shell">
+        <WindowTitlebar
+          variant="main"
+          leading={
+            <div className="window-titlebar-brand">
+              <AppLogo size={24} />
+              <strong>CLI Launchpad</strong>
             </div>
-          )}
-          <div
-            className={`shared-workbench${contextPanelOpen ? " context-open" : ""}`}
-            hidden={view !== "detail"}
+          }
+          actions={
+            view === "detail" ? (
+              <>
+                <CliTitlebarLaunchers directoryId={selectedDirectoryId} />
+                <WorkspaceLayoutControls />
+                <button
+                  type="button"
+                  className="icon-button window-titlebar-action-button"
+                  title={
+                    contextPanelOpen
+                      ? t("projectDetail.hideContextPanel")
+                      : t("projectDetail.showContextPanel")
+                  }
+                  aria-label={
+                    contextPanelOpen
+                      ? t("projectDetail.hideContextPanel")
+                      : t("projectDetail.showContextPanel")
+                  }
+                  aria-expanded={contextPanelOpen}
+                  onClick={() => setContextPanelOpen(!contextPanelOpen)}
+                >
+                  <PanelRight size={16} />
+                </button>
+              </>
+            ) : null
+          }
+        />
+        <main className="app-shell">
+          <Sidebar />
+          <section
+            ref={workspaceRef}
+            className={
+              view === "detail" ? "workspace workspace-workbench" : "workspace"
+            }
+            onScroll={(event) => {
+              scrollPositions.current[view] = event.currentTarget.scrollTop;
+            }}
           >
-            <PtyWorkspaceRegion />
-            {selectedDirectoryId != null && (
-              <Suspense fallback={null}>
-                <ProjectDetailView
-                  key={selectedDirectoryId}
-                  directoryId={selectedDirectoryId}
-                  active={view === "detail"}
-                />
-              </Suspense>
+            {view === "projects" && (
+              <div className="empty-projects-state">
+                <FolderOpen size={42} />
+                <h1>{t("emptyProjects.title")}</h1>
+                <p>{t("emptyProjects.description")}</p>
+                <button
+                  className="primary-button"
+                  onClick={() => setProjectDialog({ mode: "add" })}
+                >
+                  <Plus size={16} />
+                  {t("emptyProjects.addProject")}
+                </button>
+              </div>
             )}
-          </div>
-          {view === "executions" && <ExecutionsView />}
-          {view === "settings" && <SettingsView />}
-          {view === "about" && <AboutView />}
-        </section>
-      </main>
+            <div
+              className={`shared-workbench${contextPanelOpen ? " context-open" : ""}`}
+              hidden={view !== "detail"}
+            >
+              <PtyWorkspaceRegion />
+              {selectedDirectoryId != null && (
+                <Suspense fallback={null}>
+                  <ProjectDetailView
+                    key={selectedDirectoryId}
+                    directoryId={selectedDirectoryId}
+                    active={view === "detail"}
+                  />
+                </Suspense>
+              )}
+            </div>
+            {view === "executions" && <ExecutionsView />}
+            {view === "settings" && <SettingsView />}
+            {view === "about" && <AboutView />}
+          </section>
+        </main>
+        <WindowResizeHandles />
+      </div>
       {projectDialog && (
         <ProjectMaintenanceDialog
           key={`${projectDialog.mode}-${projectDialog.mode === "edit" ? projectDialog.directoryId : "new"}`}
@@ -211,16 +264,53 @@ function AppContent() {
         </div>
       )}
       <Toaster
-        position="top-right"
+        position="top-center"
         theme={themeMode}
         richColors
         closeButton
         visibleToasts={4}
         duration={5000}
+        style={
+          {
+            "--width": "min(640px, calc(100vw - 32px))",
+          } as CSSProperties
+        }
         toastOptions={{
           style: { fontFamily: "var(--font-ui)" },
         }}
       />
+    </>
+  );
+}
+
+function CliTitlebarLaunchers({ directoryId }: { directoryId: number | null }) {
+  const { t } = useTranslation();
+  const statusByTool = indexByTool(useCliStatus().data);
+  const { hydrationStatus, launchSession } = usePtyWorkspace();
+
+  return (
+    <>
+      {TOOLS.map((tool) => {
+        const ToolIcon = tool.icon;
+        const available = statusByTool[tool.key]?.status === "available";
+        return (
+          <button
+            key={tool.key}
+            type="button"
+            className="icon-button window-titlebar-action-button"
+            title={t("projectDetail.launchTool", { tool: tool.label })}
+            aria-label={t("projectDetail.launchTool", { tool: tool.label })}
+            disabled={
+              !available || directoryId == null || hydrationStatus !== "ready"
+            }
+            onClick={() => {
+              if (directoryId != null) launchSession(directoryId, tool.key);
+            }}
+          >
+            <ToolIcon size={16} />
+          </button>
+        );
+      })}
     </>
   );
 }

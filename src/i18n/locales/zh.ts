@@ -51,6 +51,13 @@ export const zh = {
     confirm: "结束会话并退出",
     terminating: "正在结束会话…",
   },
+  windowChrome: {
+    titlebar: "应用窗口标题栏",
+    minimize: "最小化",
+    maximize: "最大化",
+    restore: "还原",
+    close: "关闭窗口",
+  },
   pty: {
     panelLabel: "内置终端",
     paneLabel: "终端窗格",

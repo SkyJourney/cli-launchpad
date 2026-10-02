@@ -54,6 +54,13 @@ export const en = {
     confirm: "End sessions and quit",
     terminating: "Ending sessions…",
   },
+  windowChrome: {
+    titlebar: "Application window title bar",
+    minimize: "Minimize",
+    maximize: "Maximize",
+    restore: "Restore",
+    close: "Close window",
+  },
   pty: {
     panelLabel: "Embedded terminal",
     paneLabel: "Terminal pane",
@@ -157,7 +164,8 @@ export const en = {
     missing: "Not found",
     missingTitle: "Not found. Open Settings to install it",
     unknown: "Check failed",
-    unknownTitle: "Check failed. Refresh to retry; launch and install are disabled",
+    unknownTitle:
+      "Check failed. Refresh to retry; launch and install are disabled",
   },
   time: {
     neverStarted: "Never launched",
