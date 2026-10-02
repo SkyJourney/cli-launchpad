@@ -265,6 +265,7 @@ function AppContent() {
       )}
       <Toaster
         position="top-center"
+        offset={{ top: "calc(var(--window-titlebar-height) + 6px)" }}
         theme={themeMode}
         richColors
         closeButton
@@ -272,7 +273,7 @@ function AppContent() {
         duration={5000}
         style={
           {
-            "--width": "min(640px, calc(100vw - 32px))",
+            "--width": "min(560px, 50vw)",
           } as CSSProperties
         }
         toastOptions={{

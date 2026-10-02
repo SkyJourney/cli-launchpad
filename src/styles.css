@@ -28,7 +28,6 @@
   --control-height-compact: 32px;
   --control-height: 36px;
   --window-titlebar-height: 36px;
-  --toast-offset-top: calc(var(--window-titlebar-height) + 12px);
   --icon-size-button: 16px;
   --icon-size-button-compact: 14px;
   --control-border-width: 1px;
@@ -1040,6 +1039,7 @@ pre,
   flex: 1 1 auto;
   font-size: var(--font-size-control-compact);
   overflow: hidden;
+  padding-left: 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3500,8 +3500,7 @@ h1 {
 
 /* Sonner inherits the app palette so notifications match both themes. */
 [data-sonner-toaster][data-sonner-theme] {
-  --offset-top: var(--toast-offset-top);
-  --width: min(640px, calc(100vw - 32px));
+  --width: min(560px, 50vw);
   --border-radius: 10px;
   --normal-bg: var(--color-surface);
   --normal-bg-hover: var(--color-surface-hover);
