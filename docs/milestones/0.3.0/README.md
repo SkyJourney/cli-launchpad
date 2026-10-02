@@ -4,18 +4,20 @@
 
 里程碑按依赖顺序推进。每个阶段完成后先按对应文档验收，再进入下一阶段。状态初始为“待开始”，完成情况由后续实施记录更新。
 
-macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1 与 G2 完成之后，任务统一记录在[跨平台对齐待办](cross-platform-alignment.md)；它不阻塞 Windows 阶段推进，但属于 M5 发布门禁。
+macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1–G4 完成之后，任务统一记录在[跨平台对齐待办](cross-platform-alignment.md)；它不阻塞 Windows 阶段推进，但属于 M5 发布门禁。
 
-| 编号 | 里程碑                            | 依赖           | 验收文档                         |
-| ---- | --------------------------------- | -------------- | -------------------------------- |
-| M0   | 产品方向、架构边界与视觉标识      | 无             | [M0](M0-product-and-brand.md)    |
-| M1   | 内置 PTY 核心闭环                 | M0             | [M1](M1-pty-foundation.md)       |
-| M2   | 跨项目共享终端工作台              | M1             | [M2](M2-workspace-shell.md)      |
-| G1   | Grok Build CLI 接入（独立关卡）   | M2             | [G1](../grok-build-cli.md)       |
-| M3   | 全局布局保存与会话恢复            | M2、G1         | [M3](M3-sessions-and-layouts.md) |
-| G2   | Hermes Agent CLI 接入（独立关卡） | M3、G1         | [G2](../hermes-agent-cli.md)     |
-| M4   | 现有能力接入与数据迁移            | M2、M3、G1、G2 | [M4](M4-feature-integration.md)  |
-| M5   | 跨平台验收与 0.3.0 发布           | M1–M4、G1、G2  | [M5](M5-release-readiness.md)    |
+| 编号 | 里程碑                            | 依赖                            | 验收文档                             |
+| ---- | --------------------------------- | ------------------------------- | ------------------------------------ |
+| M0   | 产品方向、架构边界与视觉标识      | 无                              | [M0](M0-product-and-brand.md)        |
+| M1   | 内置 PTY 核心闭环                 | M0                              | [M1](M1-pty-foundation.md)           |
+| M2   | 跨项目共享终端工作台              | M1                              | [M2](M2-workspace-shell.md)          |
+| G1   | Grok Build CLI 接入（独立关卡）   | M2                              | [G1](../grok-build-cli.md)           |
+| M3   | 全局布局保存与会话恢复            | M2、G1                          | [M3](M3-sessions-and-layouts.md)     |
+| G2   | Hermes Agent CLI 接入（独立关卡） | M3、G1                          | [G2](../hermes-agent-cli.md)         |
+| G3   | 统一自定义窗口标题栏（独立关卡）  | M2、M3、G2                      | [G3](G3-custom-window-chrome.md)     |
+| G4   | 主题、生命周期与适配边界治理      | M2、M3、G2、G3 Windows 实机验收 | [G4](G4-architecture-refactoring.md) |
+| M4   | 现有能力接入与数据迁移            | M2、M3、G1–G4                   | [M4](M4-feature-integration.md)      |
+| M5   | 跨平台验收与 0.3.0 发布           | M1–M4、G1–G4                    | [M5](M5-release-readiness.md)        |
 
 ## 验收约定
 
@@ -30,6 +32,8 @@ macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1 与 G2 完成之后�
 - M2：Windows 阶段已完成（用户实机验收、最终代码审查及自动门禁通过；macOS/Linux 对齐留给 M5）。
 - G1：已完成。G1.1a 工具基础、G1.1b 状态/版本/展示、G1.2 安装/更新、G1.3 PTY 会话、G1.4 本地历史搜索及 Windows 手工验收通过；G1.5 最终复核和门禁通过。真实安装/更新未执行，macOS/Linux Grok 验证留待 M5。
 - M3：Windows 阶段已完成。阶段 0–7 实现、最终代码审查与门禁完成；命名布局应用保留主工作区运行 PTY，独立窗口保持独立且不参与窗格重排；主窗口大小/位置恢复有显示器边界保护。Windows 实机验收通过；macOS/Linux 对齐留给 M5。
-- G2：实现、代码审查与自动门禁完成。适配器框架、Hermes 检测/安装/更新、PTY 启动、历史检索/恢复已纳入统一边界；Windows Hermes CLI 实机验收仍需用户确认后关闭 G2 并进入 M4。
-- M4：待开始。
+- G2：实现、代码审查与自动门禁完成。适配器框架、Hermes 检测/安装/更新、PTY 启动、历史检索/恢复已纳入统一边界；Windows Hermes CLI 实机验收仍需用户确认后关闭 G2，并解除 G3/G4 的验收前置。
+- G3：规划已建立；依赖 G2 Windows 实机验收。主工作区和独立终端窗口统一自定义标题栏，平台策略与验收门禁见 [G3 文档](G3-custom-window-chrome.md)。
+- G4：规划已建立；等待 G2、G3 Windows 实机验收后开工。范围、分阶段任务和门禁见 [G4 文档](G4-architecture-refactoring.md)。
+- M4：待开始；依赖 G4 完成。
 - M5：待开始。
