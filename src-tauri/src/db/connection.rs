@@ -32,6 +32,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../../migrations/0011_workspace_layouts.sql"),
     ),
     (12, include_str!("../../migrations/0012_hermes_agent.sql")),
+    (
+        13,
+        include_str!("../../migrations/0013_launch_history_details.sql"),
+    ),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -231,7 +235,7 @@ mod tests {
     #[test]
     fn workspace_layout_migration_adds_versioned_tables_without_project_foreign_keys() {
         let connection = memory_db();
-        assert_eq!(schema_version(&connection).unwrap(), 12);
+        assert_eq!(schema_version(&connection).unwrap(), 13);
 
         let current_columns: i64 = connection
             .query_row(
@@ -463,7 +467,7 @@ mod tests {
 
         apply_migrations(&connection).expect("apply Hermes migration");
 
-        assert_eq!(schema_version(&connection).unwrap(), 12);
+        assert_eq!(schema_version(&connection).unwrap(), 13);
         assert_eq!(
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))

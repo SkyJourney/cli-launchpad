@@ -204,9 +204,12 @@ schema 版本与日志内容，用于本地排障。
 
 可移植 JSON 配置 bundle 不再导出全局或项目级 CLI 参数；导入旧版 bundle 时忽略这些兼容字段。配置导入不接受 Shell 程序或初始化脚本。导入目录必须是绝对路径，存在的目录会规范化为稳定身份。配置导出不包含日志、缓存、备份、窗口位置、自动保存的当前工作区、命名布局快照或外部 CLI 会话正文；配置导入也不覆盖工作区布局。SQLite 备份包含当前工作区和命名布局。SQLite 中 0.2.x 遗留的参数字段与记录暂时保留以兼容旧数据库和备份，但当前启动链不读取它们。
 
-`launch_history` 仅记录目录、工具、启动或恢复动作、成功状态与错误
-类别，不持久化最终命令或参数文本。添加目录和实际发起启动时，Rust
-服务层均验证项目路径存在且为目录，失效路径会保留配置并返回修正提示。
+`launch_history` 记录目录名与启动时路径快照、工具、启动或恢复动作、成功状态、
+错误类别和成功创建的工作台 PTY Session ID，不持久化最终命令或参数文本。
+内置 PTY 启动与恢复由共享 PTY service 统一记录，旧版外部终端启动链继续使用
+共享启动 service；历史写入失败不影响会话生命周期。历史保留上限默认 100 条，
+用户可选 50、100、200 或 500 条；新增记录及降低上限时立即裁剪更早记录。
+添加目录和实际发起启动时，Rust 服务层均验证项目路径存在且为目录，失效路径会保留配置并返回修正提示。
 
 ## 可删除缓存
 
@@ -459,7 +462,7 @@ args: ["install", "--id", "...", "--exact", "--accept-package-agreements", "--ac
   Codex：releases.openai.com Codex latest channel
   Antigravity：官方安装器使用的平台 manifest
   Grok Build：进入设置页或用户手动刷新版本时独立运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；启动子进程时移除 pnpm 注入的 `npm_config_user_agent`，避免把官方原生安装误判为 npm 安装；Windows 官方 stable 二进制地址不作为版本号 API。
-  Hermes Agent：进入设置页或手动刷新时，对已识别的官方 Windows 源码安装独立运行 `hermes update --check`，使用 CLI 默认更新目标并按落后提交数显示状态，不做语义版本比较；浅克隆可能只有“有更新”而没有精确提交数。检查不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata。读取 `hermes --version` 时使用临时 `HERMES_HOME` 禁用默认的被动更新网络检查，不更改用户配置。MSIX/Store 状态由所属更新渠道提供。
+  Hermes Agent：进入设置页或手动刷新时，对已识别的官方 Windows 源码安装独立运行一次 `hermes update --check`，使用 CLI 默认更新目标并按落后提交数显示状态，不做语义版本比较；浅克隆可能只有“有更新”而没有精确提交数。检查不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata。仅根据已解析的完整可执行路径及默认源码 checkout 目录判定托管资格，不再串行运行 `--install-id` 与 `--plan`。读取 `hermes --version` 时使用临时 `HERMES_HOME` 禁用默认的被动更新网络检查，不更改用户配置。MSIX/Store 状态由所属更新渠道提供。
 
 更新命令（结构化参数，先预览后确认）
   Claude：claude update

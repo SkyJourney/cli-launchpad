@@ -282,7 +282,7 @@ Grok 也提供官方 npm 包 `@xai-official/grok`，但本应用 G1 只托管官
 `grok update` 时会移除 pnpm 注入的 `npm_config_user_agent`，避免官方原生安装
 被误判为 npm 安装。
 
-Hermes 的更新可用状态仍按已识别的官方 Windows 源码安装进行查询：设置页或手动刷新时读取 `hermes update --install-id`、`hermes update --plan` 与 `hermes update --check`，均使用 CLI 默认更新目标。状态不与 `--version` 中的语义版本比较；官方对浅克隆可能只报告是否存在更新而不给提交数。`--check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，因此可能更新本地比较引用，不能承诺零文件写入。用户确认后，Launchpad 直接执行已解析的 Hermes CLI 完整路径和 `update` 参数，不额外读取更新计划或在启动任务前重复校验；MSIX、Microsoft Store、其他包管理器和来源不明安装的更新行为交由 Hermes CLI 自身处理。确认浮窗只显示来源与该完整路径命令。查询失败时保留可用缓存并明确标出查询错误；没有可用结果时显示未知状态，不猜测为已同步。
+Hermes 的更新可用状态仍按已识别的官方 Windows 源码安装进行查询：设置页或手动刷新时仅运行一次 `hermes update --check`，使用 CLI 默认更新目标。托管资格由已解析的完整可执行路径和默认源码 checkout 位置确认，不额外运行 `--install-id` 和 `--plan`。状态不与 `--version` 中的语义版本比较；官方对浅克隆可能只报告是否存在更新而不给提交数。`--check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，因此可能更新本地比较引用，不能承诺零文件写入。用户确认后，Launchpad 直接执行已解析的 Hermes CLI 完整路径和 `update` 参数，不额外读取更新计划或在启动任务前重复校验；MSIX、Microsoft Store、其他包管理器和来源不明安装的更新行为交由其所属渠道处理。确认浮窗只显示来源与该完整路径命令。查询失败时保留可用缓存并明确标出查询错误；没有可用结果时显示未知状态，不猜测为已同步。
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。Codex 的 Windows
 更新计划先解析 CLI 完整路径，再在最终 PowerShell 边界进行字面量转义；命令主体

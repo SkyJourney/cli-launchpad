@@ -23,9 +23,11 @@ impl LaunchAction {
 pub struct LaunchHistoryEntry {
     pub id: i64,
     pub directory_name: String,
+    pub directory_path: String,
     pub tool_key: ToolKey,
     pub action: LaunchAction,
     pub success: bool,
     pub error_category: Option<String>,
     pub launched_at: String,
+    pub pty_session_id: Option<String>,
 }

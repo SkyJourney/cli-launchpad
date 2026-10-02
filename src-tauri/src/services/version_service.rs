@@ -89,9 +89,7 @@ mod tests {
     };
     #[cfg(windows)]
     use crate::services::cli_adapters::hermes::version::is_hermes_default_install_path;
-    use crate::services::cli_adapters::hermes::version::{
-        parse_hermes_install_id, parse_hermes_update_check, parse_hermes_update_plan,
-    };
+    use crate::services::cli_adapters::hermes::version::parse_hermes_update_check;
 
     #[test]
     fn parses_codex_release_channel_tag() {
@@ -164,33 +162,6 @@ mod tests {
             (false, None)
         );
         assert!(parse_hermes_update_check("network request failed").is_err());
-    }
-
-    #[test]
-    fn parses_hermes_update_plan_and_rejects_incomplete_or_managed_installs() {
-        let plan = parse_hermes_update_plan(
-            "Update plan:\n  Install: git (v0.21.5 @ 040b6df2)\n  Profiles: default\n  Running Hermes services: none detected — code swap only.\n",
-        )
-        .unwrap();
-        assert_eq!(plan.install_kind, "git");
-        assert!(plan.summary.contains("Profiles: default"));
-
-        let managed = parse_hermes_update_plan(
-            "Update plan:\n  Install: docker\n  Profiles: default\n  Running Hermes services: none detected.\n",
-        )
-        .unwrap();
-        assert_eq!(managed.install_kind, "docker");
-        assert!(parse_hermes_update_plan("Install: git").is_err());
-    }
-
-    #[test]
-    fn parses_hermes_install_id_as_a_single_bounded_token() {
-        assert_eq!(
-            parse_hermes_install_id("cc57596e7c2ed097\n"),
-            Some("cc57596e7c2ed097")
-        );
-        assert_eq!(parse_hermes_install_id("warning\ncc57596e7c2ed097"), None);
-        assert_eq!(parse_hermes_install_id("../install"), None);
     }
 
     #[cfg(windows)]

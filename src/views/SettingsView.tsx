@@ -28,6 +28,7 @@ import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
 import {
   getLatestUpdateAvailability,
   isManagedUpdateAllowed,
+  getCliAdapter,
   TOOLS,
 } from "../lib/tools";
 import {
@@ -40,6 +41,7 @@ import {
   fetchLatestVersion,
   getCacheStats,
   getCloseBehavior,
+  getLaunchHistoryLimit,
   getInstallPlan,
   importConfigFromPath,
   listBackups,
@@ -47,6 +49,7 @@ import {
   startExecutionTask,
   restoreBackup,
   setCloseBehavior,
+  setLaunchHistoryLimit,
   type InstallKind,
   type InstallPlan,
   type ExecutionTask,
@@ -157,6 +160,17 @@ export function SettingsView() {
   const launchHistory = useQuery({
     queryKey: qk.launchHistory(),
     queryFn: listLaunchHistory,
+  });
+  const launchHistoryLimit = useQuery({
+    queryKey: qk.launchHistoryLimit(),
+    queryFn: getLaunchHistoryLimit,
+  });
+  const launchHistoryLimitMutation = useMutation({
+    mutationFn: setLaunchHistoryLimit,
+    onSuccess: async (_, limit) => {
+      queryClient.setQueryData(qk.launchHistoryLimit(), limit);
+      await queryClient.invalidateQueries({ queryKey: qk.launchHistory() });
+    },
   });
   const clearHistoryMutation = useMutation({
     mutationFn: clearLaunchHistory,
@@ -724,6 +738,22 @@ export function SettingsView() {
       <section className="config-backup">
         <div className="section-heading">{t("settings.recentLaunch")}</div>
         <div className="config-actions">
+          <label className="launch-history-retention">
+            <span>{t("settings.launchHistoryRetention")}</span>
+            <select
+              value={launchHistoryLimit.data ?? 100}
+              disabled={launchHistoryLimitMutation.isPending}
+              onChange={(event) =>
+                launchHistoryLimitMutation.mutate(Number(event.target.value))
+              }
+            >
+              {[50, 100, 200, 500].map((limit) => (
+                <option key={limit} value={limit}>
+                  {t("settings.launchHistoryRetentionCount", { count: limit })}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="ghost-button"
             disabled={clearHistoryMutation.isPending}
@@ -733,23 +763,45 @@ export function SettingsView() {
           </button>
         </div>
         <div className="backup-list settings-history-list">
-          {launchHistory.data?.map((event) => (
-            <div className="backup-row" key={event.id}>
-              <div>
-                <strong>
-                  {event.directoryName} · {event.toolKey}
-                </strong>
+          {launchHistory.data?.map((event) => {
+            const tool = getCliAdapter(event.toolKey);
+            const ToolIcon = tool.icon;
+            return (
+            <article className="launch-history-card" key={event.id}>
+              <div className="launch-history-card-heading">
+                <span className="launch-history-tool">
+                  <ToolIcon size={16} />
+                  {tool.label}
+                </span>
                 <span className="muted">
                   {event.action === "resume"
                     ? t("settings.resumeSession")
                     : t("settings.newSession")}{" "}
                   ·{" "}
                   {event.success ? t("settings.success") : t("settings.failed")}{" "}
-                  · {formatUtcDateTime(event.launchedAt, i18n.resolvedLanguage)}
                 </span>
               </div>
-            </div>
-          ))}
+              <div className="launch-history-card-details">
+                <span>
+                  <strong>{t("settings.launchHistoryProject")}</strong>
+                  {event.directoryName}
+                </span>
+                <span className="launch-history-path" title={event.directoryPath}>
+                  <strong>{t("settings.launchHistoryPath")}</strong>
+                  {event.directoryPath}
+                </span>
+                <span>
+                  <strong>{t("settings.launchHistoryTime")}</strong>
+                  {formatUtcDateTime(event.launchedAt, i18n.resolvedLanguage)}
+                </span>
+                <span className="launch-history-id" title={event.ptySessionId ?? undefined}>
+                  <strong>{t("settings.launchHistorySessionId")}</strong>
+                  <code>{event.ptySessionId ?? "—"}</code>
+                </span>
+              </div>
+            </article>
+            );
+          })}
         </div>
       </section>
 

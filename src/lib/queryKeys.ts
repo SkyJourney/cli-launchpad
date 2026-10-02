@@ -9,6 +9,7 @@ export const qk = {
   latestVersion: (toolKey: ToolKey) => ["latest-version", toolKey],
   backups: () => ["backups"],
   launchHistory: () => ["launch-history"],
+  launchHistoryLimit: () => ["launch-history-limit"],
   cacheStats: () => ["cache-stats"],
   terminalEnvironment: () => ["terminal-environment"],
   launchTarget: () => ["launch-target"],

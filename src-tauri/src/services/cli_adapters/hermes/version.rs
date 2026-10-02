@@ -10,8 +10,6 @@ use crate::platform::detect;
 use crate::services::version_service::first_output_line;
 
 const HERMES_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
-const HERMES_PLAN_TIMEOUT: Duration = Duration::from_secs(12);
-const HERMES_INSTALL_ID_TIMEOUT: Duration = Duration::from_secs(8);
 const HERMES_OUTPUT_LIMIT: usize = 64 * 1024;
 const HERMES_VERSION_PROBE_CONFIG: &str = "updates:\n  check: false\n";
 
@@ -68,12 +66,6 @@ pub(crate) struct HermesUpdateCheck {
     pub(crate) management_message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HermesUpdatePlan {
-    pub(crate) install_kind: String,
-    pub(crate) summary: String,
-}
-
 /// Inspect Hermes' default Windows source installation and compare it with
 /// the updater's default channel. This is called only for an explicit refresh.
 pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
@@ -81,8 +73,8 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
         ToolKey::Hermes,
     ))
     .ok_or_else(|| "未检测到可运行的 Hermes Agent CLI".to_string())?;
-    let plan = match inspect_hermes_managed_update(&path) {
-        Ok(plan) => plan,
+    match inspect_hermes_managed_install(&path) {
+        Ok(()) => {}
         Err(message) => {
             return Ok(HermesUpdateCheck {
                 update_available: None,
@@ -92,18 +84,6 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
                 management_message: Some(message),
             });
         }
-    };
-    if plan.install_kind != "git" {
-        return Ok(HermesUpdateCheck {
-            update_available: None,
-            commits_behind: None,
-            error: None,
-            managed_update_allowed: false,
-            management_message: Some(format!(
-                "Hermes Agent 当前由 {} 安装或管理；请使用原安装渠道更新。",
-                plan.install_kind
-            )),
-        });
     }
 
     let output =
@@ -126,7 +106,7 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
         return Ok(HermesUpdateCheck {
             update_available: None,
             commits_behind: None,
-            error: Some(format!("Hermes Agent 官方 main 分支检查失败：{detail}")),
+            error: Some(format!("Hermes Agent 官方更新检查失败：{detail}")),
             managed_update_allowed: true,
             management_message: None,
         });
@@ -153,11 +133,10 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
     })
 }
 
-/// Verify the default Hermes source install and its update ownership for the
-/// Settings status query.
-pub(crate) fn inspect_hermes_managed_update(
-    path: &std::path::Path,
-) -> Result<HermesUpdatePlan, String> {
+/// Verify the default Hermes source install before enabling app-managed updates.
+/// The official `update --check` command itself provides the update status, so
+/// the install identity and plan commands are unnecessary here.
+fn inspect_hermes_managed_install(path: &std::path::Path) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = path;
@@ -177,22 +156,7 @@ pub(crate) fn inspect_hermes_managed_update(
             );
         }
 
-        let install_id_output =
-            run_hermes_command(path, &["update", "--install-id"], HERMES_INSTALL_ID_TIMEOUT)?;
-        if !install_id_output.status.success()
-            || parse_hermes_install_id(&combined_output(&install_id_output)).is_none()
-        {
-            return Err("Hermes Agent 未返回有效的官方安装身份".to_string());
-        }
-
-        let plan_output = run_hermes_command(path, &["update", "--plan"], HERMES_PLAN_TIMEOUT)?;
-        if !plan_output.status.success() {
-            let detail = first_output_line(&plan_output.stderr)
-                .or_else(|| first_output_line(&plan_output.stdout))
-                .unwrap_or_else(|| format!("退出码 {}", plan_output.status));
-            return Err(format!("Hermes Agent 官方更新计划读取失败：{detail}"));
-        }
-        parse_hermes_update_plan(&combined_output(&plan_output))
+        Ok(())
     }
 }
 
@@ -338,56 +302,6 @@ fn combined_output(output: &Output) -> String {
     strip_ansi_sequences(&combined)
 }
 
-pub(crate) fn parse_hermes_install_id(output: &str) -> Option<&str> {
-    let trimmed = output.trim();
-    let mut lines = trimmed.lines();
-    let id = lines.next()?.trim();
-    if id.len() < 8
-        || id.len() > 128
-        || !id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-        || lines.any(|line| !line.trim().is_empty())
-    {
-        return None;
-    }
-    Some(id)
-}
-
-pub(crate) fn parse_hermes_update_plan(output: &str) -> Result<HermesUpdatePlan, String> {
-    let cleaned = strip_ansi_sequences(output);
-    let mut install_kind = None;
-    let mut has_profiles = false;
-    let mut has_running_services = false;
-    for line in cleaned.lines().map(str::trim) {
-        if let Some(value) = line.strip_prefix("Install:") {
-            let first = value.split_whitespace().next().unwrap_or_default();
-            if first.is_empty() || install_kind.replace(first.to_ascii_lowercase()).is_some() {
-                return Err("Hermes Agent 官方更新计划中的安装类型无效".to_string());
-            }
-        }
-        has_profiles |= line.starts_with("Profiles:");
-        has_running_services |= line.starts_with("Running Hermes services:");
-    }
-    let install_kind =
-        install_kind.ok_or_else(|| "Hermes Agent 官方更新计划缺少安装类型".to_string())?;
-    if !has_profiles || !has_running_services {
-        return Err("Hermes Agent 官方更新计划缺少 Profile 或运行服务信息".to_string());
-    }
-    let summary = cleaned
-        .lines()
-        .map(str::trim_end)
-        .filter(|line| !line.trim().is_empty())
-        .take(80)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let summary = summary.chars().take(4000).collect::<String>();
-    Ok(HermesUpdatePlan {
-        install_kind,
-        summary,
-    })
-}
-
 pub(crate) fn parse_hermes_update_check(output: &str) -> Result<(bool, Option<u32>), String> {
     let cleaned = strip_ansi_sequences(output).replace("up-to-date", "up to date");
     let mut result = None;
@@ -405,7 +319,7 @@ pub(crate) fn parse_hermes_update_check(output: &str) -> Result<(bool, Option<u3
             result = Some((true, parse_commits_behind(&normalized)));
         }
     }
-    result.ok_or_else(|| "Hermes Agent 官方 main 分支检查结果无法识别".to_string())
+    result.ok_or_else(|| "Hermes Agent 官方更新检查结果无法识别".to_string())
 }
 
 fn parse_commits_behind(output: &str) -> Option<u32> {

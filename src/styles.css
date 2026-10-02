@@ -834,6 +834,82 @@ pre,
   padding: 8px 10px;
 }
 
+.launch-history-retention {
+  align-items: center;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 8px;
+}
+
+.launch-history-retention select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font: inherit;
+  height: 32px;
+  padding: 0 8px;
+}
+
+.launch-history-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.launch-history-card-heading,
+.launch-history-tool {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.launch-history-card-heading {
+  justify-content: space-between;
+}
+
+.launch-history-tool {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.launch-history-card-details {
+  color: var(--color-text-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 5px 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.launch-history-card-details > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-history-card-details strong {
+  color: var(--color-text);
+  font-weight: 500;
+  margin-right: 5px;
+}
+
+.launch-history-id code {
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .launch-history-card-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .settings-view .backup-list.settings-history-list strong {
   font-size: 12px;
 }

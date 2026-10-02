@@ -200,6 +200,8 @@ pub fn run() {
             commands::launch::launch_tool,
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
+            commands::launch_history::get_launch_history_limit,
+            commands::launch_history::set_launch_history_limit,
             commands::session::list_sessions,
             commands::session::search_sessions,
             commands::session::refresh_session_search_index,

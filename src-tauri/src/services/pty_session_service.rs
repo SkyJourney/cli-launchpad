@@ -18,8 +18,9 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    db::pty_session_repo,
+    db::{directory_repo, launch_history_repo, pty_session_repo},
     models::{
+        launch_history::LaunchAction,
         pty_session::{
             PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
             PtySizeUpdate, PtyTerminalSnapshot,
@@ -317,6 +318,56 @@ fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppEr
 
 impl PtySessionManager {
     pub fn create(
+        &self,
+        connection: &Connection,
+        app: &AppHandle,
+        directory_id: i64,
+        tool_key: ToolKey,
+        resume_session_id: Option<&str>,
+        size: PtySizeUpdate,
+        window_label: &str,
+        on_event: Channel<PtyEvent>,
+    ) -> Result<PtySession, AppError> {
+        let directory_path = directory_repo::get(connection, directory_id)
+            .ok()
+            .flatten()
+            .map(|directory| directory.path);
+        let result = self.create_inner(
+            connection,
+            app,
+            directory_id,
+            tool_key,
+            resume_session_id,
+            size,
+            window_label,
+            on_event,
+        );
+        let action = if resume_session_id.is_some() {
+            LaunchAction::Resume
+        } else {
+            LaunchAction::Launch
+        };
+        let session_id = result
+            .as_ref()
+            .ok()
+            .map(|session| session.session_id.as_str());
+        let error_category = result.as_ref().err().map(|_| "launch_failed");
+        if let Err(error) = launch_history_repo::record(
+            connection,
+            directory_id,
+            directory_path.as_deref(),
+            tool_key,
+            action,
+            result.is_ok(),
+            error_category,
+            session_id,
+        ) {
+            log::warn!("unable to record embedded PTY launch history: {error}");
+        }
+        result
+    }
+
+    fn create_inner(
         &self,
         connection: &Connection,
         app: &AppHandle,

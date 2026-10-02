@@ -352,11 +352,13 @@ export interface BackupManifest {
 export interface LaunchHistoryEntry {
   id: number;
   directoryName: string;
+  directoryPath: string;
   toolKey: ToolKey;
   action: "launch" | "resume";
   success: boolean;
   errorCategory: string | null;
   launchedAt: string;
+  ptySessionId: string | null;
 }
 
 export interface CacheStats {
@@ -443,6 +445,14 @@ export function listLaunchHistory() {
 
 export function clearLaunchHistory() {
   return invoke<void>("clear_launch_history");
+}
+
+export function getLaunchHistoryLimit() {
+  return invoke<number>("get_launch_history_limit");
+}
+
+export function setLaunchHistoryLimit(limit: number) {
+  return invoke<void>("set_launch_history_limit", { limit });
 }
 
 // Version & install/update

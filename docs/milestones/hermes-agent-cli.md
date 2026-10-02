@@ -26,7 +26,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 - 检测 PATH、官方 Windows 源码安装器的受管入口及 `HERMES_HOME`；只对确认属于官方源码安装且由该安装器管理的实例提供 Launchpad 托管更新。其他来源允许在可信解析到命令时启动，但更新交给其所属渠道。
 - 设置页进入时为每个 CLI 独立启动最新状态查询；Hermes 单独运行 `hermes update --check`，采用官方默认更新目标，慢查询或失败只影响 Hermes 自身一行，不阻塞其他 CLI。手动刷新重新启动各自查询。检查不拉取应用代码、不安装依赖或重启 Gateway，但可能获取 Git metadata；若输出无法可靠判断更新状态或通道，显示未知状态，不猜测版本。
 - 官方 PowerShell 安装计划进入现有预览、确认、后台任务、实时日志、取消和安装后回读流程。固定使用 `-NonInteractive -Branch main -SkipBrowser -SkipComputerUse`；确认内容说明受管运行时、基础依赖、安装入口、数据目录和 PATH 等副作用。
-- 设置页版本查询结合 `hermes update --install-id`、`hermes update --plan` 与解析到的执行文件归属，识别当前安装来源并决定是否显示托管更新入口；更新任务自身不重复读取计划或校验来源，直接运行 `hermes update`，由官方 CLI 处理默认更新目标、安装渠道与更新过程。
+- 设置页版本查询对已识别的官方 Windows 默认源码安装只运行一次 `hermes update --check`；托管资格由解析到的执行文件完整路径和默认源码 checkout 位置确认，不再为一次查询串行运行 `--install-id` 与 `--plan`。更新任务不重复读取计划或校验来源，直接运行完整路径的 `hermes update`，由官方 CLI 处理默认更新目标、安装渠道与更新过程。
 - 普通启动使用 `hermes` 与当前项目目录；PTY 创建、输入输出、尺寸同步、自然退出、独立窗口及窗格行为复用现有共享生命周期。
 - 右侧项目上下文区展示当前项目 Hermes 会话，按 10 条分页，支持稀疏别名、可重建的本地搜索索引和安全恢复。遵循 Hermes 当前有效 home/Profile 解析结果，只读一个 Profile；不枚举或管理命名 Profile。
 - G2 验收以 Windows 为准。macOS/Linux 安装、路径、SQLite、PTY 和会话恢复适配留给 M5。

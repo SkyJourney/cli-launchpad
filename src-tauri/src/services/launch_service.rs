@@ -193,13 +193,19 @@ fn record_and_log_result(
     tool_key: ToolKey,
 ) -> Result<()> {
     let error_category = result.as_ref().err().map(|_| "launch_failed");
+    let directory_path = directory_repo::get(connection, directory_id)
+        .ok()
+        .flatten()
+        .map(|directory| directory.path);
     if launch_history_repo::record(
         connection,
         directory_id,
+        directory_path.as_deref(),
         tool_key,
         action,
         result.is_ok(),
         error_category,
+        None,
     )
     .is_err()
     {
