@@ -35,5 +35,5 @@ macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1–G4 完成之后，�
 - G2：实现、代码审查与自动门禁完成；2026-10-02 用户确认 Windows 实机验收通过。适配器框架、Hermes 检测/安装/更新、PTY 启动、历史检索/恢复已纳入统一边界；macOS/Linux 对齐由 M5 统一验收。
 - G3：Windows 阶段实现、代码复核、自动门禁和用户实机验收已完成。主工作区和独立终端窗口统一自定义标题栏；macOS/Linux 窗口实机验收统一见 M5 清单，详见 [G3 文档](G3-custom-window-chrome.md)。
 - G4：已完成。自动门禁、最终代码审查和五类 Windows 实机验收通过；独立窗口画布无法单独视觉确认的范围与代码复用依据已记录。详见 [G4 文档](G4-architecture-refactoring.md)。
-- M4：待开始；依赖 G4 完成。
+- M4：已完成。0.2.4 schema 8 / bundle v3 升级自动门禁与配置兼容测试通过，用户确认 Windows 实机验收通过；macOS/Linux 对齐留给 M5。详见 [M4 验收记录](M4-feature-integration.md)。
 - M5：待开始。

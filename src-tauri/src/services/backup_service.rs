@@ -243,6 +243,18 @@ mod tests {
     #[test]
     fn backup_and_restore_preserve_current_and_named_workspace_layouts() {
         let (_directory, paths, mut connection) = setup();
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Claude,
+            "session-1",
+            "My session",
+        )
+        .unwrap();
+        crate::db::app_setting_repo::set_close_behavior(
+            &connection,
+            crate::models::app_setting::CloseBehavior::Quit,
+        )
+        .unwrap();
         connection
             .execute(
                 "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, 1, 4, '{\"tree\":\"current\"}', 10)",
@@ -263,6 +275,17 @@ mod tests {
         connection
             .execute("delete from workspace_layout_presets", [])
             .unwrap();
+        crate::db::session_alias_repo::delete(
+            &connection,
+            crate::models::tool::ToolKey::Claude,
+            "session-1",
+        )
+        .unwrap();
+        crate::db::app_setting_repo::set_close_behavior(
+            &connection,
+            crate::models::app_setting::CloseBehavior::MinimizeToTray,
+        )
+        .unwrap();
 
         restore(&mut connection, &paths, &backup.id).unwrap();
 
@@ -283,6 +306,20 @@ mod tests {
         assert_eq!(current_payload, r#"{"tree":"current"}"#);
         assert_eq!(preset_name, "Saved Layout");
         assert_eq!(preset_payload, r#"{"tree":"named"}"#);
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Claude
+            )
+            .unwrap()
+            .get("session-1")
+            .map(String::as_str),
+            Some("My session")
+        );
+        assert_eq!(
+            crate::db::app_setting_repo::get_close_behavior(&connection).unwrap(),
+            crate::models::app_setting::CloseBehavior::Quit
+        );
     }
 
     #[test]
@@ -295,6 +332,138 @@ mod tests {
         restore(&mut connection, &paths, &backup.id).unwrap();
 
         assert_eq!(directory_repo::list(&connection).unwrap().len(), 1);
+        assert!(list(&paths)
+            .unwrap()
+            .iter()
+            .any(|item| matches!(item.reason, BackupReason::PreRestore)));
+    }
+
+    #[test]
+    fn restoring_a_024_schema_eight_backup_migrates_and_preserves_legacy_data() {
+        let (_directory, paths, mut connection) = setup();
+        let id = "0-2-4-schema-8";
+        let filename = format!("cli-launchpad-{id}.db");
+        let backup_file = paths.backup_database_dir.join(&filename);
+        let legacy = Connection::open(&backup_file).unwrap();
+        legacy.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations_through(&legacy, 8).unwrap();
+        legacy
+            .execute(
+                "insert into directories (id, name, path, pinned, note) values (8, 'Legacy', 'C:\\legacy', 1, 'preserve')",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "update tools set global_args = '--legacy-args' where key = 'claude'",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "insert into directory_tool_args (directory_id, tool_key, args) values (8, 'claude', '--legacy-project-args')",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('claude', 'old-session', 'Old alias', 10)",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "update application_settings set value = 'quit' where key = 'close_behavior'",
+                [],
+            )
+            .unwrap();
+        legacy.close().unwrap();
+
+        let manifest = BackupManifest {
+            id: id.to_string(),
+            created_at_ms: 10,
+            reason: BackupReason::Manual,
+            schema_version: 8,
+            database_filename: filename,
+            size_bytes: fs::metadata(&backup_file).unwrap().len(),
+        };
+        write_manifest(&paths, &manifest).unwrap();
+
+        restore(&mut connection, &paths, id).unwrap();
+
+        assert_eq!(connection::schema_version(&connection).unwrap(), 13);
+        assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
+        assert_eq!(
+            connection
+                .query_row(
+                    "select global_args from tools where key = 'claude'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "--legacy-args"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select args from directory_tool_args where directory_id = 8 and tool_key = 'claude'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "--legacy-project-args"
+        );
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Claude
+            )
+            .unwrap()
+            .get("old-session")
+            .map(String::as_str),
+            Some("Old alias")
+        );
+        assert_eq!(
+            crate::db::app_setting_repo::get_close_behavior(&connection).unwrap(),
+            crate::models::app_setting::CloseBehavior::Quit
+        );
+        assert!(list(&paths)
+            .unwrap()
+            .iter()
+            .any(|item| matches!(item.reason, BackupReason::PreRestore)));
+    }
+
+    #[test]
+    fn failed_old_backup_migration_restores_the_pre_restore_database() {
+        let (_directory, paths, mut connection) = setup();
+        directory_repo::add(&connection, "Keep current", "C:\\current", None).unwrap();
+
+        let id = "broken-schema-8";
+        let filename = format!("cli-launchpad-{id}.db");
+        let backup_file = paths.backup_database_dir.join(&filename);
+        let legacy = Connection::open(&backup_file).unwrap();
+        legacy.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations_through(&legacy, 8).unwrap();
+        legacy.execute("drop table tools", []).unwrap();
+        legacy.close().unwrap();
+
+        let manifest = BackupManifest {
+            id: id.to_string(),
+            created_at_ms: 10,
+            reason: BackupReason::Manual,
+            schema_version: 8,
+            database_filename: filename,
+            size_bytes: fs::metadata(&backup_file).unwrap().len(),
+        };
+        write_manifest(&paths, &manifest).unwrap();
+
+        assert!(restore(&mut connection, &paths, id).is_err());
+
+        assert_eq!(connection::schema_version(&connection).unwrap(), 13);
+        assert_eq!(
+            directory_repo::list(&connection).unwrap()[0].name,
+            "Keep current"
+        );
         assert!(list(&paths)
             .unwrap()
             .iter()

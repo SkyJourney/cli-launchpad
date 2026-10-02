@@ -186,5 +186,10 @@ mod tests {
             .query_row("select value from data", [], |row| row.get(0))
             .unwrap();
         assert_eq!(value, "kept");
+        let original = Connection::open(&source).unwrap();
+        let original_value: String = original
+            .query_row("select value from data", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(original_value, "kept");
     }
 }

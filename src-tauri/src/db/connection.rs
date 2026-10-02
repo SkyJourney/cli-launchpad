@@ -90,10 +90,22 @@ pub fn ensure_integrity(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
+    apply_migrations_to(connection, latest_schema_version())
+}
+
+#[cfg(test)]
+pub(crate) fn apply_migrations_through(
+    connection: &Connection,
+    target_version: i64,
+) -> rusqlite::Result<()> {
+    apply_migrations_to(connection, target_version)
+}
+
+fn apply_migrations_to(connection: &Connection, target_version: i64) -> rusqlite::Result<()> {
     let current = schema_version(connection)?;
 
     for (version, sql) in MIGRATIONS {
-        if *version > current {
+        if *version > current && *version <= target_version {
             // Apply the migration and bump user_version atomically so a crash
             // between the two cannot leave a half-migrated database. PRAGMA does
             // not support bound parameters; `version` is a trusted constant.
@@ -274,6 +286,212 @@ mod tests {
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
         assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn upgrades_a_representative_024_schema_eight_database_to_current_schema() {
+        let connection = Connection::open_in_memory().expect("open schema 8 database");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable foreign keys");
+        for (version, sql) in &MIGRATIONS[..8] {
+            connection
+                .execute_batch(&format!(
+                    "BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;"
+                ))
+                .expect("apply the 0.2.4 schema");
+        }
+
+        connection
+            .execute(
+                "insert into directories (id, name, path, sort_order, pinned, last_used_at, note) values (41, 'Existing project', 'C:\\Projects\\existing', 7, 1, '2026-09-30T12:00:00Z', 'kept note')",
+                [],
+            )
+            .expect("seed 0.2.4 project");
+        connection
+            .execute(
+                "update tools set global_args = '--legacy-global' where key = 'claude'",
+                [],
+            )
+            .expect("seed legacy global arguments");
+        connection
+            .execute(
+                "update shell_profiles set name = 'Existing PowerShell', shell_exe = 'pwsh-custom.exe' where id = 1",
+                [],
+            )
+            .expect("seed existing terminal profile");
+        connection
+            .execute(
+                "insert into directory_tool_args (directory_id, tool_key, args) values (41, 'claude', '--legacy-project')",
+                [],
+            )
+            .expect("seed legacy project arguments");
+        connection
+            .execute(
+                "update application_settings set value = 'quit' where key = 'close_behavior'",
+                [],
+            )
+            .expect("set existing desktop behavior");
+        connection
+            .execute(
+                "update application_settings set value = 'auto' where key = 'launch_target'",
+                [],
+            )
+            .expect("set existing launch target");
+        connection
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('claude', 'legacy-session', 'My session', 123)",
+                [],
+            )
+            .expect("seed legacy session alias");
+        connection
+            .execute(
+                "insert into launch_history (directory_id, tool_key, action, success, launched_at) values (41, 'claude', 'resume', 1, '2026-09-30 12:00:00')",
+                [],
+            )
+            .expect("seed launch history");
+        connection
+            .execute(
+                "insert into execution_tasks (id, tool_key, kind, source, program, args_json, preview, status, started_at_ms, finished_at_ms) values ('old-task', 'claude', 'update', 'official', 'claude', '[]', 'claude update', 'succeeded', 10, 20)",
+                [],
+            )
+            .expect("seed execution history");
+        connection
+            .execute(
+                "insert into execution_task_logs (task_id, sequence, stream, content, created_at_ms) values ('old-task', 1, 'stdout', 'completed', 20)",
+                [],
+            )
+            .expect("seed execution log");
+
+        assert_eq!(schema_version(&connection).unwrap(), 8);
+        apply_migrations(&connection).expect("upgrade 0.2.4 database");
+
+        assert_eq!(schema_version(&connection).unwrap(), 13);
+        let project: (String, String, i64, String) = connection
+            .query_row(
+                "select name, path, pinned, note from directories where id = 41",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("read migrated project");
+        assert_eq!(
+            project,
+            (
+                "Existing project".to_string(),
+                "C:\\Projects\\existing".to_string(),
+                1,
+                "kept note".to_string()
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select global_args from tools where key = 'claude'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "--legacy-global"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select args from directory_tool_args where directory_id = 41 and tool_key = 'claude'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "--legacy-project"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select value from application_settings where key = 'close_behavior'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "quit"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select value from application_settings where key = 'launch_target'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "auto"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select name, shell_exe from shell_profiles where id = 1",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            (
+                "Existing PowerShell".to_string(),
+                "pwsh-custom.exe".to_string()
+            )
+        );
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Claude
+            )
+            .unwrap()
+            .get("legacy-session")
+            .map(String::as_str),
+            Some("My session")
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select action, success from launch_history where directory_id = 41",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap(),
+            ("resume".to_string(), 1)
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select content from execution_task_logs where task_id = 'old-task'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "completed"
+        );
+        assert_eq!(
+            connection
+                .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "select count(*) from sqlite_master where type = 'table' and name in ('workspace_state', 'workspace_layout_presets')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+
+        apply_migrations(&connection).expect("re-running migrations is safe");
+        assert_eq!(schema_version(&connection).unwrap(), 13);
+        assert_eq!(
+            connection
+                .query_row("select count(*) from directories", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
