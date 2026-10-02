@@ -1,6 +1,6 @@
 # G2：Hermes Agent CLI 接入
 
-**状态：** 实现与自动化门禁收尾中；Windows CLI 实机验收待确认
+**状态：** 实现、代码审查与自动化门禁完成；Windows CLI 实机验收待确认
 **归属版本：** 0.3.0
 **依赖：** M3、G1
 **后续依赖：** M4、M5
@@ -91,7 +91,7 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 
 - Hermes 能力已接入统一 Rust/前端 CLI 适配器注册表；适配器缺省能力、单项 panic/任务异常和单一历史源错误均按 CLI 隔离降级，不中断应用启动、其他 CLI 状态查询、索引或 PTY 生命周期。
 - Hermes 历史读取只读打开当前 home/Profile 的单个 `state.db`，限量扫描 `source=cli` 的记录并验证项目归属；短预览和扫描均有上限，缺失数据库返回空结果，锁定/损坏/无效 Profile 等错误保留旧索引并标记不完整。
-- 自动化审查与门禁结果：2026-10-02，Rust 212 项测试通过、`cargo check` 通过、前端 59 项测试通过、TypeScript 检查及 Vite 生产构建通过、格式和差异检查通过。生产构建仍报告已有的大型 bundle 提示；Rust 仍报告一个 macOS 专用字段在 Windows 构建未使用的警告。
+- 自动化审查与门禁结果：2026-10-02，Rust 212 项测试通过、`cargo check` 通过、前端 62 项测试通过、TypeScript 检查及 Vite 生产构建通过、格式和差异检查通过。版本状态查询已覆盖同一 CLI 有活动任务时暂停查询、隐藏旧缓存、完成后定向强制刷新。生产构建仍报告已有的大型 bundle 提示；Rust 仍报告一个 macOS 专用字段在 Windows 构建未使用的警告。
 - 适配器安全回归包含 panic 转成单 CLI 错误、Hermes 无效 Profile 拒绝回退、数据库只读、项目隔离、缺失数据库、可选 schema 字段及超量扫描标记不完整。
 - 未验证：真实 Hermes 安装与更新；Windows Hermes TUI 输入/resize/退出、真实 Profile 数据、历史搜索/恢复、布局和独立窗口的手工验收。这些不由单元测试代替，Windows 实机检查完成前 G2 状态保持待用户验收。
 
