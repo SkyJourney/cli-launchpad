@@ -24,6 +24,7 @@ import {
 } from "../hooks/useExecutionTasks";
 import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
+import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
 import {
   getLatestUpdateAvailability,
   isManagedUpdateAllowed,
@@ -86,6 +87,10 @@ export function SettingsView() {
     queries: TOOLS.map((tool) => ({
       queryKey: qk.latestVersion(tool.key),
       queryFn: () => fetchLatestVersion(tool.key, true),
+      enabled: shouldQueryLatestVersion(
+        executionTasks.isLoading,
+        activeTaskByTool.has(tool.key),
+      ),
       staleTime: 1000 * 60 * 30,
       refetchOnMount: "always" as const,
     })),
@@ -177,7 +182,7 @@ export function SettingsView() {
         queryKey: qk.cliStatus(),
         queryFn: () => detectCliStatus(true),
       }),
-      ...TOOLS.map((tool) =>
+      ...TOOLS.filter((tool) => !activeTaskByTool.has(tool.key)).map((tool) =>
         queryClient.fetchQuery({
           queryKey: qk.latestVersion(tool.key),
           queryFn: () => fetchLatestVersion(tool.key, true),
@@ -339,6 +344,7 @@ export function SettingsView() {
           const availability = status?.status ?? "unknown";
           const latestQuery = latestQueryByTool.get(tool.key);
           const latestEntry = latestQuery?.data;
+          const activeTask = activeTaskByTool.get(tool.key);
           const latestVersion = latestEntry?.latest ?? null;
           const updatable = getLatestUpdateAvailability(
             tool.key,
@@ -371,7 +377,6 @@ export function SettingsView() {
             actionsAvailable &&
             updateAvailable &&
             isManagedUpdateAllowed(tool.key, latestEntry);
-          const activeTask = activeTaskByTool.get(tool.key);
           const reconciliationKind = executionReconciliations.data[tool.key];
           const isReconciling = reconciliationKind != null;
           const busyKind = activeTask?.kind ?? reconciliationKind;
@@ -544,31 +549,39 @@ export function SettingsView() {
                   {branchUpdateStatus
                     ? t("settings.hermesUpdateStatus")
                     : t("settings.latest")}
-                  {latestQuery?.isFetching && !latestEntry
-                    ? t("settings.checking")
-                    : branchUpdateStatus
-                      ? latestEntry?.updateAvailable === true
-                        ? latestEntry.commitsBehind == null
-                          ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
-                          : `${t("settings.hermesUpdateBehind", {
-                              count: latestEntry.commitsBehind,
-                            })}${latestStatusAnnotation}`
-                        : latestEntry?.updateAvailable === false
-                          ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
-                          : availability === "missing"
-                            ? "—"
+                  {activeTask
+                    ? t(
+                        activeTask.kind === "install"
+                          ? "settings.installing"
+                          : "settings.updating",
+                      )
+                    : isReconciling
+                      ? t("settings.refreshingVersion")
+                      : latestQuery?.isFetching && !latestEntry
+                        ? t("settings.checking")
+                        : branchUpdateStatus
+                          ? latestEntry?.updateAvailable === true
+                            ? latestEntry.commitsBehind == null
+                              ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
+                              : `${t("settings.hermesUpdateBehind", {
+                                  count: latestEntry.commitsBehind,
+                                })}${latestStatusAnnotation}`
+                            : latestEntry?.updateAvailable === false
+                              ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
+                              : availability === "missing"
+                                ? "—"
+                                : latestRefreshError
+                                  ? t("settings.unavailableWithError", {
+                                      error: latestRefreshError,
+                                    })
+                                  : t("settings.hermesRefreshPrompt")
+                          : latestVersion
+                            ? `${latestVersion}${latestStatusAnnotation}`
                             : latestRefreshError
                               ? t("settings.unavailableWithError", {
                                   error: latestRefreshError,
                                 })
-                              : t("settings.hermesRefreshPrompt")
-                      : latestVersion
-                        ? `${latestVersion}${latestStatusAnnotation}`
-                        : latestRefreshError
-                          ? t("settings.unavailableWithError", {
-                              error: latestRefreshError,
-                            })
-                          : t("settings.unavailable")}
+                              : t("settings.unavailable")}
                 </span>
               </div>
 
@@ -580,6 +593,8 @@ export function SettingsView() {
 
               {tool.showManagementMessage &&
                 availability === "available" &&
+                activeTask == null &&
+                !isReconciling &&
                 !latestQuery?.isFetching &&
                 !latestEntry?.managedUpdateAllowed &&
                 latestEntry?.managementMessage && (

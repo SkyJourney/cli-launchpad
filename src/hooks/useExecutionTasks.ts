@@ -73,6 +73,12 @@ export function useExecutionTaskEvents() {
         "execution-task-updated",
         (event) => {
           const task = event.payload;
+          if (isExecutionActive(task.status)) {
+            void queryClient.cancelQueries({
+              queryKey: qk.latestVersion(task.toolKey),
+              exact: true,
+            });
+          }
           queryClient.setQueryData<ExecutionTask[]>(
             qk.executionTasks(),
             (tasks) => upsertExecutionTask(tasks, task),
