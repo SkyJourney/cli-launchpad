@@ -204,6 +204,28 @@ async fn run_task(
         }
     }
 
+    let version_before_update = match cli_adapters::should_verify_update_result(&plan) {
+        Ok(true) => match cli_adapters::probe_plan_version(&plan).await {
+            Ok(version) => {
+                append_system_log(&app, &id, &format!("更新前目标版本：{version}\n"));
+                Some(version)
+            }
+            Err(error) => {
+                finish_failed(
+                    &app,
+                    &id,
+                    format!("无法读取更新前的目标 CLI 版本，已取消更新：{error}"),
+                );
+                return;
+            }
+        },
+        Ok(false) => None,
+        Err(error) => {
+            finish_failed(&app, &id, error);
+            return;
+        }
+    };
+
     let process_tree = match ProcessTree::new() {
         Ok(process_tree) => process_tree,
         Err(error) => {
@@ -295,13 +317,44 @@ async fn run_task(
         let _ = task.await;
     }
 
+    let update_version_verification = match (version_before_update.as_deref(), &completion) {
+        (Some(version_before), Completion::Exited(Ok(exit))) if exit.success() => {
+            Some(match cli_adapters::probe_plan_version(&plan).await {
+                Ok(version_after) => verify_updated_version(version_before, version_after),
+                Err(error) => Err(format!(
+                    "更新命令退出成功，但无法读取目标 CLI 的更新后版本：{error}"
+                )),
+            })
+        }
+        _ => None,
+    };
+
     let (status, exit_code, error_message, message) = match completion {
-        Completion::Exited(Ok(exit)) if exit.success() => (
-            ExecutionStatus::Succeeded,
-            exit.code(),
-            None,
-            "任务执行成功。\n".to_string(),
-        ),
+        Completion::Exited(Ok(exit)) if exit.success() => match update_version_verification {
+            Some(Ok(version_after)) => {
+                let version_before = version_before_update.as_deref().unwrap_or_default();
+                (
+                    ExecutionStatus::Succeeded,
+                    exit.code(),
+                    None,
+                    format!(
+                        "任务执行成功，目标 CLI 版本已从 {version_before} 更新为 {version_after}。\n"
+                    ),
+                )
+            }
+            Some(Err(error)) => (
+                ExecutionStatus::Failed,
+                exit.code(),
+                Some(error.clone()),
+                format!("任务未通过更新后版本核验：{error}。\n"),
+            ),
+            None => (
+                ExecutionStatus::Succeeded,
+                exit.code(),
+                None,
+                "任务执行成功。\n".to_string(),
+            ),
+        },
         Completion::Exited(Ok(exit)) => {
             let message = match exit.code() {
                 Some(code) => format!("命令退出码为 {code}"),
@@ -337,6 +390,16 @@ async fn run_task(
 
     if let Err(error) = manager.complete(&app, &id, status, exit_code, error_message.as_deref()) {
         log::error!("unable to complete execution task task_id={id} error={error}");
+    }
+}
+
+fn verify_updated_version(version_before: &str, version_after: String) -> Result<String, String> {
+    if version_before == version_after {
+        Err(format!(
+            "更新命令退出成功，但目标 CLI 版本仍为 {version_after}；更新可能作用于其他安装位置"
+        ))
+    } else {
+        Ok(version_after)
     }
 }
 
@@ -531,5 +594,19 @@ mod tests {
 
         assert!(active.get_by_id("codex-task").unwrap().cancel.is_none());
         assert!(active.get_by_id("claude-task").unwrap().cancel.is_some());
+    }
+
+    #[test]
+    fn successful_command_with_unchanged_version_fails_postcondition() {
+        let error = super::verify_updated_version("2.1.280", "2.1.280".to_string()).unwrap_err();
+        assert!(error.contains("更新可能作用于其他安装位置"));
+    }
+
+    #[test]
+    fn successful_command_with_changed_version_passes_postcondition() {
+        assert_eq!(
+            super::verify_updated_version("2.1.280", "2.1.288".to_string()).unwrap(),
+            "2.1.288"
+        );
     }
 }

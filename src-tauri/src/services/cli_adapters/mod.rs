@@ -94,6 +94,10 @@ pub trait CliAdapter: Sync {
         crate::services::install_service::build_command(plan)
     }
 
+    fn should_verify_update_result(&self, _plan: &InstallPlan) -> bool {
+        false
+    }
+
     fn execution_preflight_message(&self, _plan: &InstallPlan) -> Option<&'static str> {
         None
     }
@@ -157,6 +161,23 @@ pub fn prepare_command(plan: &InstallPlan) -> Result<tokio::process::Command> {
     catch_adapter(plan.tool_key, "准备执行命令", || {
         Ok(get(plan.tool_key).prepare_command(plan))
     })
+}
+
+pub fn should_verify_update_result(plan: &InstallPlan) -> Result<bool, String> {
+    catch_adapter(
+        plan.tool_key,
+        "判断是否需要核验更新结果",
+        || Ok(get(plan.tool_key).should_verify_update_result(plan)),
+    )
+    .map_err(|error| error.to_string())
+}
+
+pub async fn probe_plan_version(plan: &InstallPlan) -> Result<String, String> {
+    let tool_key = plan.tool_key;
+    let path = PathBuf::from(&plan.program);
+    tokio::spawn(async move { get(tool_key).probe_current_version(&path).await })
+        .await
+        .map_err(|error| format!("{} 版本探测适配器异常：{error}", tool_key.as_str()))?
 }
 
 pub fn resume_args(
