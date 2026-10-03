@@ -36,4 +36,4 @@ macOS/Linux 实机对齐安排在 Windows 版 M1–M4、G1–G4 完成之后，�
 - G3：Windows 阶段实现、代码复核、自动门禁和用户实机验收已完成。主工作区和独立终端窗口统一自定义标题栏；macOS/Linux 窗口实机验收统一见 M5 清单，详见 [G3 文档](G3-custom-window-chrome.md)。
 - G4：已完成。自动门禁、最终代码审查和五类 Windows 实机验收通过；独立窗口画布无法单独视觉确认的范围与代码复用依据已记录。详见 [G4 文档](G4-architecture-refactoring.md)。
 - M4：已完成。0.2.4 schema 8 / bundle v3 升级自动门禁与配置兼容测试通过，用户确认 Windows 实机验收通过；macOS/Linux 对齐留给 M5。详见 [M4 验收记录](M4-feature-integration.md)。
-- M5：准备开始 macOS/Linux 对齐。Windows 0.3.0 x64 NSIS 本地候选包已安装并启动验证；尚未正式打 tag 或发布。详见 [跨平台对齐待办](cross-platform-alignment.md) 与 [M5 发布验收](M5-release-readiness.md)。
+- M5：跨平台对齐与整体验收已通过；Windows 0.3.0 x64 NSIS 本地候选包已安装并启动验证，正式 tag 尚未创建。发布矩阵现扩展至 Windows ARM64 在线/离线 NSIS，待远端工作流验证。详见 [跨平台对齐记录](cross-platform-alignment.md) 与 [M5 发布验收](M5-release-readiness.md)。

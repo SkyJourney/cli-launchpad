@@ -7,7 +7,6 @@ import {
   type HTMLAttributes,
   type PointerEvent as ReactPointerEvent,
   type PropsWithChildren,
-  type UIEvent,
 } from "react";
 
 interface ScrollDrag {
@@ -89,7 +88,7 @@ export function ThemedScrollArea({
     };
   }, [updateThumb]);
 
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+  const handleScroll = () => {
     updateThumb();
     setScrollbarVisible(true);
     if (hideTimerRef.current !== null) {

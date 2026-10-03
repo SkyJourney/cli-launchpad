@@ -8,6 +8,9 @@
 
 ### 变更
 
+- 主工作区按需加载终端、独立窗口和次级页面，并把 React 与 i18n 运行时分包；Vite 首屏主 JS 从约 1,079 KB 降至 458 KB，低于 500 KB 提示阈值。
+- TypeScript 启用未使用局部变量和参数检查；修复目标平台导入范围与简单 Rust Clippy 风格告警。
+- 发布矩阵扩展 Windows ARM64 原生在线/离线 NSIS 构建，资产分别标记 `windows_arm64-online` 与 `windows_arm64-offline`。
 - 统一 Windows、macOS、Linux、应用内与 README 使用的圆角正方形产品标识，移除 Windows 圆形图标变体。
 - 明确 0.3.0 转型方向：以项目和独立 PTY 会话为中心的轻量级大窗口 CLI 工作台；分栏布局不拥有或终止会话。
 - 统一所有平台发布产物的文件名为 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]`，明确标出操作系统（`windows`/`macos`/`linux`），不再沿用各打包工具的原生命名（尤其是 rpm 自带的 `-<release>` 版本号和点分隔架构）。

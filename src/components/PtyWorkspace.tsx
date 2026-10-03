@@ -1191,7 +1191,6 @@ export function PtyWorkspaceRegion() {
     splitPane,
     splitAndMoveSession,
     moveSession,
-    detachedInstanceIds,
     hasDetachedSessions,
     isManagedDetachedDrag,
     detachSession,

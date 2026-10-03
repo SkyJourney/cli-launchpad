@@ -1056,7 +1056,7 @@ fn spawn_output_reader(
                                 sequence
                             );
                         }
-                        if output_chunks % 32 == 0 {
+                        if output_chunks.is_multiple_of(32) {
                             log::debug!(
                                 "PTY output progress session_id={} chunks={} bytes={} acknowledgement_calls={} last_acknowledged_sequence={}",
                                 session.session_id,

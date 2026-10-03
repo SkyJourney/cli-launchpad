@@ -114,12 +114,10 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 ### M5：跨平台验收与 0.3.0 发布
 
-**状态：** Windows M1–M4、G1–G4 已完成；Windows 0.3.0 x64 NSIS 本地候选包已安装并启动验证。macOS 对齐开发进行中（Hermes 官方 POSIX 安装/更新适配已覆盖 macOS/Linux，待目标平台实机门禁），Linux 其余对齐待开始，未创建正式版本 tag。
+**状态：** M5 跨平台对齐与整体验收已于 2026-10-03 由用户确认通过；后续平台问题按 bug+fix 处理。0.3.0 正式 tag 与 GitHub Actions 发布为独立动作，尚未执行；Windows ARM64 在线/离线 NSIS 已加入发布矩阵，待远端工作流验证。
 
-- Windows M1–M4、G1–G4 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 配置/目标平台编译、实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、窗口标题栏、项目切换、异常终止、安装包及升级路径。
-- 更新用户文档、截图、发布说明和已知限制。
-- 正式发布门禁：macOS/Linux 对齐与三平台发布检查完成，版本文件一致、文档就绪，并由用户确认后才创建正式 tag；推送匹配 tag 才触发 GitHub Actions 正式发布。
-- 验收：三个平台具备可重复的发布检查记录，五项 CLI 的平台能力和关键 PTY 生命周期有证据；每个平台至少一项 CLI 完成真实交互启动，未安装或不适用项有明确记录；旧数据迁移均通过人工验收。
+- M5 已整体关闭；历史逐项记录与未覆盖边界见[跨平台对齐记录](milestones/0.3.0/cross-platform-alignment.md)。之后发现的平台问题使用 bug+fix 流程独立处理，不重开 M5。
+- 正式发布前复核版本文件、三平台 workflow 产物、安装包和发布说明；确认发布准备就绪后再创建正式 tag，推送匹配 tag 才触发 GitHub Actions 正式发布。
 
 ## 0.3.0 之后
 

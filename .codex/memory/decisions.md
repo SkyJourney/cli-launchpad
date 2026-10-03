@@ -110,8 +110,8 @@ commit: 2e345ea
 
 ## Git Tag 驱动跨平台自动发布
 
-**结论：** 正式发布由匹配版本的 `v*.*.*` Tag 驱动；当前工作流覆盖六个构建目标，只有全部成功才生成校验和并发布。手动触发用于预检，不创建 Release。
+**结论：** 正式发布由匹配版本的 `v*.*.*` Tag 驱动；当前工作流覆盖八个构建目标，只有全部成功才生成校验和并发布。手动触发用于预检，不创建 Release。
 **Why：** 单机验证无法覆盖所有平台和架构；独立预检能在正式发布前验证同一构建矩阵，Tag 发布则提供可审计且完整的跨平台产物。当前矩阵和门禁分析见 [[synthesis_release-tag-cross-platform.md#结论]]。
-**How to apply：** 先运行手动预检，再创建与版本文件一致且指向 `main` 历史的 Tag；保留 Windows 双 NSIS、Linux x64/arm64 三格式包及 macOS ARM64/Intel DMG 的六个构建目标。平台签名与公证按当前发布约定执行。
+**How to apply：** 先运行手动预检，再创建与版本文件一致且指向 `main` 历史的 Tag；保留 Windows x64/ARM64 双 NSIS、Linux x64/arm64 三格式包及 macOS ARM64/Intel DMG 的八个构建目标。平台签名与公证按当前发布约定执行。
 **Synthesized：** [[synthesis_release-tag-cross-platform.md]]
 **See Also：** [[project_overview.md#桌面体验与分发]] [[project_progress.md#0.2.1-发布完成]] [[reference.md#发布工具官方资料]] [[synthesis_release-tag-cross-platform.md#结论]]

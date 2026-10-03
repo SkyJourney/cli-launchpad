@@ -220,7 +220,7 @@ pub(crate) fn workspace_matches(workspace_uris: &str, directory_path: &str) -> b
 fn file_uri_to_path(uri: &str) -> Option<String> {
     let encoded = uri.strip_prefix("file://")?;
     let mut decoded = percent_decode(encoded)?;
-    if decoded.as_bytes().get(0) == Some(&b'/')
+    if decoded.as_bytes().first() == Some(&b'/')
         && decoded.as_bytes().get(2) == Some(&b':')
         && decoded
             .as_bytes()

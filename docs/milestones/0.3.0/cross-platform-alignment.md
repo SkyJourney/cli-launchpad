@@ -1,29 +1,36 @@
 # 0.3.0 跨平台对齐待办
 
-**状态：** Windows M1–M4、G1–G4 已完成；macOS M0–M4、G1–G4 已由用户确认阶段验收通过；Linux 验收及 M5 CI 全 target 构建待完成
+**状态：** M5 macOS/Linux 对齐与整体验收已于 2026-10-03 由用户确认通过；之后发现的平台问题按 bug+fix 处理。正式 tag/发布仍独立待办。
 **所属版本：** 0.3.0
-**范围：** macOS 与 Linux 实机验证、平台适配和最终发布门禁
+**范围：** 记录 macOS/Linux 平台适配及验收过程；正式发布门禁另按发布流程执行
 
-Windows 本地 0.3.0 x64 NSIS 候选包已完成干净构建、安装升级和启动验证。macOS/Linux 对齐是当前剩余的版本工作；完成后再决定正式 tag 和多平台发布。
+Windows 本地 0.3.0 x64 NSIS 候选包已完成干净构建、安装升级和启动验证。用户已确认 M5 整体验收通过；本文件保留的未逐项记录内容用于追溯覆盖边界，不阻塞 M5，也不表示该项已实测。后续问题按 bug+fix 跟踪。正式 tag 和多平台发布作为独立工作，在版本及产物复核后执行。
+
+## 用户验收结论（2026-10-03）
+
+- 用户确认 macOS 与 Linux 对齐基本完成，并确认 M5 整体验收通过。
+- 旧清单中的未勾选项和历史记录继续保留，作为已记录证据与覆盖边界；不将其改写成已逐项实测，也不再作为 M5 的阻塞门禁。
+- 后续任何平台问题按 bug+fix 模式单独登记、修复和回归，不重开已通过的 M5。
+- 0.3.0 正式 tag、GitHub Actions 发布及其产物核查不包含在这次验收结论内。
 
 ## 执行顺序
 
-0.3.0 先在 Windows 上完成 M1–M4、独立 G1–G4 的实现、验收和复核，再集中在 macOS/Linux 设备上对齐平台差异。此文档是 M1–G4 所有 macOS/Linux 实机验收项的唯一执行清单；各里程碑文档保留平台设计事实和范围边界，并链接到此处，不重复维护验收清单。实机事项不阻塞 Windows 阶段推进，但必须在 M5 发布验收前完成，或逐项记录明确的延期决定。
+历史执行顺序为：Windows 完成 M1–M4、独立 G1–G4 后，在 macOS/Linux 设备对齐平台差异。此文档集中记录当时的检查项与逐平台记录；当前 M5 验收结论以上方用户确认结论为准。
 
-## 当前代码盘点与 M5 开发缺口
+## 实现盘点与历史覆盖边界
 
 代码盘点用于安排工作，不替代目标系统编译和实机验收：
 
-| 平台/能力        | 当前实现依据                                                                                                                                                                                                                                                                                                                                                                                            | M5 仍需完成                                                                                                                                                                                                                                                                                                                                                           |
+| 平台/能力        | 当前实现依据                                                                                                                                                                                                                                                                                                                                                                                            | 历史未记录项与维护说明                                                                                                                                                                                                                                                                                                                                                           |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS 窗口与终端 | `tauri.macos.conf.json` 配置原生装饰、Overlay 标题栏和交通灯位置；Rust 有 Terminal.app/iTerm/Ghostty/WezTerm/kitty 探测、启动模式及一次性启动载荷。                                                                                                                                                                                                                                                     | Apple Silicon 用户实测阶段验收通过；Intel DMG 与全 target 构建推迟到 Linux 验收后的 CI 矩阵。后续发现的平台问题按 bug 修复。                                                                                                                                                                                                                               |
-| Linux 窗口与终端 | Rust 有 `xdg-terminal-exec`、`x-terminal-emulator`、Ghostty、kitty、WezTerm、xterm 探测和 Unix 进程组管理；CI 定义 x64/arm64 deb、rpm、AppImage。                                                                                                                                                                                                                                                       | 在 X11 与 Wayland 桌面核验自绘标题栏、窗口管理器拖动/缩放、托盘、输入法和 WebKit；实际安装三类包并核验运行依赖、数据升级。                                                                                                                                                                                                                                            |
-| Unix 进程与 CLI  | macOS/Linux 共用 Unix process group，支持 `SIGTERM` 后有界等待及 `SIGKILL`；Claude、Codex、Antigravity、Grok 有 Unix 安装/更新相关实现，Grok 有本地安装目录和来源检查；Hermes 会话读取按 `~/.hermes`/活动 Profile 查找并只读 `state.db`。Hermes 官方 POSIX 源码安装、版本检查及更新来源保护现已覆盖 macOS/Linux，限定默认 `~/.local/bin/hermes` 与 `~/.hermes/hermes-agent`；设置页管理入口覆盖三平台。 | macOS 的 M0–M4/G1–G4 阶段由用户确认通过；本机未安装 Grok，因此没有实际 Grok CLI 启动/历史恢复证据，作为已知覆盖限制记录。Linux 仍需分别运行进程组/PTY 和异常终止检查，并按目标平台验收 Grok/Hermes 来源、更新状态与会话能力。安装/更新副作用说明已补齐；不得以 macOS 结果替代 Linux 实测。 |
-| 打包与正式发布   | Release workflow 已配置 Windows online/offline NSIS、macOS ARM64/Intel DMG、Linux x64/arm64 deb/rpm/AppImage，并按匹配 tag 执行发布。                                                                                                                                                                                                                                                                   | 在目标 runner/主机验证平台覆盖、产物命名、安装和依赖；当前 Windows 本地候选验证不能代替这些检查。只有 M5 门禁通过并经用户确认后才推送正式 tag。                                                                                                                                                                                                                       |
+| Linux 窗口与终端 | Rust 有 `xdg-terminal-exec`、`x-terminal-emulator`、Ghostty、kitty、WezTerm、xterm 探测和 Unix 进程组管理；CI 定义 x64/arm64 deb、rpm、AppImage。                                                                                                                                                                                                                                                       | 用户已确认 M5 整体验收通过。历史文档未保存 X11/Wayland、三类安装包等逐项实测记录；保留为覆盖边界，后续问题按 bug+fix 处理，不作为 M5 阻塞项。                                                                                                                                                                                                                                            |
+| Unix 进程与 CLI  | macOS/Linux 共用 Unix process group，支持 `SIGTERM` 后有界等待及 `SIGKILL`；Claude、Codex、Antigravity、Grok 有 Unix 安装/更新相关实现，Grok 有本地安装目录和来源检查；Hermes 会话读取按 `~/.hermes`/活动 Profile 查找并只读 `state.db`。Hermes 官方 POSIX 源码安装、版本检查及更新来源保护现已覆盖 macOS/Linux，限定默认 `~/.local/bin/hermes` 与 `~/.hermes/hermes-agent`；设置页管理入口覆盖三平台。 | macOS M0–M4/G1–G4 阶段由用户确认通过；本机未安装 Grok，因此没有实际 Grok CLI 启动/历史恢复证据，作为已知覆盖限制记录。Linux 逐项验证证据未完整记录；用户已确认 M5 整体通过，后续发现的进程、PTY、CLI 来源或会话问题按 bug+fix 处理。安装/更新副作用说明已补齐。 |
+| 打包与正式发布   | Release workflow 配置 Windows x64/ARM64 online/offline NSIS、macOS ARM64/Intel DMG、Linux x64/arm64 deb/rpm/AppImage，并按匹配 tag 执行发布。Windows ARM64 矩阵于 2026-10-03 增加，仍需在远端工作流运行中验证。                                                                                                                                                                                                                                                                   | 正式 tag/发布独立于 M5 验收；发布前仍须复核版本、workflow 产物和发布说明。 |
 
-Hermes macOS/Linux 安装计划、更新检查、默认来源保护及安装影响说明已补齐；其余路径（包括新增适配）仍须按下方清单实测。“已有实现”不表示该平台已验收通过。所有 CLI 的实际安装和更新均遵循确认预览，不直接修改用户机器上的 CLI 安装。2026-10-03 在 macOS 完成 `cargo check` 与前端生产构建；Linux 交叉编译因当前主机没有 Linux `pkg-config` sysroot（`libdbus-1-dev`）而未能完成，必须在 Linux runner/主机继续验证，且未执行真实 Hermes 安装或更新。
+Hermes macOS/Linux 安装计划、更新检查、默认来源保护及安装影响说明已补齐。历史记录中曾注明：2026-10-03 macOS 的 `cargo check` 与前端生产构建通过；当时 Windows 主机未能完成 Linux 交叉编译，且未执行真实 Hermes 安装或更新。上述未记录项作为历史覆盖边界保留；不改变用户对 M5 的整体验收结论，后续问题按 bug+fix 处理。
 
-## 分阶段任务
+## 历史分阶段任务与验收记录
 
 每个平台独立记录和验收；可按设备可用性选择先后，不以一个平台的结果替代另一个平台。
 
@@ -39,7 +46,9 @@ flowchart LR
     win["Windows 完成 M1–M4、G1–G4"] --> align["macOS/Linux 实机对齐"] --> m5["M5 跨平台发布验收"]
 ```
 
-## 共通验收项
+## 历史共通验收检查表
+
+以下复选框保留检查清单形成时的状态快照，仅用于回溯当时记录的覆盖范围；用户已确认 M5 整体验收通过，未勾选项不再作为门禁，也不应被解释为逐项验收失败。
 
 - [ ] 确认操作系统版本、CPU 架构、应用版本/构建和五个 CLI 的版本，并记录测试环境。
 - [ ] 执行 macOS/Linux Tauri 配置、目标平台依赖/schema、Rust 编译和前端打包门禁；通过 CI 或对应平台主机验证实际 release target。逐项记录未能在 Windows 主机执行的检查，不以 Windows 构建代替。
@@ -80,7 +89,9 @@ flowchart LR
 - [x] **G4 架构与主题：**用户确认阶段验收通过；后续发现的主题或适配错误隔离问题按 bug 修复。
 - [x] macOS ARM64 DMG 构建、校验、签名检查和启动验证已完成；Intel target 留至 CI 矩阵。
 
-## Linux
+## Linux 历史检查项
+
+本节保留原 Linux 检查项作为后续 bug 定位参考。用户已确认 M5 整体验收通过；之后发现具体问题时按 bug+fix 修复和回归。
 
 - [ ] 在受支持的 x64 与 arm64 环境完成上述共通验收项；无法取得某种架构设备时记录延期及影响。
 - [ ] 验证 Linux PTY/Unix 进程组的正常退出、受控终止、异常结束清理和应用退出行为。
@@ -102,9 +113,11 @@ flowchart LR
 | 2026-10-03 | macOS arm64（Tauri dev 实测待复核） | `pnpm tauri:dev`；macOS overlay 变更后由 watcher 重编译并启动                             | —                                                     | 用户曾通过边框将窗口缩至配置下限以下。根因是 `tauri.macos.conf.json` 的 `app.windows` 数组按 JSON Merge Patch 整体替换基础数组，基础配置的尺寸限制因此丢失；现已在 macOS overlay 中补齐完整主窗口配置与最小尺寸。编译通过，等待用户在当前开发版复测边框硬限制。                                                                                                                                                                                                                                                                                                                                                                                                                                            | 复测拖动四边/四角及恢复上次窗口尺寸；若仍能越过下限，再检查运行时 `set_min_size` 和 Retina 工作区换算。                                                                                                                                                         |
 | 2026-10-03 | macOS arm64（本地 release DMG）     | 0.3.0 ARM64 DMG；按用户要求覆盖安装到 `/Applications/CLI Launchpad.app` 并成功启动        | Grok Build 未安装；Hermes v0.21.5                     | 最新 `origin/main`（`46521c7`）已 fetch 并 rebase；前端 86 项测试、Rust 218 项测试、`cargo check`、Rust 格式、修改文件 Prettier、前端 TypeScript/Vite 生产构建与 `git diff --check` 通过。ARM64 DMG 构建成功，`hdiutil verify`、应用架构/版本检查和 `codesign --verify --deep --strict` 均通过；按用户要求覆盖 `/Applications` 中旧版后，从正式安装路径启动成功，原生 UI 树和截图确认 0.3.0 工作区可显示、两个已保存空窗格均恢复，应用图标与工具栏可见。构建未使用公证凭据；未启动 CLI。                                                                                                                                                                                                                   | 本地 `main` 已快进到对齐提交；旧本地 `main` 的 6 个分叉提交完整保留在 `codex/local-main-before-origin-sync`。完整 M5 macOS 门禁（真实 PTY/CLI、复杂布局和窗口状态边界、0.2.4 数据升级、Intel 目标）及 Linux 门禁仍未完成。                                      |
 | 2026-10-03 | macOS arm64（分栏树修复与复杂分栏验收） | 0.3.0 ARM64 DMG；从只读挂载的 DMG 直接启动                                                   | —                                                     | 新增两个镜像回归用例，覆盖先左右再上下后关闭左窗格，以及先上下再左右后关闭顶窗格；关闭空窗格会折叠并重建完整分栏视图，重置所有 Allotment 的缓存。前端 88 项测试、TypeScript/Vite 生产构建与 `git diff --check` 通过。DMG 校验和、应用签名与 0.3.0 版本检查通过。macOS 原生 UI 两个镜像序列均确认正确铺满。用户随后实测复杂多级、多窗格连续创建/关闭，确认每次都重新计算并正确渲染可用空间；该布局重排项验收通过，跨重启/命名布局/比例持久化仍待验收。Windows 原生 UI 尚未复测。                                                                                                                                                                                                                   | 在 Windows 主机运行相同两组操作序列；重启后再核对布局持久化。                                                                                   |
-| 待执行     | Linux                               | —                                                                                         | —                                                     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | M5 macOS/Linux 对齐与实机验收                                                                                                                                                                                                                                   |
+| 2026-10-03 | Linux（整体验收） | — | — | 用户确认 M5 整体验收通过。 | 后续平台问题按 bug+fix 处理；正式发布门禁独立。 |
 
-## 完成条件
+## 原计划门禁（已由用户整体验收结论替代）
+
+以下门禁是原执行清单的一部分，仅保留历史记录；M5 当前状态以文首用户验收结论为准。
 
 - macOS 与 Linux 的适用检查均通过，或每个未通过/未执行项均有明确延期决定、影响说明和后续安排。
 - 验收记录可复现，并已纳入 [M5 发布验收](M5-release-readiness.md)。

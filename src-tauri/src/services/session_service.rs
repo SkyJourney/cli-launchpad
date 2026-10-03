@@ -354,7 +354,7 @@ pub(crate) fn page_local(
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<SessionPage> {
-    sessions.sort_by(|a, b| b.last_active_ms.cmp(&a.last_active_ms));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.last_active_ms));
     let offset = parse_offset_cursor(cursor)?;
     let total = sessions.len();
     let items: Vec<_> = sessions.into_iter().skip(offset).take(limit).collect();

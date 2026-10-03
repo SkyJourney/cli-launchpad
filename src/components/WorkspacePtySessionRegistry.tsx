@@ -2,6 +2,8 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  lazy,
+  Suspense,
   useState,
   type MutableRefObject,
 } from "react";
@@ -19,7 +21,13 @@ import type {
   WorkspaceSlotStateKind,
   WorkspaceSlotTitle,
 } from "../lib/tauri";
-import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
+import type { PtyTerminalHandle } from "./PtyTerminal";
+
+const PtyTerminal = lazy(() =>
+  import("./PtyTerminal").then((module) => ({
+    default: module.PtyTerminal,
+  })),
+);
 
 export interface PtyWorkspaceSlot {
   instanceId: string;
@@ -127,10 +135,12 @@ function PtySessionPortal({
     element.dataset.instanceId = slot.instanceId;
     return element;
   });
+  const [terminalReady, setTerminalReady] = useState(false);
   const setTerminalRef = useCallback(
     (terminal: PtyTerminalHandle | null) => {
       if (terminal) terminalRefs.current.set(slot.instanceId, terminal);
       else terminalRefs.current.delete(slot.instanceId);
+      setTerminalReady(terminal !== null);
     },
     [slot.instanceId, terminalRefs],
   );
@@ -148,7 +158,7 @@ function PtySessionPortal({
   }, [assigned, target]);
 
   useEffect(() => {
-    if (slot.restoredState) return;
+    if (slot.restoredState || !terminalReady) return;
     const frame = window.requestAnimationFrame(() => {
       void terminalRefs.current
         .get(slot.instanceId)
@@ -166,20 +176,25 @@ function PtySessionPortal({
     slot.resumeSessionId,
     slot.restoredState,
     terminalRefs,
+    terminalReady,
   ]);
 
   return createPortal(
     slot.restoredState ? (
       <RestoredWorkspaceSlotPlaceholder state={slot.restoredState} />
     ) : (
-      <PtyTerminal
-        ref={setTerminalRef}
-        active={active}
-        visible={visible}
-        interactive={interactive}
-        onFocus={onFocusPane}
-        onSessionChange={(session) => onSessionChange(slot.instanceId, session)}
-      />
+      <Suspense fallback={null}>
+        <PtyTerminal
+          ref={setTerminalRef}
+          active={active}
+          visible={visible}
+          interactive={interactive}
+          onFocus={onFocusPane}
+          onSessionChange={(session) =>
+            onSessionChange(slot.instanceId, session)
+          }
+        />
+      </Suspense>
     ),
     target,
   );

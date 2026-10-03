@@ -375,7 +375,7 @@ fn parse_commits_behind(output: &str) -> Option<u32> {
         let number = word.parse::<u32>().ok()?;
         let window = words.get(index + 1..(index + 5).min(words.len()))?;
         let has_commit = window.iter().any(|word| word.starts_with("commit"));
-        let has_behind = window.iter().any(|word| *word == "behind");
+        let has_behind = window.contains(&"behind");
         (has_commit && has_behind).then_some(number)
     })
 }

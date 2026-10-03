@@ -31,6 +31,8 @@ CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity
 | ------------------- | ----------------------------------------------------- | ---------------------------------- |
 | Windows x64         | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe`   | NSIS 在线安装包；按需下载 WebView2 |
 | Windows x64 离线版  | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`  | 内置 WebView2，体积较大            |
+| Windows ARM64       | `CLI.Launchpad_<版本>_windows_arm64-online-setup.exe` | ARM64 原生 NSIS 在线安装包         |
+| Windows ARM64 离线版 | `CLI.Launchpad_<版本>_windows_arm64-offline-setup.exe` | ARM64 原生 NSIS 离线安装包         |
 | macOS Apple Silicon | `CLI.Launchpad_<版本>_macos_arm64.dmg`                | 适用于 M 系列芯片                  |
 | macOS Intel         | `CLI.Launchpad_<版本>_macos_x64.dmg`                  | 适用于 Intel 芯片                  |
 | Linux x64           | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}`   | 三种格式任选，适用于 x86_64        |
@@ -197,8 +199,8 @@ pnpm tauri:build:linux
 首次打包 AppImage 时，Tauri 会自动下载 `linuxdeploy` 及相关插件（需要联网），后续构建可复用缓存。
 
 推送与应用版本一致的 `v*.*.*` Tag 后，`.github/workflows/release.yml` 会在线并行
-构建 Windows 在线/离线 NSIS、Linux x64/arm64 deb+rpm+AppImage（arm64 使用 GitHub
-原生 ARM64 Runner，不做交叉编译）与两种 macOS DMG，生成 SHA-256 校验文件，并在
+构建 Windows x64/ARM64 在线/离线 NSIS（ARM64 使用 GitHub 原生 ARM64 Runner）、
+Linux x64/arm64 deb+rpm+AppImage（arm64 使用 GitHub 原生 ARM64 Runner，不做交叉编译）与两种 macOS DMG，生成 SHA-256 校验文件，并在
 全部 target 成功后自动创建 GitHub Release。手动触发该工作流只保留 Actions
 Artifacts，不会创建 Release。
 

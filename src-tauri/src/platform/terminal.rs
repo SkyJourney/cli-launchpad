@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+#[cfg(any(windows, target_os = "macos"))]
+use std::path::Path;
+#[cfg(any(windows, target_os = "macos"))]
+use std::path::PathBuf;
+#[cfg(any(windows, target_os = "macos"))]
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
@@ -6,6 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 
 #[cfg(any(windows, test))]
 use serde::Deserialize;
+#[cfg(any(windows, target_os = "macos"))]
 use tokio::process::Command;
 
 #[cfg(windows)]
@@ -67,15 +72,15 @@ struct SettingsProfile {
 pub async fn detect_environment() -> TerminalEnvironment {
     #[cfg(windows)]
     {
-        return detect_windows_environment().await;
+        detect_windows_environment().await
     }
     #[cfg(target_os = "macos")]
     {
-        return detect_macos_environment().await;
+        detect_macos_environment().await
     }
     #[cfg(target_os = "linux")]
     {
-        return detect_linux_environment().await;
+        detect_linux_environment().await
     }
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     TerminalEnvironment {
@@ -762,7 +767,7 @@ fn first_command_token(commandline: &str) -> Option<&str> {
         let end = rest.find('"')?;
         return Some(&rest[..end]);
     }
-    Some(value.split_whitespace().next()?)
+    value.split_whitespace().next()
 }
 
 #[cfg(any(windows, test))]

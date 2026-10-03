@@ -73,13 +73,29 @@ jobs:
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             build_args: --bundles nsis
+            target_dir: release
             asset_suffix: windows_x64-online-setup.exe
           - id: windows-offline
             label: Windows x64 offline NSIS
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             build_args: --bundles nsis --config src-tauri/tauri.offline.conf.json
+            target_dir: release
             asset_suffix: windows_x64-offline-setup.exe
+          - id: windows-arm64-online
+            label: Windows ARM64 online NSIS
+            os: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            build_args: --bundles nsis --target aarch64-pc-windows-msvc
+            target_dir: aarch64-pc-windows-msvc/release
+            asset_suffix: windows_arm64-online-setup.exe
+          - id: windows-arm64-offline
+            label: Windows ARM64 offline NSIS
+            os: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            build_args: --bundles nsis --config src-tauri/tauri.offline.conf.json --target aarch64-pc-windows-msvc
+            target_dir: aarch64-pc-windows-msvc/release
+            asset_suffix: windows_arm64-offline-setup.exe
           - id: linux-x64
             label: Linux x64 deb/rpm/AppImage
             os: ubuntu-latest
@@ -162,7 +178,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          $bundle = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe' | Select-Object -First 1
+          $bundle = Get-ChildItem "src-tauri/target/${{ matrix.target_dir }}/bundle/nsis/*.exe" | Select-Object -First 1
           if ($null -eq $bundle) {
             throw 'NSIS installer was not generated.'
           }

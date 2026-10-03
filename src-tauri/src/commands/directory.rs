@@ -115,8 +115,7 @@ mod tests {
 #[tauri::command]
 pub fn open_project_directory(state: State<'_, Db>, id: i64) -> Result<(), AppError> {
     let directory = with_conn(&state, |conn| {
-        Ok(directory_repo::get(conn, id)?
-            .ok_or_else(|| AppError::msg(format!("项目目录 {id} 不存在")))?)
+        directory_repo::get(conn, id)?.ok_or_else(|| AppError::msg(format!("项目目录 {id} 不存在")))
     })?;
     directory_service::validate_path(&directory.path)?;
     crate::platform::opener::open_directory(&directory.path)?;

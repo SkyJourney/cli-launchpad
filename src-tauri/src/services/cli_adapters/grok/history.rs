@@ -42,7 +42,7 @@ pub(crate) fn search_grok_documents_in(
     directory_path: &str,
     max_total_bytes: u64,
 ) -> Result<SearchSource> {
-    let groups = grok_session_group_dirs(&sessions_dir, directory_path)?;
+    let groups = grok_session_group_dirs(sessions_dir, directory_path)?;
     let mut source = SearchSource::default();
     let mut seen_ids = HashSet::new();
     let mut inspected_entries = 0;

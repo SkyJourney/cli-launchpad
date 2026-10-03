@@ -25,15 +25,31 @@ import {
   WindowResizeHandles,
   WindowTitlebar,
 } from "./components/WindowTitlebar";
-import { StandalonePtyWindow } from "./components/StandalonePtyWindow";
+const StandalonePtyWindow = lazy(() =>
+  import("./components/StandalonePtyWindow").then((module) => ({
+    default: module.StandalonePtyWindow,
+  })),
+);
 const ProjectDetailView = lazy(() =>
   import("./views/ProjectDetailView").then((module) => ({
     default: module.ProjectDetailView,
   })),
 );
-import { SettingsView } from "./views/SettingsView";
-import { ExecutionsView } from "./views/ExecutionsView";
-import { AboutView } from "./views/AboutView";
+const SettingsView = lazy(() =>
+  import("./views/SettingsView").then((module) => ({
+    default: module.SettingsView,
+  })),
+);
+const ExecutionsView = lazy(() =>
+  import("./views/ExecutionsView").then((module) => ({
+    default: module.ExecutionsView,
+  })),
+);
+const AboutView = lazy(() =>
+  import("./views/AboutView").then((module) => ({
+    default: module.AboutView,
+  })),
+);
 import { useExecutionTaskEvents } from "./hooks/useExecutionTasks";
 import { indexByTool, useCliStatus } from "./hooks/useCliStatus";
 import { useThemeSync } from "./hooks/useThemeSync";
@@ -54,13 +70,15 @@ export function App() {
   )?.key;
   if (sessionId && handoffToken && instanceId) {
     return (
-      <StandalonePtyWindow
-        sessionId={sessionId}
-        handoffToken={handoffToken}
-        instanceId={instanceId}
-        toolKey={detachedToolKey}
-        title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
-      />
+      <Suspense fallback={null}>
+        <StandalonePtyWindow
+          sessionId={sessionId}
+          handoffToken={handoffToken}
+          instanceId={instanceId}
+          toolKey={detachedToolKey}
+          title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
+        />
+      </Suspense>
     );
   }
   return (
@@ -252,9 +270,11 @@ function AppContent() {
                 </Suspense>
               )}
             </div>
-            {view === "executions" && <ExecutionsView />}
-            {view === "settings" && <SettingsView />}
-            {view === "about" && <AboutView />}
+            <Suspense fallback={null}>
+              {view === "executions" && <ExecutionsView />}
+              {view === "settings" && <SettingsView />}
+              {view === "about" && <AboutView />}
+            </Suspense>
           </section>
         </main>
         <WindowResizeHandles />
