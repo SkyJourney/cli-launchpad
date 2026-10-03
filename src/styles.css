@@ -45,6 +45,8 @@
   --color-surface: #ffffff;
   --color-surface-subtle: #f1f3f7;
   --color-surface-hover: #f7f9fc;
+  --color-project-session-count-bg: #e3eaf5;
+  --color-project-session-count-text: #475467;
   --color-text: #18212f;
   --color-text-secondary: #475467;
   --color-text-muted: #667085;
@@ -146,6 +148,8 @@
   --color-surface: #171e2b;
   --color-surface-subtle: #202938;
   --color-surface-hover: #242e3e;
+  --color-project-session-count-bg: #344157;
+  --color-project-session-count-text: #d0d5dd;
   --color-text: #f2f4f7;
   --color-text-secondary: #c4cad4;
   --color-text-muted: #98a2b3;
@@ -876,9 +880,9 @@ pre,
 
 .project-navigation-session-count {
   align-items: center;
-  background: var(--color-surface-hover);
+  background: var(--color-project-session-count-bg);
   border-radius: 999px;
-  color: var(--text-muted-color);
+  color: var(--color-project-session-count-text);
   display: inline-flex;
   flex: 0 0 auto;
   font-family: var(--font-mono);
