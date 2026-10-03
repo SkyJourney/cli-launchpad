@@ -1,6 +1,6 @@
 # 产品路线图
 
-本文档记录 CLI Launchpad 的产品方向和版本阶段。当前正式发布基线仍为 0.2.4；Windows 本地候选包已使用 0.3.0 版本号完成构建、安装和启动验证，但尚未正式发布。0.3.0 是一次以项目与内置终端为中心的产品形态转型；macOS/Linux 对齐完成并通过 M5 后，再决定正式 tag 与多平台发布。各阶段的范围和验收条件见 [`docs/milestones/0.3.0/`](milestones/0.3.0/README.md)。
+本文档记录 CLI Launchpad 的产品方向和版本阶段。当前正式发布版本为 0.3.0（2026-10-03 发布）。0.3.0 将产品转型为以项目与内置终端为中心的轻量级本地工作台；M5 跨平台对齐和八目标发布验收均已完成，后续平台问题按 bug+fix 处理。各阶段的范围和验收条件见 [`docs/milestones/0.3.0/`](milestones/0.3.0/README.md) 与 [GitHub Release](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0)。
 
 ## 当前产品方向
 
@@ -114,10 +114,10 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 ### M5：跨平台验收与 0.3.0 发布
 
-**状态：** M5 跨平台对齐与整体验收已于 2026-10-03 由用户确认通过；后续平台问题按 bug+fix 处理。八目标 Release 预检 #37129066965 于 2026-10-03 全部成功，包含 Windows ARM64 在线/离线 NSIS；验收文档推送后进入正式 `v0.3.0` tag 与 GitHub Release 流程。
+**状态：** M5 跨平台对齐与整体验收已于 2026-10-03 由用户确认通过；0.3.0 八目标构建和 GitHub Release 同日成功完成。后续平台问题按 bug+fix 处理。
 
 - M5 已整体关闭；历史逐项记录与未覆盖边界见[跨平台对齐记录](milestones/0.3.0/cross-platform-alignment.md)。之后发现的平台问题使用 bug+fix 流程独立处理，不重开 M5。
-- 正式发布前复核版本文件、三平台 workflow 产物、安装包和发布说明；确认发布准备就绪后再创建正式 tag，推送匹配 tag 才触发 GitHub Actions 正式发布。
+- [0.3.0 正式 Release](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0) 已发布 12 个平台安装包和 SHA-256 校验清单；发布前预检与正式 tag workflow 均通过。
 
 ## 0.3.0 之后
 

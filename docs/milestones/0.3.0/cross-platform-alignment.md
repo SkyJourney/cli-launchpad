@@ -1,6 +1,6 @@
 # 0.3.0 跨平台对齐待办
 
-**状态：** M5 macOS/Linux 对齐与整体验收已于 2026-10-03 由用户确认通过；之后发现的平台问题按 bug+fix 处理。八目标 Release 预检于 2026-10-03 全部成功，正在进入正式 tag/发布流程。
+**状态：** M5 macOS/Linux 对齐与整体验收已于 2026-10-03 由用户确认通过；0.3.0 正式版已于同日发布。之后发现的平台问题按 bug+fix 处理。
 **所属版本：** 0.3.0
 **范围：** 记录 macOS/Linux 平台适配及验收过程；正式发布门禁另按发布流程执行
 
@@ -11,7 +11,7 @@ Windows 本地 0.3.0 x64 NSIS 候选包已完成干净构建、安装升级和�
 - 用户确认 macOS 与 Linux 对齐基本完成，并确认 M5 整体验收通过。
 - 旧清单中的未勾选项和历史记录继续保留，作为已记录证据与覆盖边界；不将其改写成已逐项实测，也不再作为 M5 的阻塞门禁。
 - 后续任何平台问题按 bug+fix 模式单独登记、修复和回归，不重开已通过的 M5。
-- 0.3.0 正式 tag、GitHub Actions 发布及其产物核查独立于 M5 实机验收；八目标手动预检已通过，正式发布结果以后续 Release workflow 为准。
+- 0.3.0 正式 tag、GitHub Actions 发布及其产物核查独立于 M5 实机验收；八目标手动预检和正式发布均已通过，正式资产见 [GitHub Release](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0)。
 
 ## 执行顺序
 
@@ -26,7 +26,7 @@ Windows 本地 0.3.0 x64 NSIS 候选包已完成干净构建、安装升级和�
 | macOS 窗口与终端 | `tauri.macos.conf.json` 配置原生装饰、Overlay 标题栏和交通灯位置；Rust 有 Terminal.app/iTerm/Ghostty/WezTerm/kitty 探测、启动模式及一次性启动载荷。                                                                                                                                                                                                                                                     | Apple Silicon 用户实测阶段验收通过；Intel DMG 与全 target 构建推迟到 Linux 验收后的 CI 矩阵。后续发现的平台问题按 bug 修复。                                                                                                                                                                                                                               |
 | Linux 窗口与终端 | Rust 有 `xdg-terminal-exec`、`x-terminal-emulator`、Ghostty、kitty、WezTerm、xterm 探测和 Unix 进程组管理；CI 定义 x64/arm64 deb、rpm、AppImage。                                                                                                                                                                                                                                                       | 用户已确认 M5 整体验收通过。历史文档未保存 X11/Wayland、三类安装包等逐项实测记录；保留为覆盖边界，后续问题按 bug+fix 处理，不作为 M5 阻塞项。                                                                                                                                                                                                                                            |
 | Unix 进程与 CLI  | macOS/Linux 共用 Unix process group，支持 `SIGTERM` 后有界等待及 `SIGKILL`；Claude、Codex、Antigravity、Grok 有 Unix 安装/更新相关实现，Grok 有本地安装目录和来源检查；Hermes 会话读取按 `~/.hermes`/活动 Profile 查找并只读 `state.db`。Hermes 官方 POSIX 源码安装、版本检查及更新来源保护现已覆盖 macOS/Linux，限定默认 `~/.local/bin/hermes` 与 `~/.hermes/hermes-agent`；设置页管理入口覆盖三平台。 | macOS M0–M4/G1–G4 阶段由用户确认通过；本机未安装 Grok，因此没有实际 Grok CLI 启动/历史恢复证据，作为已知覆盖限制记录。Linux 逐项验证证据未完整记录；用户已确认 M5 整体通过，后续发现的进程、PTY、CLI 来源或会话问题按 bug+fix 处理。安装/更新副作用说明已补齐。 |
-| 打包与正式发布   | Release workflow 配置 Windows x64/ARM64 online/offline NSIS、macOS ARM64/Intel DMG、Linux x64/arm64 deb/rpm/AppImage，并按匹配 tag 执行发布。手动预检 #37129066965 于 2026-10-03 全部成功，八组 Actions artifacts 均已上传。                                                                                                                                                                                                                                  | 八目标构建及 ARM64 Runner 已由远端预检验证；正式 tag 发布与校验和/Release 资产核查仍待完成。 |
+| 打包与正式发布   | Release workflow 配置 Windows x64/ARM64 online/offline NSIS、macOS ARM64/Intel DMG、Linux x64/arm64 deb/rpm/AppImage，并按匹配 tag 执行发布。手动预检 #37129066965 与正式发布 run #37130320908 均于 2026-10-03 成功；正式 Release 发布 12 个安装包及 SHA-256 清单。                                                                                                                                                                           | 八目标构建、ARM64 原生 Runner、校验和生成和 Release 资产上传均已验证；后续平台问题按 bug+fix 处理。 |
 
 Hermes macOS/Linux 安装计划、更新检查、默认来源保护及安装影响说明已补齐。历史记录中曾注明：2026-10-03 macOS 的 `cargo check` 与前端生产构建通过；当时 Windows 主机未能完成 Linux 交叉编译，且未执行真实 Hermes 安装或更新。上述未记录项作为历史覆盖边界保留；不改变用户对 M5 的整体验收结论，后续问题按 bug+fix 处理。
 
