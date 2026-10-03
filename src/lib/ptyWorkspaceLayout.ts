@@ -25,7 +25,7 @@ export interface WorkspaceSlotSequence {
   sequence: number;
 }
 
-export const MIN_WORKSPACE_PANE_WIDTH = 220;
+export const MIN_WORKSPACE_PANE_WIDTH = 200;
 export const MIN_WORKSPACE_PANE_HEIGHT = 150;
 export const WORKSPACE_SASH_SIZE = 8;
 

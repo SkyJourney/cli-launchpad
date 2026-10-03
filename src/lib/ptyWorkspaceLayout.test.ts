@@ -612,8 +612,8 @@ describe("PTY workspace split tree", () => {
   });
 
   it("requires enough width for two horizontally split panes and a sash", () => {
-    expect(canSplitWorkspacePane(448, 120, "horizontal")).toBe(true);
-    expect(canSplitWorkspacePane(447, 900, "horizontal")).toBe(false);
+    expect(canSplitWorkspacePane(408, 120, "horizontal")).toBe(true);
+    expect(canSplitWorkspacePane(407, 900, "horizontal")).toBe(false);
   });
 
   it("requires enough height for two vertically split panes and a sash", () => {
@@ -622,7 +622,7 @@ describe("PTY workspace split tree", () => {
   });
 
   it("checks only the dimension used by the requested split direction", () => {
-    expect(canSplitWorkspacePane(448, 40, "horizontal")).toBe(true);
+    expect(canSplitWorkspacePane(408, 40, "horizontal")).toBe(true);
     expect(canSplitWorkspacePane(40, 308, "vertical")).toBe(true);
   });
 

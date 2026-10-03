@@ -3761,9 +3761,6 @@ h1 {
   --error-bg: var(--color-danger-bg);
   --error-border: var(--color-danger-border);
   --error-text: var(--color-danger-text);
-  --toast-close-button-start: unset;
-  --toast-close-button-end: 10px;
-  --toast-close-button-transform: translateY(-50%);
   font-family: var(--font-ui);
 }
 
@@ -3790,6 +3787,15 @@ h1 {
   color: currentColor;
   opacity: 0.72;
   top: 50%;
+}
+
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-close-button] {
+  left: auto;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 [data-sonner-toast][data-styled="true"]:hover [data-close-button]:hover {
@@ -3871,9 +3877,7 @@ h1 {
 
 .anchored-popover .readonly-args {
   box-sizing: border-box;
-  max-height: 120px;
   min-width: 0;
-  overflow: auto;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   word-break: normal;
