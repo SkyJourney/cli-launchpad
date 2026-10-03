@@ -3,7 +3,7 @@
   <h1>CLI Launchpad</h1>
   <p>面向 Claude Code、Codex、Antigravity、Grok Build 与 Hermes Agent CLI 的轻量级跨平台会话工作台。</p>
   <p>
-    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4"><img src="https://img.shields.io/badge/version-0.2.4-2856d8" alt="Version 0.2.4"></a>
+    <a href="https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0"><img src="https://img.shields.io/badge/version-0.3.0-2856d8" alt="Version 0.3.0"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-14823b" alt="MIT License"></a>
     <a href="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml"><img src="https://github.com/SkyJourney/cli-launchpad/actions/workflows/release.yml/badge.svg" alt="Release Build"></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-475467" alt="Windows, macOS and Linux">
@@ -18,12 +18,14 @@
   </p>
 </div>
 
-CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity CLI、Codex CLI 或 Claude Code CLI。0.3.0 正在转型为以项目和内置终端会话为中心的轻量工作台，并通过独立 G1、G2 里程碑接入 Grok Build 与 Hermes Agent CLI。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
+CLI Launchpad 0.3.0 是一款以项目和内置 PTY 会话为中心的轻量级本地工作台，支持 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent 五项 CLI，并提供多窗格、可保存布局、会话历史搜索与恢复。项目由 [SkyJourney](https://github.com/SkyJourney) 维护。
 
 ## 下载
 
 正式版本由 Git Tag 触发 GitHub Actions，在全部目标构建成功后自动发布到
 [GitHub Releases](https://github.com/SkyJourney/cli-launchpad/releases)。
+
+当前正式版：[CLI Launchpad 0.3.0](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0)。
 
 发布产物统一使用 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]` 命名：
 
@@ -40,11 +42,11 @@ CLI Launchpad 0.2.4 管理常用本地项目，并帮助用户启动 Antigravity
 
 每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
 Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
-Linux 的 AppImage 下载后需先自行添加可执行权限（`chmod +x`）才能运行。
+Intel DMG 已通过 CI 构建，但未在 Intel Mac 上进行实机验证。Linux 的 AppImage 下载后需先自行添加可执行权限（`chmod +x`）才能运行。
 
 ## 界面预览
 
-以下截图展示 0.2.x 版本界面；0.3.0 将采用项目导航与内置 PTY 终端组成的大窗口工作台。
+以下截图展示 0.2.x 版本界面，尚未更新为当前 0.3.0 工作台界面。
 
 ### 项目与 CLI 启动
 
@@ -169,7 +171,7 @@ Windows 产物与运行依赖：
 - **WebView2**：
   - 在线版（默认 `downloadBootstrapper`）：安装包小，安装时检测缺失则联网下载。
   - 离线版（`offlineInstaller`，见 `src-tauri/tauri.offline.conf.json`）：内嵌完整 WebView2，无网也能装（包体更大）。
-- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.2.3_x64-online-setup.exe`。
+- `build:installers` 复用 Tauri 产物名的 `{productName}_{version}_{arch}` 前缀，自动追加 `online`/`offline`，例如 `CLI Launchpad_0.3.0_x64-online-setup.exe`。
 
 macOS 使用独立的 ARM64 与 Intel DMG，不生成 Universal 包：
 
@@ -205,7 +207,7 @@ Linux x64/arm64 deb+rpm+AppImage（arm64 使用 GitHub 原生 ARM64 Runner，不
 Artifacts，不会创建 Release。
 
 正式打包前确保 Windows 的 `src-tauri/icons/icon.ico`、macOS 的
-`src-tauri/icons/icon.icns` 均已就位；Linux 复用 `src-tauri/icons/` 下现有的 PNG 图标，无需额外准备。签名、公证和真实 Intel Mac 验证仍属于正式发布前检查。
+`src-tauri/icons/icon.icns` 均已就位；Linux 复用 `src-tauri/icons/` 下现有的 PNG 图标，无需额外准备。当前 macOS DMG 使用 ad hoc 签名且未经过 Apple 公证；Intel 目标已由 CI 构建，尚无 Intel Mac 实机验证记录。
 
 ## 内置字体
 
@@ -220,7 +222,7 @@ Artifacts，不会创建 Release。
 
 ## 应用更新
 
-0.2.4 不包含 CLI Launchpad 自身的自动更新或后台更新检查。后续版本可基于
+CLI Launchpad 当前不包含自身的自动更新或后台更新检查。后续版本可基于
 GitHub Releases 增加显式的版本检查，并在获得用户确认后再进入下载或安装流程。
 
 ## 许可证
@@ -253,13 +255,11 @@ src-tauri/src/platform/       平台相关启动逻辑
 - 按会话 ID 设置本地别名，不同步普通会话到业务数据库。
 - 三项 CLI 的启动模型选择与手动模型/部署名。
 
-## 0.3.0 工作台目标
+## 0.3.0 工作台
 
-- 在大窗口工作台中按项目导航和切换 CLI 终端。
-- 在应用内 PTY 中运行 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent CLI。
-- 0.3.0 通过独立 G1、G2 里程碑分别接入 Grok Build（`grok`）和 Hermes Agent（`hermes`，窗口简称 `HA`）。
-- 每个 PTY 独立归属项目和工具；CLI 对话可选关联。
-- 支持多终端标签和分栏，布局预设只记录排列方式，不拥有或终止终端会话。
-- 保留会话历史与恢复、安装更新、执行任务、配置备份和桌面能力；会话历史支持基于可重建本地 metadata 索引的项目内搜索。
+- 按项目组织工作区，并在应用内 PTY 中运行 Claude Code、Codex、Antigravity、Grok Build 和 Hermes Agent CLI。
+- 每个终端会话独立关联项目与 CLI；支持多终端标签、分栏及可保存布局，布局只记录排列方式，不拥有或终止终端会话。
+- 支持项目内会话历史搜索与恢复，以及 CLI 安装更新、后台任务、配置备份和独立终端窗口。
+- 提供 12 种界面语言、浅色/深色主题同步和可折叠左栏。
 
 分阶段范围和验收条件见 [0.3.0 路线图](docs/roadmap.md) 与 [里程碑文档](docs/milestones/0.3.0/README.md)。

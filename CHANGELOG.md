@@ -4,6 +4,8 @@
 
 项目从 `0.2.0` 开始维护变更日志；此前的 `0.1.0` 未追溯补录。
 
+## [Unreleased]
+
 ## [0.3.0] - 2026-10-03
 
 ### 新增
@@ -23,7 +25,8 @@
 ### 验证
 
 - Windows x64 0.3.0 NSIS 候选包完成干净构建、升级本机 0.2.4 安装及启动核对。
-- GitHub Actions 手动预检 #37129066965 的版本校验和八个构建目标全部成功；该预检生成 Actions artifacts，不创建 GitHub Release。
+- GitHub Actions 手动预检 [#37129066965](https://github.com/SkyJourney/cli-launchpad/actions/runs/37129066965) 的版本校验和八个构建目标全部成功；该预检只生成 Actions artifacts，不创建 Release。
+- 正式发布 run [#37130320908](https://github.com/SkyJourney/cli-launchpad/actions/runs/37130320908) 的八个构建目标及发布步骤全部成功；[GitHub Release v0.3.0](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0) 已上传 12 个平台安装包和 `SHA256SUMS.txt`。
 - 前端 88 项测试、Rust 222 项测试、`cargo check`、`cargo fmt --check`、TypeScript/Vite 生产构建及差异检查通过。
 
 ## [0.2.4] - 2026-09-02
@@ -183,7 +186,9 @@
 - Apple Silicon 实机已验证五款终端探测、Terminal.app、iTerm2、Ghostty、WezTerm、kitty 冷/热启动、特殊字符参数、自删除载荷、CLI 交互配色及 Dock Reopen。仍需验证真实版本替换、主动终止和完整桌面生命周期，并对 Intel target 完成独立构建检查。
 - Apple Silicon Release DMG 已完成构建和只读挂载验证；当前仅为 ad hoc 签名，正式跨设备分发仍依赖 Developer ID 签名与公证凭据。
 
-[Unreleased]: https://github.com/SkyJourney/cli-launchpad/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/SkyJourney/cli-launchpad/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0
+[0.2.4]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.4
 [0.2.3]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.3
 [0.2.2]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.2
 [0.2.1]: https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.2.1
