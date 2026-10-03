@@ -11,6 +11,16 @@ const MAX_PTY_COLUMNS = 500;
 const MAX_PTY_ROWS = 300;
 
 export function fitTerminalToPtyBounds(fit: FitAddon, terminal: Terminal) {
+  // The terminal scrollbar is hidden in CSS, so FitAddon must not reserve its
+  // fallback scrollbar width when the browser reports no native scrollbar.
+  const viewport = (
+    terminal as unknown as {
+      _core?: { viewport?: { scrollBarWidth: number } };
+    }
+  )._core?.viewport;
+  if (viewport) {
+    viewport.scrollBarWidth = 0;
+  }
   fit.fit();
   const cols = Math.min(MAX_PTY_COLUMNS, Math.max(1, terminal.cols));
   const rows = Math.min(MAX_PTY_ROWS, Math.max(1, terminal.rows));

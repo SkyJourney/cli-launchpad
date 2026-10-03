@@ -11,6 +11,7 @@ import {
 import clsx from "clsx";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useAppStore } from "../store/appStore";
@@ -23,7 +24,7 @@ import {
   setDirectoryPinned,
   type Directory,
 } from "../lib/tauri";
-import { TOOLS } from "../lib/tools";
+import { TOOLS, type ToolMeta } from "../lib/tools";
 import { AnchoredPopover } from "./AnchoredPopover";
 import { usePtyWorkspace } from "./PtyWorkspace";
 import { SearchInput } from "./SearchInput";
@@ -195,7 +196,13 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
                   setProjectMenuDirectoryId(directory.id);
                 }}
               >
-                <div className="project-navigation-row">
+                <div
+                  className={clsx("project-navigation-row", {
+                    active: selected,
+                    pinned: directory.pinned,
+                    "has-cli-sessions": projectCliSessions.length > 0,
+                  })}
+                >
                   <button
                     type="button"
                     className={clsx("project-navigation-item", {
@@ -238,33 +245,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
                     <Ellipsis size={17} />
                   </button>
                 </div>
-                {projectCliSessions.length > 0 && (
-                  <ul className="project-navigation-session-list">
-                    {projectCliSessions.map(({ tool, count }) => {
-                      const ToolIcon = tool.icon;
-                      const label = t("sidebar.managedCliSessions", {
-                        tool: tool.label,
-                        count,
-                      });
-                      return (
-                        <li
-                          className="project-navigation-session-item"
-                          key={tool.key}
-                          aria-label={label}
-                          title={label}
-                        >
-                          <ToolIcon size={14} />
-                          <span className="project-navigation-session-name">
-                            {tool.label}
-                          </span>
-                          <span className="project-navigation-session-count">
-                            {count}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                <ProjectNavigationSessions sessions={projectCliSessions} />
               </div>
             );
           })}
@@ -350,5 +331,128 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
         </AnchoredPopover>
       )}
     </aside>
+  );
+}
+
+type ProjectCliSession = { tool: ToolMeta; count: number };
+type AnimatedProjectCliSession = ProjectCliSession & {
+  phase: "entering" | "steady" | "exiting";
+};
+
+function ProjectNavigationSessions({
+  sessions,
+}: {
+  sessions: ProjectCliSession[];
+}) {
+  const { t } = useTranslation();
+  const [renderedSessions, setRenderedSessions] = useState<
+    AnimatedProjectCliSession[]
+  >(() =>
+    sessions.map((session) => ({ ...session, phase: "steady" as const })),
+  );
+
+  useEffect(() => {
+    setRenderedSessions((current) => {
+      const desired = new Map(
+        sessions.map((session) => [session.tool.key, session]),
+      );
+      const next = current.map((session) => {
+        const updated = desired.get(session.tool.key);
+        if (!updated) {
+          return session.phase === "exiting"
+            ? session
+            : { ...session, phase: "exiting" as const };
+        }
+
+        desired.delete(session.tool.key);
+        return {
+          ...updated,
+          phase:
+            session.phase === "exiting" ? ("entering" as const) : session.phase,
+        };
+      });
+
+      for (const session of desired.values()) {
+        next.push({ ...session, phase: "entering" });
+      }
+
+      if (
+        next.length === current.length &&
+        next.every(
+          (session, index) =>
+            session.tool.key === current[index].tool.key &&
+            session.count === current[index].count &&
+            session.phase === current[index].phase,
+        )
+      ) {
+        return current;
+      }
+      return next;
+    });
+  }, [sessions]);
+
+  const panelStyle = {
+    "--project-session-panel-height":
+      sessions.length > 0 ? String(sessions.length * 23 + 5) + "px" : "0px",
+  } as CSSProperties;
+
+  const handleAnimationEnd = (
+    toolKey: ToolMeta["key"],
+    phase: AnimatedProjectCliSession["phase"],
+  ) => {
+    if (phase === "exiting") {
+      setRenderedSessions((current) =>
+        current.filter((session) => session.tool.key !== toolKey),
+      );
+      return;
+    }
+    if (phase === "entering") {
+      setRenderedSessions((current) =>
+        current.map((session) =>
+          session.tool.key === toolKey && session.phase === "entering"
+            ? { ...session, phase: "steady" }
+            : session,
+        ),
+      );
+    }
+  };
+
+  return (
+    <div
+      className={clsx("project-navigation-session-panel", {
+        expanded: sessions.length > 0,
+      })}
+      style={panelStyle}
+      aria-hidden={sessions.length === 0}
+    >
+      <ul className="project-navigation-session-list">
+        {renderedSessions.map(({ tool, count, phase }) => {
+          const ToolIcon = tool.icon;
+          const label = t("sidebar.managedCliSessions", {
+            tool: tool.label,
+            count,
+          });
+          return (
+            <li
+              className={clsx("project-navigation-session-item", {
+                entering: phase === "entering",
+                exiting: phase === "exiting",
+              })}
+              key={tool.key}
+              aria-label={label}
+              aria-hidden={phase === "exiting"}
+              title={label}
+              onAnimationEnd={() => handleAnimationEnd(tool.key, phase)}
+            >
+              <ToolIcon size={14} />
+              <span className="project-navigation-session-name">
+                {tool.label}
+              </span>
+              <span className="project-navigation-session-count">{count}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
