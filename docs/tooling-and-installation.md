@@ -40,8 +40,10 @@ Antigravity 是 Google 将 Gemini CLI 迁移到新品牌后的目标 CLI。本�
 - Codex CLI 官方命令为 `codex`。Windows 优先使用官方 PowerShell 独立安装器；macOS 使用 `curl -fsSL https://chatgpt.com/codex/install.sh | sh`；当前 CLI 提供 `codex update`。Windows 下由应用固定通过 Windows PowerShell 5.1 执行该更新命令，并将 `PSModulePath` 限定为 Windows PowerShell 5.1 的标准模块目录，避免应用从 PowerShell 7 启动时把不兼容的模块路径继承给更新器。
 - Antigravity CLI 官方命令为 `agy`。Windows 使用官方 PowerShell installer；macOS 使用 `curl -fsSL https://antigravity.google/cli/install.sh | bash`。
 - Grok Build CLI 官方命令为 `grok`。Windows 官方安装器为 `https://x.ai/cli/install.ps1`，Launchpad 固定 stable 通道；默认目录为当前用户目录下的 `.grok/bin`，支持 `GROK_BIN_DIR`。安装脚本会视情况替换 `grok.exe`/`agent.exe`、写入用户级 PATH 与 Grok CLI 配置，并生成 PowerShell 补全。若环境含 `GROK_DEPLOYMENT_KEY`，还会请求并写入托管部署配置。脚本从 x.ai 获取版本和二进制，必要时回退 Google Cloud Storage。CLI 支持 `grok update`、`grok update --check`，以及 `grok --resume <session-id>`。
+- Grok Build 的 macOS/Linux 确认预览按官方 POSIX 脚本 `https://x.ai/cli/install.sh` 说明影响：默认把版本二进制放在 `~/.grok/downloads`、在 `~/.grok/bin` 发布 `grok`/`agent` 入口，写入 `~/.grok/config.toml` 与 Bash/Zsh/Fish 补全；脚本按可识别的 shell 修改启动文件以加入 PATH，首次编辑对应现有文件时创建时间戳备份。macOS Bash 还可能在已有 `~/.bash_profile` 中追加加载 `~/.bashrc` 的语句。如果 `~/.local/bin` 或 `/usr/local/bin` 已在 PATH 且可写，也可能在那里创建入口软链接。Launchpad 固定 stable；仅在环境存在 `GROK_DEPLOYMENT_KEY` 时请求和写入托管部署配置。见[官方脚本](https://x.ai/cli/install.sh)及[Grok Build 官方说明](https://docs.x.ai/build/overview)。
 - Grok 官方会话位于 `~/.grok/sessions/`（可由 `GROK_HOME` 覆盖）；Launchpad 只读取官方文档描述的 `summary.json` metadata。官方 `grok sessions search` 可能混合本地与远端结果，因此工作台只实现本地 metadata 搜索。
 - Hermes Agent CLI 官方命令为 `hermes`，支持 `hermes --version`。Windows 官方安装器为 `https://hermes-agent.nousresearch.com/install.ps1`；G2 使用官方 PowerShell 调用方式和 `-NonInteractive -Branch main -SkipBrowser -SkipComputerUse`，跳过 setup/gateway 交互及 Launchpad 不提供的可选浏览器、computer-use 工具。源码受管安装的入口默认位于 `%LOCALAPPDATA%\hermes\bin\`，源码与默认用户数据位于 `%LOCALAPPDATA%\hermes\`，`HERMES_HOME` 可覆盖数据目录。安装器仍会准备其受管 Python/Node 等运行时和基础依赖、launcher 与数据目录；确认预览说明这些影响和用户 PATH 变更。官方更新说明区分源码安装与包管理安装；`hermes update --check` 不应用代码、不安装依赖或重启 Gateway，但可能获取 Git metadata，不视为零文件写入；`hermes update --plan` 可查看安装归属及运行服务影响。Launchpad 的更新任务直接运行官方默认命令 `hermes update`，不指定分支或额外确认参数，也不重复读取更新计划；安装渠道、默认更新目标与交互由 Hermes CLI 自行处理。
+- Hermes Agent macOS/Linux 安装确认预览按当前官方 POSIX 安装脚本及 Launchpad 参数说明：源码位于 `~/.hermes/hermes-agent`，命令入口发布到 `~/.local/bin/hermes`，默认数据目录为 `~/.hermes`（可由 `HERMES_HOME` 改写）；安装会下载校验过的 uv、准备受管 Python/依赖和工具缓存、写安装日志，并按检测到的 shell 更新启动文件 PATH。Launchpad 使用 `--non-interactive` 跳过首次 setup 向导，同时传入 `--skip-browser --skip-computer-use`；官方脚本会记住这两个可选组件的跳过状态，之后可通过 `hermes pm install` 单独安装。Linux 管理入口仅识别官方默认的 `~/.local/bin/hermes` 与 `~/.hermes/hermes-agent` Git checkout；其他路径或安装渠道仍交由其自身管理。官方细节见[安装文档](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/installation.md)、[当前安装脚本](https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh)；社区用户也报告安装后需要重新载入 shell 配置并留意 `~/.local/bin` PATH 项，见[安装后 PATH 案例](https://www.reddit.com/r/hermesagent/comments/1tsp31w/uninstall_hermes_completely_for_a_clean_install/)。
 - Hermes 会话保存在当前有效 Hermes home 对应 Profile 的 SQLite `state.db`；官方 `sessions` 表含 `source`、`title`、`cwd`、`git_repo_root` 等元数据。G2 只读且有界地处理 `source=cli` 会话，按项目目录过滤；指定会话以 `hermes --resume <session-id> --no-restore-cwd` 恢复。官方稳定机器可读列表格式未明确前，不解析人类可读表格输出。
 - Antigravity 官方 release manifest 的 macOS 平台名为 `darwin_arm64` 与 `darwin_amd64`。
 
@@ -191,16 +193,17 @@ args:
 
 `irm ... | iex` 类型安装脚本必须在 UI 中高亮来源、网络执行风险和确认按钮。默认不要静默运行。
 
-macOS 安装清单：
+macOS/Linux（POSIX）安装清单：
 
-| 工具        | 解释器      | 固定官方命令                                                                                  |
-| ----------- | ----------- | --------------------------------------------------------------------------------------------- |
-| Claude Code | `/bin/bash` | `curl -fsSL https://claude.ai/install.sh \| bash`                                             |
-| Codex       | `/bin/sh`   | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`                                       |
-| Antigravity | `/bin/bash` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`                                |
-| Grok Build  | `/bin/bash` | `curl -fsSL https://x.ai/cli/install.sh \| bash`（在 M5 跨平台对齐前不纳入 Windows 实施门禁） |
+| 工具         | 解释器      | 固定官方命令                                                                                                                     |
+| ------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code  | `/bin/bash` | `curl -fsSL https://claude.ai/install.sh \| bash`                                                                                |
+| Codex        | `/bin/sh`   | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`                                                                          |
+| Antigravity  | `/bin/bash` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`                                                                   |
+| Grok Build   | `/bin/bash` | `curl -fsSL https://x.ai/cli/install.sh \| bash`                                                                                 |
+| Hermes Agent | `/bin/bash` | `curl -fsSL https://hermes-agent.nousresearch.com/install.sh \| bash -s -- --non-interactive --skip-browser --skip-computer-use` |
 
-Hermes Agent 的 macOS/Linux 安装命令与安装归属尚不纳入 G2；在 M5 按官方平台文档核验后再加入对应平台清单。
+macOS/Linux 的 Grok Build 与 Hermes Agent 均调用官方 POSIX 安装脚本；Hermes 使用非交互模式跳过工作台不提供的浏览器和 computer-use 可选工具。官方默认入口为 `~/.local/bin/hermes`，源码 checkout 位于 `~/.hermes/hermes-agent`；Launchpad 仅对这两个默认位置匹配且包含 Git checkout 的安装开放托管更新。Hermes Desktop、Nix 或其他自定义安装路径由其所属渠道更新。macOS/Linux 实机验收仍归 M5。
 
 实现层把解释器作为 `program`，把 `-c` 和对应命令常量作为参数数组。网络脚本
 字符串只能从内置 CLI 安装清单产生，不允许追加用户输入；预览必须原样展示 URL、
@@ -215,13 +218,13 @@ Grok Windows 主程序通过 HTTPS 下载；安装脚本对其附带的 MinGit �
 
 最新版本查询：
 
-| 工具         | 最新版本来源                                                                                                                                                                                                                                                                                                            |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code  | `downloads.claude.ai/claude-code-releases/latest`                                                                                                                                                                                                                                                                       |
-| Codex        | `releases.openai.com/codex/channels/latest`                                                                                                                                                                                                                                                                             |
-| Antigravity  | 官方安装器使用的当前平台 release manifest                                                                                                                                                                                                                                                                               |
-| Grok Build   | 进入设置页或手动刷新时独立运行官方 `grok update --check --json` 并解析 `latestVersion`；无法解析则显示未知                                                                                                                                                                                                              |
-| Hermes Agent | 进入设置页或手动刷新时，对已识别的官方 Windows 源码安装独立运行 `hermes update --check`，使用 Hermes 官方默认更新目标；以分支落后提交数表达更新状态，不使用语义版本比较；浅克隆可能只能确认有更新而无法给出提交数。该检查不应用代码、不安装依赖或重启 Gateway，但会获取并更新 Git 比较 metadata；无法识别输出时显示未知 |
+| 工具         | 最新版本来源                                                                                                                                                                                                                                                                                                                            |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code  | `downloads.claude.ai/claude-code-releases/latest`                                                                                                                                                                                                                                                                                       |
+| Codex        | `releases.openai.com/codex/channels/latest`                                                                                                                                                                                                                                                                                             |
+| Antigravity  | 官方安装器使用的当前平台 release manifest                                                                                                                                                                                                                                                                                               |
+| Grok Build   | 进入设置页或手动刷新时独立运行官方 `grok update --check --json` 并解析 `latestVersion`；无法解析则显示未知                                                                                                                                                                                                                              |
+| Hermes Agent | 进入设置页或手动刷新时，对已识别的官方 Windows/macOS/Linux 默认源码安装独立运行 `hermes update --check`，使用 Hermes 官方默认更新目标；以分支落后提交数表达更新状态，不使用语义版本比较；浅克隆可能只能确认有更新而无法给出提交数。该检查不应用代码、不安装依赖或重启 Gateway，但会获取并更新 Git 比较 metadata；无法识别输出时显示未知 |
 
 设置页按 CLI 分别发起安装、当前版本和更新状态查询，并独立显示进度与结果；单个 CLI 的慢查询或失败不会阻塞其他 CLI。进入设置页自动查询，手动刷新必须强制重新查询；任务完成后的版本回读只刷新对应 CLI。
 
@@ -275,14 +278,14 @@ Windows 下 Codex 的官方安装器和内置更新命令都必须通过 `System
 | Hermes Agent | `<已解析的 Hermes CLI 完整路径> update` | 使用官方默认更新语义；确认框仅展示来源和完整路径命令，更新目标、安装渠道处理及交互由 Hermes CLI 自行决定 |
 
 Grok 也提供官方 npm 包 `@xai-official/grok`，但本应用 G1 只托管官方原生安装器。
-只有官方 CLI 检查 JSON 明确报告 `installer=internal`，且当前程序位于
-`%USERPROFILE%\.grok\bin`、`GROK_BIN_DIR` 或对应 Unix 用户目录时，应用内更新才可用；
-计划生成只定位本机 CLI，不执行网络检查；任务创建后再校验同一可执行文件报告的
-安装来源。npm、未知来源或路径不匹配时任务会失败且不会调用更新命令。运行
+官方 CLI 检查 JSON 明确报告 `installer=internal` 时，应用内更新可用；安装路径可以是
+用户自定义目录或 PATH 中的入口，不要求固定在默认目录。计划生成只定位本机 CLI，不执行
+网络检查；任务创建后再校验同一可执行文件报告的安装来源。npm、未知来源时任务会失败且
+不会调用更新命令。运行
 `grok update` 时会移除 pnpm 注入的 `npm_config_user_agent`，避免官方原生安装
 被误判为 npm 安装。
 
-Hermes 的更新可用状态仍按已识别的官方 Windows 源码安装进行查询：设置页或手动刷新时仅运行一次 `hermes update --check`，使用 CLI 默认更新目标。托管资格由已解析的完整可执行路径和默认源码 checkout 位置确认，不额外运行 `--install-id` 和 `--plan`。状态不与 `--version` 中的语义版本比较；官方对浅克隆可能只报告是否存在更新而不给提交数。`--check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，因此可能更新本地比较引用，不能承诺零文件写入。用户确认后，Launchpad 直接执行已解析的 Hermes CLI 完整路径和 `update` 参数，不额外读取更新计划或在启动任务前重复校验；MSIX、Microsoft Store、其他包管理器和来源不明安装的更新行为交由其所属渠道处理。确认浮窗只显示来源与该完整路径命令。查询失败时保留可用缓存并明确标出查询错误；没有可用结果时显示未知状态，不猜测为已同步。
+Hermes 的更新可用状态按已识别的官方 Windows/macOS/Linux 默认源码安装进行查询：设置页或手动刷新时仅运行一次 `hermes update --check`，使用 CLI 默认更新目标。Windows 要求可执行文件位于 `%LOCALAPPDATA%\\hermes\\bin` 且 checkout 位于 `%LOCALAPPDATA%\\hermes\\hermes-agent`；macOS/Linux 要求入口位于 `~/.local/bin/hermes` 且 checkout 位于 `~/.hermes/hermes-agent`。不额外运行 `--install-id` 和 `--plan`。状态不与 `--version` 中的语义版本比较；官方对浅克隆可能只报告是否存在更新而不给提交数。`--check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，因此可能更新本地比较引用，不能承诺零文件写入。用户确认后，Launchpad 直接执行已解析的 Hermes CLI 完整路径和 `update` 参数，并在任务启动前再次校验该路径和默认源码 checkout；MSIX、Microsoft Store、Hermes Desktop、Nix、其他包管理器和来源不明安装的更新行为交由其所属渠道处理。确认浮窗只显示来源与该完整路径命令。查询失败时保留可用缓存并明确标出查询错误；没有可用结果时显示未知状态，不猜测为已同步。
 
 更新命令同样用结构化参数建模，不在业务层拼接自由字符串。Codex 的 Windows
 更新计划先解析 CLI 完整路径，再在最终 PowerShell 边界进行字面量转义；命令主体

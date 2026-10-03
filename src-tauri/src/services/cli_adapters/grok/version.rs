@@ -13,7 +13,7 @@ pub(crate) fn fetch_grok_update_check() -> Result<(GrokUpdateCheck, bool, Option
     ))
     .ok_or_else(|| "未检测到可运行的 Grok Build CLI".to_string())?;
     let check = inspect_grok_update_check(&path)?;
-    let management_message = grok_update_management_message(&path, check.installer.as_deref());
+    let management_message = grok_update_management_message(check.installer.as_deref());
     let managed_update_allowed = management_message.is_none();
     Ok((check, managed_update_allowed, management_message))
 }
@@ -37,29 +37,18 @@ pub(crate) fn inspect_grok_update_check(path: &std::path::Path) -> Result<GrokUp
     parse_grok_update_check(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Return a management explanation unless both the CLI and its location
-/// identify the official native installer. In particular, a stale
-/// `config.toml` marker cannot make an npm shim eligible for `grok update`.
-pub(crate) fn grok_update_management_message(
-    path: &std::path::Path,
-    installer: Option<&str>,
-) -> Option<String> {
-    grok_update_management_message_for(path, installer, &grok_native_install_dirs())
+/// The CLI's update check reports the installation source. Trust its `internal`
+/// result regardless of executable location so custom paths for a native
+/// install still use the official `grok update` command.
+pub(crate) fn grok_update_management_message(installer: Option<&str>) -> Option<String> {
+    grok_update_management_message_for(installer)
 }
 
-pub(crate) fn grok_update_management_message_for(
-    path: &std::path::Path,
-    installer: Option<&str>,
-    expected_dirs: &[std::path::PathBuf],
-) -> Option<String> {
+pub(crate) fn grok_update_management_message_for(installer: Option<&str>) -> Option<String> {
     match installer {
-        Some("internal") if is_grok_in_known_bin_dir(path, expected_dirs) => None,
+        Some("internal") => None,
         Some("npm") => Some(
             "此 Grok Build 由 npm 管理。请使用原安装渠道更新，或查看 Grok Build 官方 CLI 安装说明。"
-                .to_string(),
-        ),
-        Some("internal") => Some(
-            "CLI 报告为官方原生安装，但程序路径不在已知官方安装目录中；为避免误更新，Launchpad 已禁用托管更新。"
                 .to_string(),
         ),
         Some(_) => Some(
@@ -73,49 +62,8 @@ pub(crate) fn grok_update_management_message_for(
     }
 }
 
-pub(crate) fn validate_grok_native_update_source(
-    path: &std::path::Path,
-    installer: Option<&str>,
-) -> Result<(), String> {
-    grok_update_management_message(path, installer).map_or(Ok(()), Err)
-}
-
-pub(crate) fn is_grok_in_known_bin_dir(
-    path: &std::path::Path,
-    expected_dirs: &[std::path::PathBuf],
-) -> bool {
-    let expected_name = if cfg!(windows) { "grok.exe" } else { "grok" };
-    if !path
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected_name))
-    {
-        return false;
-    }
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    normalized_path(parent).is_some_and(|parent| {
-        expected_dirs
-            .iter()
-            .filter_map(|directory| normalized_path(directory))
-            .any(|directory| parent == directory)
-    })
-}
-
-fn normalized_path(path: &std::path::Path) -> Option<String> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().ok()?.join(path)
-    };
-    let resolved = std::fs::canonicalize(&absolute).unwrap_or(absolute);
-    Some(
-        resolved
-            .to_string_lossy()
-            .replace('/', "\\")
-            .trim_end_matches('\\')
-            .to_ascii_lowercase(),
-    )
+pub(crate) fn validate_grok_native_update_source(installer: Option<&str>) -> Result<(), String> {
+    grok_update_management_message(installer).map_or(Ok(()), Err)
 }
 
 pub(crate) fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {

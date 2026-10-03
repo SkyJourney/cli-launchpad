@@ -18,6 +18,10 @@ pub(crate) fn hermes_install_dirs() -> Vec<PathBuf> {
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         return vec![PathBuf::from(local_app_data).join("hermes").join("bin")];
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if let Some(home) = std::env::var_os("HOME") {
+        return vec![PathBuf::from(home).join(".local").join("bin")];
+    }
     Vec::new()
 }
 
@@ -66,7 +70,7 @@ pub(crate) struct HermesUpdateCheck {
     pub(crate) management_message: Option<String>,
 }
 
-/// Inspect Hermes' default Windows source installation and compare it with
+/// Inspect Hermes' default managed source installation and compare it with
 /// the updater's default channel. This is called only for an explicit refresh.
 pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
     let path = crate::services::cli_adapters::installed_path(crate::services::cli_adapters::get(
@@ -137,11 +141,6 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
 /// The official `update --check` command itself provides the update status, so
 /// the install identity and plan commands are unnecessary here.
 fn inspect_hermes_managed_install(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        return Err("Hermes Agent 托管安装和更新将在 M5 跨平台阶段接入".to_string());
-    }
     #[cfg(windows)]
     {
         let local_app_data = std::env::var_os("LOCALAPPDATA")
@@ -158,6 +157,43 @@ fn inspect_hermes_managed_install(path: &std::path::Path) -> Result<(), String> 
 
         Ok(())
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| "无法确认 POSIX 用户级 Hermes 安装目录".to_string())?;
+        let expected_bin = home.join(".local").join("bin");
+        let checkout_root = home.join(".hermes").join("hermes-agent");
+        if !is_hermes_posix_source_install(path, &expected_bin, &checkout_root) {
+            return Err(
+                "仅对 Hermes 官方默认 macOS/Linux 源码安装启用 Launchpad 托管更新；其他安装请使用原渠道。"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        Err("当前平台不支持 Hermes Agent 托管安装和更新".to_string())
+    }
+}
+
+pub(crate) fn validate_managed_install(path: &std::path::Path) -> Result<(), String> {
+    inspect_hermes_managed_install(path)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn is_hermes_posix_source_install(
+    path: &std::path::Path,
+    expected_bin: &std::path::Path,
+    checkout_root: &std::path::Path,
+) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("hermes")
+        && path
+            .parent()
+            .is_some_and(|parent| same_path(parent, expected_bin))
+        && checkout_root.join(".git").exists()
 }
 
 #[cfg(windows)]
@@ -180,14 +216,22 @@ pub(crate) fn is_hermes_default_install_path(
         && checkout_root.join(".git").exists()
 }
 
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
     fn normalized(path: &std::path::Path) -> String {
         let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        resolved
-            .to_string_lossy()
-            .replace('/', "\\")
-            .trim_end_matches('\\')
-            .to_ascii_lowercase()
+        #[cfg(windows)]
+        {
+            resolved
+                .to_string_lossy()
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_ascii_lowercase()
+        }
+        #[cfg(not(windows))]
+        {
+            resolved.to_string_lossy().trim_end_matches('/').to_string()
+        }
     }
     normalized(left) == normalized(right)
 }
@@ -366,4 +410,30 @@ fn strip_ansi_sequences(input: &str) -> String {
         }
     }
     output
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod posix_tests {
+    use super::*;
+
+    #[test]
+    fn managed_source_install_requires_default_launcher_and_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join(".local").join("bin");
+        let checkout = root.path().join(".hermes").join("hermes-agent");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        let launcher = bin.join("hermes");
+        std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+
+        assert!(is_hermes_posix_source_install(&launcher, &bin, &checkout));
+        assert!(!is_hermes_posix_source_install(
+            &root.path().join("homebrew/bin/hermes"),
+            &bin,
+            &checkout
+        ));
+
+        std::fs::remove_dir_all(checkout.join(".git")).unwrap();
+        assert!(!is_hermes_posix_source_install(&launcher, &bin, &checkout));
+    }
 }

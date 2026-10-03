@@ -84,8 +84,8 @@ pub(crate) fn normalize_semver(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::services::cli_adapters::grok::version::{
-        grok_update_check_command, grok_update_management_message_for, is_grok_in_known_bin_dir,
-        parse_grok_latest, parse_grok_update_check,
+        grok_update_check_command, grok_update_management_message_for, parse_grok_latest,
+        parse_grok_update_check,
     };
     #[cfg(windows)]
     use crate::services::cli_adapters::hermes::version::is_hermes_default_install_path;
@@ -199,38 +199,10 @@ mod tests {
     }
 
     #[test]
-    fn grok_update_management_requires_both_internal_source_and_known_path() {
-        let binary = std::path::PathBuf::from(if cfg!(windows) {
-            r"C:\Users\tester\.grok\bin\grok.exe"
-        } else {
-            "/home/tester/.grok/bin/grok"
-        });
-        let directory = binary.parent().unwrap().to_path_buf();
-        assert_eq!(
-            grok_update_management_message_for(&binary, Some("internal"), &[directory.clone()]),
-            None
-        );
-        assert!(
-            grok_update_management_message_for(&binary, Some("npm"), &[directory.clone()])
-                .is_some()
-        );
-        assert!(grok_update_management_message_for(&binary, None, &[directory.clone()]).is_some());
-
-        let wrong_binary = std::path::PathBuf::from(if cfg!(windows) {
-            r"C:\Users\tester\AppData\Roaming\npm\grok.exe"
-        } else {
-            "/home/tester/.npm/bin/grok"
-        });
-        assert!(grok_update_management_message_for(
-            &wrong_binary,
-            Some("internal"),
-            &[directory.clone()]
-        )
-        .is_some());
-
-        let expected_name = if cfg!(windows) { "grok.exe" } else { "grok" };
-        let known = directory.join(expected_name);
-        assert!(is_grok_in_known_bin_dir(&known, &[directory]));
+    fn grok_update_management_trusts_reported_official_native_source() {
+        assert_eq!(grok_update_management_message_for(Some("internal")), None);
+        assert!(grok_update_management_message_for(Some("npm")).is_some());
+        assert!(grok_update_management_message_for(None).is_some());
     }
 
     #[test]

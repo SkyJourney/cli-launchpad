@@ -15,8 +15,8 @@
         "title": "CLI Launchpad",
         "width": 1360,
         "height": 860,
-        "minWidth": 860,
-        "minHeight": 560,
+        "minWidth": 960,
+        "minHeight": 640,
         "decorations": false,
         "dragDropEnabled": false
       }

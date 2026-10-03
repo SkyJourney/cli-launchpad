@@ -339,7 +339,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("CLI Launchpad")
         .menu(&menu)
-        .show_menu_on_left_click(false);
+        .show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
@@ -366,7 +366,13 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             } = event
             {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    show_main_window(&window);
+                    let is_visible = window.is_visible().unwrap_or(false);
+                    let is_minimized = window.is_minimized().unwrap_or(false);
+                    if is_visible && !is_minimized {
+                        let _ = window.hide();
+                    } else {
+                        show_main_window(&window);
+                    }
                 }
             }
         })

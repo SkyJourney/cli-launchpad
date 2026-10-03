@@ -259,6 +259,15 @@ export const zh = {
       "如果安装目录尚未位于当前用户 PATH，会将其加入用户 PATH。",
     grokInstallEffectNetwork:
       "从 x.ai 获取版本信息和程序文件；网络不可达时会回退 Google Cloud Storage。若环境提供 GROK_DEPLOYMENT_KEY，还会请求部署配置并写入托管配置文件。",
+    grokPosixInstallEffectsHeading: "官方 macOS/Linux 安装脚本会执行以下操作：",
+    grokPosixInstallEffectPath:
+      "默认将程序放在当前用户的 ~/.grok/bin；GROK_BIN_DIR 可改写该目录。若 ~/.local/bin 或 /usr/local/bin 已在 PATH 且可写，脚本还可能在那里创建 grok 和 agent 软链接。",
+    grokPosixInstallEffectFiles:
+      "下载平台对应的 Grok 程序到 ~/.grok/downloads，并在 ~/.grok/bin 创建或替换 grok、agent 软链接；同时写入 ~/.grok/config.toml 和 Bash、Zsh、Fish 补全文件。",
+    grokPosixInstallEffectShell:
+      "按可识别的登录 shell 更新 ~/.bashrc、~/.zshrc 或 Fish 配置，将 ~/.grok/bin 加入后续会话的 PATH；首次修改对应已有配置文件前会创建时间戳备份。macOS 的 Bash 还可能在已有 ~/.bash_profile 中追加加载 ~/.bashrc 的语句。",
+    grokPosixInstallEffectNetwork:
+      "从 x.ai 获取版本和程序文件，网络不可达时回退到 Google Cloud Storage。仅当环境中存在 GROK_DEPLOYMENT_KEY 时，才会请求并写入部署配置；Launchpad 固定使用 stable 通道。",
     grokUpdateSourceUnknown: "请先刷新版本信息，以确认 Grok Build 的安装来源。",
     installing: "安装中…",
     updating: "更新中…",
@@ -292,6 +301,20 @@ export const zh = {
       "将 %LOCALAPPDATA%\\hermes\\bin 加入当前用户 PATH（如尚未配置）。",
     hermesInstallEffectNetwork:
       "从 Hermes 官方安装地址下载脚本，并联网获取源码与所需运行时、依赖。",
+    hermesPosixInstallEffectsHeading:
+      "官方 macOS/Linux 安装脚本会执行以下操作：",
+    hermesPosixInstallEffectLayout:
+      "在 ~/.hermes/hermes-agent 创建或更新源码目录，在 ~/.local/bin 发布 hermes 命令入口，并在 ~/.hermes 下准备配置和用户数据；创建 .env 时会设置为仅当前用户可读写，现有配置文件不会被初始模板覆盖。",
+    hermesPosixInstallEffectRuntime:
+      "下载经校验的 uv 工具，并在 Hermes 数据目录中准备受管 Python、依赖和工具缓存；安装日志写入 ~/.hermes/logs/install.log。",
+    hermesPosixInstallEffectShell:
+      "按当前 shell 更新相应启动文件，将 ~/.local/bin 加入 PATH；需要重新载入 shell 配置或打开新终端后才能从终端直接运行 hermes。",
+    hermesPosixInstallEffectOptions:
+      "Launchpad 传入跳过浏览器和电脑操作组件的选项，因此本次不会安装这两项可选工具；Hermes 会记住该选择，之后可用 hermes pm install 单独安装。",
+    hermesPosixInstallEffectSetup:
+      "本次使用非交互模式，不会启动首次 setup 配置向导；安装后可运行 hermes setup 完成模型和工具配置。",
+    hermesPosixInstallEffectNetwork:
+      "从 Hermes 官方地址获取安装脚本，从 NousResearch GitHub 拉取 main 源码，并下载固定版本且校验 SHA-256 的 uv 与项目依赖；uv 下载遇到网络故障时官方脚本可回退到其镜像。",
     checking: "查询中…",
     cachedSuffix: "（缓存）",
     refreshFailedSuffix: "；本次查询失败：{{error}}",

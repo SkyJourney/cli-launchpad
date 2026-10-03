@@ -2,7 +2,7 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 commit: 8d4a751
 ---
 
@@ -77,6 +77,10 @@ commit: 8d4a751
 
 ## 近期待办
 
+- 0.3.0 M5 macOS 对齐已开始：Hermes 官方 POSIX 源码安装、默认 `~/.local/bin/hermes` 与 `~/.hermes/hermes-agent` 来源识别，以及托管更新执行前校验已实现；前端曾将 Hermes 设置操作限制在 Windows，现已开放 macOS。当前 Hermes v0.21.5 的 `hermes update --check` 报告落后 `origin/main` 873 个提交。Grok 安装弹窗命令现按空白换行；Windows 专属的 Grok/Hermes 安装影响说明仅在 Windows 展示。macOS 交通灯垂直位置从 y=15 调至 y=20 logical px，用户于 2026-10-03 确认位置正确。Apple Silicon `cargo check`、215 项 Rust 测试、83 项前端测试和生产构建通过，arm64 `.app` 构建和签名校验通过；Tauri 默认 DMG 流程在 Finder AppleScript 步骤失败，跳过 Finder 美化步骤后的预览 DMG 校验通过。初始 `pnpm tauri:dev` 自动化未绑定原生窗口；2026-10-03 改用打包 arm64 debug `.app` 的原生 UI 操作完成复核，未启动 CLI。Grok Build 在此 macOS 机器未安装，M5 已明确列出 Grok macOS 专项验收，其检测/安装计划、更新来源、PTY、历史/搜索/恢复仍未验证。最新复核发现工作区比例恢复的一次性布局时序缺口，已改为在容器可见并取得有效尺寸后应用；增加 macOS 窄窗口标题栏紧凑布局；最新复核取消窄屏隐藏品牌标题的规则，避免标题后的侧栏/分栏按钮移到 Logo 旁，并补齐 M0–M4/G1–G4 的 macOS 逐项追踪清单。2026-10-03 开发版实测：正常退出写入窗口尺寸/位置并复开恢复 1600×1200 可见尺寸（重启后的实际屏幕坐标未独立读取）；横向加嵌套纵向分栏三窗格均可见，关闭空窗格后回到单窗格（SQLite schemaVersion 1、revision 104）。第二轮退出受 `close_behavior=minimize_to_tray` 影响，未完成三窗格跨重启验证；命名布局、比例拖动后跨重启、多显示器仍待验收。当前数据库已恢复单空窗格，window-state 已有几何数据。M0/M1/M2/M3/M4/G1/G2/G3/G4 的详细逐项状态见 [M5 跨平台对齐清单](../../docs/milestones/0.3.0/cross-platform-alignment.md)。当前新增的 83 项前端测试、生产构建和 Rust `cargo check` 通过。PTY/真实 CLI/0.2.4 数据升级、正式 DMG 流程及 Intel 目标仍待验收。
+- Linux M5 对齐、Hermes 官方 Linux 安装/更新来源支持和三平台发布验收仍待完成。
+- 2026-10-03 macOS 窗口代码对齐：主窗口最小尺寸现为 960×640，基础 Tauri 配置和 macOS overlay 均显式填写；macOS overlay 的 `app.windows` 数组会按 JSON Merge Patch 整体覆盖基础数组，曾导致原生边框未应用基础最小尺寸，现已补全 overlay 窗口配置。移除小于 800px 时左栏与工作区上下堆叠的规则；pane 操作组水平内边距为 12px，Grok 命令预览保留换行并可断开长命令。滚动条 CSS 改动已撤回，等 Windows 统一主题标准样式后再对齐。前端构建、83 项测试、修改文件 Prettier 和差异检查通过；macOS Tauri dev 在 overlay 与最小宽度变更后均自动重编译并运行。CUA 无法绑定未打包的 dev 窗口，边框下限实测仍待用户确认。详见 [M5 跨平台对齐清单](../../docs/milestones/0.3.0/cross-platform-alignment.md)。
+- 2026-10-03 更新 main 并将 macOS 对齐工作 rebase 到最新 `origin/main`（`46521c7`）。当前工作树完整保留 39 个开发文件；前端 Vitest 86 项、Rust 218 项、`cargo check`、`cargo fmt --check`、修改文件 Prettier、TypeScript/Vite 生产构建和 `git diff --check` 均通过。Apple Silicon ARM64 `0.3.0` DMG 已构建、`hdiutil verify` 与深度签名校验通过，并按用户要求直接覆盖安装到 `/Applications/CLI Launchpad.app`；核对版本和 arm64 架构后，从正式安装路径启动，原生窗口成功显示并恢复双窗格。DMG 跳过公证（未配置 Apple Developer 凭据）；未启动 CLI。正式 main 合并尚未执行；macOS 更完整的 PTY/CLI/布局/0.2.4 升级、Intel 与 Linux 门禁仍未完成。
 - 继续对 Claude Code、Codex 的真实版本替换，以及跨 CLI 并行、主动终止和重启后历史持久化进行人工端到端验证。
 - 正式跨设备分发达到规模后，评估 Apple Developer Program，并补齐 Developer ID 签名与公证。
 - 对安装包、托盘交互、窗口状态恢复、真实 CLI 启动/恢复及配置文件导入导出进行人工端到端验证。
@@ -94,6 +98,9 @@ commit: 8d4a751
 ## G1 Grok Build CLI 接入（Windows 阶段完成）
 
 - Grok Build 已纳入四项 CLI 工作台，支持 Windows 检测、版本读取、官方安装/更新计划、内置 PTY 启动、summary metadata 历史读取、别名、会话恢复与项目隔离搜索。
+- 2026-10-03 修复 Grok 任务日志显示：安装和更新产生的 stderr 在执行页按普通输出样式呈现，避免官方 CLI 把正常进度写入 stderr 时被误当成错误。
+- 修复 Grok 更新资格矛盾：同一已检测 CLI 的官方更新检查报告 `installer=internal` 即开放 `grok update`，不再额外限制二进制必须位于默认安装目录；npm/未知来源仍交回原渠道或禁用托管更新。保留任务启动前对同一 CLI 来源的复核。
+- 2026-10-03 全工作区差异审查发现 macOS 窄窗标题栏曾隐藏整组工具入口（设置、执行任务、主题、语言和关于），现改为压缩按钮间距并保留入口；Grok/Hermes macOS/Linux 安装副作用说明仍需按平台核对并补齐。
 - G1 各阶段代码审查、修复复审、Rust 与前端最终门禁记录见 [G1 里程碑文档](../../docs/milestones/grok-build-cli.md)；用户已确认 G1.4 Windows 搜索验收通过。
 - 未实际执行 Grok 安装或更新命令，避免更改本机环境；macOS/Linux 真机检测、安装、PTY 与会话恢复仍按 M5 清单验证。
 

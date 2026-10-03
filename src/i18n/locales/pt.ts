@@ -299,6 +299,15 @@ export const pt = {
       "Adicionar o diretório de instalação ao PATH do usuário atual se ele ainda não estiver presente.",
     grokInstallEffectNetwork:
       "Buscar informações de versão e binários em x.ai, com o Google Cloud Storage como alternativa. Se GROK_DEPLOYMENT_KEY estiver no ambiente, também buscar configurações de implantação e gravar arquivos de configuração gerenciados.",
+    grokPosixInstallEffectsHeading: "The official macOS/Linux installer will:",
+    grokPosixInstallEffectPath:
+      "Place files in ~/.grok/bin by default; GROK_BIN_DIR can change that location. If ~/.local/bin or /usr/local/bin is already on PATH and writable, the script may also create grok and agent symlinks there.",
+    grokPosixInstallEffectFiles:
+      "Download the platform binary to ~/.grok/downloads and create or replace grok and agent symlinks in ~/.grok/bin. It also writes ~/.grok/config.toml and Bash, Zsh, and Fish completion files.",
+    grokPosixInstallEffectShell:
+      "When it recognizes the login shell, update ~/.bashrc, ~/.zshrc, or the Fish config so future sessions add ~/.grok/bin to PATH; it backs up an existing target config before its first edit. On macOS Bash, it may also append a line to an existing ~/.bash_profile to source ~/.bashrc.",
+    grokPosixInstallEffectNetwork:
+      "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Atualize as informações de versão primeiro para verificar a origem da instalação do Grok Build.",
     installing: "Instalando…",
@@ -335,6 +344,20 @@ export const pt = {
       "Adicionar %LOCALAPPDATA%\\hermes\\bin ao PATH do usuário atual se ainda não estiver configurado.",
     hermesInstallEffectNetwork:
       "Baixar o script do endereço oficial do instalador Hermes e buscar código-fonte, ambientes e dependências.",
+    hermesPosixInstallEffectsHeading:
+      "The official macOS/Linux installer will:",
+    hermesPosixInstallEffectLayout:
+      "Create or update source under ~/.hermes/hermes-agent, publish the hermes command under ~/.local/bin, and prepare configuration and user data under ~/.hermes. A new .env file is restricted to the current user; existing config files are not replaced by initial templates.",
+    hermesPosixInstallEffectRuntime:
+      "Download the checksum-verified uv tool, then prepare managed Python, dependencies, and tool caches in the Hermes data area. Installer logs go to ~/.hermes/logs/install.log.",
+    hermesPosixInstallEffectShell:
+      "Update the startup file for the detected shell to add ~/.local/bin to PATH. Reload the shell configuration or open a new terminal before running hermes from a terminal.",
+    hermesPosixInstallEffectOptions:
+      "Launchpad passes options to skip the browser and computer-use components, so these optional tools are not installed. Hermes remembers this choice; they can be installed later with hermes pm install.",
+    hermesPosixInstallEffectSetup:
+      "This non-interactive run skips the first-run setup wizard. Run hermes setup after installation to configure a model and tools.",
+    hermesPosixInstallEffectNetwork:
+      "Fetch the installer from the official Hermes address, clone the main source from NousResearch GitHub, and download a pinned SHA-256-verified uv build and project dependencies. If the uv download has a network failure, the official script can use its mirror.",
     checking: "Verificando…",
     cachedSuffix: " (em cache)",
     refreshFailedSuffix: "; falha ao atualizar: {{error}}",

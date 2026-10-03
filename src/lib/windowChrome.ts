@@ -15,7 +15,7 @@ export function getWindowChromeOptions(userAgent: string): WindowChromeOptions {
       decorations: true,
       titleBarStyle: "overlay",
       hiddenTitle: true,
-      trafficLightPosition: { x: 14, y: 15 },
+      trafficLightPosition: { x: 14, y: 20 },
     };
   }
 

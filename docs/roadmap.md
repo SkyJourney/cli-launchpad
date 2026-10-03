@@ -114,7 +114,7 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 ### M5：跨平台验收与 0.3.0 发布
 
-**状态：** Windows M1–M4、G1–G4 已完成；Windows 0.3.0 x64 NSIS 本地候选包已安装并启动验证。macOS/Linux 对齐待开始，未创建正式版本 tag。
+**状态：** Windows M1–M4、G1–G4 已完成；Windows 0.3.0 x64 NSIS 本地候选包已安装并启动验证。macOS 对齐开发进行中（Hermes 官方 POSIX 安装/更新适配已覆盖 macOS/Linux，待目标平台实机门禁），Linux 其余对齐待开始，未创建正式版本 tag。
 
 - Windows M1–M4、G1–G4 完成后，按[跨平台对齐待办](milestones/0.3.0/cross-platform-alignment.md)完成 macOS/Linux 配置/目标平台编译、实机验证与必要适配，并复核 Windows、macOS、Linux 的 PTY、布局、窗口标题栏、项目切换、异常终止、安装包及升级路径。
 - 更新用户文档、截图、发布说明和已知限制。

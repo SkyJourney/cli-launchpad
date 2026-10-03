@@ -285,6 +285,15 @@ export const ko = {
       "설치 디렉터리가 PATH에 없는 경우 현재 사용자의 PATH에 추가합니다.",
     grokInstallEffectNetwork:
       "x.ai에서 버전 정보와 바이너리를 가져오며 Google Cloud Storage를 대체 경로로 사용합니다. 환경에 GROK_DEPLOYMENT_KEY가 있으면 배포 설정도 가져와 관리 설정 파일에 기록합니다.",
+    grokPosixInstallEffectsHeading: "The official macOS/Linux installer will:",
+    grokPosixInstallEffectPath:
+      "Place files in ~/.grok/bin by default; GROK_BIN_DIR can change that location. If ~/.local/bin or /usr/local/bin is already on PATH and writable, the script may also create grok and agent symlinks there.",
+    grokPosixInstallEffectFiles:
+      "Download the platform binary to ~/.grok/downloads and create or replace grok and agent symlinks in ~/.grok/bin. It also writes ~/.grok/config.toml and Bash, Zsh, and Fish completion files.",
+    grokPosixInstallEffectShell:
+      "When it recognizes the login shell, update ~/.bashrc, ~/.zshrc, or the Fish config so future sessions add ~/.grok/bin to PATH; it backs up an existing target config before its first edit. On macOS Bash, it may also append a line to an existing ~/.bash_profile to source ~/.bashrc.",
+    grokPosixInstallEffectNetwork:
+      "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Grok Build 설치 출처를 확인하려면 먼저 버전 정보를 새로 고치세요.",
     installing: "설치 중…",
@@ -321,6 +330,20 @@ export const ko = {
       "%LOCALAPPDATA%\\hermes\\bin이 아직 설정되지 않은 경우 현재 사용자의 PATH에 추가합니다.",
     hermesInstallEffectNetwork:
       "공식 Hermes 설치 프로그램 주소에서 스크립트를 다운로드하고 소스, 런타임 및 종속성을 가져옵니다.",
+    hermesPosixInstallEffectsHeading:
+      "The official macOS/Linux installer will:",
+    hermesPosixInstallEffectLayout:
+      "Create or update source under ~/.hermes/hermes-agent, publish the hermes command under ~/.local/bin, and prepare configuration and user data under ~/.hermes. A new .env file is restricted to the current user; existing config files are not replaced by initial templates.",
+    hermesPosixInstallEffectRuntime:
+      "Download the checksum-verified uv tool, then prepare managed Python, dependencies, and tool caches in the Hermes data area. Installer logs go to ~/.hermes/logs/install.log.",
+    hermesPosixInstallEffectShell:
+      "Update the startup file for the detected shell to add ~/.local/bin to PATH. Reload the shell configuration or open a new terminal before running hermes from a terminal.",
+    hermesPosixInstallEffectOptions:
+      "Launchpad passes options to skip the browser and computer-use components, so these optional tools are not installed. Hermes remembers this choice; they can be installed later with hermes pm install.",
+    hermesPosixInstallEffectSetup:
+      "This non-interactive run skips the first-run setup wizard. Run hermes setup after installation to configure a model and tools.",
+    hermesPosixInstallEffectNetwork:
+      "Fetch the installer from the official Hermes address, clone the main source from NousResearch GitHub, and download a pinned SHA-256-verified uv build and project dependencies. If the uv download has a network failure, the official script can use its mirror.",
     checking: "확인 중…",
     cachedSuffix: " (캐시됨)",
     refreshFailedSuffix: "; 새로 고침 실패: {{error}}",

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import hermesAgentAvatar from "../../assets/icons/brands/hermesagent.webp";
 import type { InstallKind } from "../tauri";
-import type { CliAdapter } from "./types";
+import type { CliAdapter, CliPlatform } from "./types";
 
 const HermesAgentIcon: CliAdapter["icon"] = ({ size = 24 }) =>
   createElement("img", {
@@ -19,18 +19,34 @@ export const hermesAdapter: CliAdapter = {
   shortLabel: "HA",
   icon: HermesAgentIcon,
   settingsActions: true,
-  canManageSettings: (isWindows) => isWindows,
+  canManageSettings: (platform: CliPlatform) =>
+    platform === "windows" || platform === "macos" || platform === "linux",
   terminalPaste: { controlV: "terminal", windowsAltV: "terminal" },
   latestStatusKind: "branch-update",
-  installEffects: {
-    headingKey: "settings.hermesInstallEffectsHeading",
-    effectKeys: [
-      "settings.hermesInstallEffectRuntime",
-      "settings.hermesInstallEffectData",
-      "settings.hermesInstallEffectPath",
-      "settings.hermesInstallEffectNetwork",
-    ],
-  },
+  installEffects: (platform) =>
+    platform === "windows"
+      ? {
+          headingKey: "settings.hermesInstallEffectsHeading",
+          effectKeys: [
+            "settings.hermesInstallEffectRuntime",
+            "settings.hermesInstallEffectData",
+            "settings.hermesInstallEffectPath",
+            "settings.hermesInstallEffectNetwork",
+          ],
+        }
+      : platform === "macos" || platform === "linux"
+        ? {
+            headingKey: "settings.hermesPosixInstallEffectsHeading",
+            effectKeys: [
+              "settings.hermesPosixInstallEffectLayout",
+              "settings.hermesPosixInstallEffectRuntime",
+              "settings.hermesPosixInstallEffectShell",
+              "settings.hermesPosixInstallEffectOptions",
+              "settings.hermesPosixInstallEffectSetup",
+              "settings.hermesPosixInstallEffectNetwork",
+            ],
+          }
+        : undefined,
   showCommandNotice: (kind: InstallKind) => kind !== "update",
   showManagementMessage: true,
   refreshLatestAfterExecution: (kind: InstallKind) => kind === "update",

@@ -7,7 +7,7 @@
 
 ## 目标
 
-在 M3 完成后、M4 开始前，将 Hermes Agent 的本地交互式 CLI 纳入 CLI Launchpad。G2 先完成 Windows 的检测、官方安装/更新、项目内 PTY 启动、会话历史、项目内搜索与恢复。Hermes 窗口标题简称为 `HA`，标题格式沿用 `项目名-HA-01`；macOS/Linux 实机对齐仍由 M5 负责。
+在 M3 完成后、M4 开始前，将 Hermes Agent 的本地交互式 CLI 纳入 CLI Launchpad。G2 先完成 Windows 的检测、官方安装/更新、项目内 PTY 启动、会话历史、项目内搜索与恢复。Hermes 窗口标题简称为 `HA`，标题格式沿用 `项目名-HA-01`；macOS/Linux 的 POSIX 安装/更新适配已在 M5 接入，实机对齐仍由 M5 负责。
 
 G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程服务、Hermes Desktop、Profile 管理或工具生态接入 Launchpad。
 
@@ -23,13 +23,13 @@ G2 只接入 `hermes` CLI。它不把 Hermes 的 Gateway、消息平台、远程
 ## 已确认范围
 
 - 增加 Hermes Agent 工具身份和全局状态，显示完整名称；终端标题使用 `HA`。窗口计数沿用项目与 CLI 全局序号规则，独立窗口也参与计数。
-- 检测 PATH、官方 Windows 源码安装器的受管入口及 `HERMES_HOME`；只对确认属于官方源码安装且由该安装器管理的实例提供 Launchpad 托管更新。其他来源允许在可信解析到命令时启动，但更新交给其所属渠道。
+- 检测 PATH、官方 Windows/macOS/Linux 源码安装器的受管入口及 `HERMES_HOME`；只对确认属于官方默认源码安装且由该安装器管理的实例提供 Launchpad 托管更新。其他来源允许在可信解析到命令时启动，但更新交给其所属渠道。
 - 设置页进入时为每个 CLI 独立启动最新状态查询；Hermes 单独运行 `hermes update --check`，采用官方默认更新目标，慢查询或失败只影响 Hermes 自身一行，不阻塞其他 CLI。手动刷新重新启动各自查询。检查不拉取应用代码、不安装依赖或重启 Gateway，但可能获取 Git metadata；若输出无法可靠判断更新状态或通道，显示未知状态，不猜测版本。
 - 官方 PowerShell 安装计划进入现有预览、确认、后台任务、实时日志、取消和安装后回读流程。固定使用 `-NonInteractive -Branch main -SkipBrowser -SkipComputerUse`；确认内容说明受管运行时、基础依赖、安装入口、数据目录和 PATH 等副作用。
-- 设置页版本查询对已识别的官方 Windows 默认源码安装只运行一次 `hermes update --check`；托管资格由解析到的执行文件完整路径和默认源码 checkout 位置确认，不再为一次查询串行运行 `--install-id` 与 `--plan`。更新任务不重复读取计划或校验来源，直接运行完整路径的 `hermes update`，由官方 CLI 处理默认更新目标、安装渠道与更新过程。
+- 设置页版本查询对已识别的官方 Windows/POSIX 默认源码安装只运行一次 `hermes update --check`；托管资格由解析到的执行文件完整路径和默认源码 checkout 位置确认，不再为一次查询串行运行 `--install-id` 与 `--plan`。更新任务在启动前重复校验该路径和 checkout，随后运行完整路径的 `hermes update`，由官方 CLI 处理默认更新目标、安装渠道与更新过程。
 - 普通启动使用 `hermes` 与当前项目目录；PTY 创建、输入输出、尺寸同步、自然退出、独立窗口及窗格行为复用现有共享生命周期。
 - 右侧项目上下文区展示当前项目 Hermes 会话，按 10 条分页，支持稀疏别名、可重建的本地搜索索引和安全恢复。遵循 Hermes 当前有效 home/Profile 解析结果，只读一个 Profile；不枚举或管理命名 Profile。
-- G2 验收以 Windows 为准。macOS/Linux 安装、路径、SQLite、PTY 和会话恢复实机验收统一列入 [M5 跨平台对齐清单](0.3.0/cross-platform-alignment.md)。
+- G2 验收以 Windows 为准。macOS/Linux 官方 POSIX 安装计划、默认来源识别、版本检查、托管更新校验和安装脚本影响预览均已接入；目标平台的安装、路径、SQLite、PTY 和会话恢复实机验收统一列入 [M5 跨平台对齐清单](0.3.0/cross-platform-alignment.md)。
 
 ## 非目标
 

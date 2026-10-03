@@ -47,6 +47,23 @@ describe("managed CLI updates", () => {
     );
   });
 
+  it("exposes Hermes management on all supported desktop platforms", () => {
+    const hermes = getCliAdapter("hermes");
+
+    expect(hermes.canManageSettings("windows")).toBe(true);
+    expect(hermes.canManageSettings("macos")).toBe(true);
+    expect(hermes.canManageSettings("linux")).toBe(true);
+  });
+
+  it("provides platform-appropriate installer effects", () => {
+    expect(getCliAdapter("grok").installEffects?.("windows")).toBeDefined();
+    expect(getCliAdapter("grok").installEffects?.("macos")).toBeDefined();
+    expect(getCliAdapter("grok").installEffects?.("linux")).toBeDefined();
+    expect(getCliAdapter("hermes").installEffects?.("windows")).toBeDefined();
+    expect(getCliAdapter("hermes").installEffects?.("macos")).toBeDefined();
+    expect(getCliAdapter("hermes").installEffects?.("linux")).toBeDefined();
+  });
+
   it("keeps the existing update flow for the other CLIs", () => {
     expect(isManagedUpdateAllowed("claude", undefined)).toBe(true);
     expect(

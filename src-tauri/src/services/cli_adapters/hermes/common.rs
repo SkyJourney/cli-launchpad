@@ -73,6 +73,17 @@ impl CliAdapter for HermesAdapter {
         platform::build_plan(kind)
     }
 
+    fn execution_preflight_message(&self, plan: &InstallPlan) -> Option<&'static str> {
+        (plan.kind == InstallKind::Update).then_some("正在后台校验 Hermes Agent 源码安装来源。")
+    }
+
+    fn validate_execution(&self, plan: &InstallPlan) -> Result<(), String> {
+        if plan.kind != InstallKind::Update {
+            return Ok(());
+        }
+        version::validate_managed_install(std::path::Path::new(&plan.program))
+    }
+
     fn list_sessions(
         &self,
         directory_path: String,

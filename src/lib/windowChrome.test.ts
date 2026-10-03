@@ -12,7 +12,7 @@ describe("window chrome platform policy", () => {
       decorations: true,
       titleBarStyle: "overlay",
       hiddenTitle: true,
-      trafficLightPosition: { x: 14, y: 15 },
+      trafficLightPosition: { x: 14, y: 20 },
     });
   });
 

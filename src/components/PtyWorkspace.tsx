@@ -1708,17 +1708,22 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
       return;
     }
 
-    // Allotment registers its pane views after the initial layout effect.
-    // Defer restored/preset ratios until the next frame so resize() never sees
-    // an uninitialized viewItems array.
-    const frame = window.requestAnimationFrame(() => {
-      if (splitId === null || splitDirection === null || splitRatio === null) {
-        return;
-      }
-
+    // The workspace can be mounted while its parent view is hidden or before
+    // the native window has completed its restored geometry. Wait until the
+    // split host has a real extent instead of permanently missing the one-shot
+    // initial ratio application.
+    const applyRatio = () => {
       const host = splitHostRef.current;
       const allotment = allotmentRef.current;
       if (!host || !allotment) return;
+
+      const appliedNow = appliedSplitRatioRef.current;
+      if (
+        appliedNow?.splitId === splitId &&
+        Math.abs(appliedNow.ratio - splitRatio) < 0.0001
+      ) {
+        return;
+      }
 
       const extent =
         splitDirection === "horizontal" ? host.clientWidth : host.clientHeight;
@@ -1737,9 +1742,32 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
       } finally {
         applyingSplitRatioRef.current = false;
       }
-    });
+    };
 
-    return () => window.cancelAnimationFrame(frame);
+    let frame = 0;
+    const scheduleApply = () => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      // Allotment registers its pane views after the initial layout effect.
+      // The frame also lets ResizeObserver report dimensions after visibility
+      // and native window restoration have settled.
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        applyRatio();
+      });
+    };
+
+    const host = splitHostRef.current;
+    const observer =
+      host && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(scheduleApply)
+        : null;
+    if (host) observer?.observe(host);
+    scheduleApply();
+
+    return () => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [splitDirection, splitId, splitRatio]);
 
   if (node.kind === "pane") return <WorkspacePaneView {...props} pane={node} />;

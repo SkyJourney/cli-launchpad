@@ -75,7 +75,7 @@ impl CliAdapter for GrokAdapter {
         }
         let path = std::path::Path::new(&plan.program);
         let check = version::inspect_grok_update_check(path)?;
-        version::validate_grok_native_update_source(path, check.installer.as_deref())
+        version::validate_grok_native_update_source(check.installer.as_deref())
     }
 
     fn build_plan(&self, kind: InstallKind) -> anyhow::Result<InstallPlan> {

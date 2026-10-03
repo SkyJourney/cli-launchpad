@@ -3,12 +3,18 @@
   "app": {
     "windows": [
       {
+        "title": "CLI Launchpad",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 960,
+        "minHeight": 640,
         "decorations": true,
+        "dragDropEnabled": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": {
           "x": 14,
-          "y": 15
+          "y": 20
         }
       }
     ]

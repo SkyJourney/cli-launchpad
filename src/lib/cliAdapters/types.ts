@@ -16,6 +16,8 @@ export interface InstallEffectsNotice {
   effectKeys: string[];
 }
 
+export type CliPlatform = "windows" | "macos" | "linux";
+
 export interface CliAdapter {
   key: ToolKey;
   label: string;
@@ -23,10 +25,10 @@ export interface CliAdapter {
   icon: ComponentType<{ size?: number | string }>;
   colorPrimary?: string;
   settingsActions: boolean;
-  canManageSettings(isWindows: boolean): boolean;
+  canManageSettings(platform: CliPlatform): boolean;
   terminalPaste: TerminalPasteBehavior;
   latestStatusKind: "version" | "branch-update";
-  installEffects?: InstallEffectsNotice;
+  installEffects?: (platform: CliPlatform) => InstallEffectsNotice | undefined;
   showCommandNotice(kind: InstallKind): boolean;
   showManagementMessage: boolean;
   refreshLatestAfterExecution(kind: InstallKind): boolean;

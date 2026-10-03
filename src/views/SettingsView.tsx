@@ -75,7 +75,12 @@ interface PendingAction {
 export function SettingsView() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const isWindows = /Windows/i.test(navigator.userAgent);
+  const userAgent = navigator.userAgent;
+  const platform = /Windows/i.test(userAgent)
+    ? "windows"
+    : /Macintosh|Mac OS X|MacPPC|MacIntel/i.test(userAgent)
+      ? "macos"
+      : "linux";
   const cliStatus = useCliStatus(true);
   const executionTasks = useExecutionTasks();
   const executionReconciliations = useExecutionReconciliations();
@@ -381,10 +386,11 @@ export function SettingsView() {
               : "",
           ].join("");
           const isMissing = availability === "missing";
+          const installEffects = tool.installEffects?.(platform);
           const updateAvailable =
             availability === "available" && updatable === true;
           const actionsAvailable =
-            tool.settingsActions && tool.canManageSettings(isWindows);
+            tool.settingsActions && tool.canManageSettings(platform);
           const canInstall =
             actionsAvailable && !cliStatus.isFetching && isMissing;
           const canUpdate =
@@ -513,19 +519,18 @@ export function SettingsView() {
                         <code className="readonly-args">
                           {pendingAction.plan.preview}
                         </code>
-                        {pendingAction.kind === "install" &&
-                          tool.installEffects && (
-                            <div className="cli-install-effects">
-                              <p className="muted">
-                                {t(tool.installEffects.headingKey)}
-                              </p>
-                              <ul>
-                                {tool.installEffects.effectKeys.map((key) => (
-                                  <li key={key}>{t(key)}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
+                        {pendingAction.kind === "install" && installEffects && (
+                          <div className="cli-install-effects">
+                            <p className="muted">
+                              {t(installEffects.headingKey)}
+                            </p>
+                            <ul>
+                              {installEffects.effectKeys.map((key) => (
+                                <li key={key}>{t(key)}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {tool.showCommandNotice(pendingAction.kind) && (
                           <p className="muted">{t("settings.commandNotice")}</p>
                         )}
@@ -767,39 +772,47 @@ export function SettingsView() {
             const tool = getCliAdapter(event.toolKey);
             const ToolIcon = tool.icon;
             return (
-            <article className="launch-history-card" key={event.id}>
-              <div className="launch-history-card-heading">
-                <span className="launch-history-tool">
-                  <ToolIcon size={16} />
-                  {tool.label}
-                </span>
-                <span className="muted">
-                  {event.action === "resume"
-                    ? t("settings.resumeSession")
-                    : t("settings.newSession")}{" "}
-                  ·{" "}
-                  {event.success ? t("settings.success") : t("settings.failed")}{" "}
-                </span>
-              </div>
-              <div className="launch-history-card-details">
-                <span>
-                  <strong>{t("settings.launchHistoryProject")}</strong>
-                  {event.directoryName}
-                </span>
-                <span className="launch-history-path" title={event.directoryPath}>
-                  <strong>{t("settings.launchHistoryPath")}</strong>
-                  {event.directoryPath}
-                </span>
-                <span>
-                  <strong>{t("settings.launchHistoryTime")}</strong>
-                  {formatUtcDateTime(event.launchedAt, i18n.resolvedLanguage)}
-                </span>
-                <span className="launch-history-id" title={event.ptySessionId ?? undefined}>
-                  <strong>{t("settings.launchHistorySessionId")}</strong>
-                  <code>{event.ptySessionId ?? "—"}</code>
-                </span>
-              </div>
-            </article>
+              <article className="launch-history-card" key={event.id}>
+                <div className="launch-history-card-heading">
+                  <span className="launch-history-tool">
+                    <ToolIcon size={16} />
+                    {tool.label}
+                  </span>
+                  <span className="muted">
+                    {event.action === "resume"
+                      ? t("settings.resumeSession")
+                      : t("settings.newSession")}{" "}
+                    ·{" "}
+                    {event.success
+                      ? t("settings.success")
+                      : t("settings.failed")}{" "}
+                  </span>
+                </div>
+                <div className="launch-history-card-details">
+                  <span>
+                    <strong>{t("settings.launchHistoryProject")}</strong>
+                    {event.directoryName}
+                  </span>
+                  <span
+                    className="launch-history-path"
+                    title={event.directoryPath}
+                  >
+                    <strong>{t("settings.launchHistoryPath")}</strong>
+                    {event.directoryPath}
+                  </span>
+                  <span>
+                    <strong>{t("settings.launchHistoryTime")}</strong>
+                    {formatUtcDateTime(event.launchedAt, i18n.resolvedLanguage)}
+                  </span>
+                  <span
+                    className="launch-history-id"
+                    title={event.ptySessionId ?? undefined}
+                  >
+                    <strong>{t("settings.launchHistorySessionId")}</strong>
+                    <code>{event.ptySessionId ?? "—"}</code>
+                  </span>
+                </div>
+              </article>
             );
           })}
         </div>
