@@ -139,6 +139,7 @@ interface PtyReturnRequestEvent extends DetachedWindowRecord {
 interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
   tree: WorkspaceNode;
+  workspaceTreeRevision: number;
   focusedPaneId: string;
   hydrationStatus: PtyWorkspaceHydrationStatus;
   hydrationError: string | null;
@@ -201,6 +202,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [tree, setTree] = useState<WorkspaceNode>(() =>
     createWorkspacePane(initialPaneId),
   );
+  const [workspaceTreeRevision, setWorkspaceTreeRevision] = useState(0);
   const [focusedPaneId, setFocusedPaneId] = useState(initialPaneId);
   const [portalTargets, setPortalTargets] = useState<
     Record<string, HTMLDivElement>
@@ -966,6 +968,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!pane || pane.sessionIds.length > 0) return;
       const next = removeEmptyWorkspacePane(treeRef.current, paneId);
       commitTree(next);
+      // Closing a pane changes the split topology. Remount the complete tree
+      // so every Allotment recalculates from the surviving tree dimensions,
+      // rather than retaining any cached sizes from the previous topology.
+      setWorkspaceTreeRevision((revision) => revision + 1);
       if (!findWorkspacePane(next, focusedPaneIdRef.current)) {
         const fallbackPaneId = listWorkspacePanes(next)[0].id;
         setFocusedPane(fallbackPaneId);
@@ -1062,6 +1068,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     () => ({
       slots,
       tree,
+      workspaceTreeRevision,
       focusedPaneId,
       hydrationStatus,
       hydrationError,
@@ -1092,6 +1099,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [
       slots,
       tree,
+      workspaceTreeRevision,
       focusedPaneId,
       hydrationStatus,
       hydrationError,
@@ -1169,6 +1177,7 @@ export function PtyWorkspaceRegion() {
   const {
     slots,
     tree,
+    workspaceTreeRevision,
     focusedPaneId,
     hydrationStatus,
     hydrationError,
@@ -1314,6 +1323,7 @@ export function PtyWorkspaceRegion() {
       )}
       <div className="pty-workspace-tree">
         <WorkspaceTreeView
+          key={workspaceTreeRevision}
           node={tree}
           slots={slots}
           focusedPaneId={focusedPaneId}
@@ -1687,6 +1697,7 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
   const allotmentRef = useRef<AllotmentHandle | null>(null);
   const appliedSplitRatioRef = useRef<{
     splitId: string;
+    direction: SplitDirection;
     ratio: number;
   } | null>(null);
   const applyingSplitRatioRef = useRef(false);
@@ -1703,6 +1714,7 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
     const applied = appliedSplitRatioRef.current;
     if (
       applied?.splitId === splitId &&
+      applied.direction === splitDirection &&
       Math.abs(applied.ratio - splitRatio) < 0.0001
     ) {
       return;
@@ -1720,6 +1732,7 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
       const appliedNow = appliedSplitRatioRef.current;
       if (
         appliedNow?.splitId === splitId &&
+        appliedNow.direction === splitDirection &&
         Math.abs(appliedNow.ratio - splitRatio) < 0.0001
       ) {
         return;
@@ -1735,7 +1748,11 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
       applyingSplitRatioRef.current = true;
       try {
         allotment.resize(sizes);
-        appliedSplitRatioRef.current = { splitId, ratio: splitRatio };
+        appliedSplitRatioRef.current = {
+          splitId,
+          direction: splitDirection,
+          ratio: splitRatio,
+        };
       } catch (error) {
         // Keep the workspace mounted; preferredSize remains the safe fallback.
         console.error("Failed to apply the workspace split ratio", error);
@@ -1777,6 +1794,11 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
   return (
     <div ref={splitHostRef} className="pty-workspace-split-host">
       <Allotment
+        // A split can be promoted from a nested child to the workspace root
+        // when its sibling pane closes. Remount Allotment when the tree node
+        // identity changes so its cached orientation and pane sizes cannot
+        // leak across the new topology.
+        key={`${node.id}:${node.direction}`}
         ref={allotmentRef}
         id={node.id}
         className="pty-workspace-split"
@@ -1793,6 +1815,7 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
           if (isUsableWorkspaceSplitSizes(sizes) && total > 0) {
             appliedSplitRatioRef.current = {
               splitId: node.id,
+              direction: node.direction,
               ratio: sizes[0] / total,
             };
           }

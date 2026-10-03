@@ -421,6 +421,102 @@ describe("PTY workspace split tree", () => {
     expect(containsWorkspaceSession(afterClose, "session-b")).toBe(true);
   });
 
+  it("promotes the surviving nested split after closing the opposite root pane", () => {
+    const sideBySide = splitWorkspacePane(
+      createWorkspacePane("pane-left", 4),
+      "pane-left",
+      "horizontal",
+      "split-left-right",
+      "pane-right-top",
+      1,
+    );
+    const withRightColumnStacked = splitWorkspacePane(
+      sideBySide,
+      "pane-right-top",
+      "vertical",
+      "split-right-up-down",
+      "pane-right-bottom",
+      2,
+    );
+    const resized = setWorkspaceSplitRatio(
+      withRightColumnStacked,
+      "split-right-up-down",
+      0.63,
+    );
+
+    const afterClosingLeft = removeEmptyWorkspacePane(resized, "pane-left");
+
+    expect(afterClosingLeft).toEqual(
+      resized.kind === "split" ? resized.second : null,
+    );
+    expect(afterClosingLeft.kind).toBe("split");
+    if (afterClosingLeft.kind !== "split") return;
+    expect(afterClosingLeft.id).toBe("split-right-up-down");
+    expect(afterClosingLeft.direction).toBe("vertical");
+    expect(afterClosingLeft.ratio).toBe(0.63);
+    expect(listWorkspacePanes(afterClosingLeft).map((pane) => pane.id)).toEqual(
+      ["pane-right-top", "pane-right-bottom"],
+    );
+
+    const afterClosingTop = removeEmptyWorkspacePane(
+      afterClosingLeft,
+      "pane-right-top",
+    );
+    expect(afterClosingTop).toEqual(
+      createWorkspacePane("pane-right-bottom", 2),
+    );
+
+    const splitAgain = splitWorkspacePane(
+      afterClosingTop,
+      "pane-right-bottom",
+      "horizontal",
+      "split-again",
+      "pane-new",
+    );
+    expect(removeEmptyWorkspacePane(splitAgain, "pane-new")).toEqual(
+      afterClosingTop,
+    );
+  });
+
+  it("promotes a horizontal child split after closing the other vertical pane", () => {
+    const topBottom = splitWorkspacePane(
+      createWorkspacePane("pane-top", 1),
+      "pane-top",
+      "vertical",
+      "split-top-bottom",
+      "pane-bottom-left",
+      1,
+    );
+    const withBottomRow = splitWorkspacePane(
+      topBottom,
+      "pane-bottom-left",
+      "horizontal",
+      "split-bottom-left-right",
+      "pane-bottom-right",
+      2,
+    );
+    const resized = setWorkspaceSplitRatio(
+      withBottomRow,
+      "split-bottom-left-right",
+      0.61,
+    );
+
+    const afterClosingTop = removeEmptyWorkspacePane(resized, "pane-top");
+
+    expect(afterClosingTop).toEqual(
+      resized.kind === "split" ? resized.second : null,
+    );
+    expect(afterClosingTop.kind).toBe("split");
+    if (afterClosingTop.kind !== "split") return;
+    expect(afterClosingTop.id).toBe("split-bottom-left-right");
+    expect(afterClosingTop.direction).toBe("horizontal");
+    expect(afterClosingTop.ratio).toBe(0.61);
+    expect(listWorkspacePanes(afterClosingTop).map((pane) => pane.id)).toEqual([
+      "pane-bottom-left",
+      "pane-bottom-right",
+    ]);
+  });
+
   it("keeps surviving pane numbers and reuses the smallest vacant number", () => {
     const pane123 = splitWorkspacePane(
       splitWorkspacePane(
