@@ -288,7 +288,7 @@ mod unix {
         use std::time::Duration;
         use std::{thread, time::Instant};
 
-        use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
         use super::*;
 

@@ -122,7 +122,7 @@ commit: 8d4a751
 - 全局滚动条已统一：项目列表的覆盖式滚动条抽为 `ThemedScrollArea`，并复用于项目上下文；全局原生滚动条共用主题滑块 token、透明轨道与 6px 规格。组件 CSS 中残留的浮层、弹窗和主按钮阴影裸色也已改用浅/深语义 token。
 - 2026-10-02 用户确认 G4 五类 Windows 实机验收通过：滚动条与布局、主题同步、独立窗口返回与关闭、窗格与终端、会话历史。最终复审发现并修复 xterm 初始化后未监听主题 token；独立窗口画布无法单独视觉确认的限制已记录。完整自动门禁与最终审查通过，G4 已完成。
 - 移除未使用的 `emptyToolMap`、`--font-size-heading` 和会伪造空历史成功的 adapter helper；Rust 未实现的历史能力显式报错。Sonner/Allotment 第三方变量、CLI 品牌、ANSI 与日志 palette 已区分记录。
-- 当前门禁：前端 81 项测试、生产构建、Rust 214 项测试、`cargo check`、`cargo fmt --check`、修改文件 Prettier 检查和 `git diff --check` 通过。Vite 主 bundle 超 500 KB 与 Windows 下 macOS 专用字段警告已记录；全仓 Prettier 仍发现 11 个未修改文件格式不符合现行配置。
+- 当前门禁：前端 81 项测试、生产构建、Rust 214 项测试、`cargo check`、`cargo fmt --check`、修改文件 Prettier 检查和 `git diff --check` 通过。Vite 主 bundle 超 500 KB 提示仍存在；2026-10-03 后续修复移除了 Windows 下 macOS 专用字段的死代码警告及一处未使用导入。全仓 Prettier 仍发现 11 个未修改文件格式不符合现行配置。
 - macOS/Linux 所有此前分散的对齐及验收统一由 M5 承接；G4 关闭后 M4 前置已满足。
 - 文档入口：[G4 里程碑](../../docs/milestones/0.3.0/G4-architecture-refactoring.md)、[M5 跨平台对齐清单](../../docs/milestones/0.3.0/cross-platform-alignment.md)。
 

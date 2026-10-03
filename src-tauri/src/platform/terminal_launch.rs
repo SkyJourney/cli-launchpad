@@ -34,6 +34,7 @@ pub struct LaunchCandidate {
     pub preservation: Option<ProfilePreservation>,
     pub reason: String,
     pub command: ComposedCommand,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub requires_macos_command_document: bool,
 }
 

@@ -131,6 +131,8 @@ Rust command/history/version/platform 实现位于 `src-tauri/src/services/cli_a
 
 **最终自动门禁（2026-10-02）：** 前端 81 项测试通过；`pnpm run build` 通过（Vite 保留主 bundle 超 500 KB 提示）；Rust 214 项测试、`cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --check --manifest-path src-tauri/Cargo.toml` 通过（Windows 下保留 macOS 专用字段未使用告警）；本阶段修改文件 Prettier 检查和 `git diff --check` 通过。全局组件 CSS 裸色及 token 消费审计完成；项目列表与项目上下文复用 `ThemedScrollArea`，原生滚动条使用相同主题滑块 token。最终复审发现并修复 xterm 画布未监听主题 token 的问题，修复后的完整自动门禁再次通过。Vite bundle 与平台专用字段告警均为已记录的非阻断项。
 
+> 后续状态（2026-10-03）：Windows 下 macOS 专用字段的死代码警告已修复；上述门禁记录保留当日实际结果。Vite 主 bundle 超 500 KB 提示仍存在。
+
 ### 阶段 1：主题控制层与语义 token
 
 1. 定义主题标识、主题偏好、解析结果和语义 token 契约，区分用户偏好 `system` 与最终应用的浅/深主题。
