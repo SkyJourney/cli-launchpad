@@ -26,7 +26,7 @@ commit: 8d4a751
 ## 发布工具官方资料
 
 - [Tauri Action](https://github.com/tauri-apps/tauri-action)：GitHub Actions 中调用 Tauri CLI 构建桌面安装包；`tauriScript` 必须指向实际的包管理器 Tauri 入口。
-- [GitHub Actions 手动运行工作流](https://docs.github.com/actions/managing-workflow-runs/manually-running-a-workflow)：用于 Tag 前执行不发布 Release 的六目标构建预检。
+- [GitHub Actions 手动运行工作流](https://docs.github.com/actions/managing-workflow-runs/manually-running-a-workflow)：用于 Tag 前执行不发布 Release 的八目标构建预检；2026-10-03 run `37129066965` 全部通过。
 - [GitHub CLI auth login](https://cli.github.com/manual/gh_auth_login)：SSH Key 负责 Git 传输，`gh` 的 OAuth Token 负责 Actions 与 Release API；已有 SSH 配置时使用 `--skip-ssh-key` 避免生成或上传新密钥。
 
 **See Also：** [[decisions.md#Git-Tag-驱动跨平台自动发布]] [[project_progress.md#0.2.1-发布完成]] [[synthesis_release-tag-cross-platform.md#结论]]

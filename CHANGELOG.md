@@ -4,16 +4,27 @@
 
 项目从 `0.2.0` 开始维护变更日志；此前的 `0.1.0` 未追溯补录。
 
-## [Unreleased]
+## [0.3.0] - 2026-10-03
+
+### 新增
+
+- 将应用升级为以项目和内置 PTY 会话为中心的本地工作台，支持多窗格、可保存布局、独立终端窗口及项目会话历史搜索/恢复。
+- 通过统一 CLI 适配器接入 Claude Code（`claude`）、Codex（`codex`）、Antigravity（`agy`）、Grok Build（`grok`）和 Hermes Agent（`hermes`）。
+- 增加 12 种界面语言、跨窗口主题同步、可折叠侧栏及项目拖动排序。
 
 ### 变更
 
-- 主工作区按需加载终端、独立窗口和次级页面，并把 React 与 i18n 运行时分包；Vite 首屏主 JS 从约 1,079 KB 降至 458 KB，低于 500 KB 提示阈值。
-- TypeScript 启用未使用局部变量和参数检查；修复目标平台导入范围与简单 Rust Clippy 风格告警。
-- 发布矩阵扩展 Windows ARM64 原生在线/离线 NSIS 构建，资产分别标记 `windows_arm64-online` 与 `windows_arm64-offline`。
-- 统一 Windows、macOS、Linux、应用内与 README 使用的圆角正方形产品标识，移除 Windows 圆形图标变体。
-- 明确 0.3.0 转型方向：以项目和独立 PTY 会话为中心的轻量级大窗口 CLI 工作台；分栏布局不拥有或终止会话。
-- 统一所有平台发布产物的文件名为 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]`，明确标出操作系统（`windows`/`macos`/`linux`），不再沿用各打包工具的原生命名（尤其是 rpm 自带的 `-<release>` 版本号和点分隔架构）。
+- PTY 与进程生命周期由 Rust 服务统一管理，窗格和布局不再拥有会话生命周期；统一主题语义变量及跨平台终端行为。
+- React 页面与终端按需加载，并拆分 React/i18n vendor 包；首屏主 JS 从约 1,079 KB 降至 458 KB。
+- TypeScript 启用未使用局部变量和参数检查，修复目标平台导入范围及 Rust Clippy 风格告警。
+- 发布矩阵扩展为 Windows x64/ARM64 在线与离线 NSIS、macOS Apple Silicon/Intel DMG、Linux x64/ARM64 deb/rpm/AppImage；Windows ARM64 使用原生 Runner。
+- 统一三平台安装包资产命名（`CLI.Launchpad_<版本>_<系统>_<架构>[后缀]`）和应用圆角正方形标识。
+
+### 验证
+
+- Windows x64 0.3.0 NSIS 候选包完成干净构建、升级本机 0.2.4 安装及启动核对。
+- GitHub Actions 手动预检 #37129066965 的版本校验和八个构建目标全部成功；该预检生成 Actions artifacts，不创建 GitHub Release。
+- 前端 88 项测试、Rust 222 项测试、`cargo check`、`cargo fmt --check`、TypeScript/Vite 生产构建及差异检查通过。
 
 ## [0.2.4] - 2026-09-02
 

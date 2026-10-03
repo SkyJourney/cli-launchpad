@@ -127,6 +127,12 @@ commit: 8d4a751
 - macOS/Linux 所有此前分散的对齐及验收统一由 M5 承接；G4 关闭后 M4 前置已满足。
 - 文档入口：[G4 里程碑](../../docs/milestones/0.3.0/G4-architecture-refactoring.md)、[M5 跨平台对齐清单](../../docs/milestones/0.3.0/cross-platform-alignment.md)。
 
+## 0.3.0 发布预检与正式发布
+
+- 2026-10-03 将代码优化、打包调整和 Windows ARM64 加入 Release workflow 后，以 `ab34efc` 推送 `main`，手动运行 Release 预检 [#37129066965](https://github.com/SkyJourney/cli-launchpad/actions/runs/37129066965)。版本校验及八个目标全部成功，八组 Actions artifacts 均已上传；Linux x64/ARM64 无 Rust 编译告警，Windows ARM64 原生 Runner 在线/离线 NSIS 均通过。该 workflow_dispatch 只生成限时构建产物，不创建 Release。
+- 用户已确认 M5 整体验收通过，后续平台问题使用 bug+fix 流程。验收文档同步推送后，继续创建并推送 `v0.3.0` tag，核对正式 GitHub Release、SHA-256 清单和八目标资产。
+- 文档入口：[M5 发布验收](../../docs/milestones/0.3.0/M5-release-readiness.md)、[0.3.0 路线图](../../docs/roadmap.md)、[[synthesis_release-tag-cross-platform.md#结论]]。
+
 ## See Also
 
 - [[decisions.md#0.3.0-目标范围为五项-CLI]]

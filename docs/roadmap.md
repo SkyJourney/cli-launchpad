@@ -114,7 +114,7 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 ### M5：跨平台验收与 0.3.0 发布
 
-**状态：** M5 跨平台对齐与整体验收已于 2026-10-03 由用户确认通过；后续平台问题按 bug+fix 处理。0.3.0 正式 tag 与 GitHub Actions 发布为独立动作，尚未执行；Windows ARM64 在线/离线 NSIS 已加入发布矩阵，待远端工作流验证。
+**状态：** M5 跨平台对齐与整体验收已于 2026-10-03 由用户确认通过；后续平台问题按 bug+fix 处理。八目标 Release 预检 #37129066965 于 2026-10-03 全部成功，包含 Windows ARM64 在线/离线 NSIS；验收文档推送后进入正式 `v0.3.0` tag 与 GitHub Release 流程。
 
 - M5 已整体关闭；历史逐项记录与未覆盖边界见[跨平台对齐记录](milestones/0.3.0/cross-platform-alignment.md)。之后发现的平台问题使用 bug+fix 流程独立处理，不重开 M5。
 - 正式发布前复核版本文件、三平台 workflow 产物、安装包和发布说明；确认发布准备就绪后再创建正式 tag，推送匹配 tag 才触发 GitHub Actions 正式发布。
