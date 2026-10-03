@@ -23,6 +23,7 @@
     "removeProject": "Eliminar proyecto",
     "confirmRemoveProject": "¿Eliminar el proyecto \"{{name}}\"? Los archivos en el disco no se eliminarán.",
     "pinProjectFailed": "No se pudo cambiar el estado de fijación del proyecto: {{error}}",
+    "reorderProjectsFailed": "No se pudieron reordenar los proyectos: {{error}}",
     "openProjectFolderFailed": "Error al abrir la carpeta del proyecto: {{error}}",
     "removeProjectFailed": "No se ha podido eliminar el proyecto: {{error}}",
     "noProjects": "Aún no hay proyectos. Añade uno para empezar.",

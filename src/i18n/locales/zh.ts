@@ -23,6 +23,7 @@ export const zh = {
     removeProject: "移除项目",
     confirmRemoveProject: "移除项目“{{name}}”？磁盘上的文件不会被删除。",
     pinProjectFailed: "置顶项目失败：{{error}}",
+    reorderProjectsFailed: "项目排序失败：{{error}}",
     openProjectFolderFailed: "打开项目目录失败：{{error}}",
     removeProjectFailed: "移除项目失败：{{error}}",
     noProjects: "还没有项目，点击添加开始使用。",

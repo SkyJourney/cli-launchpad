@@ -30,6 +30,7 @@ export const fr = {
     confirmRemoveProject:
       "Supprimer le projet « {{name}} » ? Les fichiers sur le disque ne seront pas supprimés.",
     pinProjectFailed: "Impossible d’épingler le projet : {{error}}",
+    reorderProjectsFailed: "Impossible de réorganiser les projets : {{error}}",
     openProjectFolderFailed:
       "Impossible d’ouvrir le dossier du projet : {{error}}",
     removeProjectFailed: "Impossible de supprimer le projet : {{error}}",

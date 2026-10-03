@@ -30,6 +30,7 @@ export const ko = {
     confirmRemoveProject:
       "프로젝트 ‘{{name}}’을(를) 제거할까요? 디스크의 파일은 삭제되지 않습니다.",
     pinProjectFailed: "프로젝트를 고정하지 못했습니다: {{error}}",
+    reorderProjectsFailed: "프로젝트 순서를 변경하지 못했습니다: {{error}}",
     openProjectFolderFailed: "프로젝트 폴더를 열지 못했습니다: {{error}}",
     removeProjectFailed: "프로젝트를 제거하지 못했습니다: {{error}}",
     noProjects: "아직 프로젝트가 없습니다. 프로젝트를 추가해 시작하세요.",

@@ -30,6 +30,8 @@ export const de = {
     confirmRemoveProject:
       "Projekt „{{name}}“ entfernen? Dateien auf dem Datenträger werden nicht gelöscht.",
     pinProjectFailed: "Projekt konnte nicht angeheftet werden: {{error}}",
+    reorderProjectsFailed:
+      "Projekte konnten nicht neu sortiert werden: {{error}}",
     openProjectFolderFailed:
       "Projektordner konnte nicht geöffnet werden: {{error}}",
     removeProjectFailed: "Projekt konnte nicht entfernt werden: {{error}}",

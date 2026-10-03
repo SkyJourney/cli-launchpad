@@ -30,6 +30,7 @@ export const ja = {
     confirmRemoveProject:
       "プロジェクト「{{name}}」を削除しますか？ディスク上のファイルは削除されません。",
     pinProjectFailed: "プロジェクトのピン留めに失敗しました: {{error}}",
+    reorderProjectsFailed: "プロジェクトの並べ替えに失敗しました: {{error}}",
     openProjectFolderFailed:
       "プロジェクトフォルダーを開けませんでした: {{error}}",
     removeProjectFailed: "プロジェクトを削除できませんでした: {{error}}",

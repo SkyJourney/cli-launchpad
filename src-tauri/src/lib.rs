@@ -245,6 +245,7 @@ pub fn run() {
             commands::directory::update_directory,
             commands::directory::remove_directory,
             commands::directory::set_directory_pinned,
+            commands::directory::reorder_directories,
             commands::directory::open_project_directory,
             commands::execution::start_execution_task,
             commands::execution::list_execution_tasks,

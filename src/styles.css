@@ -722,18 +722,6 @@ pre,
   box-shadow: inset 3px 0 var(--color-pinned-accent);
 }
 
-.project-navigation-row.has-cli-sessions {
-  position: relative;
-  z-index: 1;
-  box-shadow: 0 2px 4px var(--color-elevation-shadow);
-}
-
-.project-navigation-row.pinned.active.has-cli-sessions {
-  box-shadow:
-    0 2px 4px var(--color-elevation-shadow),
-    inset 3px 0 var(--color-pinned-accent);
-}
-
 .project-navigation-item {
   background: transparent;
   border: 0;
@@ -763,6 +751,39 @@ pre,
 
 .project-navigation-entry {
   min-width: 0;
+  position: relative;
+}
+
+.project-navigation-entry[draggable="true"] {
+  cursor: grab;
+}
+
+.project-navigation-entry[draggable="true"] .project-navigation-item {
+  cursor: grab;
+}
+
+.project-navigation-entry.dragging {
+  opacity: 0.48;
+  transition: opacity 100ms ease;
+}
+
+.project-navigation-entry.drop-before::before,
+.project-navigation-entry.drop-after::after {
+  background: var(--color-primary);
+  border-radius: 999px;
+  content: "";
+  height: 2px;
+  inset-inline: 7px;
+  position: absolute;
+  z-index: 2;
+}
+
+.project-navigation-entry.drop-before::before {
+  top: -1px;
+}
+
+.project-navigation-entry.drop-after::after {
+  bottom: -1px;
 }
 
 .project-navigation-session-panel {
@@ -978,12 +999,6 @@ pre,
 
 [dir="rtl"] .project-navigation-row.pinned.active {
   box-shadow: inset -3px 0 var(--color-pinned-accent);
-}
-
-[dir="rtl"] .project-navigation-row.pinned.active.has-cli-sessions {
-  box-shadow:
-    0 2px 4px var(--color-elevation-shadow),
-    inset -3px 0 var(--color-pinned-accent);
 }
 
 [dir="rtl"] .project-navigation-session-list {

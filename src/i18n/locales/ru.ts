@@ -30,6 +30,7 @@ export const ru = {
     confirmRemoveProject:
       "Удалить проект «{{name}}»? Файлы на диске не будут удалены.",
     pinProjectFailed: "Не удалось закрепить проект: {{error}}",
+    reorderProjectsFailed: "Не удалось изменить порядок проектов: {{error}}",
     openProjectFolderFailed: "Не удалось открыть папку проекта: {{error}}",
     removeProjectFailed: "Не удалось удалить проект: {{error}}",
     noProjects: "Проектов пока нет. Добавьте проект, чтобы начать.",

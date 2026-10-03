@@ -24,6 +24,7 @@ export const en = {
     confirmRemoveProject:
       "Remove project “{{name}}”? Files on disk will not be deleted.",
     pinProjectFailed: "Failed to update project pin: {{error}}",
+    reorderProjectsFailed: "Failed to reorder projects: {{error}}",
     openProjectFolderFailed: "Failed to open project folder: {{error}}",
     removeProjectFailed: "Failed to remove project: {{error}}",
     noProjects: "No projects yet. Add one to get started.",

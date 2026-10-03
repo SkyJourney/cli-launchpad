@@ -30,6 +30,7 @@ export const ar = {
     confirmRemoveProject:
       "هل تريد إزالة المشروع «{{name}}»؟ لن تُحذف الملفات من القرص.",
     pinProjectFailed: "تعذر تثبيت المشروع: {{error}}",
+    reorderProjectsFailed: "تعذر إعادة ترتيب المشاريع: {{error}}",
     openProjectFolderFailed: "تعذر فتح مجلد المشروع: {{error}}",
     removeProjectFailed: "تعذرت إزالة المشروع: {{error}}",
     noProjects: "لا توجد مشاريع بعد. أضف مشروعًا للبدء.",

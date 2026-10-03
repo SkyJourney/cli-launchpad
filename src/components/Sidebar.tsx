@@ -17,10 +17,12 @@ import { toast } from "sonner";
 import { useAppStore } from "../store/appStore";
 import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
+import { moveProjectWithinPinGroup } from "../lib/projectOrdering";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import {
   openProjectDirectory,
   removeDirectory,
+  reorderDirectories,
   setDirectoryPinned,
   type Directory,
 } from "../lib/tauri";
@@ -47,7 +49,47 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
     number | null
   >(null);
   const [projectSearch, setProjectSearch] = useState("");
+  const [draggedProjectId, setDraggedProjectId] = useState<number | null>(null);
+  const [projectDropTarget, setProjectDropTarget] = useState<{
+    id: number;
+    position: "before" | "after";
+  } | null>(null);
   const projectMenuAnchors = useRef(new Map<number, HTMLButtonElement>());
+  const reorderMutation = useMutation({
+    mutationFn: ({
+      orderedIds,
+      pinned,
+    }: {
+      orderedIds: number[];
+      pinned: boolean;
+    }) => reorderDirectories(orderedIds, pinned),
+    onMutate: async ({ orderedIds, pinned }) => {
+      await queryClient.cancelQueries({ queryKey: qk.directories() });
+      const previousDirectories = queryClient.getQueryData<Directory[]>(
+        qk.directories(),
+      );
+      if (previousDirectories) {
+        const sortOrder = new Map(orderedIds.map((id, index) => [id, index]));
+        queryClient.setQueryData<Directory[]>(
+          qk.directories(),
+          previousDirectories.map((directory) =>
+            directory.pinned === pinned && sortOrder.has(directory.id)
+              ? { ...directory, sortOrder: sortOrder.get(directory.id)! }
+              : directory,
+          ),
+        );
+      }
+      return { previousDirectories };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previousDirectories) {
+        queryClient.setQueryData(qk.directories(), context.previousDirectories);
+      }
+      toast.error(t("sidebar.reorderProjectsFailed", { error: String(error) }));
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: qk.directories() }),
+  });
   const pinMutation = useMutation({
     mutationFn: ({ id, pinned }: { id: number; pinned: boolean }) =>
       setDirectoryPinned(id, pinned),
@@ -89,7 +131,11 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       )
       .sort((a, b) => {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-        return (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "");
+        return (
+          a.sortOrder - b.sortOrder ||
+          (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
+          a.name.localeCompare(b.name)
+        );
       });
   }, [directories, projectSearch]);
   const projectMenuAnchorRef = useMemo(
@@ -128,6 +174,36 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       onError: (error) =>
         toast.error(t("sidebar.removeProjectFailed", { error: String(error) })),
     });
+  };
+
+  const clearProjectDragState = () => {
+    setDraggedProjectId(null);
+    setProjectDropTarget(null);
+  };
+
+  const dropProject = (
+    targetId: number,
+    event: React.DragEvent<HTMLDivElement>,
+  ) => {
+    event.preventDefault();
+    const sourceId = Number(event.dataTransfer.getData("text/plain"));
+    if (!Number.isSafeInteger(sourceId) || !directories) {
+      clearProjectDragState();
+      return;
+    }
+    const position =
+      projectDropTarget?.id === targetId ? projectDropTarget.position : "after";
+    const source = directories.find((directory) => directory.id === sourceId);
+    const orderedIds = moveProjectWithinPinGroup(
+      directories,
+      sourceId,
+      targetId,
+      position,
+    );
+    if (source && orderedIds) {
+      reorderMutation.mutate({ orderedIds, pinned: source.pinned });
+    }
+    clearProjectDragState();
   };
 
   return (
@@ -189,8 +265,54 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
             });
             return (
               <div
-                className="project-navigation-entry"
+                className={clsx("project-navigation-entry", {
+                  dragging: draggedProjectId === directory.id,
+                  "drop-before":
+                    projectDropTarget?.id === directory.id &&
+                    projectDropTarget.position === "before",
+                  "drop-after":
+                    projectDropTarget?.id === directory.id &&
+                    projectDropTarget.position === "after",
+                })}
                 key={directory.id}
+                draggable={
+                  !projectSearch.trim() && visibleDirectories.length > 1
+                }
+                onDragStart={(event) => {
+                  if (projectSearch.trim()) {
+                    event.preventDefault();
+                    return;
+                  }
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "text/plain",
+                    String(directory.id),
+                  );
+                  setDraggedProjectId(directory.id);
+                }}
+                onDragOver={(event) => {
+                  if (!draggedProjectId || draggedProjectId === directory.id)
+                    return;
+                  const dragged = directories?.find(
+                    (candidate) => candidate.id === draggedProjectId,
+                  );
+                  if (!dragged || dragged.pinned !== directory.pinned) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const position =
+                    event.clientY < bounds.top + bounds.height / 2
+                      ? "before"
+                      : "after";
+                  setProjectDropTarget((current) =>
+                    current?.id === directory.id &&
+                    current.position === position
+                      ? current
+                      : { id: directory.id, position },
+                  );
+                }}
+                onDrop={(event) => dropProject(directory.id, event)}
+                onDragEnd={clearProjectDragState}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setProjectMenuDirectoryId(directory.id);
@@ -200,7 +322,6 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
                   className={clsx("project-navigation-row", {
                     active: selected,
                     pinned: directory.pinned,
-                    "has-cli-sessions": projectCliSessions.length > 0,
                   })}
                 >
                   <button
