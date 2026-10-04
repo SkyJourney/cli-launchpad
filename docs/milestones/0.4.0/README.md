@@ -4,13 +4,13 @@
 
 仓库克隆不属于目标；项目仍从用户登记的已有本地目录开始。所有里程碑共同组成 0.4.0，阶段验收不等于版本发布。实施须遵守产品需求、架构和 UI 设计文档中定义的 Rust 所有权、路径安全、系统认证及窗格适配器边界。
 
-| 编号 | 里程碑 | 依赖 | 验收文档 |
-| --- | --- | --- | --- |
-| M6 | 内容窗格与文件工作区 | 0.3.0 | [M6](M6-workspace-files.md) |
-| M7 | Markdown 连续预览 | M6 | [M7](M7-markdown-preview.md) |
-| M8 | 本地 Git 管理与编辑器联动 | M6 | [M8](M8-local-git.md) |
-| M9 | Git 远程与系统认证 | M8 | [M9](M9-git-remotes-auth.md) |
-| M10 | Rebase 与冲突恢复 | M9 | [M10](M10-rebase-conflicts.md) |
+| 编号 | 里程碑                    | 依赖  | 验收文档                       |
+| ---- | ------------------------- | ----- | ------------------------------ |
+| M6   | 内容窗格与文件工作区      | 0.3.0 | [M6](M6-workspace-files.md)    |
+| M7   | Markdown 连续预览         | M6    | [M7](M7-markdown-preview.md)   |
+| M8   | 本地 Git 管理与编辑器联动 | M6    | [M8](M8-local-git.md)          |
+| M9   | Git 远程与系统认证        | M8    | [M9](M9-git-remotes-auth.md)   |
+| M10  | Rebase 与冲突恢复         | M9    | [M10](M10-rebase-conflicts.md) |
 
 M7 与 M8 可在 M6 验收后并行推进；M9 依赖 M8 的 Git service 和状态模型；M10 依赖 M9 的远程同步流程。M7 结果不阻塞 Git 主线，但必须纳入 0.4.0 最终集成验收。
 
@@ -31,4 +31,5 @@ M7 与 M8 可在 M6 验收后并行推进；M9 依赖 M8 的 Git service 和状�
 
 ## 状态
 
-- M6–M10：待开始。
+- M6：实现及 Windows 自动门禁进行中；Monaco 编辑器与工作区索引调研见 [M6 编辑器与索引调研](M6-editor-and-index-research.md)；macOS/Linux 实机验收待对应环境验证。
+- M7–M10：待开始。

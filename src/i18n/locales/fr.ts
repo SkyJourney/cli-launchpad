@@ -132,7 +132,7 @@ export const fr = {
     nextSessionsHeading: "Sessions de terminal suivantes",
     emptyPane: "Panneau vide",
     empty:
-      "Restaurez une session depuis l’historique à droite ou démarrez une CLI dans ce panneau.",
+      "Restaurez une session depuis la droite ou ouvrez un fichier ou démarrez une CLI dans ce panneau.",
     starting: "Création de la session de terminal…",
     terminalNotReady:
       "Le terminal n’est pas encore prêt. Réessayez dans un instant.",
@@ -562,6 +562,41 @@ export const fr = {
       stdout: "Sortie",
       stderr: "Erreur",
       system: "Système",
+    },
+  },
+  workspaceFiles: {
+    rightPanelTabs: "Onglets du panneau droit",
+    files: "Fichiers",
+    git: "Git",
+    gitLater: "La gestion Git sera disponible dans une étape ultérieure.",
+    projectRoot: "Racine du projet",
+    refresh: "Actualiser",
+    showHidden: "Afficher les fichiers cachés",
+    emptyDirectory: "Ce dossier est vide",
+    symlinkDisabled: "Les liens symboliques ne peuvent pas encore être ouverts",
+    ignored: "Ignoré",
+    closeFile: "Fermer le fichier",
+    closeFileNamed: "Fermer {{name}}",
+    fileMenu: "Menu de la fenêtre du fichier",
+    closeOthers: "Fermer les autres fichiers du panneau ({{count}})",
+    closeAllInPane: "Fermer tous les fichiers du panneau ({{count}})",
+    splitAndMoveRight: "Scinder à droite et déplacer ce fichier",
+    splitAndMoveDown: "Scinder en bas et déplacer ce fichier",
+    discardChanges:
+      "Ce fichier contient des modifications non enregistrées. Le fermer et les abandonner ?",
+    save: "Enregistrer",
+    reload: "Recharger",
+    directoryLimitReached: "Trop d’éléments. Les 5 000 premiers sont affichés.",
+    loadingFile: "Chargement du fichier…",
+    fileCannotOpen: "Ce fichier ne peut pas être ouvert ici",
+    imagePreview: "Aperçu de l’image",
+    unsupported: {
+      binary:
+        "L’éditeur de texte ne prend pas en charge les fichiers binaires.",
+      tooLarge: "Le fichier dépasse la limite de taille d’aperçu.",
+      invalidImage:
+        "Les données de l’image ne correspondent pas à son extension.",
+      unsupportedImage: "Ce format d’image n’est pas pris en charge.",
     },
   },
 } satisfies LocaleShape<typeof en>;

@@ -30,6 +30,11 @@ const StandalonePtyWindow = lazy(() =>
     default: module.StandalonePtyWindow,
   })),
 );
+const StandaloneWorkspaceFileWindow = lazy(() =>
+  import("./components/StandaloneWorkspaceFileWindow").then((module) => ({
+    default: module.StandaloneWorkspaceFileWindow,
+  })),
+);
 const ProjectDetailView = lazy(() =>
   import("./views/ProjectDetailView").then((module) => ({
     default: module.ProjectDetailView,
@@ -68,6 +73,18 @@ export function App() {
   const detachedToolKey = TOOLS.find(
     (tool) => tool.key === params.get("detachedToolKey"),
   )?.key;
+  const detachedFileId = params.get("detachedFileId");
+  const fileHandoffToken = params.get("fileHandoffToken");
+  if (detachedFileId && fileHandoffToken) {
+    return (
+      <Suspense fallback={null}>
+        <StandaloneWorkspaceFileWindow
+          documentId={detachedFileId}
+          token={fileHandoffToken}
+        />
+      </Suspense>
+    );
+  }
   if (sessionId && handoffToken && instanceId) {
     return (
       <Suspense fallback={null}>

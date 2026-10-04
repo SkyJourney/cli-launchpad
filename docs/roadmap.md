@@ -125,13 +125,13 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 
 产品仍以用户已登记的本地项目目录为中心，不提供仓库克隆。窗格容器从 PTY 专用布局扩展为多内容容器，先以静态适配器承载 PTY 终端、文本编辑器和 Markdown 预览。文件与 Git 能力由 Rust services 以项目根目录为安全边界提供；系统 Git、凭据助手、操作系统凭据存储和 SSH agent 作为 Git 执行与认证路径。Launchpad 不建立独立账号库，不存储 Git 密钥。
 
-| 里程碑 | 范围 | 依赖 |
-| --- | --- | --- |
-| [0.4.0 里程碑索引](milestones/0.4.0/README.md) | M6–M10 总览、依赖与版本验收门禁 | 0.3.0 |
-| [M6：内容窗格与文件工作区](milestones/0.4.0/M6-workspace-files.md) | 窗格内容宿主/适配器、项目文件树、文本编辑和保存 | 0.3.0 |
-| [M7：Markdown 连续预览](milestones/0.4.0/M7-markdown-preview.md) | 先优化 md-to-pdf 功能分包，再由 Launchpad 按配置接入安全渲染、文档主题与 ECharts；评估独立 npm 发布条件 | M6 |
-| [M8：本地 Git 管理与编辑器联动](milestones/0.4.0/M8-local-git.md) | 分支、工作区状态、diff、暂存/提交、blame 和行标记 | M6 |
-| [M9：远程与系统认证](milestones/0.4.0/M9-git-remotes-auth.md) | remote 管理、认证交互、fetch/push/快进拉取 | M8 |
-| [M10：Rebase 与冲突恢复](milestones/0.4.0/M10-rebase-conflicts.md) | rebase/冲突状态、三方编辑、继续/跳过/中止及恢复 | M9 |
+| 里程碑                                                             | 范围                                                                                                    | 依赖  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ----- |
+| [0.4.0 里程碑索引](milestones/0.4.0/README.md)                     | M6–M10 总览、依赖与版本验收门禁                                                                         | 0.3.0 |
+| [M6：内容窗格与文件工作区](milestones/0.4.0/M6-workspace-files.md) | 窗格内容宿主/适配器、项目文件树、文本编辑和保存                                                         | 0.3.0 |
+| [M7：Markdown 连续预览](milestones/0.4.0/M7-markdown-preview.md)   | 先优化 md-to-pdf 功能分包，再由 Launchpad 按配置接入安全渲染、文档主题与 ECharts；评估独立 npm 发布条件 | M6    |
+| [M8：本地 Git 管理与编辑器联动](milestones/0.4.0/M8-local-git.md)  | 分支、工作区状态、diff、暂存/提交、blame 和行标记                                                       | M6    |
+| [M9：远程与系统认证](milestones/0.4.0/M9-git-remotes-auth.md)      | remote 管理、认证交互、fetch/push/快进拉取                                                              | M8    |
+| [M10：Rebase 与冲突恢复](milestones/0.4.0/M10-rebase-conflicts.md) | rebase/冲突状态、三方编辑、继续/跳过/中止及恢复                                                         | M9    |
 
-0.4.0 的发布门禁是 M6–M10 完成后进行全量审查和跨平台验收。每一阶段都要求维护现有 PTY、布局保存/恢复和独立终端窗口行为；变更、认证和冲突状态必须以文件系统与系统 Git 的真实状态为准。详细范围和测试要求见 [0.4.0 里程碑索引](milestones/0.4.0/README.md)。
+0.4.0 的发布门禁是 M6–M10 完成后进行全量审查和跨平台验收。每一阶段都要求维护现有 PTY、布局保存/恢复和独立终端窗口行为；变更、认证和冲突状态必须以文件系统与系统 Git 的真实状态为准。M6 已进入实现阶段，详细范围和测试要求见 [0.4.0 里程碑索引](milestones/0.4.0/README.md)。

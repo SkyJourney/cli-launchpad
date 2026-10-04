@@ -6,7 +6,8 @@ import { useTranslation } from "react-i18next";
 import type { ToolKey } from "../lib/tauri";
 import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
-import { WindowResizeHandles, WindowTitlebar } from "./WindowTitlebar";
+import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
+import { getWorkspaceContentAdapter } from "./WorkspaceContentView";
 import {
   getPtySessionWindowStatus,
   type PtySessionWindowStatus,
@@ -15,6 +16,10 @@ import {
   encodePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
+import {
+  encodeWorkspaceContentDrag,
+  WORKSPACE_CONTENT_DRAG_TYPE,
+} from "../lib/workspaceContentDrag";
 import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
 
 interface StandalonePtyWindowProps {
@@ -206,6 +211,42 @@ export function StandalonePtyWindow({
     [],
   );
 
+  const handleWindowCloseRequest = useCallback(() => {
+    const currentWindow = getCurrentWindow();
+    const terminalState = terminalRef.current?.getSessionState();
+    if (
+      terminalState === "exited" ||
+      terminalState === "terminated" ||
+      terminalState === "failed"
+    ) {
+      closeAfterExitRef.current();
+      return;
+    }
+    if (!readyRef.current && terminalState !== "running") {
+      void getPtySessionWindowStatus(sessionId)
+        .then((status) => {
+          if (status === "ended") {
+            closeAfterExitRef.current();
+          } else if (status === "ownedByAnotherWindow") {
+            emitTo("main", "pty-detached-failed", {
+              instanceId,
+              sessionId,
+              windowLabel: currentWindow.label,
+              message: translationRef.current("pty.detachedClosedBeforeReady"),
+            }).catch(() => undefined);
+            closeAfterTransferRef.current();
+          } else {
+            void requestReturnRef.current();
+          }
+        })
+        .catch((reason) =>
+          console.warn("Failed to inspect PTY before closing", reason),
+        );
+      return;
+    }
+    void requestReturnRef.current();
+  }, [instanceId, sessionId]);
+
   useEffect(() => {
     const suppressNativeContextMenu = (event: MouseEvent) =>
       event.preventDefault();
@@ -216,43 +257,6 @@ export function StandalonePtyWindow({
       const currentWindow = getCurrentWindow();
       try {
         const registeredListeners = await Promise.all([
-          currentWindow.onCloseRequested((event) => {
-            event.preventDefault();
-            const terminalState = terminalRef.current?.getSessionState();
-            if (
-              terminalState === "exited" ||
-              terminalState === "terminated" ||
-              terminalState === "failed"
-            ) {
-              closeAfterExitRef.current();
-              return;
-            }
-            if (!readyRef.current && terminalState !== "running") {
-              void getPtySessionWindowStatus(sessionId)
-                .then((status) => {
-                  if (status === "ended") {
-                    closeAfterExitRef.current();
-                  } else if (status === "ownedByAnotherWindow") {
-                    emitTo("main", "pty-detached-failed", {
-                      instanceId,
-                      sessionId,
-                      windowLabel: currentWindow.label,
-                      message: translationRef.current(
-                        "pty.detachedClosedBeforeReady",
-                      ),
-                    }).catch(() => undefined);
-                    closeAfterTransferRef.current();
-                  } else {
-                    void requestReturnRef.current();
-                  }
-                })
-                .catch((reason) =>
-                  console.warn("Failed to inspect PTY before closing", reason),
-                );
-              return;
-            }
-            void requestReturnRef.current();
-          }),
           listen<WindowHandoffEvent>("pty-return-complete", (event) => {
             if (event.payload.instanceId !== instanceId) return;
             returnAttemptRef.current += 1;
@@ -380,45 +384,50 @@ export function StandalonePtyWindow({
   }, [handoffToken, instanceId, sessionId]);
 
   return (
-    <main className="standalone-pty-window">
-      <WindowTitlebar
-        variant="standalone"
-        actions={
-          <button
-            type="button"
-            className="ghost-button standalone-pty-return window-titlebar-compact-button"
-            disabled={!ready || returning}
-            onClick={() => void requestReturnRef.current()}
-            title={t("pty.returnToWorkspace")}
-          >
-            <ArrowLeft size={15} />
-            {returning
-              ? t("pty.returningToWorkspace")
-              : t("pty.returnToWorkspace")}
-          </button>
-        }
-      >
-        <div
-          className="standalone-pty-title"
-          draggable={ready && !returning}
-          onDragStart={(event) => {
-            if (!ready || returning) {
-              event.preventDefault();
-              return;
-            }
-            event.dataTransfer.effectAllowed = "move";
-            const payload = encodePtySessionDrag({
-              instanceId,
-              sourceWindowLabel: getCurrentWindow().label,
-            });
-            event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, payload);
-            event.dataTransfer.setData("text/plain", payload);
-          }}
+    <WorkspaceContentWindowShell
+      beforeClose={getWorkspaceContentAdapter("pty").beforeWindowClose}
+      onCloseRequested={handleWindowCloseRequest}
+      actions={
+        <button
+          type="button"
+          className="ghost-button standalone-pty-return window-titlebar-compact-button"
+          disabled={!ready || returning}
+          onClick={() => void requestReturnRef.current()}
+          title={t("pty.returnToWorkspace")}
         >
+          <ArrowLeft size={15} />
+          {returning
+            ? t("pty.returningToWorkspace")
+            : t("pty.returnToWorkspace")}
+        </button>
+      }
+      draggable={ready && !returning}
+      onDragStart={(event) => {
+        if (!ready || returning) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = "move";
+        const payload = encodeWorkspaceContentDrag({
+          kind: "pty",
+          contentId: instanceId,
+          sourceWindowLabel: getCurrentWindow().label,
+        });
+        const legacyPayload = encodePtySessionDrag({
+          instanceId,
+          sourceWindowLabel: getCurrentWindow().label,
+        });
+        event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
+        event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, legacyPayload);
+        event.dataTransfer.setData("text/plain", payload);
+      }}
+      title={
+        <>
           {ToolIcon ? <ToolIcon size={16} /> : <TerminalIcon size={16} />}
           <strong>{title}</strong>
-        </div>
-      </WindowTitlebar>
+        </>
+      }
+    >
       <div className="standalone-pty-content">
         {!ready && !error && (
           <p className="standalone-pty-status">{t("pty.starting")}</p>
@@ -431,7 +440,6 @@ export function StandalonePtyWindow({
         />
         {error && <p className="error standalone-pty-error">{error}</p>}
       </div>
-      <WindowResizeHandles />
-    </main>
+    </WorkspaceContentWindowShell>
   );
 }

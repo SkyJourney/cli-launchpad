@@ -109,7 +109,7 @@
     "previousSessionsHeading": "Sesiones de terminal anteriores",
     "nextSessionsHeading": "Sesiones de terminal posteriores",
     "emptyPane": "Panel vacío",
-    "empty": "Restaura una sesión del historial a la derecha o inicia una CLI aquí.",
+    "empty": "Restaura una sesión desde la derecha o abre un archivo o inicia una CLI en este panel.",
     "starting": "Creando sesión de terminal…",
     "terminalNotReady": "El terminal aún no está listo. Inténtalo de nuevo en breve.",
     "close": "Cerrar sesión de terminal",
@@ -459,6 +459,38 @@
       "stdout": "Salida",
       "stderr": "Error",
       "system": "Sistema"
+    }
+  },
+  "workspaceFiles": {
+    "rightPanelTabs": "Pestañas del panel derecho",
+    "files": "Archivos",
+    "git": "Git",
+    "gitLater": "La gestión de Git estará disponible en un hito posterior.",
+    "projectRoot": "Raíz del proyecto",
+    "refresh": "Actualizar",
+    "showHidden": "Mostrar archivos ocultos",
+    "emptyDirectory": "Esta carpeta está vacía",
+    "symlinkDisabled": "Todavía no se pueden abrir enlaces simbólicos",
+    "ignored": "Ignorado",
+    "closeFile": "Cerrar archivo",
+    "closeFileNamed": "Cerrar {{name}}",
+    "fileMenu": "Menú de ventana de archivo",
+    "closeOthers": "Cerrar otros archivos del panel ({{count}})",
+    "closeAllInPane": "Cerrar todos los archivos del panel ({{count}})",
+    "splitAndMoveRight": "Dividir a la derecha y mover este archivo",
+    "splitAndMoveDown": "Dividir abajo y mover este archivo",
+    "discardChanges": "Este archivo tiene cambios sin guardar. ¿Quieres cerrarlo y descartarlos?",
+    "save": "Guardar",
+    "reload": "Volver a cargar",
+    "directoryLimitReached": "Hay demasiados elementos. Se muestran los primeros 5.000.",
+    "loadingFile": "Cargando archivo…",
+    "fileCannotOpen": "No se puede abrir este archivo aquí",
+    "imagePreview": "Vista previa de imagen",
+    "unsupported": {
+      "binary": "El editor de texto no admite archivos binarios.",
+      "tooLarge": "El archivo supera el límite de tamaño de vista previa.",
+      "invalidImage": "Los datos de imagen no coinciden con la extensión del archivo.",
+      "unsupportedImage": "Este formato de imagen no es compatible."
     }
   }
 }

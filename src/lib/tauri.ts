@@ -7,8 +7,8 @@ export type WorkspaceLayoutNode =
       kind: "pane";
       id: string;
       paneNumber: number;
-      sessionIds: string[];
-      activeSessionId: string | null;
+      contents: WorkspacePaneContentRef[];
+      activeContent?: WorkspacePaneContentRef | null;
     }
   | {
       kind: "split";
@@ -40,7 +40,19 @@ export interface WorkspaceLayoutDocument {
   tree: WorkspaceLayoutNode;
   focusedPaneId: string;
   slots: WorkspaceLayoutSlot[];
+  documents: WorkspaceFileDocument[];
   detachedSlotIds: string[];
+}
+
+export type WorkspacePaneContentRef =
+  | { kind: "pty"; slotId: string }
+  | { kind: "file"; documentId: string };
+
+export interface WorkspaceFileDocument {
+  id: string;
+  directoryId: number;
+  directoryPath: string;
+  relativePath: string;
 }
 
 export type WorkspaceLayoutStateStatus =
@@ -105,6 +117,34 @@ export interface Directory {
   lastUsedAt: string | null;
   note: string | null;
 }
+
+export interface ProjectFileEntry {
+  name: string;
+  relativePath: string;
+  kind: "directory" | "file" | "other";
+  size: number;
+  hidden: boolean;
+  ignored: boolean;
+  symbolicLink: boolean;
+}
+
+export interface ProjectDirectoryListing {
+  entries: ProjectFileEntry[];
+  truncated: boolean;
+}
+
+export interface ProjectTextFile {
+  content: string;
+  revision: string;
+}
+
+export type ProjectFileOpenResult =
+  | { kind: "text"; content: string; revision: string }
+  | { kind: "image"; mimeType: string; base64Data: string }
+  | {
+      kind: "unsupported";
+      reason: "binary" | "tooLarge" | "invalidImage" | "unsupportedImage";
+    };
 
 export type CloseBehavior = "minimize_to_tray" | "quit";
 
@@ -411,6 +451,41 @@ export function reorderDirectories(orderedIds: number[], pinned: boolean) {
 
 export function openProjectDirectory(id: number) {
   return invoke<void>("open_project_directory", { id });
+}
+
+export function listProjectFiles(directoryId: number, relativePath = "") {
+  return invoke<ProjectDirectoryListing>("list_project_files", {
+    directoryId,
+    relativePath,
+  });
+}
+
+export function readProjectTextFile(directoryId: number, relativePath: string) {
+  return invoke<ProjectTextFile>("read_project_text_file", {
+    directoryId,
+    relativePath,
+  });
+}
+
+export function openProjectFile(directoryId: number, relativePath: string) {
+  return invoke<ProjectFileOpenResult>("open_project_file", {
+    directoryId,
+    relativePath,
+  });
+}
+
+export function saveProjectTextFile(
+  directoryId: number,
+  relativePath: string,
+  content: string,
+  expectedRevision: string,
+) {
+  return invoke<ProjectTextFile>("save_project_text_file", {
+    directoryId,
+    relativePath,
+    content,
+    expectedRevision,
+  });
 }
 
 // CLI detection

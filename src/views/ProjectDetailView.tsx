@@ -6,8 +6,14 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  ChevronRight,
   Check,
+  FileText,
+  Files,
   FolderOpen,
+  Folder,
+  FolderTree,
+  GitBranch,
   PanelRight,
   Pencil,
   RefreshCw,
@@ -18,6 +24,7 @@ import {
 import clsx from "clsx";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { useDirectory } from "../hooks/queries";
 import { indexByTool, useCliStatus } from "../hooks/useCliStatus";
 import { formatRelativeMs } from "../lib/format";
@@ -32,6 +39,7 @@ import {
 import { TOOLS } from "../lib/tools";
 import {
   deleteSessionAlias,
+  listProjectFiles,
   listSessionPage,
   openProjectDirectory,
   refreshSessionSearchIndex,
@@ -40,6 +48,7 @@ import {
   type SessionPage,
   type SessionInfo,
   type ToolKey,
+  type ProjectFileEntry,
 } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
 import { usePtyWorkspace } from "../components/PtyWorkspace";
@@ -58,7 +67,7 @@ export function ProjectDetailView({
   const { t, i18n } = useTranslation();
   const contextPanelOpen = useAppStore((state) => state.contextPanelOpen);
   const setContextPanelOpen = useAppStore((state) => state.setContextPanelOpen);
-  const launchSession = usePtyWorkspace().launchSession;
+  const { launchSession, openProjectFile } = usePtyWorkspace();
   const queryClient = useQueryClient();
 
   const directory = useDirectory(requestedDirectoryId);
@@ -76,6 +85,11 @@ export function ProjectDetailView({
   const [previousDirectoryId, setPreviousDirectoryId] = useState<number | null>(
     null,
   );
+  const [panelTab, setPanelTab] = useState<"context" | "files" | "git">(
+    "context",
+  );
+  const [filePath, setFilePath] = useState("");
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
 
   useEffect(() => {
     const narrowViewport = window.matchMedia("(max-width: 1120px)");
@@ -89,6 +103,13 @@ export function ProjectDetailView({
   }, [setContextPanelOpen]);
 
   const directoryId = directory?.id ?? null;
+  const projectFilesQuery = useQuery({
+    queryKey: ["project-files", directoryId, filePath],
+    queryFn: () => listProjectFiles(directoryId as number, filePath),
+    enabled:
+      active && contextPanelOpen && panelTab === "files" && directoryId != null,
+    staleTime: 10_000,
+  });
   const projectChanged = previousDirectoryId !== directoryId;
   const normalizedSessionSearch = sessionSearch.trim();
   const searchingSessions = normalizedSessionSearch.length > 0;
@@ -207,6 +228,7 @@ export function ProjectDetailView({
     setSessionSearch("");
     setDebouncedSessionSearch("");
     setVisibleSearchCount(10);
+    setFilePath("");
   }, [directoryId, previousDirectoryId, queryClient]);
 
   useEffect(() => {
@@ -368,10 +390,41 @@ export function ProjectDetailView({
         />
       ))}
       <header className="project-context-header">
-        <div>
-          <h2>{t("projectDetail.context")}</h2>
-          <span>{directory.name}</span>
-        </div>
+        <nav
+          className="project-context-tabs"
+          aria-label={t("workspaceFiles.rightPanelTabs")}
+        >
+          <button
+            type="button"
+            className={clsx("icon-button", { active: panelTab === "context" })}
+            aria-label={t("projectDetail.context")}
+            aria-pressed={panelTab === "context"}
+            title={t("projectDetail.context")}
+            onClick={() => setPanelTab("context")}
+          >
+            <FolderTree size={16} />
+          </button>
+          <button
+            type="button"
+            className={clsx("icon-button", { active: panelTab === "files" })}
+            aria-label={t("workspaceFiles.files")}
+            aria-pressed={panelTab === "files"}
+            title={t("workspaceFiles.files")}
+            onClick={() => setPanelTab("files")}
+          >
+            <Files size={16} />
+          </button>
+          <button
+            type="button"
+            className={clsx("icon-button", { active: panelTab === "git" })}
+            aria-label={t("workspaceFiles.git")}
+            aria-pressed={panelTab === "git"}
+            title={t("workspaceFiles.gitLater")}
+            onClick={() => setPanelTab("git")}
+          >
+            <GitBranch size={16} />
+          </button>
+        </nav>
         <div className="project-context-header-actions">
           <button
             type="button"
@@ -397,6 +450,9 @@ export function ProjectDetailView({
           </button>
         </div>
       </header>
+      <div className="project-context-project-name" title={directory.name}>
+        {directory.name}
+      </div>
       <ThemedScrollArea
         className="project-context-scroll-area"
         viewportClassName="project-context-body"
@@ -406,284 +462,431 @@ export function ProjectDetailView({
           tabIndex: 0,
         }}
       >
-        {openPathError && (
-          <p className="error">
-            {t("projectDetail.openPathFailed", { error: openPathError })}
-          </p>
-        )}
-
-        <section className="project-context-section">
-          <div className="section-heading">
-            {t("projectDetail.cliLaunchers")}
-          </div>
-          <div
-            className="cli-launcher-list"
-            role="group"
-            aria-label={t("projectDetail.cliLaunchers")}
-          >
-            {TOOLS.map((tool) => {
-              const status = statusByTool[tool.key]?.status ?? "unknown";
-              const available = status === "available";
-              const ToolIcon = tool.icon;
-              return (
-                <button
-                  key={tool.key}
-                  type="button"
-                  className="cli-launch-button"
-                  title={t(
-                    available
-                      ? "cliStatus.availableTitle"
-                      : status === "unknown"
-                        ? "cliStatus.unknownTitle"
-                        : "cliStatus.missingTitle",
-                  )}
-                  aria-label={t("projectDetail.launchTool", {
-                    tool: tool.label,
-                  })}
-                  disabled={!available}
-                  onClick={() => {
-                    cancelRename();
-                    runEmbeddedLaunch(tool.key);
-                  }}
-                >
-                  <ToolIcon size={17} />
-                  {tool.label}
-                  <span
-                    className={clsx("tab-dot", `dot-${status}`)}
-                    aria-hidden="true"
-                  />
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="project-context-section">
-          <div className="section-heading heading-actions">
-            <span>{t("projectDetail.sessions")}</span>
-            <button
-              className="icon-button refresh-button"
-              title={t("projectDetail.refreshSessions")}
-              disabled={sessionsFetching}
-              onClick={refreshSessions}
-            >
-              <RefreshCw
-                size={14}
-                className={sessionsFetching ? "spinning" : undefined}
-              />
-            </button>
-          </div>
-          <SearchInput
-            className="session-history-search"
-            value={sessionSearch}
-            onChange={setSessionSearch}
-            placeholder={t("projectDetail.searchPlaceholder")}
-            ariaLabel={t("projectDetail.searchSessions")}
-            maxLength={200}
-            onClear={() => setSessionSearch("")}
-            clearLabel={t("projectDetail.clearSearch")}
+        {panelTab === "files" ? (
+          <ProjectFileBrowser
+            currentPath={filePath}
+            entries={projectFilesQuery.data?.entries ?? []}
+            truncated={projectFilesQuery.data?.truncated ?? false}
+            loading={projectFilesQuery.isLoading}
+            error={
+              projectFilesQuery.error ? String(projectFilesQuery.error) : null
+            }
+            showHidden={showHiddenFiles}
+            onPathChange={setFilePath}
+            onRefresh={() => void projectFilesQuery.refetch()}
+            onToggleHidden={() => setShowHiddenFiles((value) => !value)}
+            onOpenFile={(entry) =>
+              void openProjectFile(
+                directory.id,
+                directory.path,
+                entry.relativePath,
+              ).catch((reason) => toast.error(String(reason)))
+            }
           />
-          {searchingSessions &&
-            searchReady &&
-            incompleteSearchTools.length > 0 && (
-              <p className="muted session-search-warning">
-                {t("projectDetail.searchIncomplete", {
-                  tools: incompleteSearchTools
-                    .map(
-                      (toolKey) =>
-                        TOOLS.find((tool) => tool.key === toolKey)?.label ??
-                        toolKey,
-                    )
-                    .join(", "),
-                })}
+        ) : panelTab === "git" ? (
+          <div className="project-files-empty">
+            <p>{t("workspaceFiles.gitLater")}</p>
+          </div>
+        ) : (
+          <>
+            {openPathError && (
+              <p className="error">
+                {t("projectDetail.openPathFailed", { error: openPathError })}
               </p>
             )}
-          {sessionsError && sessionItems.length === 0 ? (
-            <p className="error">
-              {t(
-                searchingSessions
-                  ? "projectDetail.searchFailed"
-                  : "projectDetail.sessionsFailed",
-                {
-                  error: String(sessionsError),
-                },
-              )}
-            </p>
-          ) : sessionsLoading && sessionItems.length === 0 ? (
-            <p className="muted">{t("projectDetail.reading")}</p>
-          ) : sessionItems.length > 0 ? (
-            <div className="session-history">
-              <ul className="session-list">
-                {sessionItems.map((session) => {
-                  const editing =
-                    editingSessionId ===
-                    `${session.toolKey}:${session.sessionId}`;
-                  const displayTitle = session.alias ?? session.title;
-                  const sessionTool = TOOLS.find(
-                    (tool) => tool.key === session.toolKey,
-                  )!;
-                  const SessionToolIcon = sessionTool.icon;
+
+            <section className="project-context-section">
+              <div className="section-heading">
+                {t("projectDetail.cliLaunchers")}
+              </div>
+              <div
+                className="cli-launcher-list"
+                role="group"
+                aria-label={t("projectDetail.cliLaunchers")}
+              >
+                {TOOLS.map((tool) => {
+                  const status = statusByTool[tool.key]?.status ?? "unknown";
+                  const available = status === "available";
+                  const ToolIcon = tool.icon;
                   return (
-                    <li
-                      className="session-row"
-                      key={`${session.toolKey}:${session.sessionId}`}
+                    <button
+                      key={tool.key}
+                      type="button"
+                      className="cli-launch-button"
+                      title={t(
+                        available
+                          ? "cliStatus.availableTitle"
+                          : status === "unknown"
+                            ? "cliStatus.unknownTitle"
+                            : "cliStatus.missingTitle",
+                      )}
+                      aria-label={t("projectDetail.launchTool", {
+                        tool: tool.label,
+                      })}
+                      disabled={!available}
+                      onClick={() => {
+                        cancelRename();
+                        runEmbeddedLaunch(tool.key);
+                      }}
                     >
-                      <div className="session-meta">
-                        <span className="session-tool-label">
-                          <SessionToolIcon size={14} />
-                          {sessionTool.label}
-                        </span>
-                        {editing ? (
-                          <input
-                            autoFocus
-                            className="session-alias-input"
-                            aria-label={t("projectDetail.sessionAlias")}
-                            maxLength={100}
-                            value={aliasDraft}
-                            onChange={(event) => {
-                              setAliasDraft(event.target.value);
-                              setAliasError(null);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                saveAlias(session);
-                              } else if (event.key === "Escape") {
-                                cancelRename();
-                              }
-                            }}
-                          />
-                        ) : (
-                          <span
-                            className="session-title"
-                            title={
-                              session.alias
-                                ? t("projectDetail.originalTitle", {
-                                    title: session.title,
-                                  })
-                                : session.title
-                            }
-                          >
-                            {displayTitle}
-                          </span>
-                        )}
-                        <span className="muted">
-                          {formatRelativeMs(
-                            session.lastActiveMs,
-                            i18n.resolvedLanguage,
-                            t("time.unknown"),
-                          )}
-                          {session.alias
-                            ? ` · ${t("projectDetail.customTitle")}`
-                            : ""}
-                        </span>
-                        {editing && aliasError && (
-                          <span className="error session-alias-error">
-                            {aliasError}
-                          </span>
-                        )}
-                      </div>
-                      <div className="session-actions">
-                        {editing ? (
-                          <>
-                            <button
-                              className="icon-button"
-                              title={t("projectDetail.saveAlias")}
-                              aria-label={t("projectDetail.saveAlias")}
-                              disabled={aliasMutation.isPending}
-                              onClick={() => saveAlias(session)}
-                            >
-                              <Check size={14} />
-                            </button>
-                            <button
-                              className="icon-button"
-                              title={t("projectDetail.cancelRename")}
-                              aria-label={t("projectDetail.cancelRename")}
-                              disabled={aliasMutation.isPending}
-                              onClick={cancelRename}
-                            >
-                              <X size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="icon-button"
-                              title={t("projectDetail.renameSession")}
-                              aria-label={t("projectDetail.renameSession")}
-                              disabled={aliasMutation.isPending}
-                              onClick={() => beginRename(session, displayTitle)}
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            {session.alias && (
-                              <button
-                                className="icon-button"
-                                title={t("projectDetail.restoreOriginal")}
-                                aria-label={t("projectDetail.restoreOriginal")}
-                                disabled={aliasMutation.isPending}
-                                onClick={() => restoreOriginalTitle(session)}
-                              >
-                                <Undo2 size={14} />
-                              </button>
-                            )}
-                          </>
-                        )}
-                        <button
-                          className="ghost-button"
-                          disabled={
-                            statusByTool[session.toolKey]?.status !==
-                              "available" || editing
-                          }
-                          onClick={() => runResume(session)}
-                        >
-                          <RotateCcw size={14} />
-                          {t("projectDetail.resumeEmbedded")}
-                        </button>
-                      </div>
-                    </li>
+                      <ToolIcon size={17} />
+                      {tool.label}
+                      <span
+                        className={clsx("tab-dot", `dot-${status}`)}
+                        aria-hidden="true"
+                      />
+                    </button>
                   );
                 })}
-              </ul>
-              {sessionsNextPageError && (
-                <p className="error session-page-error">
-                  {t("projectDetail.loadMoreFailed", {
-                    error: String(sessionsNextPageError),
-                  })}
+              </div>
+            </section>
+
+            <section className="project-context-section">
+              <div className="section-heading heading-actions">
+                <span>{t("projectDetail.sessions")}</span>
+                <button
+                  className="icon-button refresh-button"
+                  title={t("projectDetail.refreshSessions")}
+                  disabled={sessionsFetching}
+                  onClick={refreshSessions}
+                >
+                  <RefreshCw
+                    size={14}
+                    className={sessionsFetching ? "spinning" : undefined}
+                  />
+                </button>
+              </div>
+              <SearchInput
+                className="session-history-search"
+                value={sessionSearch}
+                onChange={setSessionSearch}
+                placeholder={t("projectDetail.searchPlaceholder")}
+                ariaLabel={t("projectDetail.searchSessions")}
+                maxLength={200}
+                onClear={() => setSessionSearch("")}
+                clearLabel={t("projectDetail.clearSearch")}
+              />
+              {searchingSessions &&
+                searchReady &&
+                incompleteSearchTools.length > 0 && (
+                  <p className="muted session-search-warning">
+                    {t("projectDetail.searchIncomplete", {
+                      tools: incompleteSearchTools
+                        .map(
+                          (toolKey) =>
+                            TOOLS.find((tool) => tool.key === toolKey)?.label ??
+                            toolKey,
+                        )
+                        .join(", "),
+                    })}
+                  </p>
+                )}
+              {sessionsError && sessionItems.length === 0 ? (
+                <p className="error">
+                  {t(
+                    searchingSessions
+                      ? "projectDetail.searchFailed"
+                      : "projectDetail.sessionsFailed",
+                    {
+                      error: String(sessionsError),
+                    },
+                  )}
+                </p>
+              ) : sessionsLoading && sessionItems.length === 0 ? (
+                <p className="muted">{t("projectDetail.reading")}</p>
+              ) : sessionItems.length > 0 ? (
+                <div className="session-history">
+                  <ul className="session-list">
+                    {sessionItems.map((session) => {
+                      const editing =
+                        editingSessionId ===
+                        `${session.toolKey}:${session.sessionId}`;
+                      const displayTitle = session.alias ?? session.title;
+                      const sessionTool = TOOLS.find(
+                        (tool) => tool.key === session.toolKey,
+                      )!;
+                      const SessionToolIcon = sessionTool.icon;
+                      return (
+                        <li
+                          className="session-row"
+                          key={`${session.toolKey}:${session.sessionId}`}
+                        >
+                          <div className="session-meta">
+                            <span className="session-tool-label">
+                              <SessionToolIcon size={14} />
+                              {sessionTool.label}
+                            </span>
+                            {editing ? (
+                              <input
+                                autoFocus
+                                className="session-alias-input"
+                                aria-label={t("projectDetail.sessionAlias")}
+                                maxLength={100}
+                                value={aliasDraft}
+                                onChange={(event) => {
+                                  setAliasDraft(event.target.value);
+                                  setAliasError(null);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    saveAlias(session);
+                                  } else if (event.key === "Escape") {
+                                    cancelRename();
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <span
+                                className="session-title"
+                                title={
+                                  session.alias
+                                    ? t("projectDetail.originalTitle", {
+                                        title: session.title,
+                                      })
+                                    : session.title
+                                }
+                              >
+                                {displayTitle}
+                              </span>
+                            )}
+                            <span className="muted">
+                              {formatRelativeMs(
+                                session.lastActiveMs,
+                                i18n.resolvedLanguage,
+                                t("time.unknown"),
+                              )}
+                              {session.alias
+                                ? ` · ${t("projectDetail.customTitle")}`
+                                : ""}
+                            </span>
+                            {editing && aliasError && (
+                              <span className="error session-alias-error">
+                                {aliasError}
+                              </span>
+                            )}
+                          </div>
+                          <div className="session-actions">
+                            {editing ? (
+                              <>
+                                <button
+                                  className="icon-button"
+                                  title={t("projectDetail.saveAlias")}
+                                  aria-label={t("projectDetail.saveAlias")}
+                                  disabled={aliasMutation.isPending}
+                                  onClick={() => saveAlias(session)}
+                                >
+                                  <Check size={14} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  title={t("projectDetail.cancelRename")}
+                                  aria-label={t("projectDetail.cancelRename")}
+                                  disabled={aliasMutation.isPending}
+                                  onClick={cancelRename}
+                                >
+                                  <X size={14} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  className="icon-button"
+                                  title={t("projectDetail.renameSession")}
+                                  aria-label={t("projectDetail.renameSession")}
+                                  disabled={aliasMutation.isPending}
+                                  onClick={() =>
+                                    beginRename(session, displayTitle)
+                                  }
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                {session.alias && (
+                                  <button
+                                    className="icon-button"
+                                    title={t("projectDetail.restoreOriginal")}
+                                    aria-label={t(
+                                      "projectDetail.restoreOriginal",
+                                    )}
+                                    disabled={aliasMutation.isPending}
+                                    onClick={() =>
+                                      restoreOriginalTitle(session)
+                                    }
+                                  >
+                                    <Undo2 size={14} />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            <button
+                              className="ghost-button"
+                              disabled={
+                                statusByTool[session.toolKey]?.status !==
+                                  "available" || editing
+                              }
+                              onClick={() => runResume(session)}
+                            >
+                              <RotateCcw size={14} />
+                              {t("projectDetail.resumeEmbedded")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {sessionsNextPageError && (
+                    <p className="error session-page-error">
+                      {t("projectDetail.loadMoreFailed", {
+                        error: String(sessionsNextPageError),
+                      })}
+                    </p>
+                  )}
+                  {sessionsHaveNextPage && (
+                    <button
+                      className="ghost-button session-load-more"
+                      disabled={sessionsFetchingNextPage}
+                      onClick={() => {
+                        if (searchingSessions) {
+                          setVisibleSearchCount(nextSearchVisibleCount);
+                        } else {
+                          void Promise.all(
+                            sessionQueries
+                              .filter((query) => query.hasNextPage)
+                              .map((query) => query.fetchNextPage()),
+                          );
+                        }
+                      }}
+                    >
+                      {sessionsFetchingNextPage
+                        ? t("common.loading")
+                        : t("common.more")}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="muted">
+                  {searchingSessions
+                    ? t("projectDetail.noSearchResults")
+                    : t("projectDetail.noSessions")}
                 </p>
               )}
-              {sessionsHaveNextPage && (
-                <button
-                  className="ghost-button session-load-more"
-                  disabled={sessionsFetchingNextPage}
-                  onClick={() => {
-                    if (searchingSessions) {
-                      setVisibleSearchCount(nextSearchVisibleCount);
-                    } else {
-                      void Promise.all(
-                        sessionQueries
-                          .filter((query) => query.hasNextPage)
-                          .map((query) => query.fetchNextPage()),
-                      );
-                    }
-                  }}
-                >
-                  {sessionsFetchingNextPage
-                    ? t("common.loading")
-                    : t("common.more")}
-                </button>
-              )}
-            </div>
-          ) : (
-            <p className="muted">
-              {searchingSessions
-                ? t("projectDetail.noSearchResults")
-                : t("projectDetail.noSessions")}
-            </p>
-          )}
-        </section>
+            </section>
+          </>
+        )}
       </ThemedScrollArea>
     </aside>
+  );
+}
+
+function ProjectFileBrowser({
+  currentPath,
+  entries,
+  truncated,
+  loading,
+  error,
+  showHidden,
+  onPathChange,
+  onRefresh,
+  onToggleHidden,
+  onOpenFile,
+}: {
+  currentPath: string;
+  entries: ProjectFileEntry[];
+  truncated: boolean;
+  loading: boolean;
+  error: string | null;
+  showHidden: boolean;
+  onPathChange: (path: string) => void;
+  onRefresh: () => void;
+  onToggleHidden: () => void;
+  onOpenFile: (entry: ProjectFileEntry) => void;
+}) {
+  const { t } = useTranslation();
+  const segments = currentPath ? currentPath.split("/") : [];
+  const visibleEntries = entries.filter((entry) => showHidden || !entry.hidden);
+
+  return (
+    <section
+      className="project-files-browser"
+      aria-label={t("workspaceFiles.files")}
+    >
+      <div className="project-files-toolbar">
+        <div className="project-files-breadcrumbs">
+          <button type="button" onClick={() => onPathChange("")}>
+            {t("workspaceFiles.projectRoot")}
+          </button>
+          {segments.map((segment, index) => (
+            <span key={`${segment}-${index}`}>
+              <ChevronRight size={13} />
+              <button
+                type="button"
+                onClick={() =>
+                  onPathChange(segments.slice(0, index + 1).join("/"))
+                }
+              >
+                {segment}
+              </button>
+            </span>
+          ))}
+        </div>
+        <button type="button" className="ghost-button" onClick={onRefresh}>
+          {t("workspaceFiles.refresh")}
+        </button>
+      </div>
+      <label className="project-files-hidden-toggle">
+        <input type="checkbox" checked={showHidden} onChange={onToggleHidden} />
+        {t("workspaceFiles.showHidden")}
+      </label>
+      {error ? (
+        <p className="error project-files-status">{error}</p>
+      ) : loading ? (
+        <p className="muted project-files-status">{t("common.loading")}</p>
+      ) : visibleEntries.length === 0 ? (
+        <p className="muted project-files-status">
+          {t("workspaceFiles.emptyDirectory")}
+        </p>
+      ) : (
+        <ul className="project-files-list">
+          {visibleEntries.map((entry) => {
+            const isDirectory = entry.kind === "directory";
+            const Icon = isDirectory ? Folder : FileText;
+            return (
+              <li key={entry.relativePath}>
+                <button
+                  type="button"
+                  className={clsx("project-file-entry", {
+                    ignored: entry.ignored,
+                    disabled: entry.symbolicLink || entry.kind === "other",
+                  })}
+                  disabled={entry.symbolicLink || entry.kind === "other"}
+                  title={
+                    entry.symbolicLink
+                      ? t("workspaceFiles.symlinkDisabled")
+                      : entry.relativePath
+                  }
+                  onClick={() =>
+                    isDirectory
+                      ? onPathChange(entry.relativePath)
+                      : onOpenFile(entry)
+                  }
+                >
+                  <Icon size={15} />
+                  <span>{entry.name}</span>
+                  {entry.ignored && (
+                    <small>{t("workspaceFiles.ignored")}</small>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {truncated && (
+        <p className="muted project-files-status">
+          {t("workspaceFiles.directoryLimitReached")}
+        </p>
+      )}
+    </section>
   );
 }
 

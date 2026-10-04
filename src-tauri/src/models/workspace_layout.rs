@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::tool::ToolKey;
 
-pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 3;
 pub const MAX_WORKSPACE_LAYOUT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_WORKSPACE_LAYOUT_DEPTH: usize = 32;
 pub const MAX_WORKSPACE_LAYOUT_NODES: usize = 511;
@@ -42,6 +42,8 @@ pub struct WorkspaceLayoutDocument {
     pub focused_pane_id: String,
     pub slots: Vec<WorkspaceLayoutSlot>,
     #[serde(default)]
+    pub documents: Vec<WorkspaceFileDocument>,
+    #[serde(default)]
     pub detached_slot_ids: Vec<String>,
 }
 
@@ -51,7 +53,16 @@ impl WorkspaceLayoutDocument {
             return Err(WorkspaceLayoutError::PayloadTooLarge);
         }
 
-        let document: Self = serde_json::from_str(json)
+        let mut value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
+        let source_version = value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| WorkspaceLayoutError::InvalidJson("缺少 schemaVersion".into()))?;
+        if source_version == 1 || source_version == 2 {
+            migrate_legacy_content_refs(&mut value, source_version);
+        }
+        let document: Self = serde_json::from_value(value)
             .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
         document.validate()?;
         Ok(document)
@@ -73,8 +84,10 @@ impl WorkspaceLayoutDocument {
                 self.schema_version,
             ));
         }
-        if self.slots.len() > MAX_WORKSPACE_LAYOUT_SLOTS {
-            return invalid("会话数量超过限制");
+        if self.slots.len() > MAX_WORKSPACE_LAYOUT_SLOTS
+            || self.documents.len() > MAX_WORKSPACE_LAYOUT_SLOTS
+        {
+            return invalid("会话或文件文档数量超过限制");
         }
 
         let mut slots_by_id = HashMap::with_capacity(self.slots.len());
@@ -96,9 +109,25 @@ impl WorkspaceLayoutDocument {
             }
         }
 
+        let mut documents_by_id = HashMap::with_capacity(self.documents.len());
+        let mut document_paths = HashSet::new();
+        for document in &self.documents {
+            validate_file_document(document)?;
+            if documents_by_id
+                .insert(document.id.as_str(), document)
+                .is_some()
+            {
+                return invalid("文件文档身份重复");
+            }
+            if !document_paths.insert((document.directory_id, document.relative_path.as_str())) {
+                return invalid("同一项目文件不能重复打开");
+            }
+        }
+
         let mut node_ids = HashSet::new();
         let mut pane_numbers = HashSet::new();
         let mut referenced_slots = HashSet::new();
+        let mut referenced_documents = HashSet::new();
         let mut node_count = 0;
         let mut pane_ids = HashSet::new();
         validate_node(
@@ -110,6 +139,8 @@ impl WorkspaceLayoutDocument {
             &mut pane_ids,
             &mut referenced_slots,
             &slots_by_id,
+            &mut referenced_documents,
+            &documents_by_id,
         )?;
 
         if !pane_ids.contains(self.focused_pane_id.as_str()) {
@@ -131,6 +162,9 @@ impl WorkspaceLayoutDocument {
 
         if referenced_slots.len() != slots_by_id.len() {
             return invalid("存在未归属 pane 或独立窗口的 slot");
+        }
+        if referenced_documents.len() != documents_by_id.len() {
+            return invalid("存在未归属 pane 的文件文档");
         }
 
         Ok(())
@@ -156,8 +190,9 @@ pub enum WorkspaceLayoutNode {
     Pane {
         id: String,
         pane_number: u32,
-        session_ids: Vec<String>,
-        active_session_id: Option<String>,
+        contents: Vec<WorkspacePaneContentRef>,
+        #[serde(default)]
+        active_content: Option<WorkspacePaneContentRef>,
     },
     Split {
         id: String,
@@ -166,6 +201,27 @@ pub enum WorkspaceLayoutNode {
         first: Box<WorkspaceLayoutNode>,
         second: Box<WorkspaceLayoutNode>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WorkspacePaneContentRef {
+    Pty { slot_id: String },
+    File { document_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceFileDocument {
+    pub id: String,
+    pub directory_id: i64,
+    pub directory_path: String,
+    pub relative_path: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -296,6 +352,8 @@ fn validate_node<'a>(
     pane_ids: &mut HashSet<&'a str>,
     referenced_slots: &mut HashSet<&'a str>,
     slots_by_id: &HashMap<&'a str, &'a WorkspaceLayoutSlot>,
+    referenced_documents: &mut HashSet<&'a str>,
+    documents_by_id: &HashMap<&'a str, &'a WorkspaceFileDocument>,
 ) -> Result<(), WorkspaceLayoutError> {
     if depth > MAX_WORKSPACE_LAYOUT_DEPTH {
         return invalid("布局嵌套层级超过限制");
@@ -309,8 +367,8 @@ fn validate_node<'a>(
         WorkspaceLayoutNode::Pane {
             id,
             pane_number,
-            session_ids,
-            active_session_id,
+            contents,
+            active_content,
         } => {
             validate_text(id, MAX_ID_CHARS, "pane ID")?;
             if !node_ids.insert(id) {
@@ -320,21 +378,38 @@ fn validate_node<'a>(
                 return invalid("pane 编号无效或重复");
             }
             pane_ids.insert(id);
-            if session_ids.len() > MAX_WORKSPACE_LAYOUT_SLOTS {
-                return invalid("单个 pane 的会话数量超过限制");
+            if contents.len() > MAX_WORKSPACE_LAYOUT_SLOTS {
+                return invalid("单个 pane 的内容数量超过限制");
             }
-            for instance_id in session_ids {
-                if !slots_by_id.contains_key(instance_id.as_str()) {
-                    return invalid("pane 引用了不存在的 slot");
-                }
-                if !referenced_slots.insert(instance_id.as_str()) {
-                    return invalid("slot 在多个 pane 中重复出现");
+            let mut pane_contents = HashSet::new();
+            for content in contents {
+                match content {
+                    WorkspacePaneContentRef::Pty { slot_id } => {
+                        if !slots_by_id.contains_key(slot_id.as_str()) {
+                            return invalid("pane 引用了不存在的 slot");
+                        }
+                        if !referenced_slots.insert(slot_id.as_str())
+                            || !pane_contents.insert(("pty", slot_id.as_str()))
+                        {
+                            return invalid("slot 在多个 pane 或内容项中重复出现");
+                        }
+                    }
+                    WorkspacePaneContentRef::File { document_id } => {
+                        if !documents_by_id.contains_key(document_id.as_str()) {
+                            return invalid("pane 引用了不存在的文件文档");
+                        }
+                        if !referenced_documents.insert(document_id.as_str())
+                            || !pane_contents.insert(("file", document_id.as_str()))
+                        {
+                            return invalid("文件文档在多个 pane 或内容项中重复出现");
+                        }
+                    }
                 }
             }
-            match (session_ids.is_empty(), active_session_id.as_deref()) {
-                (true, None) => {}
-                (false, Some(active)) if session_ids.iter().any(|id| id == active) => {}
-                _ => return invalid("活动 slot 与 pane 会话列表不匹配"),
+            match active_content {
+                None => {}
+                Some(active) if contents.contains(active) => {}
+                Some(_) => return invalid("活动内容与 pane 内容列表不匹配"),
             }
         }
         WorkspaceLayoutNode::Split {
@@ -360,6 +435,8 @@ fn validate_node<'a>(
                 pane_ids,
                 referenced_slots,
                 slots_by_id,
+                referenced_documents,
+                documents_by_id,
             )?;
             validate_node(
                 second,
@@ -370,10 +447,86 @@ fn validate_node<'a>(
                 pane_ids,
                 referenced_slots,
                 slots_by_id,
+                referenced_documents,
+                documents_by_id,
             )?;
         }
     }
     Ok(())
+}
+
+fn migrate_legacy_content_refs(layout: &mut serde_json::Value, source_version: u64) {
+    if let Some(object) = layout.as_object_mut() {
+        object.insert(
+            "schemaVersion".to_string(),
+            serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
+        );
+        if let Some(tree) = object.get_mut("tree") {
+            migrate_legacy_content_node(tree, source_version);
+        }
+    }
+}
+
+fn migrate_legacy_content_node(node: &mut serde_json::Value, source_version: u64) {
+    let Some(object) = node.as_object_mut() else {
+        return;
+    };
+    match object.get("kind").and_then(serde_json::Value::as_str) {
+        Some("pane") => {
+            let session_ids = object
+                .remove("sessionIds")
+                .and_then(|value| value.as_array().cloned())
+                .unwrap_or_default();
+            let document_ids = object
+                .remove("documentIds")
+                .and_then(|value| value.as_array().cloned())
+                .unwrap_or_default();
+            let active_session_id = object.remove("activeSessionId");
+            let legacy_active_content = object.remove("activeContent");
+            let mut contents = Vec::with_capacity(session_ids.len() + document_ids.len());
+            contents.extend(session_ids.iter().filter_map(|value| {
+                value
+                    .as_str()
+                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
+            }));
+            contents.extend(document_ids.iter().filter_map(|value| {
+                value.as_str().map(
+                    |document_id| serde_json::json!({ "kind": "file", "documentId": document_id }),
+                )
+            }));
+            let active_content = if source_version >= 2 {
+                legacy_active_content.filter(|value| !value.is_null())
+            } else {
+                None
+            }
+            .or_else(|| {
+                active_session_id
+                    .as_ref()
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|active| {
+                        session_ids
+                            .iter()
+                            .any(|session_id| session_id.as_str() == Some(*active))
+                    })
+                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
+            })
+            .or_else(|| contents.first().cloned());
+            object.insert("contents".to_string(), serde_json::Value::Array(contents));
+            object.insert(
+                "activeContent".to_string(),
+                active_content.unwrap_or(serde_json::Value::Null),
+            );
+        }
+        Some("split") => {
+            if let Some(first) = object.get_mut("first") {
+                migrate_legacy_content_node(first, source_version);
+            }
+            if let Some(second) = object.get_mut("second") {
+                migrate_legacy_content_node(second, source_version);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError> {
@@ -402,6 +555,34 @@ fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError>
     }
     if let WorkspaceSlotTitle::Custom(title) = &slot.title {
         validate_text(title, MAX_CUSTOM_TITLE_CHARS, "自定义标题")?;
+    }
+    Ok(())
+}
+
+fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), WorkspaceLayoutError> {
+    validate_uuid(&document.id, "文件文档 ID")?;
+    if document.directory_id <= 0 {
+        return invalid("文件项目 ID 无效");
+    }
+    validate_text(
+        &document.directory_path,
+        MAX_DIRECTORY_PATH_CHARS,
+        "文件项目路径",
+    )?;
+    validate_text(
+        &document.relative_path,
+        MAX_DIRECTORY_PATH_CHARS,
+        "项目内相对路径",
+    )?;
+    if document.relative_path.starts_with('/')
+        || document.relative_path.contains('\\')
+        || document.relative_path.contains(':')
+        || document
+            .relative_path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return invalid("文件引用必须是规范的项目内相对路径");
     }
     Ok(())
 }
@@ -440,8 +621,12 @@ mod tests {
             tree: WorkspaceLayoutNode::Pane {
                 id: "workspace-root".to_string(),
                 pane_number: 1,
-                session_ids: vec![instance_id.clone()],
-                active_session_id: Some(instance_id.clone()),
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }),
             },
             focused_pane_id: "workspace-root".to_string(),
             slots: vec![WorkspaceLayoutSlot {
@@ -455,6 +640,7 @@ mod tests {
                 resume_session_id: None,
                 title: WorkspaceSlotTitle::Automatic,
             }],
+            documents: Vec::new(),
             detached_slot_ids: Vec::new(),
         }
     }
@@ -467,7 +653,7 @@ mod tests {
 
         assert_eq!(restored, document);
         assert!(json.contains("schemaVersion"));
-        assert!(json.contains("activeSessionId"));
+        assert!(json.contains("contents"));
     }
 
     #[test]
@@ -477,8 +663,163 @@ mod tests {
 
         assert_eq!(
             document.validate(),
-            Err(WorkspaceLayoutError::UnsupportedVersion(2))
+            Err(WorkspaceLayoutError::UnsupportedVersion(
+                WORKSPACE_LAYOUT_SCHEMA_VERSION + 1
+            ))
         );
+    }
+
+    #[test]
+    fn workspace_layout_allows_temporarily_inactive_detached_content() {
+        let mut document = valid_document();
+        let WorkspaceLayoutNode::Pane { active_content, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        *active_content = None;
+
+        document
+            .validate()
+            .expect("detached handoff may leave content without active focus");
+    }
+
+    #[test]
+    fn workspace_layout_rejects_active_content_not_owned_by_pane() {
+        let mut document = valid_document();
+        let WorkspaceLayoutNode::Pane { active_content, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        *active_content = Some(WorkspacePaneContentRef::File {
+            document_id: Uuid::new_v4().to_string(),
+        });
+
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("活动内容")
+        ));
+    }
+
+    #[test]
+    fn workspace_layout_migrates_legacy_pty_active_content() {
+        let document = valid_document();
+        let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+        legacy["schemaVersion"] = serde_json::json!(1);
+        let pane = legacy["tree"].as_object_mut().unwrap();
+        pane.remove("contents");
+        pane.remove("activeContent");
+        pane.insert(
+            "sessionIds".into(),
+            serde_json::json!([document.slots[0].instance_id]),
+        );
+        pane.insert(
+            "activeSessionId".into(),
+            serde_json::json!(document.slots[0].instance_id),
+        );
+        pane.insert("documentIds".into(), serde_json::json!([]));
+        let json = serde_json::to_string(&legacy).expect("serialize legacy layout");
+        let migrated = WorkspaceLayoutDocument::from_json(&json).expect("migrate layout");
+
+        assert_eq!(migrated.schema_version, WORKSPACE_LAYOUT_SCHEMA_VERSION);
+        assert!(matches!(
+            &migrated.tree,
+            WorkspaceLayoutNode::Pane {
+                active_content: Some(WorkspacePaneContentRef::Pty { slot_id }),
+                ..
+            } if slot_id == &migrated.slots[0].instance_id
+        ));
+    }
+
+    #[test]
+    fn workspace_layout_migrates_v2_mixed_content_and_preserves_active_file() {
+        let mut document = valid_document();
+        let document_id = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: document_id.clone(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\example".to_string(),
+            relative_path: "README.md".to_string(),
+        });
+        let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+        legacy["schemaVersion"] = serde_json::json!(2);
+        let pane = legacy["tree"].as_object_mut().unwrap();
+        pane.remove("contents");
+        pane.insert(
+            "sessionIds".into(),
+            serde_json::json!([document.slots[0].instance_id]),
+        );
+        pane.insert(
+            "documentIds".into(),
+            serde_json::json!([document_id.clone()]),
+        );
+        legacy["tree"]["activeContent"] = serde_json::json!({
+            "kind": "file",
+            "documentId": document_id,
+        });
+        let json = serde_json::to_string(&legacy).expect("serialize v2 layout");
+
+        let migrated = WorkspaceLayoutDocument::from_json(&json).expect("migrate v2 layout");
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = migrated.tree
+        else {
+            panic!("expected root pane");
+        };
+        assert_eq!(contents.len(), 2);
+        assert_eq!(
+            active_content,
+            Some(WorkspacePaneContentRef::File {
+                document_id: migrated.documents[0].id.clone()
+            })
+        );
+    }
+
+    #[test]
+    fn workspace_layout_rejects_file_path_traversal() {
+        let mut document = valid_document();
+        let file_id = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: file_id.clone(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\example".to_string(),
+            relative_path: "../outside.txt".to_string(),
+        });
+        if let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree {
+            contents.push(WorkspacePaneContentRef::File {
+                document_id: file_id,
+            });
+        }
+
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("相对路径")
+        ));
+    }
+
+    #[test]
+    fn workspace_layout_rejects_duplicate_open_file_identity() {
+        let mut document = valid_document();
+        let first_id = Uuid::new_v4().to_string();
+        let second_id = Uuid::new_v4().to_string();
+        for id in [&first_id, &second_id] {
+            document.documents.push(WorkspaceFileDocument {
+                id: id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: "src/main.rs".to_string(),
+            });
+        }
+        if let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree {
+            contents.extend(
+                [first_id, second_id]
+                    .map(|document_id| WorkspacePaneContentRef::File { document_id }),
+            );
+        }
+
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("不能重复打开")
+        ));
     }
 
     #[test]
@@ -505,14 +846,18 @@ mod tests {
             first: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-1".to_string(),
                 pane_number: 1,
-                session_ids: vec![slot_id.clone()],
-                active_session_id: Some(slot_id.clone()),
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: slot_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: slot_id.clone(),
+                }),
             }),
             second: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-2".to_string(),
                 pane_number: 2,
-                session_ids: vec![slot_id.clone()],
-                active_session_id: Some(slot_id),
+                contents: vec![WorkspacePaneContentRef::Pty { slot_id }],
+                active_content: None,
             }),
         };
         document.focused_pane_id = "pane-1".to_string();
@@ -530,14 +875,10 @@ mod tests {
         duplicate.instance_id = Uuid::new_v4().to_string();
         let duplicate_instance_id = duplicate.instance_id.clone();
         document.slots.push(duplicate);
-        if let WorkspaceLayoutNode::Pane {
-            session_ids,
-            active_session_id,
-            ..
-        } = &mut document.tree
-        {
-            session_ids.push(duplicate_instance_id.clone());
-            *active_session_id = Some(duplicate_instance_id);
+        if let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree {
+            contents.push(WorkspacePaneContentRef::Pty {
+                slot_id: duplicate_instance_id,
+            });
         }
 
         assert!(matches!(
@@ -556,14 +897,14 @@ mod tests {
             first: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-1".to_string(),
                 pane_number: 1,
-                session_ids: Vec::new(),
-                active_session_id: None,
+                contents: Vec::new(),
+                active_content: None,
             }),
             second: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-2".to_string(),
                 pane_number: 2,
-                session_ids: Vec::new(),
-                active_session_id: None,
+                contents: Vec::new(),
+                active_content: None,
             }),
         };
         document.focused_pane_id = "pane-1".to_string();
@@ -588,8 +929,8 @@ mod tests {
         document.tree = WorkspaceLayoutNode::Pane {
             id: "workspace-root".to_string(),
             pane_number: 1,
-            session_ids: Vec::new(),
-            active_session_id: None,
+            contents: Vec::new(),
+            active_content: None,
         };
         document.detached_slot_ids = vec![slot_id];
         document.validate().expect("detached slot is still managed");
@@ -610,8 +951,8 @@ mod tests {
         document.tree = WorkspaceLayoutNode::Pane {
             id: "workspace-root".to_string(),
             pane_number: 1,
-            session_ids: Vec::new(),
-            active_session_id: None,
+            contents: Vec::new(),
+            active_content: None,
         };
         document.detached_slot_ids = vec![slot_id];
 
@@ -629,8 +970,8 @@ mod tests {
                 return WorkspaceLayoutNode::Pane {
                     id: "deepest-pane".to_string(),
                     pane_number: 1,
-                    session_ids: Vec::new(),
-                    active_session_id: None,
+                    contents: Vec::new(),
+                    active_content: None,
                 };
             }
             WorkspaceLayoutNode::Split {
@@ -641,8 +982,8 @@ mod tests {
                 second: Box::new(WorkspaceLayoutNode::Pane {
                     id: format!("pane-{depth}"),
                     pane_number: depth as u32 + 1,
-                    session_ids: Vec::new(),
-                    active_session_id: None,
+                    contents: Vec::new(),
+                    active_content: None,
                 }),
             }
         }
@@ -676,8 +1017,8 @@ mod tests {
                 return WorkspaceLayoutNode::Pane {
                     id,
                     pane_number,
-                    session_ids: Vec::new(),
-                    active_session_id: None,
+                    contents: Vec::new(),
+                    active_content: None,
                 };
             }
             WorkspaceLayoutNode::Split {

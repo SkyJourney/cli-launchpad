@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import {
   findWorkspacePane,
   listVisibleWorkspaceSessionIds,
+  hasWorkspaceContent,
   listWorkspacePanes,
   type WorkspaceNode,
 } from "../lib/ptyWorkspaceLayout";
@@ -63,10 +64,8 @@ export function WorkspacePtySessionRegistry({
   onPortalTarget: (instanceId: string, target: HTMLDivElement | null) => void;
   onFocusPane: (paneId: string) => void;
 }) {
-  const activeSessionId = findWorkspacePane(
-    tree,
-    focusedPaneId,
-  )?.activeSessionId;
+  const activeContent = findWorkspacePane(tree, focusedPaneId)?.activeContent;
+  const activeSessionId = activeContent?.kind === "pty" ? activeContent.slotId : null;
   const panes = listWorkspacePanes(tree);
   const visibleSessionIds = new Set(listVisibleWorkspaceSessionIds(tree));
 
@@ -74,7 +73,7 @@ export function WorkspacePtySessionRegistry({
     <div className="pty-session-registry" hidden aria-hidden="true">
       {slots.map((slot) => {
         const pane = panes.find((candidate) =>
-          candidate.sessionIds.includes(slot.instanceId),
+          hasWorkspaceContent(candidate, { kind: "pty", slotId: slot.instanceId }),
         );
         return (
           <PtySessionPortal

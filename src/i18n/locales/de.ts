@@ -133,7 +133,7 @@ export const de = {
     nextSessionsHeading: "Spätere Terminalsitzungen",
     emptyPane: "Leerer Bereich",
     empty:
-      "Stelle rechts eine Sitzung aus dem Verlauf wieder her oder starte hier eine CLI.",
+      "Stelle rechts eine Sitzung wieder her oder öffne hier eine Datei bzw. starte eine CLI.",
     starting: "Terminalsitzung wird erstellt…",
     terminalNotReady:
       "Das Terminal ist noch nicht bereit. Versuche es gleich erneut.",
@@ -561,6 +561,41 @@ export const de = {
       stdout: "Ausgabe",
       stderr: "Fehler",
       system: "System",
+    },
+  },
+  workspaceFiles: {
+    rightPanelTabs: "Register der rechten Seitenleiste",
+    files: "Dateien",
+    git: "Git",
+    gitLater:
+      "Die Git-Verwaltung wird in einem späteren Meilenstein verfügbar.",
+    projectRoot: "Projektstamm",
+    refresh: "Aktualisieren",
+    showHidden: "Versteckte Dateien anzeigen",
+    emptyDirectory: "Dieser Ordner ist leer",
+    symlinkDisabled: "Symbolische Links können noch nicht geöffnet werden",
+    ignored: "Ignoriert",
+    closeFile: "Datei schließen",
+    closeFileNamed: "{{name}} schließen",
+    fileMenu: "Dateifenstermenü",
+    closeOthers: "Andere Dateien in diesem Bereich schließen ({{count}})",
+    closeAllInPane: "Alle Dateien in diesem Bereich schließen ({{count}})",
+    splitAndMoveRight: "Rechts teilen und diese Datei verschieben",
+    splitAndMoveDown: "Unten teilen und diese Datei verschieben",
+    discardChanges:
+      "Diese Datei enthält nicht gespeicherte Änderungen. Schließen und verwerfen?",
+    save: "Speichern",
+    reload: "Neu laden",
+    directoryLimitReached:
+      "Zu viele Einträge. Die ersten 5.000 werden angezeigt.",
+    loadingFile: "Datei wird geladen…",
+    fileCannotOpen: "Diese Datei kann hier nicht geöffnet werden",
+    imagePreview: "Bildvorschau",
+    unsupported: {
+      binary: "Der Texteditor unterstützt keine Binärdateien.",
+      tooLarge: "Die Datei überschreitet die Vorschaugrößenbegrenzung.",
+      invalidImage: "Die Bilddaten stimmen nicht mit der Dateiendung überein.",
+      unsupportedImage: "Dieses Bildformat wird nicht unterstützt.",
     },
   },
 } satisfies LocaleShape<typeof en>;

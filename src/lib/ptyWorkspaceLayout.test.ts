@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   activateWorkspaceSession,
+  activateWorkspaceFile,
+  addWorkspaceFileToPane,
   addSessionToWorkspacePane,
   canSplitWorkspacePane,
   containsWorkspaceSession,
@@ -10,9 +12,14 @@ import {
   listWorkspacePanes,
   listVisibleWorkspaceSessionIds,
   moveWorkspaceSession,
+  moveWorkspaceFileToPane,
+  splitAndMoveWorkspaceFile,
+  deactivateWorkspaceFile,
   nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   removeWorkspaceSession,
+  removeWorkspaceFileFromPane,
+  remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
   splitAndMoveWorkspaceSession,
   splitWorkspacePane,
@@ -69,8 +76,8 @@ describe("PTY workspace split tree", () => {
       kind: "pane",
       id: "root",
       paneNumber: 1,
-      sessionIds: ["session-a"],
-      activeSessionId: "session-a",
+      contents: [{ kind: "pty", slotId: "session-a" }],
+      activeContent: { kind: "pty", slotId: "session-a" },
     });
     expect(split.second).toEqual(createWorkspacePane("pane-b", 2));
     expect(listWorkspacePanes(split).map((pane) => pane.id)).toEqual([
@@ -111,9 +118,10 @@ describe("PTY workspace split tree", () => {
       "session-a",
     );
 
-    expect(findWorkspacePane(switched, "root")?.activeSessionId).toBe(
-      "session-a",
-    );
+    expect(findWorkspacePane(switched, "root")?.activeContent).toEqual({
+      kind: "pty",
+      slotId: "session-a",
+    });
     expect(() =>
       activateWorkspaceSession(switched, "root", "session-missing"),
     ).toThrow("does not belong");
@@ -177,15 +185,18 @@ describe("PTY workspace split tree", () => {
       kind: "pane",
       id: "root",
       paneNumber: 1,
-      sessionIds: ["session-b"],
-      activeSessionId: "session-b",
+      contents: [{ kind: "pty", slotId: "session-b" }],
+      activeContent: { kind: "pty", slotId: "session-b" },
     });
     expect(findWorkspacePane(moved, "pane-b")).toEqual({
       kind: "pane",
       id: "pane-b",
       paneNumber: 2,
-      sessionIds: ["session-c", "session-a"],
-      activeSessionId: "session-a",
+      contents: [
+        { kind: "pty", slotId: "session-c" },
+        { kind: "pty", slotId: "session-a" },
+      ],
+      activeContent: { kind: "pty", slotId: "session-a" },
     });
   });
 
@@ -209,9 +220,10 @@ describe("PTY workspace split tree", () => {
     expect(findWorkspacePane(moved, "root")).toEqual(
       createWorkspacePane("root"),
     );
-    expect(findWorkspacePane(moved, "pane-b")?.activeSessionId).toBe(
-      "session-a",
-    );
+    expect(findWorkspacePane(moved, "pane-b")?.activeContent).toEqual({
+      kind: "pty",
+      slotId: "session-a",
+    });
   });
 
   it("keeps an empty child pane after moving its only session", () => {
@@ -232,8 +244,11 @@ describe("PTY workspace split tree", () => {
     );
 
     expect(listWorkspacePanes(moved)).toHaveLength(2);
-    expect(findWorkspacePane(moved, "pane-b")?.sessionIds).toEqual([]);
-    expect(findWorkspacePane(moved, "root")?.activeSessionId).toBe("session-a");
+    expect(findWorkspacePane(moved, "pane-b")?.contents).toEqual([]);
+    expect(findWorkspacePane(moved, "root")?.activeContent).toEqual({
+      kind: "pty",
+      slotId: "session-a",
+    });
   });
 
   it("activates a session when asked to move it to its current pane", () => {
@@ -254,9 +269,10 @@ describe("PTY workspace split tree", () => {
       "session-a",
     );
 
-    expect(findWorkspacePane(activated, "root")?.activeSessionId).toBe(
-      "session-a",
-    );
+    expect(findWorkspacePane(activated, "root")?.activeContent).toEqual({
+      kind: "pty",
+      slotId: "session-a",
+    });
   });
 
   it("rejects moves when the source, target, or session is invalid", () => {
@@ -308,15 +324,15 @@ describe("PTY workspace split tree", () => {
       kind: "pane",
       id: "root",
       paneNumber: 1,
-      sessionIds: ["session-b"],
-      activeSessionId: "session-b",
+      contents: [{ kind: "pty", slotId: "session-b" }],
+      activeContent: { kind: "pty", slotId: "session-b" },
     });
     expect(findWorkspacePane(splitAndMoved, "pane-b")).toEqual({
       kind: "pane",
       id: "pane-b",
       paneNumber: 2,
-      sessionIds: ["session-a"],
-      activeSessionId: "session-a",
+      contents: [{ kind: "pty", slotId: "session-a" }],
+      activeContent: { kind: "pty", slotId: "session-a" },
     });
   });
 
@@ -348,8 +364,8 @@ describe("PTY workspace split tree", () => {
       findWorkspacePane(
         removeWorkspaceSession(withSessions, "session-b"),
         "root",
-      )?.activeSessionId,
-    ).toBe("session-a");
+      )?.activeContent,
+    ).toEqual({ kind: "pty", slotId: "session-a" });
   });
 
   it("keeps an empty child pane after its final session exits", () => {
@@ -637,4 +653,195 @@ describe("PTY workspace split tree", () => {
       createWorkspacePane("root"),
     );
   });
+
+  it("switches pane content between PTY and file while keeping both references", () => {
+    const withSession = addSessionToWorkspacePane(
+      createWorkspacePane("root"),
+      "root",
+      "session-a",
+    );
+    const withFile = addWorkspaceFileToPane(withSession, "root", "file-a");
+    expect(listVisibleWorkspaceSessionIds(withFile)).toEqual([]);
+
+    const backToPty = activateWorkspaceSession(withFile, "root", "session-a");
+    expect(listVisibleWorkspaceSessionIds(backToPty)).toEqual(["session-a"]);
+    const backToFile = activateWorkspaceFile(backToPty, "root", "file-a");
+    expect(findWorkspacePane(backToFile, "root")?.contents).toEqual([
+      { kind: "pty", slotId: "session-a" },
+      { kind: "file", documentId: "file-a" },
+    ]);
+    expect(listVisibleWorkspaceSessionIds(backToFile)).toEqual([]);
+  });
+
+  it("remaps preset document references to current live ids without duplicates", () => {
+    const withPresetFile = addWorkspaceFileToPane(
+      createWorkspacePane("root"),
+      "root",
+      "preset-file",
+    );
+    const withBothIds = addWorkspaceFileToPane(
+      withPresetFile,
+      "root",
+      "live-file",
+    );
+    const active = activateWorkspaceFile(withBothIds, "root", "preset-file");
+
+    const remapped = remapWorkspaceFileIds(
+      active,
+      new Map([["preset-file", "live-file"]]),
+    );
+
+    expect(remapped).toMatchObject({
+      contents: [{ kind: "file", documentId: "live-file" }],
+      activeContent: { kind: "file", documentId: "live-file" },
+    });
+  });
+
+  it("moves a file tab between panes and activates it in the destination", () => {
+    const first = addWorkspaceFileToPane(
+      createWorkspacePane("first"),
+      "first",
+      "file-a",
+    );
+    const split = splitWorkspacePane(
+      first,
+      "first",
+      "horizontal",
+      "split",
+      "second",
+    );
+
+    const moved = moveWorkspaceFileToPane(split, "first", "second", "file-a");
+
+    expect(findWorkspacePane(moved, "first")?.contents).toEqual([]);
+    expect(findWorkspacePane(moved, "second")).toMatchObject({
+      contents: [{ kind: "file", documentId: "file-a" }],
+      activeContent: { kind: "file", documentId: "file-a" },
+    });
+  });
+
+  it("splits a pane and moves the selected file into the new pane", () => {
+    const withFile = addWorkspaceFileToPane(
+      createWorkspacePane("source"),
+      "source",
+      "file-a",
+    );
+    const moved = splitAndMoveWorkspaceFile(
+      withFile,
+      "source",
+      "file-a",
+      "horizontal",
+      "split-a",
+      "destination",
+    );
+
+    expect(findWorkspacePane(moved, "source")).toMatchObject({
+      contents: [],
+      activeContent: null,
+    });
+    expect(findWorkspacePane(moved, "destination")).toMatchObject({
+      contents: [{ kind: "file", documentId: "file-a" }],
+      activeContent: { kind: "file", documentId: "file-a" },
+    });
+  });
+
+  it("deactivates a detached file without removing its pane reference", () => {
+    const withFile = addWorkspaceFileToPane(
+      createWorkspacePane("root"),
+      "root",
+      "file-a",
+    );
+    const detached = deactivateWorkspaceFile(withFile, "root", "file-a");
+    expect(findWorkspacePane(detached, "root")).toMatchObject({
+      contents: [{ kind: "file", documentId: "file-a" }],
+      activeContent: null,
+    });
+  });
+
+  it("falls back to an open file when the active PTY exits", () => {
+    const mixed = addWorkspaceFileToPane(
+      addSessionToWorkspacePane(
+        createWorkspacePane("root"),
+        "root",
+        "session-a",
+      ),
+      "root",
+      "file-a",
+    );
+    const showingPty = activateWorkspaceSession(mixed, "root", "session-a");
+    const afterExit = removeWorkspaceSession(showingPty, "session-a");
+
+    expect(findWorkspacePane(afterExit, "root")?.activeContent).toEqual({
+      kind: "file",
+      documentId: "file-a",
+    });
+  });
+
+  it("chooses an open PTY or neighboring file when closing the active file", () => {
+    const mixed = addWorkspaceFileToPane(
+      addWorkspaceFileToPane(
+        addSessionToWorkspacePane(
+          createWorkspacePane("root"),
+          "root",
+          "session-a",
+        ),
+        "root",
+        "file-a",
+      ),
+      "root",
+      "file-b",
+    );
+    const closedFile = removeWorkspaceFileFromPane(mixed, "root", "file-b");
+    expect(findWorkspacePane(closedFile, "root")?.activeContent).toEqual({
+      kind: "file",
+      documentId: "file-a",
+    });
+
+    const closedLastFile = removeWorkspaceFileFromPane(
+      closedFile,
+      "root",
+      "file-a",
+    );
+    expect(findWorkspacePane(closedLastFile, "root")?.activeContent).toEqual({
+      kind: "pty",
+      slotId: "session-a",
+    });
+  });
+
+  it.each([
+    ["first", "second"],
+    ["second", "first"],
+  ] as const)(
+    "allows a file close to traverse an unrelated pane (%s pane owns the file)",
+    (ownerPaneId, otherPaneId) => {
+      const split = splitWorkspacePane(
+        createWorkspacePane("first"),
+        "first",
+        "horizontal",
+        "split",
+        "second",
+      );
+      const withFile = addWorkspaceFileToPane(split, ownerPaneId, "file-a");
+
+      const afterOwner = removeWorkspaceFileFromPane(
+        withFile,
+        ownerPaneId,
+        "file-a",
+      );
+      const afterOther = removeWorkspaceFileFromPane(
+        afterOwner,
+        otherPaneId,
+        "file-a",
+      );
+
+      expect(
+        listWorkspacePanes(afterOther).every((pane) =>
+          pane.contents.every(
+            (content) =>
+              content.kind !== "file" || content.documentId !== "file-a",
+          ),
+        ),
+      ).toBe(true);
+    },
+  );
 });

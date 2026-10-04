@@ -30,15 +30,15 @@ function createDocument(projectName = "Project"): WorkspaceLayoutDocument {
         kind: "pane",
         id: "pane-1",
         paneNumber: 1,
-        sessionIds: ["slot-1"],
-        activeSessionId: "slot-1",
+        contents: [{ kind: "pty", slotId: "slot-1" }],
+        activeContent: { kind: "pty", slotId: "slot-1" },
       },
       second: {
         kind: "pane",
         id: "pane-2",
         paneNumber: 2,
-        sessionIds: [],
-        activeSessionId: null,
+        contents: [],
+        activeContent: null,
       },
     },
     focusedPaneId: "pane-2",
@@ -85,8 +85,8 @@ describe("workspace layout persistence mapping", () => {
           kind: "pane",
           id: "changed",
           paneNumber: 1,
-          sessionIds: [],
-          activeSessionId: null,
+          contents: [],
+          activeContent: null,
         },
       }),
     ).toBe(false);
@@ -112,8 +112,31 @@ describe("workspace layout persistence mapping", () => {
       tree: document.tree,
       focusedPaneId: "pane-2",
       slots: document.slots,
+      documents: [],
       detachedSlotIds: [],
     });
+  });
+
+  it("persists file references beside PTY slots without storing editor content", () => {
+    const document = createDocument();
+    document.documents = [
+      {
+        id: "file-doc-1",
+        directoryId: 42,
+        directoryPath: "C:\\Projects\\sample",
+        relativePath: "src/main.rs",
+      },
+    ];
+    if (document.tree.kind !== "split") throw new Error("expected split");
+    const pane = document.tree.first;
+    if (pane.kind !== "pane") throw new Error("expected first pane");
+    pane.contents.push({ kind: "file", documentId: "file-doc-1" });
+    pane.activeContent = { kind: "file", documentId: "file-doc-1" };
+
+    const restored = restoreWorkspaceRuntimeSnapshot(document);
+    expect(restored.documents).toEqual(document.documents);
+    expect(restored.tree).toEqual(document.tree);
+    expect(JSON.stringify(document)).not.toContain("unsaved editor text");
   });
 
   it("stores the latest sash ratio in autosave and named-layout snapshots", () => {
@@ -137,15 +160,15 @@ describe("workspace layout persistence mapping", () => {
     const restored = restoreWorkspaceRuntimeSnapshot(document);
     restored.tree.kind === "split" &&
       restored.tree.first.kind === "pane" &&
-      restored.tree.first.sessionIds.push("unexpected");
+      restored.tree.first.contents.push({ kind: "pty", slotId: "unexpected" });
     restored.slots[0].title.kind === "custom" &&
       (restored.slots[0].title.value = "Changed");
 
     expect(
       document.tree.kind === "split" && document.tree.first.kind === "pane"
-        ? document.tree.first.sessionIds
+        ? document.tree.first.contents
         : [],
-    ).toEqual(["slot-1"]);
+    ).toEqual([{ kind: "pty", slotId: "slot-1" }]);
     expect(document.slots[0].title).toEqual({
       kind: "custom",
       value: "Review",
@@ -164,15 +187,15 @@ describe("workspace layout persistence mapping", () => {
             kind: "pane",
             id: "pane-1",
             paneNumber: 1,
-            sessionIds: ["slot-main"],
-            activeSessionId: "slot-main",
+            contents: [{ kind: "pty", slotId: "slot-main" }],
+            activeContent: { kind: "pty", slotId: "slot-main" },
           },
           second: {
             kind: "pane",
             id: "pane-2",
             paneNumber: 2,
-            sessionIds: [],
-            activeSessionId: null,
+            contents: [],
+            activeContent: null,
           },
         },
         focusedPaneId: "pane-2",
@@ -205,8 +228,12 @@ describe("workspace layout persistence mapping", () => {
     }
     expect(restored.tree.first).toMatchObject({
       id: "pane-1",
-      sessionIds: ["slot-main", "slot-detached-a", "slot-detached-b"],
-      activeSessionId: "slot-detached-b",
+      contents: [
+        { kind: "pty", slotId: "slot-main" },
+        { kind: "pty", slotId: "slot-detached-a" },
+        { kind: "pty", slotId: "slot-detached-b" },
+      ],
+      activeContent: { kind: "pty", slotId: "slot-detached-b" },
     });
     expect(restored.focusedPaneId).toBe("pane-2");
     expect(restored.detachedSlotIds).toEqual([]);
@@ -235,15 +262,21 @@ describe("workspace layout persistence mapping", () => {
             kind: "pane",
             id: "pane-1",
             paneNumber: 1,
-            sessionIds: ["saved", "live-outside", "ended"],
-            activeSessionId: "live-outside",
+            contents: ["saved", "live-outside", "ended"].map((slotId) => ({
+              kind: "pty" as const,
+              slotId,
+            })),
+            activeContent: { kind: "pty", slotId: "live-outside" },
           },
           second: {
             kind: "pane",
             id: "pane-2",
             paneNumber: 2,
-            sessionIds: ["detached", "invalid"],
-            activeSessionId: "detached",
+            contents: ["detached", "invalid"].map((slotId) => ({
+              kind: "pty" as const,
+              slotId,
+            })),
+            activeContent: { kind: "pty", slotId: "detached" },
           },
         },
         focusedPaneId: "pane-2",
@@ -276,8 +309,13 @@ describe("workspace layout persistence mapping", () => {
     ) {
       return;
     }
-    expect(restored.tree.first.sessionIds).toEqual(["saved", "live-outside"]);
-    expect(restored.tree.second.sessionIds).toEqual(["invalid"]);
+    expect(restored.tree.first.contents).toEqual([
+      { kind: "pty", slotId: "saved" },
+      { kind: "pty", slotId: "live-outside" },
+    ]);
+    expect(restored.tree.second.contents).toEqual([
+      { kind: "pty", slotId: "invalid" },
+    ]);
     expect(restored.slots.map(({ instanceId }) => instanceId)).toEqual([
       "saved",
       "live-outside",
@@ -350,15 +388,17 @@ describe("workspace layout persistence mapping", () => {
           kind: "pane",
           id: "pane-1",
           paneNumber: 1,
-          sessionIds: [endedSlot.instanceId, invalidSlot.instanceId],
-          activeSessionId: endedSlot.instanceId,
+          contents: [endedSlot.instanceId, invalidSlot.instanceId].map(
+            (slotId) => ({ kind: "pty" as const, slotId }),
+          ),
+          activeContent: { kind: "pty", slotId: endedSlot.instanceId },
         },
         second: {
           kind: "pane",
           id: "pane-2",
           paneNumber: 2,
-          sessionIds: [],
-          activeSessionId: null,
+          contents: [],
+          activeContent: null,
         },
       },
       focusedPaneId: "pane-2",
@@ -393,14 +433,14 @@ describe("workspace layout persistence mapping", () => {
       first: {
         id: "pane-1",
         paneNumber: 1,
-        sessionIds: [invalidSlot.instanceId],
-        activeSessionId: invalidSlot.instanceId,
+        contents: [{ kind: "pty", slotId: invalidSlot.instanceId }],
+        activeContent: { kind: "pty", slotId: invalidSlot.instanceId },
       },
       second: {
         id: "pane-2",
         paneNumber: 2,
-        sessionIds: [],
-        activeSessionId: null,
+        contents: [],
+        activeContent: null,
       },
     });
 
@@ -414,8 +454,8 @@ describe("workspace layout persistence mapping", () => {
         (pane) => pane.id === "pane-2",
       ),
     ).toMatchObject({
-      sessionIds: ["restored-live-session"],
-      activeSessionId: "restored-live-session",
+      contents: [{ kind: "pty", slotId: "restored-live-session" }],
+      activeContent: { kind: "pty", slotId: "restored-live-session" },
     });
   });
 });

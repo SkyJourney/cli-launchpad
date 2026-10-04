@@ -7,8 +7,9 @@ use crate::db::{directory_repo, pty_session_repo, workspace_layout_repo};
 use crate::models::workspace_layout::{
     validate_preset_name, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
     WorkspaceLayoutPreset, WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveResult,
-    WorkspaceLayoutSlot, WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus, WorkspaceSlotState,
-    WorkspaceSlotStateKind, MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    WorkspaceLayoutSlot, WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus,
+    WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
+    MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
@@ -24,7 +25,7 @@ pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead,
         });
     };
 
-    if row.schema_version != i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION) {
+    if !is_supported_layout_version(row.schema_version) {
         return Ok(needs_reset(
             row.revision,
             row.schema_version,
@@ -32,16 +33,16 @@ pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead,
             format!("不支持工作区布局版本 {}", row.schema_version),
         ));
     }
+    if source_layout_version(&row.payload_json) != Some(row.schema_version) {
+        return Ok(needs_reset(
+            row.revision,
+            row.schema_version,
+            row.updated_at_ms,
+            "布局 JSON 版本与数据库版本不一致".to_string(),
+        ));
+    }
     let mut layout = match WorkspaceLayoutDocument::from_json(&row.payload_json) {
-        Ok(layout) if i64::from(layout.schema_version) == row.schema_version => layout,
-        Ok(_) => {
-            return Ok(needs_reset(
-                row.revision,
-                row.schema_version,
-                row.updated_at_ms,
-                "布局 JSON 版本与数据库版本不一致".to_string(),
-            ));
-        }
+        Ok(layout) => layout,
         Err(error) => {
             return Ok(needs_reset(
                 row.revision,
@@ -55,7 +56,7 @@ pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead,
     Ok(WorkspaceLayoutStateRead {
         status: WorkspaceLayoutStateStatus::Ready,
         revision: Some(row.revision),
-        schema_version: Some(row.schema_version),
+        schema_version: Some(i64::from(layout.schema_version)),
         updated_at_ms: Some(row.updated_at_ms),
         layout: Some(layout),
         slot_states,
@@ -74,16 +75,17 @@ pub fn save_current(
 
     // Do not let routine autosaves replace data that needs explicit recovery.
     if let Some(current) = workspace_layout_repo::get_current(connection)? {
-        if current.schema_version != i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION) {
+        if !is_supported_layout_version(current.schema_version) {
             return Err(AppError::msg(
                 "当前布局版本不受支持；请先显式重置工作区后再保存",
             ));
         }
         let stored = WorkspaceLayoutDocument::from_json(&current.payload_json)
             .map_err(|error| AppError::msg(format!("当前布局需要显式重置：{error}")))?;
-        if stored.schema_version as i64 != current.schema_version {
+        if source_layout_version(&current.payload_json) != Some(current.schema_version) {
             return Err(AppError::msg("当前布局版本信息不一致；请先显式重置工作区"));
         }
+        let _ = stored;
     }
 
     let (saved, current_revision) = workspace_layout_repo::save_current(
@@ -101,9 +103,8 @@ pub fn save_current(
 
 pub fn reset_current(connection: &mut Connection) -> Result<i64, AppError> {
     if let Some(current) = workspace_layout_repo::get_current(connection)? {
-        if current.schema_version == i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION)
-            && WorkspaceLayoutDocument::from_json(&current.payload_json)
-                .is_ok_and(|layout| i64::from(layout.schema_version) == current.schema_version)
+        if is_supported_layout_version(current.schema_version)
+            && WorkspaceLayoutDocument::from_json(&current.payload_json).is_ok()
         {
             return Err(AppError::msg("当前布局可以正常读取，无需执行恢复性重置"));
         }
@@ -130,8 +131,10 @@ pub fn get_preset(connection: &Connection, id: &str) -> Result<WorkspaceLayoutPr
     let layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
     let mut layout = layout;
     let slot_states = resolve_layout_slots(connection, &mut layout)?;
+    let mut summary = row.summary;
+    summary.schema_version = i64::from(layout.schema_version);
     Ok(WorkspaceLayoutPreset {
-        summary: row.summary,
+        summary,
         layout,
         slot_states,
     })
@@ -303,11 +306,12 @@ pub fn empty_layout() -> WorkspaceLayoutDocument {
         tree: WorkspaceLayoutNode::Pane {
             id: "workspace-root".to_string(),
             pane_number: 1,
-            session_ids: Vec::new(),
-            active_session_id: None,
+            contents: Vec::new(),
+            active_content: None,
         },
         focused_pane_id: "workspace-root".to_string(),
         slots: Vec::new(),
+        documents: Vec::new(),
         detached_slot_ids: Vec::new(),
     }
 }
@@ -341,14 +345,31 @@ fn parse_preset_layout(
     stored_schema_version: i64,
     payload_json: &str,
 ) -> Result<WorkspaceLayoutDocument, AppError> {
-    if stored_schema_version != i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION) {
+    if !is_supported_layout_version(stored_schema_version) {
         return Err(AppError::msg(format!(
             "该命名布局使用不支持的版本 {stored_schema_version}"
         )));
     }
     let layout = WorkspaceLayoutDocument::from_json(payload_json).map_err(layout_error)?;
+    if source_layout_version(payload_json) != Some(stored_schema_version) {
+        return Err(AppError::msg("命名布局 JSON 版本与数据库版本不一致"));
+    }
+    if i64::from(layout.schema_version) != i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION) {
+        return Err(AppError::msg("命名布局未能迁移到当前版本"));
+    }
     layout.validate_as_preset().map_err(layout_error)?;
     Ok(layout)
+}
+
+fn is_supported_layout_version(version: i64) -> bool {
+    (1..=i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION)).contains(&version)
+}
+
+fn source_layout_version(payload_json: &str) -> Option<i64> {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()?
+        .get("schemaVersion")?
+        .as_i64()
 }
 
 fn resolve_layout_slots(
@@ -445,11 +466,11 @@ fn pane_identity_for_slot(node: &WorkspaceLayoutNode, slot_id: &str) -> Option<(
         WorkspaceLayoutNode::Pane {
             id,
             pane_number,
-            session_ids,
+            contents,
             ..
-        } => session_ids
+        } => contents
             .iter()
-            .any(|session_id| session_id == slot_id)
+            .any(|content| matches!(content, WorkspacePaneContentRef::Pty { slot_id: id } if id == slot_id))
             .then(|| (id.clone(), *pane_number)),
         WorkspaceLayoutNode::Split { first, second, .. } => pane_identity_for_slot(first, slot_id)
             .or_else(|| pane_identity_for_slot(second, slot_id)),
@@ -482,15 +503,18 @@ fn append_to_pane(node: &mut WorkspaceLayoutNode, pane_id: &str, slot_id: &str) 
     match node {
         WorkspaceLayoutNode::Pane {
             id,
-            session_ids,
-            active_session_id,
+            contents,
+            active_content,
             ..
         } if id == pane_id => {
-            if !session_ids.iter().any(|session_id| session_id == slot_id) {
-                session_ids.push(slot_id.to_string());
+            let content = WorkspacePaneContentRef::Pty {
+                slot_id: slot_id.to_string(),
+            };
+            if !contents.contains(&content) {
+                contents.push(content.clone());
             }
-            if active_session_id.is_none() {
-                *active_session_id = Some(slot_id.to_string());
+            if active_content.is_none() {
+                *active_content = Some(content);
             }
             true
         }
@@ -504,22 +528,24 @@ fn append_to_pane(node: &mut WorkspaceLayoutNode, pane_id: &str, slot_id: &str) 
 fn remove_slot_references(node: &mut WorkspaceLayoutNode, removed_slot_ids: &[String]) {
     match node {
         WorkspaceLayoutNode::Pane {
-            session_ids,
-            active_session_id,
+            contents,
+            active_content,
             ..
         } => {
-            let active_index = active_session_id
+            let active_index = active_content
                 .as_ref()
-                .and_then(|active_id| session_ids.iter().position(|id| id == active_id));
-            let active_was_removed = active_session_id
+                .and_then(|active| contents.iter().position(|content| content == active));
+            let active_was_removed = active_content
                 .as_ref()
-                .is_some_and(|active_id| removed_slot_ids.contains(active_id));
-            session_ids.retain(|id| !removed_slot_ids.contains(id));
+                .is_some_and(|active| matches!(active, WorkspacePaneContentRef::Pty { slot_id } if removed_slot_ids.contains(slot_id)));
+            contents.retain(|content| {
+                !matches!(content, WorkspacePaneContentRef::Pty { slot_id } if removed_slot_ids.contains(slot_id))
+            });
             if active_was_removed {
                 let replacement_index = active_index
                     .unwrap_or(0)
-                    .min(session_ids.len().saturating_sub(1));
-                *active_session_id = session_ids.get(replacement_index).cloned();
+                    .min(contents.len().saturating_sub(1));
+                *active_content = contents.get(replacement_index).cloned();
             }
         }
         WorkspaceLayoutNode::Split { first, second, .. } => {
@@ -583,8 +609,12 @@ mod tests {
             tree: WorkspaceLayoutNode::Pane {
                 id: "workspace-root".to_string(),
                 pane_number: 1,
-                session_ids: vec![instance_id.clone()],
-                active_session_id: Some(instance_id.clone()),
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }),
             },
             focused_pane_id: "workspace-root".to_string(),
             slots: vec![WorkspaceLayoutSlot {
@@ -598,6 +628,7 @@ mod tests {
                 resume_session_id: None,
                 title: WorkspaceSlotTitle::Automatic,
             }],
+            documents: Vec::new(),
             detached_slot_ids: Vec::new(),
         }
     }
@@ -621,27 +652,48 @@ mod tests {
                 first: Box::new(WorkspaceLayoutNode::Pane {
                     id: first_pane_id.to_string(),
                     pane_number: first_pane_number,
-                    active_session_id: first_session_ids.first().cloned(),
-                    session_ids: first_session_ids,
+                    contents: first_session_ids
+                        .iter()
+                        .cloned()
+                        .map(|slot_id| WorkspacePaneContentRef::Pty { slot_id })
+                        .collect(),
+                    active_content: first_session_ids
+                        .first()
+                        .cloned()
+                        .map(|slot_id| WorkspacePaneContentRef::Pty { slot_id }),
                 }),
                 second: Box::new(WorkspaceLayoutNode::Pane {
                     id: second_pane_id.to_string(),
                     pane_number: second_pane_number,
-                    active_session_id: second_session_ids.first().cloned(),
-                    session_ids: second_session_ids,
+                    contents: second_session_ids
+                        .iter()
+                        .cloned()
+                        .map(|slot_id| WorkspacePaneContentRef::Pty { slot_id })
+                        .collect(),
+                    active_content: second_session_ids
+                        .first()
+                        .cloned()
+                        .map(|slot_id| WorkspacePaneContentRef::Pty { slot_id }),
                 }),
             },
             focused_pane_id: focused_pane_id.to_string(),
             slots,
+            documents: Vec::new(),
             detached_slot_ids: Vec::new(),
         }
     }
 
-    fn pane_session_ids<'a>(node: &'a WorkspaceLayoutNode, pane_id: &str) -> Option<&'a [String]> {
+    fn pane_session_ids(node: &WorkspaceLayoutNode, pane_id: &str) -> Option<Vec<String>> {
         match node {
-            WorkspaceLayoutNode::Pane {
-                id, session_ids, ..
-            } => (id == pane_id).then_some(session_ids),
+            WorkspaceLayoutNode::Pane { id, contents, .. } => (id == pane_id).then(|| {
+                contents
+                    .iter()
+                    .filter_map(|content| match content {
+                        WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.clone()),
+                        WorkspacePaneContentRef::File { .. } => None,
+                    })
+                    .collect()
+            }),
             WorkspaceLayoutNode::Split { first, second, .. } => {
                 pane_session_ids(first, pane_id).or_else(|| pane_session_ids(second, pane_id))
             }
@@ -856,10 +908,15 @@ mod tests {
             ToolKey::Codex
         );
         assert_eq!(plan.layout.detached_slot_ids, vec![b_slot.instance_id]);
-        let WorkspaceLayoutNode::Pane { session_ids, .. } = &plan.layout.tree else {
+        let WorkspaceLayoutNode::Pane { contents, .. } = &plan.layout.tree else {
             panic!("preset fixture keeps its root pane");
         };
-        assert_eq!(session_ids, &vec![active_a.slots[0].instance_id.clone()]);
+        assert_eq!(
+            contents,
+            &vec![WorkspacePaneContentRef::Pty {
+                slot_id: active_a.slots[0].instance_id.clone()
+            }]
+        );
 
         let repeated_plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
         assert_eq!(repeated_plan.layout.slots.len(), 2);
@@ -893,15 +950,15 @@ mod tests {
         .unwrap();
         let mut active = layout_with_slot(directory.id, &directory.path, "work", Some(session));
         let WorkspaceLayoutNode::Pane {
-            session_ids,
-            active_session_id,
+            contents,
+            active_content,
             ..
         } = &mut active.tree
         else {
             panic!("one-slot fixture keeps its root pane");
         };
-        session_ids.clear();
-        *active_session_id = None;
+        contents.clear();
+        *active_content = None;
         active
             .detached_slot_ids
             .push(active.slots[0].instance_id.clone());
@@ -911,10 +968,10 @@ mod tests {
 
         assert_eq!(plan.layout.detached_slot_ids, active.detached_slot_ids);
         assert_eq!(plan.layout.slots.len(), 1);
-        let WorkspaceLayoutNode::Pane { session_ids, .. } = &plan.layout.tree else {
+        let WorkspaceLayoutNode::Pane { contents, .. } = &plan.layout.tree else {
             panic!("empty preset keeps its focused root pane");
         };
-        assert!(session_ids.is_empty());
+        assert!(contents.is_empty());
     }
 
     #[test]
@@ -1062,14 +1119,18 @@ mod tests {
             first: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-1".to_string(),
                 pane_number: 1,
-                session_ids: vec![ended_slot_id],
-                active_session_id: Some(preset_layout.slots[0].instance_id.clone()),
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: ended_slot_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: ended_slot_id,
+                }),
             }),
             second: Box::new(WorkspaceLayoutNode::Pane {
                 id: "pane-2".to_string(),
                 pane_number: 2,
-                session_ids: Vec::new(),
-                active_session_id: None,
+                contents: Vec::new(),
+                active_content: None,
             }),
         };
         preset_layout.focused_pane_id = "pane-2".to_string();
@@ -1095,18 +1156,20 @@ mod tests {
             WorkspaceLayoutNode::Pane {
                 id,
                 pane_number: 1,
-                session_ids,
-                active_session_id: None,
-            } if id == "pane-1" && session_ids.is_empty()
+                contents,
+                active_content: None,
+                ..
+            } if id == "pane-1" && contents.is_empty()
         ));
         assert!(matches!(
             &**second,
             WorkspaceLayoutNode::Pane {
                 id,
                 pane_number: 2,
-                session_ids,
-                active_session_id: None,
-            } if id == "pane-2" && session_ids.is_empty()
+                contents,
+                active_content: None,
+                ..
+            } if id == "pane-2" && contents.is_empty()
         ));
     }
 

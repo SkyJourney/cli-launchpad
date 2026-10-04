@@ -208,7 +208,9 @@ pub fn delete_preset(connection: &Connection, id: &str) -> rusqlite::Result<bool
 mod tests {
     use super::*;
     use crate::db::connection;
-    use crate::models::workspace_layout::{WorkspaceLayoutDocument, WorkspaceLayoutNode};
+    use crate::models::workspace_layout::{
+        WorkspaceLayoutDocument, WorkspaceLayoutNode, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    };
     use uuid::Uuid;
 
     fn database() -> Connection {
@@ -219,15 +221,16 @@ mod tests {
 
     fn layout_json() -> String {
         WorkspaceLayoutDocument {
-            schema_version: 1,
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
             tree: WorkspaceLayoutNode::Pane {
                 id: "root".to_string(),
                 pane_number: 1,
-                session_ids: Vec::new(),
-                active_session_id: None,
+                contents: Vec::new(),
+                active_content: None,
             },
             focused_pane_id: "root".to_string(),
             slots: Vec::new(),
+            documents: Vec::new(),
             detached_slot_ids: Vec::new(),
         }
         .to_json()

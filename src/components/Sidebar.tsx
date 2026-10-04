@@ -18,7 +18,7 @@ import { useAppStore } from "../store/appStore";
 import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { moveProjectWithinPinGroup } from "../lib/projectOrdering";
-import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
+import { listWorkspacePaneContents, listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import {
   openProjectDirectory,
   removeDirectory,
@@ -110,7 +110,11 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const workspaceSessionIds = useMemo(() => {
     if (hydrationStatus !== "ready") return new Set<string>();
     const representedInstanceIds = new Set([
-      ...listWorkspacePanes(tree).flatMap((pane) => pane.sessionIds),
+      ...listWorkspacePanes(tree).flatMap((pane) =>
+        listWorkspacePaneContents(pane, "pty").flatMap((content) =>
+          content.kind === "pty" ? [content.slotId] : [],
+        ),
+      ),
       ...detachedInstanceIds,
     ]);
     return new Set(

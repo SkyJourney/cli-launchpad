@@ -9,16 +9,18 @@ import {
   type WorkspaceLayoutNode,
   type WorkspaceLayoutSaveResult,
   type WorkspaceLayoutSlot,
+  type WorkspaceFileDocument,
   type WorkspaceSlotState,
   type WorkspaceSlotStateKind,
 } from "./tauri";
 
-export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 1;
+export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 3;
 
 export interface WorkspaceRuntimeSnapshot {
   tree: WorkspaceNode;
   focusedPaneId: string;
   slots: WorkspaceLayoutSlot[];
+  documents?: WorkspaceFileDocument[];
   detachedSlotIds: string[];
 }
 
@@ -111,6 +113,7 @@ export function createWorkspaceLayoutDocument(
     tree: cloneWorkspaceNode(snapshot.tree),
     focusedPaneId: snapshot.focusedPaneId,
     slots: snapshot.slots.map(cloneWorkspaceSlot),
+    documents: (snapshot.documents ?? []).map((document) => ({ ...document })),
     detachedSlotIds: [...snapshot.detachedSlotIds],
   };
 }
@@ -122,6 +125,7 @@ export function restoreWorkspaceRuntimeSnapshot(
     tree: cloneWorkspaceNode(document.tree),
     focusedPaneId: document.focusedPaneId,
     slots: document.slots.map(cloneWorkspaceSlot),
+    documents: (document.documents ?? []).map((file) => ({ ...file })),
     detachedSlotIds: [...document.detachedSlotIds],
   };
 }
@@ -200,6 +204,7 @@ export function cloneWorkspaceLayoutDocument(
     tree: cloneWorkspaceNode(document.tree),
     focusedPaneId: document.focusedPaneId,
     slots: document.slots.map(cloneWorkspaceSlot),
+    documents: (document.documents ?? []).map((file) => ({ ...file })),
     detachedSlotIds: [...document.detachedSlotIds],
   };
 }
@@ -217,8 +222,8 @@ function cloneWorkspaceNode(node: WorkspaceNode): WorkspaceLayoutNode {
       kind: "pane",
       id: node.id,
       paneNumber: node.paneNumber,
-      sessionIds: [...node.sessionIds],
-      activeSessionId: node.activeSessionId,
+      contents: node.contents.map((content) => ({ ...content })),
+      activeContent: node.activeContent ? { ...node.activeContent } : null,
     };
   }
 
@@ -237,11 +242,17 @@ function appendToFirstWorkspacePane(
   slotIds: string[],
 ): WorkspaceNode {
   if (node.kind === "pane") {
-    const sessionIds = [...node.sessionIds, ...slotIds];
+    const contents = [
+      ...node.contents,
+      ...slotIds.map((slotId) => ({ kind: "pty" as const, slotId })),
+    ];
     return {
       ...node,
-      sessionIds,
-      activeSessionId: slotIds[slotIds.length - 1] ?? node.activeSessionId,
+      contents,
+      activeContent:
+        slotIds.length > 0
+          ? { kind: "pty", slotId: slotIds[slotIds.length - 1] }
+          : node.activeContent,
     };
   }
   return {

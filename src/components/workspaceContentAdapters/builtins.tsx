@@ -1,0 +1,178 @@
+import { useEffect, useState } from "react";
+import { Save } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
+import type { WorkspaceFileDocument } from "../../lib/tauri";
+import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
+import type { WorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
+import { registerWorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
+import { createWorkspaceEditorModelUri } from "../../lib/workspaceEditorModel";
+
+const unsupportedReasonKeys = {
+  binary: "workspaceFiles.unsupported.binary",
+  tooLarge: "workspaceFiles.unsupported.tooLarge",
+  invalidImage: "workspaceFiles.unsupported.invalidImage",
+  unsupportedImage: "workspaceFiles.unsupported.unsupportedImage",
+} as const;
+
+function PtyContentAdapter() {
+  // PTY DOM portals are attached and hidden by the PTY session registry.
+  return null;
+}
+
+function TextFileContentAdapter({
+  fileDocument,
+  fileBuffer,
+  onEditFile,
+  onSaveFile,
+}: {
+  fileDocument: WorkspaceFileDocument | undefined;
+  fileBuffer: WorkspaceFileBuffer | undefined;
+  onEditFile: (documentId: string, content: string) => void;
+  onSaveFile: (documentId: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  );
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateTheme = () =>
+      setTheme(root.dataset.theme === "light" ? "light" : "dark");
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    updateTheme();
+    return () => observer.disconnect();
+  }, []);
+
+  if (!fileDocument) return null;
+
+  if (!fileBuffer) {
+    return (
+      <div className="pty-workspace-empty" role="status">
+        {t("workspaceFiles.loadingFile")}
+      </div>
+    );
+  }
+  if (fileBuffer.kind === "image") {
+    return (
+      <div className="workspace-file-preview">
+        <div
+          className="workspace-file-preview-path"
+          title={fileDocument.relativePath}
+        >
+          {fileDocument.relativePath}
+        </div>
+        <div className="workspace-image-preview-stage">
+          <img
+            src={fileBuffer.previewDataUrl}
+            alt={t("workspaceFiles.imagePreview")}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (fileBuffer.kind === "unsupported") {
+    return (
+      <div className="workspace-file-preview">
+        <div
+          className="workspace-file-preview-path"
+          title={fileDocument.relativePath}
+        >
+          {fileDocument.relativePath}
+        </div>
+        <div className="workspace-file-unavailable" role="status">
+          <strong>{t("workspaceFiles.fileCannotOpen")}</strong>
+          <span>
+            {t(unsupportedReasonKeys[fileBuffer.unsupportedReason ?? "binary"])}
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="workspace-text-editor">
+      <div className="workspace-text-editor-toolbar">
+        <span title={fileDocument.relativePath}>
+          {fileDocument.relativePath}
+        </span>
+        <button
+          type="button"
+          className="icon-button workspace-text-editor-save"
+          disabled={
+            fileBuffer.saving || fileBuffer.content === fileBuffer.savedContent
+          }
+          onClick={() => void onSaveFile(fileDocument.id)}
+        >
+          <Save size={14} /> {t("workspaceFiles.save")}
+        </button>
+      </div>
+      <WorkspaceEditorSurface
+        value={fileBuffer.content}
+        relativePath={fileDocument.relativePath}
+        modelUri={createWorkspaceEditorModelUri(
+          fileDocument.directoryId,
+          fileDocument.relativePath,
+        )}
+        theme={theme}
+        onChange={(content) => onEditFile(fileDocument.id, content)}
+        onSave={() => void onSaveFile(fileDocument.id)}
+      />
+    </div>
+  );
+}
+
+const builtinAdapters: WorkspaceContentAdapter[] = [
+  {
+    id: "core.pty",
+    apiVersion: 1,
+    kind: "pty",
+    render: () => <PtyContentAdapter />,
+    labels: {
+      menu: "pty.sessionMenu",
+      close: "pty.close",
+      closeCurrent: "pty.closeCurrent",
+      closeOthers: "pty.closeOthers",
+      closeAll: "pty.closeAllInPane",
+      splitAndMoveRight: "pty.splitAndMoveRight",
+      splitAndMoveDown: "pty.splitAndMoveDown",
+    },
+  },
+  {
+    id: "core.file-editor",
+    apiVersion: 1,
+    kind: "file",
+    render: (context) => {
+      if (context.content.kind !== "file" || !context.file?.document) {
+        return null;
+      }
+      return (
+        <TextFileContentAdapter
+          fileDocument={context.file.document}
+          fileBuffer={context.file.buffer}
+          onEditFile={context.file.edit}
+          onSaveFile={context.file.save}
+        />
+      );
+    },
+    beforeClose: ({ isDirty, confirmDiscard }) => !isDirty || confirmDiscard(),
+    labels: {
+      menu: "workspaceFiles.fileMenu",
+      close: "workspaceFiles.closeFile",
+      closeCurrent: "workspaceFiles.closeFileNamed",
+      closeOthers: "workspaceFiles.closeOthers",
+      closeAll: "workspaceFiles.closeAllInPane",
+      splitAndMoveRight: "workspaceFiles.splitAndMoveRight",
+      splitAndMoveDown: "workspaceFiles.splitAndMoveDown",
+    },
+  },
+];
+
+export function registerBuiltinWorkspaceContentAdapters(): () => void {
+  const unregister = builtinAdapters.map(registerWorkspaceContentAdapter);
+  return () => unregister.reverse().forEach((dispose) => dispose());
+}

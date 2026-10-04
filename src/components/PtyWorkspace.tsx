@@ -5,7 +5,6 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import {
   ChevronDown,
-  ChevronRight,
   Check,
   Columns2,
   LayoutTemplate,
@@ -29,7 +28,6 @@ import {
   type ReactNode,
   type DragEvent as ReactDragEvent,
 } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
@@ -37,11 +35,17 @@ import { getWindowChromeOptions } from "../lib/windowChrome";
 import {
   type WorkspaceNode,
   activateWorkspaceSession,
+  activateWorkspaceFile,
+  deactivateWorkspaceFile,
+  addWorkspaceFileToPane,
   addSessionToWorkspacePane,
   canSplitWorkspacePane,
   createWorkspacePane,
   findWorkspacePane,
   listWorkspacePanes,
+  listWorkspacePaneContents,
+  hasWorkspaceContent,
+  moveWorkspaceFileToPane,
   moveWorkspaceSession,
   MIN_WORKSPACE_PANE_HEIGHT,
   MIN_WORKSPACE_PANE_WIDTH,
@@ -50,8 +54,10 @@ import {
   nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   removeWorkspaceSession,
+  remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
   splitAndMoveWorkspaceSession,
+  splitAndMoveWorkspaceFile,
   splitWorkspacePane,
   type SplitDirection,
   type WorkspacePane,
@@ -63,7 +69,13 @@ import {
   parsePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
+import {
+  encodeWorkspaceContentDrag,
+  parseWorkspaceContentDrag,
+  WORKSPACE_CONTENT_DRAG_TYPE,
+} from "../lib/workspaceContentDrag";
 import { matchesDetachedWindow } from "../lib/ptySessionLifecycle";
+import { matchesWorkspaceFileWindow } from "../lib/workspaceFileWindow";
 import {
   getPtySessionWindowStatus,
   getWorkspaceLayout,
@@ -75,7 +87,10 @@ import {
   updateWorkspaceLayoutPreset,
   resetWorkspaceLayout,
   saveWorkspaceLayout,
+  openProjectFile as openProjectFileContent,
+  saveProjectTextFile,
   type Directory,
+  type WorkspaceFileDocument,
   type PtySession,
   type ToolKey,
   type WorkspaceLayoutDocument,
@@ -94,8 +109,22 @@ import {
   WorkspaceLayoutSaveQueue,
 } from "../lib/workspaceLayoutPersistence";
 import { getTerminalTitleLabel, TOOLS } from "../lib/tools";
+import {
+  createWorkspaceFileBuffer,
+  completeWorkspaceFileSave,
+  failWorkspaceFileSave,
+} from "../lib/workspaceFileBuffer";
+import { closeWorkspaceFileState } from "../lib/workspaceFileClose";
 import { useAppStore } from "../store/appStore";
 import { AnchoredPopover } from "./AnchoredPopover";
+import {
+  WorkspaceContentView,
+  getWorkspaceContentAdapter,
+} from "./WorkspaceContentView";
+import { WorkspaceContentTab } from "./WorkspaceContentTab";
+import { WorkspaceContentContextMenu } from "./WorkspaceContentContextMenu";
+import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
+import { requestWorkspaceContentClose } from "../lib/workspaceContentClose";
 import type { PtyTerminalHandle } from "./PtyTerminal";
 import {
   WorkspacePtySessionRegistry,
@@ -136,8 +165,32 @@ interface PtyReturnRequestEvent extends DetachedWindowRecord {
   targetPaneId?: string;
 }
 
+interface WorkspaceFileWindowEvent {
+  documentId: string;
+  token: string;
+  windowLabel: string;
+  targetPaneId?: string;
+  fileDocument?: WorkspaceFileDocument;
+  fileBuffer?: WorkspaceFileBuffer;
+  message?: string;
+}
+
+interface PendingWorkspaceFileWindow {
+  documentId: string;
+  token: string;
+  windowLabel: string;
+  window: WebviewWindow;
+  timer: number;
+  resolve: () => void;
+  reject: (reason: Error) => void;
+  attached: boolean;
+}
+
 interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
+  fileDocuments: WorkspaceFileDocument[];
+  fileBuffers: Record<string, WorkspaceFileBuffer>;
+  detachedFileIds: Set<string>;
   tree: WorkspaceNode;
   workspaceTreeRevision: number;
   focusedPaneId: string;
@@ -153,6 +206,18 @@ interface PtyWorkspaceContextValue {
     toolKey: ToolKey,
     resumeSessionId?: string,
   ) => void;
+  openProjectFile: (
+    directoryId: number,
+    directoryPath: string,
+    relativePath: string,
+  ) => Promise<void>;
+  loadFile: (documentId: string) => Promise<void>;
+  activateFile: (paneId: string, documentId: string) => void;
+  editFile: (documentId: string, content: string) => void;
+  saveFile: (documentId: string) => Promise<void>;
+  closeFile: (documentId: string, skipDirtyConfirmation?: boolean) => void;
+  closeFiles: (documentIds: string[], skipDirtyConfirmation?: boolean) => void;
+  detachFile: (documentId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
   activateSession: (paneId: string, instanceId: string) => void;
   splitPane: (paneId: string, direction: SplitDirection) => void;
@@ -161,14 +226,28 @@ interface PtyWorkspaceContextValue {
     instanceId: string,
     direction: SplitDirection,
   ) => void;
+  splitAndMoveFile: (
+    paneId: string,
+    documentId: string,
+    direction: SplitDirection,
+  ) => void;
   moveSession: (
     sourcePaneId: string,
     destinationPaneId: string,
     instanceId: string,
   ) => void;
+  moveFile: (
+    sourcePaneId: string,
+    destinationPaneId: string,
+    documentId: string,
+  ) => void;
   detachedInstanceIds: Set<string>;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
+  isManagedDetachedFileDrag: (
+    documentId: string,
+    windowLabel: string,
+  ) => boolean;
   detachSession: (instanceId: string) => Promise<void>;
   closeEmptyPane: (paneId: string) => void;
   updateSplitRatio: (
@@ -199,6 +278,16 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [layoutResetPending, setLayoutResetPending] = useState(false);
   const [initialPaneId] = useState<string>(() => crypto.randomUUID());
   const [slots, setSlots] = useState<PtyWorkspaceSlot[]>([]);
+  const [fileDocuments, setFileDocuments] = useState<WorkspaceFileDocument[]>(
+    [],
+  );
+  const [fileBuffers, setFileBuffers] = useState<
+    Record<string, WorkspaceFileBuffer>
+  >({});
+  const [detachedFileIds, setDetachedFileIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const detachedFileIdsRef = useRef(detachedFileIds);
   const [tree, setTree] = useState<WorkspaceNode>(() =>
     createWorkspacePane(initialPaneId),
   );
@@ -219,20 +308,32 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const splitResizeInProgressRef = useRef(false);
   const persistLatestRef = useRef<(() => void) | null>(null);
   const slotsRef = useRef(slots);
+  const fileDocumentsRef = useRef(fileDocuments);
+  const fileBuffersRef = useRef(fileBuffers);
+  const openingFileRequestsRef = useRef(new Map<string, Promise<void>>());
   const treeRef = useRef(tree);
   const focusedPaneIdRef = useRef(focusedPaneId);
   const detachedByInstanceRef = useRef(
     new Map<string, ManagedDetachedWindow>(),
   );
   const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
+  const detachedFilesRef = useRef(
+    new Map<string, PendingWorkspaceFileWindow>(),
+  );
+  const pendingDetachedFilesRef = useRef(
+    new Map<string, PendingWorkspaceFileWindow>(),
+  );
   const upsertPtySession = useAppStore((state) => state.upsertPtySession);
   const removePtySession = useAppStore((state) => state.removePtySession);
   const activeView = useAppStore((state) => state.view);
 
   slotsRef.current = slots;
+  fileDocumentsRef.current = fileDocuments;
+  fileBuffersRef.current = fileBuffers;
   if (!splitResizeInProgressRef.current) treeRef.current = tree;
   focusedPaneIdRef.current = focusedPaneId;
   detachedInstanceIdsRef.current = detachedInstanceIds;
+  detachedFileIdsRef.current = detachedFileIds;
   hydrationStatusRef.current = hydrationStatus;
 
   const createSaveQueue = useCallback(
@@ -260,10 +361,15 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           tree: treeOverride ?? treeRef.current,
           focusedPaneId: focusedPaneIdRef.current,
           slots: persistedSlots,
+          documents: fileDocumentsRef.current,
           detachedSlotIds: [...detachedInstanceIdsRef.current].filter(
             (instanceId) =>
               !listWorkspacePanes(treeOverride ?? treeRef.current).some(
-                (pane) => pane.sessionIds.includes(instanceId),
+                (pane) =>
+                  hasWorkspaceContent(pane, {
+                    kind: "pty",
+                    slotId: instanceId,
+                  }),
               ),
           ),
         }),
@@ -309,6 +415,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         treeRef.current = restoredSnapshot.tree;
         focusedPaneIdRef.current = restoredSnapshot.focusedPaneId;
         setSlots(restoredSlots);
+        setFileDocuments(restoredSnapshot.documents ?? []);
+        setFileBuffers({});
+        setDetachedFileIds(new Set());
+        detachedFileIdsRef.current = new Set();
+        detachedFilesRef.current.clear();
+        pendingDetachedFilesRef.current.clear();
         setTree(restoredSnapshot.tree);
         setFocusedPaneId(restoredSnapshot.focusedPaneId);
         setDetachedInstanceIds(new Set());
@@ -340,6 +452,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     hydrationStatus,
     persistWorkspaceSnapshot,
     slots,
+    fileDocuments,
     tree,
   ]);
 
@@ -403,6 +516,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         slots: slotsRef.current.map((slot) =>
           toWorkspaceLayoutSlot(slot, directories ?? []),
         ),
+        documents: fileDocumentsRef.current,
         detachedSlotIds: activeDetachedIds,
       });
       const plan = await planApplyWorkspaceLayoutPreset(presetId, activeLayout);
@@ -418,12 +532,54 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       }
       const restored = restoreWorkspaceLayoutApplyPlan(plan);
       const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
+      const restoredDocuments = [...(restored.documents ?? [])];
+      const currentDocuments = fileDocumentsRef.current;
+      const currentDocumentByIdentity = new Map(
+        currentDocuments.map((document) => [
+          `${document.directoryId}:${document.relativePath}`,
+          document,
+        ]),
+      );
+      const documentIdMap = new Map<string, string>();
+      const normalizedDocuments = restoredDocuments.map((document) => {
+        const currentDocument = currentDocumentByIdentity.get(
+          `${document.directoryId}:${document.relativePath}`,
+        );
+        if (!currentDocument) return document;
+        documentIdMap.set(document.id, currentDocument.id);
+        return currentDocument;
+      });
+      let restoredTree = remapWorkspaceFileIds(restored.tree, documentIdMap);
+      restoredDocuments.splice(
+        0,
+        restoredDocuments.length,
+        ...normalizedDocuments,
+      );
+      const restoredPaths = new Set(
+        restoredDocuments.map(
+          (document) => `${document.directoryId}:${document.relativePath}`,
+        ),
+      );
+      for (const document of fileDocumentsRef.current) {
+        const identity = `${document.directoryId}:${document.relativePath}`;
+        if (restoredPaths.has(identity)) continue;
+        const targetPane = listWorkspacePanes(restoredTree)[0];
+        restoredTree = addWorkspaceFileToPane(
+          restoredTree,
+          targetPane.id,
+          document.id,
+        );
+        restoredDocuments.push(document);
+        restoredPaths.add(identity);
+      }
 
       slotsRef.current = restoredSlots;
-      treeRef.current = restored.tree;
+      treeRef.current = restoredTree;
       focusedPaneIdRef.current = restored.focusedPaneId;
       setSlots(restoredSlots);
-      setTree(restored.tree);
+      setFileDocuments(restoredDocuments);
+      fileDocumentsRef.current = restoredDocuments;
+      setTree(restoredTree);
       setFocusedPaneId(restored.focusedPaneId);
       const nextDetachedIds = new Set(restored.detachedSlotIds);
       detachedInstanceIdsRef.current = nextDetachedIds;
@@ -436,6 +592,333 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     treeRef.current = next;
     setTree(next);
   }, []);
+
+  const openProjectFile = useCallback(
+    (
+      directoryId: number,
+      directoryPath: string,
+      relativePath: string,
+    ): Promise<void> => {
+      const identity = `${directoryId}:${relativePath}`;
+      const pending = openingFileRequestsRef.current.get(identity);
+      if (pending) return pending;
+      const operation = (async () => {
+        let document = fileDocumentsRef.current.find(
+          (entry) =>
+            entry.directoryId === directoryId &&
+            entry.relativePath === relativePath,
+        );
+        if (!document) {
+          const loaded = createWorkspaceFileBuffer(
+            await openProjectFileContent(directoryId, relativePath),
+          );
+          document = {
+            id: crypto.randomUUID(),
+            directoryId,
+            directoryPath,
+            relativePath,
+          };
+          const nextDocuments = [...fileDocumentsRef.current, document];
+          fileDocumentsRef.current = nextDocuments;
+          setFileDocuments(nextDocuments);
+          const nextBuffers = {
+            ...fileBuffersRef.current,
+            [document.id]: loaded,
+          };
+          fileBuffersRef.current = nextBuffers;
+          setFileBuffers(nextBuffers);
+        } else if (!fileBuffersRef.current[document.id]) {
+          const loaded = createWorkspaceFileBuffer(
+            await openProjectFileContent(directoryId, relativePath),
+          );
+          const nextBuffers = {
+            ...fileBuffersRef.current,
+            [document.id]: loaded,
+          };
+          fileBuffersRef.current = nextBuffers;
+          setFileBuffers(nextBuffers);
+        }
+
+        const detachedWindow =
+          detachedFilesRef.current.get(document.id) ??
+          pendingDetachedFilesRef.current.get(document.id);
+        if (detachedWindow) {
+          await detachedWindow.window.setFocus().catch(() => undefined);
+          return;
+        }
+
+        const ownerPane = listWorkspacePanes(treeRef.current).find((pane) =>
+          hasWorkspaceContent(pane, { kind: "file", documentId: document.id }),
+        );
+        const pane =
+          ownerPane ??
+          listWorkspacePanes(treeRef.current).find(
+            (entry) => entry.id === focusedPaneIdRef.current,
+          ) ??
+          listWorkspacePanes(treeRef.current)[0];
+        focusedPaneIdRef.current = pane.id;
+        setFocusedPaneId(pane.id);
+        commitTree(
+          hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
+            ? activateWorkspaceFile(treeRef.current, pane.id, document.id)
+            : addWorkspaceFileToPane(treeRef.current, pane.id, document.id),
+        );
+      })();
+      openingFileRequestsRef.current.set(identity, operation);
+      const clearPending = () => {
+        if (openingFileRequestsRef.current.get(identity) === operation) {
+          openingFileRequestsRef.current.delete(identity);
+        }
+      };
+      void operation.then(clearPending, clearPending);
+      return operation;
+    },
+    [commitTree],
+  );
+
+  const activateFile = useCallback(
+    (paneId: string, documentId: string) => {
+      focusedPaneIdRef.current = paneId;
+      setFocusedPaneId(paneId);
+      commitTree(activateWorkspaceFile(treeRef.current, paneId, documentId));
+    },
+    [commitTree],
+  );
+
+  const loadFile = useCallback(async (documentId: string) => {
+    if (fileBuffersRef.current[documentId]) return;
+    const document = fileDocumentsRef.current.find(
+      (entry) => entry.id === documentId,
+    );
+    if (!document) return;
+    const loaded = createWorkspaceFileBuffer(
+      await openProjectFileContent(document.directoryId, document.relativePath),
+    );
+    if (fileBuffersRef.current[documentId]) return;
+    const next = {
+      ...fileBuffersRef.current,
+      [documentId]: loaded,
+    };
+    fileBuffersRef.current = next;
+    setFileBuffers(next);
+  }, []);
+
+  const editFile = useCallback((documentId: string, content: string) => {
+    const buffer = fileBuffersRef.current[documentId];
+    if (!buffer) return;
+    const next = {
+      ...fileBuffersRef.current,
+      [documentId]: { ...buffer, content },
+    };
+    fileBuffersRef.current = next;
+    setFileBuffers(next);
+  }, []);
+
+  const reloadFile = useCallback(async (documentId: string) => {
+    const document = fileDocumentsRef.current.find(
+      (entry) => entry.id === documentId,
+    );
+    if (!document) return;
+    try {
+      const loaded = createWorkspaceFileBuffer(
+        await openProjectFileContent(
+          document.directoryId,
+          document.relativePath,
+        ),
+      );
+      const next = {
+        ...fileBuffersRef.current,
+        [documentId]: loaded,
+      };
+      fileBuffersRef.current = next;
+      setFileBuffers(next);
+    } catch (reason) {
+      toast.error(String(reason));
+    }
+  }, []);
+
+  const saveFile = useCallback(
+    async (documentId: string) => {
+      const document = fileDocumentsRef.current.find(
+        (entry) => entry.id === documentId,
+      );
+      const buffer = fileBuffersRef.current[documentId];
+      if (
+        !document ||
+        !buffer ||
+        buffer.content === buffer.savedContent ||
+        buffer.saving
+      ) {
+        return;
+      }
+      const pending = { ...buffer, saving: true };
+      fileBuffersRef.current = {
+        ...fileBuffersRef.current,
+        [documentId]: pending,
+      };
+      setFileBuffers(fileBuffersRef.current);
+      try {
+        const result = await saveProjectTextFile(
+          document.directoryId,
+          document.relativePath,
+          buffer.content,
+          buffer.revision,
+        );
+        const next = {
+          ...fileBuffersRef.current,
+          [documentId]: completeWorkspaceFileSave(
+            fileBuffersRef.current[documentId],
+            buffer,
+            result,
+          ),
+        };
+        fileBuffersRef.current = next;
+        setFileBuffers(next);
+      } catch (reason) {
+        const next = {
+          ...fileBuffersRef.current,
+          [documentId]: failWorkspaceFileSave(
+            fileBuffersRef.current[documentId],
+            buffer,
+          ),
+        };
+        fileBuffersRef.current = next;
+        setFileBuffers(next);
+        const message = String(reason);
+        if (message.includes("其他位置修改")) {
+          toast.error(message, {
+            action: {
+              label: t("workspaceFiles.reload"),
+              onClick: () => void reloadFile(documentId),
+            },
+          });
+        } else {
+          toast.error(message);
+        }
+      }
+    },
+    [reloadFile, t],
+  );
+
+  const closeFiles = useCallback(
+    (requestedDocumentIds: string[], skipDirtyConfirmation = false) => {
+      const documentIds = [...new Set(requestedDocumentIds)].filter(
+        (documentId) =>
+          fileDocumentsRef.current.some(
+            (document) => document.id === documentId,
+          ) && !detachedFileIdsRef.current.has(documentId),
+      );
+      if (documentIds.length === 0) return;
+      const hasDirtyBuffers = documentIds.some((documentId) => {
+        const buffer = fileBuffersRef.current[documentId];
+        return Boolean(buffer && buffer.content !== buffer.savedContent);
+      });
+      if (
+        hasDirtyBuffers &&
+        !skipDirtyConfirmation &&
+        !window.confirm(t("workspaceFiles.discardChanges"))
+      ) {
+        return;
+      }
+      const next = closeWorkspaceFileState(
+        {
+          tree: treeRef.current,
+          documents: fileDocumentsRef.current,
+          buffers: fileBuffersRef.current,
+        },
+        documentIds,
+      );
+      if (next.closedDocumentIds.length === 0) return;
+      commitTree(next.tree);
+      fileDocumentsRef.current = next.documents;
+      setFileDocuments(next.documents);
+      fileBuffersRef.current = next.buffers;
+      setFileBuffers(next.buffers);
+    },
+    [commitTree, t],
+  );
+  const closeFile = useCallback(
+    (documentId: string, skipDirtyConfirmation = false) =>
+      closeFiles([documentId], skipDirtyConfirmation),
+    [closeFiles],
+  );
+
+  const detachFile = useCallback(
+    async (documentId: string) => {
+      if (detachedFilesRef.current.has(documentId)) return;
+      let fileBuffer = fileBuffersRef.current[documentId];
+      if (!fileBuffer) {
+        await loadFile(documentId);
+        fileBuffer = fileBuffersRef.current[documentId];
+      }
+      const fileDocument = fileDocumentsRef.current.find(
+        (document) => document.id === documentId,
+      );
+      if (!fileDocument || !fileBuffer) {
+        throw new Error(t("workspaceFiles.loadingFile"));
+      }
+      const token = crypto.randomUUID();
+      const windowLabel = `workspace-content-${crypto.randomUUID()}`;
+      const childUrl = new URL(window.location.href);
+      childUrl.search = "";
+      childUrl.hash = "";
+      childUrl.searchParams.set("detachedFileId", documentId);
+      childUrl.searchParams.set("fileHandoffToken", token);
+      await new Promise<void>((resolve, reject) => {
+        const { trafficLightPosition, ...chromeOptions } =
+          getWindowChromeOptions(navigator.userAgent);
+        const child = new WebviewWindow(windowLabel, {
+          ...chromeOptions,
+          ...(trafficLightPosition
+            ? {
+                trafficLightPosition: new LogicalPosition(
+                  trafficLightPosition.x,
+                  trafficLightPosition.y,
+                ),
+              }
+            : {}),
+          url: `${childUrl.pathname}${childUrl.search}${childUrl.hash}`,
+          title:
+            fileDocument.relativePath.split("/").pop() ??
+            fileDocument.relativePath,
+          width: 1100,
+          height: 760,
+          minWidth: 560,
+          minHeight: 360,
+          dragDropEnabled: false,
+        });
+        const timer = window.setTimeout(() => {
+          pendingDetachedFilesRef.current.delete(documentId);
+          void child.destroy().catch(() => undefined);
+          reject(new Error(t("pty.detachedStartTimedOut")));
+        }, 15_000);
+        pendingDetachedFilesRef.current.set(documentId, {
+          documentId,
+          token,
+          windowLabel,
+          window: child,
+          timer,
+          resolve,
+          reject,
+          attached: false,
+        });
+        void child.once("tauri://error", (event) => {
+          const pending = pendingDetachedFilesRef.current.get(documentId);
+          if (pending?.windowLabel !== windowLabel) return;
+          pendingDetachedFilesRef.current.delete(documentId);
+          window.clearTimeout(pending.timer);
+          reject(
+            new Error(
+              event.payload == null
+                ? t("pty.detachedCreateFailed")
+                : String(event.payload),
+            ),
+          );
+        });
+      });
+    },
+    [loadFile, t],
+  );
 
   const registerPortalTarget = useCallback(
     (instanceId: string, target: HTMLDivElement | null) => {
@@ -464,7 +947,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!pane) return;
       setFocusedPane(paneId);
       const activeSlot = slotsRef.current.find(
-        (slot) => slot.instanceId === pane.activeSessionId,
+        (slot) =>
+          slot.instanceId ===
+          (pane.activeContent?.kind === "pty"
+            ? pane.activeContent.slotId
+            : null),
       );
       if (activeSlot && !isInvalidRestoredSlotState(activeSlot.restoredState)) {
         const state = useAppStore.getState();
@@ -580,7 +1067,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const sourcePane = findWorkspacePane(treeRef.current, paneId);
       if (!sourcePane) return;
       const sourceSlot = slotsRef.current.find(
-        (slot) => slot.instanceId === sourcePane.activeSessionId,
+        (slot) =>
+          slot.instanceId ===
+          (sourcePane.activeContent?.kind === "pty"
+            ? sourcePane.activeContent.slotId
+            : null),
       );
       if (sourceSlot) {
         const state = useAppStore.getState();
@@ -608,7 +1099,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const slot = slotsRef.current.find(
         (candidate) => candidate.instanceId === instanceId,
       );
-      if (!sourcePane?.sessionIds.includes(instanceId) || !slot) return;
+      if (
+        !sourcePane ||
+        !hasWorkspaceContent(sourcePane, { kind: "pty", slotId: instanceId }) ||
+        !slot
+      )
+        return;
       const newPaneId = crypto.randomUUID();
       const next = splitAndMoveWorkspaceSession(
         treeRef.current,
@@ -631,6 +1127,29 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [commitTree, setFocusedPane],
   );
 
+  const splitAndMoveFile = useCallback(
+    (paneId: string, documentId: string, direction: SplitDirection) => {
+      const sourcePane = findWorkspacePane(treeRef.current, paneId);
+      if (
+        !sourcePane ||
+        !hasWorkspaceContent(sourcePane, { kind: "file", documentId })
+      )
+        return;
+      const nextPaneId = crypto.randomUUID();
+      const next = splitAndMoveWorkspaceFile(
+        treeRef.current,
+        paneId,
+        documentId,
+        direction,
+        crypto.randomUUID(),
+        nextPaneId,
+      );
+      commitTree(next);
+      setFocusedPane(nextPaneId);
+    },
+    [commitTree, setFocusedPane],
+  );
+
   const moveSession = useCallback(
     (sourcePaneId: string, destinationPaneId: string, instanceId: string) => {
       const sourcePane = findWorkspacePane(treeRef.current, sourcePaneId);
@@ -642,7 +1161,8 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         (candidate) => candidate.instanceId === instanceId,
       );
       if (
-        !sourcePane?.sessionIds.includes(instanceId) ||
+        !sourcePane ||
+        !hasWorkspaceContent(sourcePane, { kind: "pty", slotId: instanceId }) ||
         !destinationPane ||
         !slot
       ) {
@@ -667,10 +1187,30 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [commitTree, setFocusedPane],
   );
 
+  const moveFile = useCallback(
+    (sourcePaneId: string, destinationPaneId: string, documentId: string) => {
+      const next = moveWorkspaceFileToPane(
+        treeRef.current,
+        sourcePaneId,
+        destinationPaneId,
+        documentId,
+      );
+      if (next === treeRef.current) return;
+      commitTree(next);
+      setFocusedPane(destinationPaneId);
+    },
+    [commitTree, setFocusedPane],
+  );
+
   const isManagedDetachedDrag = useCallback(
     (instanceId: string, windowLabel: string) =>
       detachedByInstanceRef.current.get(instanceId)?.windowLabel ===
       windowLabel,
+    [],
+  );
+  const isManagedDetachedFileDrag = useCallback(
+    (documentId: string, windowLabel: string) =>
+      detachedFilesRef.current.get(documentId)?.windowLabel === windowLabel,
     [],
   );
 
@@ -875,7 +1415,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           findWorkspacePane(currentTree, focusedPaneIdRef.current) ||
           listWorkspacePanes(currentTree)[0];
         const existingPane = listWorkspacePanes(currentTree).find((pane) =>
-          pane.sessionIds.includes(payload.instanceId),
+          hasWorkspaceContent(pane, {
+            kind: "pty",
+            slotId: payload.instanceId,
+          }),
         );
         const nextTree = existingPane
           ? activateWorkspaceSession(
@@ -962,10 +1505,203 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     t,
   ]);
 
+  useEffect(() => {
+    let disposed = false;
+    const stops: (() => void)[] = [];
+    const setup = async () => {
+      const listeners = await Promise.all([
+        listen<WorkspaceFileWindowEvent>(
+          "workspace-file-window-ready",
+          async (event) => {
+            const pending = pendingDetachedFilesRef.current.get(
+              event.payload.documentId,
+            );
+            if (
+              !pending ||
+              !matchesWorkspaceFileWindow(pending, event.payload)
+            ) {
+              return;
+            }
+            const fileDocument = fileDocumentsRef.current.find(
+              (document) => document.id === pending.documentId,
+            );
+            const fileBuffer = fileBuffersRef.current[pending.documentId];
+            if (!fileDocument || !fileBuffer) {
+              pendingDetachedFilesRef.current.delete(pending.documentId);
+              window.clearTimeout(pending.timer);
+              pending.reject(new Error(t("workspaceFiles.loadingFile")));
+              void pending.window.destroy().catch(() => undefined);
+              return;
+            }
+            await emitTo(pending.windowLabel, "workspace-file-window-init", {
+              documentId: pending.documentId,
+              token: pending.token,
+              windowLabel: pending.windowLabel,
+              fileDocument,
+              fileBuffer,
+            } satisfies WorkspaceFileWindowEvent);
+          },
+        ),
+        listen<WorkspaceFileWindowEvent>(
+          "workspace-file-window-attached",
+          (event) => {
+            const pending = pendingDetachedFilesRef.current.get(
+              event.payload.documentId,
+            );
+            if (
+              !pending ||
+              !matchesWorkspaceFileWindow(pending, event.payload)
+            ) {
+              return;
+            }
+            window.clearTimeout(pending.timer);
+            pending.attached = true;
+            pendingDetachedFilesRef.current.delete(pending.documentId);
+            detachedFilesRef.current.set(pending.documentId, pending);
+            setDetachedFileIds((current) => {
+              const next = new Set(current).add(pending.documentId);
+              detachedFileIdsRef.current = next;
+              return next;
+            });
+            const pane = listWorkspacePanes(treeRef.current).find((candidate) =>
+              hasWorkspaceContent(candidate, {
+                kind: "file",
+                documentId: pending.documentId,
+              }),
+            );
+            if (pane) {
+              commitTree(
+                deactivateWorkspaceFile(
+                  treeRef.current,
+                  pane.id,
+                  pending.documentId,
+                ),
+              );
+            }
+            pending.resolve();
+          },
+        ),
+        listen<WorkspaceFileWindowEvent>(
+          "workspace-file-window-buffer-changed",
+          (event) => {
+            const managed = detachedFilesRef.current.get(
+              event.payload.documentId,
+            );
+            if (
+              !managed ||
+              !matchesWorkspaceFileWindow(managed, event.payload) ||
+              !event.payload.fileBuffer
+            ) {
+              return;
+            }
+            const next = {
+              ...fileBuffersRef.current,
+              [managed.documentId]: event.payload.fileBuffer,
+            };
+            fileBuffersRef.current = next;
+            setFileBuffers(next);
+          },
+        ),
+        listen<WorkspaceFileWindowEvent>(
+          "workspace-file-window-return-requested",
+          async (event) => {
+            const managed = detachedFilesRef.current.get(
+              event.payload.documentId,
+            );
+            if (
+              !managed ||
+              !matchesWorkspaceFileWindow(managed, event.payload) ||
+              !event.payload.fileDocument ||
+              !event.payload.fileBuffer
+            ) {
+              await emitTo(
+                event.payload.windowLabel,
+                "workspace-file-window-return-failed",
+                {
+                  documentId: event.payload.documentId,
+                  token: event.payload.token,
+                  message: t("pty.returnFailed", {
+                    error: t("pty.workspaceRestoring"),
+                  }),
+                },
+              ).catch(() => undefined);
+              return;
+            }
+            const document = event.payload.fileDocument;
+            const nextBuffers = {
+              ...fileBuffersRef.current,
+              [document.id]: event.payload.fileBuffer,
+            };
+            fileBuffersRef.current = nextBuffers;
+            setFileBuffers(nextBuffers);
+            let targetPane = event.payload.targetPaneId
+              ? findWorkspacePane(treeRef.current, event.payload.targetPaneId)
+              : null;
+            targetPane ??=
+              listWorkspacePanes(treeRef.current).find((candidate) =>
+                hasWorkspaceContent(candidate, {
+                  kind: "file",
+                  documentId: document.id,
+                }),
+              ) ?? null;
+            targetPane ??= findWorkspacePane(
+              treeRef.current,
+              focusedPaneIdRef.current,
+            );
+            if (targetPane) {
+              const nextTree = hasWorkspaceContent(targetPane, {
+                kind: "file",
+                documentId: document.id,
+              })
+                ? activateWorkspaceFile(
+                    treeRef.current,
+                    targetPane.id,
+                    document.id,
+                  )
+                : addWorkspaceFileToPane(
+                    treeRef.current,
+                    targetPane.id,
+                    document.id,
+                  );
+              commitTree(nextTree);
+              setFocusedPane(targetPane.id);
+            }
+            detachedFilesRef.current.delete(document.id);
+            setDetachedFileIds((current) => {
+              const next = new Set(current);
+              next.delete(document.id);
+              detachedFileIdsRef.current = next;
+              return next;
+            });
+            await emitTo(
+              event.payload.windowLabel,
+              "workspace-file-window-return-complete",
+              {
+                documentId: document.id,
+                token: event.payload.token,
+              },
+            ).catch(() => managed.window.destroy().catch(() => undefined));
+          },
+        ),
+      ]);
+      if (disposed) listeners.forEach((stop) => stop());
+      else stops.push(...listeners);
+    };
+    void setup().catch((reason) =>
+      console.error("File window listener setup failed", reason),
+    );
+    return () => {
+      disposed = true;
+      stops.forEach((stop) => stop());
+    };
+  }, [commitTree, setFocusedPane, t]);
+
   const closeEmptyPane = useCallback(
     (paneId: string) => {
       const pane = findWorkspacePane(treeRef.current, paneId);
-      if (!pane || pane.sessionIds.length > 0) return;
+      if (!pane || pane.contents.length > 0) {
+        return;
+      }
       const next = removeEmptyWorkspacePane(treeRef.current, paneId);
       commitTree(next);
       // Closing a pane changes the split topology. Remount the complete tree
@@ -975,10 +1711,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!findWorkspacePane(next, focusedPaneIdRef.current)) {
         const fallbackPaneId = listWorkspacePanes(next)[0].id;
         setFocusedPane(fallbackPaneId);
-        const activeSlotId = findWorkspacePane(
+        const activeContent = findWorkspacePane(
           next,
           fallbackPaneId,
-        )?.activeSessionId;
+        )?.activeContent;
+        const activeSlotId =
+          activeContent?.kind === "pty" ? activeContent.slotId : null;
         const activeSlot = slotsRef.current.find(
           (slot) => slot.instanceId === activeSlotId,
         );
@@ -1048,7 +1786,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       presetTree = removeWorkspaceSession(presetTree, instanceId);
     }
     const presetPanes = listWorkspacePanes(presetTree);
-    const paneSlotIds = new Set(presetPanes.flatMap((pane) => pane.sessionIds));
+    const paneSlotIds = new Set(
+      presetPanes.flatMap((pane) =>
+        listWorkspacePaneContents(pane, "pty").flatMap((content) =>
+          content.kind === "pty" ? [content.slotId] : [],
+        ),
+      ),
+    );
     const currentFocusedPaneId = focusedPaneIdRef.current;
     return createWorkspaceLayoutDocument({
       tree: presetTree,
@@ -1060,6 +1804,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       slots: slotsRef.current
         .filter((slot) => paneSlotIds.has(slot.instanceId))
         .map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
+      documents: fileDocumentsRef.current,
       detachedSlotIds: [],
     });
   }, [directories]);
@@ -1067,6 +1812,8 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       slots,
+      fileDocuments,
+      fileBuffers,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -1078,14 +1825,26 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       portalTargets,
       terminalRefs,
       launchSession,
+      openProjectFile,
+      loadFile,
+      activateFile,
+      editFile,
+      saveFile,
+      closeFile,
+      closeFiles,
+      detachFile,
+      detachedFileIds,
       focusPane,
       activateSession,
       splitPane,
       splitAndMoveSession,
+      splitAndMoveFile,
       moveSession,
+      moveFile,
       detachedInstanceIds,
       hasDetachedSessions: detachedInstanceIds.size > 0,
       isManagedDetachedDrag,
+      isManagedDetachedFileDrag,
       detachSession,
       closeEmptyPane,
       updateSplitRatio,
@@ -1098,6 +1857,8 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     }),
     [
       slots,
+      fileDocuments,
+      fileBuffers,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -1109,13 +1870,25 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       portalTargets,
       terminalRefs,
       launchSession,
+      openProjectFile,
+      loadFile,
+      activateFile,
+      editFile,
+      saveFile,
+      closeFile,
+      closeFiles,
+      detachFile,
+      detachedFileIds,
       focusPane,
       activateSession,
       splitPane,
       splitAndMoveSession,
+      splitAndMoveFile,
       moveSession,
+      moveFile,
       detachedInstanceIds,
       isManagedDetachedDrag,
+      isManagedDetachedFileDrag,
       detachSession,
       closeEmptyPane,
       updateSplitRatio,
@@ -1176,6 +1949,9 @@ export function PtyWorkspaceRegion() {
   const { t } = useTranslation();
   const {
     slots,
+    fileDocuments,
+    fileBuffers,
+    detachedFileIds,
     tree,
     workspaceTreeRevision,
     focusedPaneId,
@@ -1190,15 +1966,25 @@ export function PtyWorkspaceRegion() {
     activateSession,
     splitPane,
     splitAndMoveSession,
+    splitAndMoveFile,
     moveSession,
+    moveFile,
     hasDetachedSessions,
     isManagedDetachedDrag,
+    isManagedDetachedFileDrag,
     detachSession,
+    detachFile,
     closeEmptyPane,
     updateSplitRatio,
     retryHydration,
     resetWorkspace,
     removeSlot,
+    activateFile,
+    closeFile,
+    closeFiles,
+    editFile,
+    loadFile,
+    saveFile,
   } = usePtyWorkspace();
   const { data: directories } = useDirectories();
   const ptySessionsById = useAppStore((state) => state.ptySessionsById);
@@ -1325,6 +2111,9 @@ export function PtyWorkspaceRegion() {
           key={workspaceTreeRevision}
           node={tree}
           slots={slots}
+          fileDocuments={fileDocuments}
+          fileBuffers={fileBuffers}
+          detachedFileIds={detachedFileIds}
           focusedPaneId={focusedPaneId}
           portalTargets={portalTargets}
           canCloseEmptyPane={listWorkspacePanes(tree).length > 1}
@@ -1334,11 +2123,25 @@ export function PtyWorkspaceRegion() {
           workspacePanes={workspacePanes}
           onFocusPane={focusPane}
           onActivateSession={activateSession}
+          onActivateFile={activateFile}
+          onCloseFile={closeFile}
+          onCloseFiles={closeFiles}
+          onDetachFile={(documentId) => {
+            void detachFile(documentId).catch((reason) =>
+              toast.error(String(reason)),
+            );
+          }}
+          onMoveFile={moveFile}
+          onEditFile={editFile}
+          onLoadFile={loadFile}
+          onSaveFile={saveFile}
           onSplitPane={splitPane}
           onSplitAndMoveSession={splitAndMoveSession}
+          onSplitAndMoveFile={splitAndMoveFile}
           onMoveSession={moveSession}
           hasDetachedSessions={hasDetachedSessions}
           isManagedDetachedDrag={isManagedDetachedDrag}
+          isManagedDetachedFileDrag={isManagedDetachedFileDrag}
           onDetachSession={(instanceId) => {
             void detachSession(instanceId).catch((reason) =>
               toast.error(String(reason)),
@@ -1657,6 +2460,9 @@ function WorkspaceLayoutManager({
 interface WorkspaceTreeViewProps {
   node: WorkspaceNode;
   slots: PtyWorkspaceSlot[];
+  fileDocuments: WorkspaceFileDocument[];
+  fileBuffers: Record<string, WorkspaceFileBuffer>;
+  detachedFileIds: Set<string>;
   focusedPaneId: string;
   portalTargets: Record<string, HTMLDivElement>;
   canCloseEmptyPane: boolean;
@@ -1666,10 +2472,30 @@ interface WorkspaceTreeViewProps {
   workspacePanes: WorkspacePane[];
   onFocusPane: (paneId: string) => void;
   onActivateSession: (paneId: string, instanceId: string) => void;
+  onActivateFile: (paneId: string, documentId: string) => void;
+  onCloseFile: (documentId: string, skipDirtyConfirmation?: boolean) => void;
+  onCloseFiles: (
+    documentIds: string[],
+    skipDirtyConfirmation?: boolean,
+  ) => void;
+  onDetachFile: (documentId: string) => void;
+  onMoveFile: (
+    sourcePaneId: string,
+    destinationPaneId: string,
+    documentId: string,
+  ) => void;
+  onEditFile: (documentId: string, content: string) => void;
+  onLoadFile: (documentId: string) => Promise<void>;
+  onSaveFile: (documentId: string) => Promise<void>;
   onSplitPane: (paneId: string, direction: SplitDirection) => void;
   onSplitAndMoveSession: (
     paneId: string,
     instanceId: string,
+    direction: SplitDirection,
+  ) => void;
+  onSplitAndMoveFile: (
+    paneId: string,
+    documentId: string,
     direction: SplitDirection,
   ) => void;
   onMoveSession: (
@@ -1679,6 +2505,10 @@ interface WorkspaceTreeViewProps {
   ) => void;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
+  isManagedDetachedFileDrag: (
+    documentId: string,
+    windowLabel: string,
+  ) => boolean;
   onDetachSession: (instanceId: string) => void;
   onCloseEmptyPane: (paneId: string) => void;
   onSplitResize: (
@@ -1849,6 +2679,9 @@ function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
 function WorkspacePaneView({
   pane,
   slots,
+  fileDocuments,
+  fileBuffers,
+  detachedFileIds,
   focusedPaneId,
   portalTargets,
   canCloseEmptyPane,
@@ -1858,11 +2691,21 @@ function WorkspacePaneView({
   workspacePanes,
   onFocusPane,
   onActivateSession,
+  onActivateFile,
+  onCloseFile,
+  onCloseFiles,
+  onDetachFile,
+  onMoveFile,
+  onEditFile,
+  onLoadFile,
+  onSaveFile,
   onSplitPane,
   onSplitAndMoveSession,
+  onSplitAndMoveFile,
   onMoveSession,
   hasDetachedSessions,
   isManagedDetachedDrag,
+  isManagedDetachedFileDrag,
   onDetachSession,
   onCloseEmptyPane,
   onCloseSlot,
@@ -1872,11 +2715,31 @@ function WorkspacePaneView({
 }) {
   const { t } = useTranslation();
   const paneName = t("pty.paneNumber", { number: pane.paneNumber });
-  const paneSlots = pane.sessionIds
-    .map((instanceId) => slots.find((slot) => slot.instanceId === instanceId))
+  const paneSlots = listWorkspacePaneContents(pane, "pty")
+    .map((content) =>
+      content.kind === "pty"
+        ? slots.find((slot) => slot.instanceId === content.slotId)
+        : undefined,
+    )
     .filter((slot): slot is PtyWorkspaceSlot => Boolean(slot));
+  const activeFileId =
+    pane.activeContent?.kind === "file" ? pane.activeContent.documentId : null;
+  const activeFile = activeFileId
+    ? fileDocuments.find((document) => document.id === activeFileId)
+    : undefined;
+  const paneFiles = listWorkspacePaneContents(pane, "file")
+    .map((content) => (content.kind === "file" ? content.documentId : null))
+    .filter((documentId): documentId is string => documentId !== null)
+    .filter((documentId) => !detachedFileIds.has(documentId))
+    .map((documentId) =>
+      fileDocuments.find((document) => document.id === documentId),
+    )
+    .filter((document): document is WorkspaceFileDocument => Boolean(document));
+  const activeFileBuffer = activeFileId ? fileBuffers[activeFileId] : undefined;
   const activeSlotIndex = paneSlots.findIndex(
-    (slot) => slot.instanceId === pane.activeSessionId,
+    (slot) =>
+      slot.instanceId ===
+      (pane.activeContent?.kind === "pty" ? pane.activeContent.slotId : null),
   );
   const activeSlot =
     activeSlotIndex >= 0 ? paneSlots[activeSlotIndex] : undefined;
@@ -1890,11 +2753,21 @@ function WorkspacePaneView({
   const focused = pane.id === focusedPaneId;
   const contentRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{
-    instanceId: string;
+    target:
+      | { kind: "pty"; instanceId: string }
+      | { kind: "file"; documentId: string };
     x: number;
     y: number;
   } | null>(null);
   const [dropActive, setDropActive] = useState(false);
+
+  useEffect(() => {
+    if (activeFileId && !activeFileBuffer) {
+      void onLoadFile(activeFileId).catch((reason) =>
+        toast.error(String(reason)),
+      );
+    }
+  }, [activeFileBuffer, activeFileId, onLoadFile]);
 
   useEffect(() => {
     const clearDropTarget = () => setDropActive(false);
@@ -1950,10 +2823,15 @@ function WorkspacePaneView({
     for (const slot of paneSlots) {
       const target = portalTargets[slot.instanceId];
       if (!target) continue;
-      target.hidden = pane.activeSessionId !== slot.instanceId;
+      target.hidden =
+        pane.activeContent?.kind === "file" ||
+        !(
+          pane.activeContent?.kind === "pty" &&
+          pane.activeContent.slotId === slot.instanceId
+        );
       if (target.parentElement !== content) content.appendChild(target);
     }
-  }, [pane.activeSessionId, paneSlots, portalTargets]);
+  }, [pane.activeContent, paneSlots, portalTargets]);
 
   const renderActiveTab = (slot: PtyWorkspaceSlot) => {
     const tool = TOOLS.find((entry) => entry.key === slot.toolKey)!;
@@ -1965,63 +2843,46 @@ function WorkspacePaneView({
     const title = workspaceSlotTitle(slot, directories);
 
     return (
-      <div
-        className="pty-pane-tab-group active"
+      <WorkspaceContentTab
         key={slot.instanceId}
+        title={title}
+        active={
+          pane.activeContent?.kind !== "file" &&
+          pane.activeContent?.kind === "pty" &&
+          pane.activeContent.slotId === slot.instanceId
+        }
+        related={slot.directoryId === selectedDirectoryId}
+        closeLabel={t(getWorkspaceContentAdapter("pty").labels.close)}
+        closeAccessibleName={t("pty.closeNamed", { name: title })}
+        draggable
+        onDragStart={(event) =>
+          beginWorkspaceSessionDrag(event, pane.id, slot.instanceId)
+        }
+        onActivate={() => onActivateSession(pane.id, slot.instanceId)}
+        onRequestClose={() => void onCloseSlot(slot)}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
           onFocusPane(pane.id);
           setContextMenu({
-            instanceId: slot.instanceId,
+            target: { kind: "pty", instanceId: slot.instanceId },
             x: event.clientX,
             y: event.clientY,
           });
         }}
       >
-        <button
-          type="button"
-          role="tab"
-          className={clsx("pty-pane-tab", {
-            active: pane.activeSessionId === slot.instanceId,
-            related: slot.directoryId === selectedDirectoryId,
+        <ToolIcon size={13} />
+        <span
+          className={clsx("pty-pane-tab-status", {
+            running: session?.state === "running",
+            failed:
+              session?.state === "failed" ||
+              isInvalidRestoredSlotState(slot.restoredState),
           })}
-          title={title}
-          draggable
-          aria-selected={pane.activeSessionId === slot.instanceId}
-          onDragStart={(event) =>
-            beginWorkspaceSessionDrag(event, pane.id, slot.instanceId)
-          }
-          onClick={(event) => {
-            event.stopPropagation();
-            onActivateSession(pane.id, slot.instanceId);
-          }}
-        >
-          <ToolIcon size={13} />
-          <span
-            className={clsx("pty-pane-tab-status", {
-              running: session?.state === "running",
-              failed:
-                session?.state === "failed" ||
-                isInvalidRestoredSlotState(slot.restoredState),
-            })}
-            aria-hidden="true"
-          />
-          <span className="pty-pane-tab-title">{title}</span>
-        </button>
-        <button
-          type="button"
-          className="pty-pane-tab-close"
-          title={t("pty.close")}
-          aria-label={t("pty.closeNamed", { name: title })}
-          onClick={(event) => {
-            event.stopPropagation();
-            void onCloseSlot(slot);
-          }}
-        >
-          <X size={12} />
-        </button>
-      </div>
+          aria-hidden="true"
+        />
+        <span className="pty-pane-tab-title">{title}</span>
+      </WorkspaceContentTab>
     );
   };
 
@@ -2038,6 +2899,7 @@ function WorkspacePaneView({
         const types = Array.from(event.dataTransfer.types);
         if (
           !types.includes(PTY_SESSION_DRAG_TYPE) &&
+          !types.includes(WORKSPACE_CONTENT_DRAG_TYPE) &&
           !(hasDetachedSessions && types.includes("text/plain"))
         ) {
           return;
@@ -2056,6 +2918,7 @@ function WorkspacePaneView({
         const types = Array.from(event.dataTransfer.types);
         if (
           !types.includes(PTY_SESSION_DRAG_TYPE) &&
+          !types.includes(WORKSPACE_CONTENT_DRAG_TYPE) &&
           !(hasDetachedSessions && types.includes("text/plain"))
         ) {
           return;
@@ -2063,6 +2926,66 @@ function WorkspacePaneView({
         event.preventDefault();
         event.stopPropagation();
         setDropActive(false);
+        const contentPayload = parseWorkspaceContentDrag(
+          event.dataTransfer.getData(WORKSPACE_CONTENT_DRAG_TYPE),
+        );
+        if (
+          contentPayload?.sourceWindowLabel === "main" &&
+          "sourcePaneId" in contentPayload
+        ) {
+          if (contentPayload.kind === "file") {
+            onMoveFile(
+              contentPayload.sourcePaneId,
+              pane.id,
+              contentPayload.contentId,
+            );
+          } else {
+            onMoveSession(
+              contentPayload.sourcePaneId,
+              pane.id,
+              contentPayload.contentId,
+            );
+          }
+          return;
+        }
+        if (
+          contentPayload?.kind === "pty" &&
+          contentPayload.sourceWindowLabel !== "main" &&
+          isManagedDetachedDrag(
+            contentPayload.contentId,
+            contentPayload.sourceWindowLabel,
+          )
+        ) {
+          void emitTo(
+            contentPayload.sourceWindowLabel,
+            "pty-return-drop-requested",
+            {
+              instanceId: contentPayload.contentId,
+              targetPaneId: pane.id,
+            },
+          ).catch((reason) =>
+            toast.error(t("pty.returnFailed", { error: String(reason) })),
+          );
+          return;
+        }
+        if (
+          contentPayload?.kind === "file" &&
+          contentPayload.sourceWindowLabel !== "main" &&
+          isManagedDetachedFileDrag(
+            contentPayload.contentId,
+            contentPayload.sourceWindowLabel,
+          )
+        ) {
+          void emitTo(
+            contentPayload.sourceWindowLabel,
+            "workspace-file-window-return-drop-requested",
+            {
+              documentId: contentPayload.contentId,
+              targetPaneId: pane.id,
+            },
+          ).catch((reason) => toast.error(String(reason)));
+          return;
+        }
         const payloadText =
           event.dataTransfer.getData(PTY_SESSION_DRAG_TYPE) ||
           event.dataTransfer.getData("text/plain");
@@ -2090,7 +3013,7 @@ function WorkspacePaneView({
       <header className="pty-pane-header">
         <div className="pty-pane-identity">
           <span className="pty-pane-name">{paneName}</span>
-          {paneSlots.length === 0 && (
+          {pane.contents.length === 0 && (
             <span className="pty-pane-empty-title">{t("pty.emptyPane")}</span>
           )}
         </div>
@@ -2108,7 +3031,7 @@ function WorkspacePaneView({
               onCloseSlot={onCloseSlot}
               onContextMenu={(instanceId, x, y) => {
                 onFocusPane(pane.id);
-                setContextMenu({ instanceId, x, y });
+                setContextMenu({ target: { kind: "pty", instanceId }, x, y });
               }}
             />
           )}
@@ -2121,6 +3044,66 @@ function WorkspacePaneView({
               {renderActiveTab(activeSlot)}
             </div>
           )}
+          {paneFiles.map((file) => {
+            const buffer = fileBuffers[file.id];
+            const fileName = file.relativePath.split("/").pop();
+            const dirty = buffer && buffer.content !== buffer.savedContent;
+            return (
+              <WorkspaceContentTab
+                className="file-tab-group"
+                key={file.id}
+                title={file.relativePath}
+                active={activeFileId === file.id}
+                closeLabel={t(getWorkspaceContentAdapter("file").labels.close)}
+                closeAccessibleName={t("workspaceFiles.closeFileNamed", {
+                  name: file.relativePath,
+                })}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  const payload = encodeWorkspaceContentDrag({
+                    kind: "file",
+                    contentId: file.id,
+                    sourcePaneId: pane.id,
+                    sourceWindowLabel: "main",
+                  });
+                  event.dataTransfer.setData(
+                    WORKSPACE_CONTENT_DRAG_TYPE,
+                    payload,
+                  );
+                  event.dataTransfer.setData("text/plain", payload);
+                }}
+                onActivate={() => onActivateFile(pane.id, file.id)}
+                onRequestClose={() =>
+                  requestWorkspaceContentClose(
+                    getWorkspaceContentAdapter("file").beforeClose,
+                    {
+                      isDirty: Boolean(dirty),
+                      confirmDiscard: () =>
+                        window.confirm(t("workspaceFiles.discardChanges")),
+                    },
+                    () => onCloseFile(file.id, true),
+                  )
+                }
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onFocusPane(pane.id);
+                  onActivateFile(pane.id, file.id);
+                  setContextMenu({
+                    target: { kind: "file", documentId: file.id },
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+              >
+                <span className="pty-pane-tab-title">
+                  {fileName}
+                  {dirty ? " •" : ""}
+                </span>
+              </WorkspaceContentTab>
+            );
+          })}
           {nextSlots.length > 0 && (
             <PaneSessionStack
               side="after"
@@ -2134,26 +3117,28 @@ function WorkspacePaneView({
               onCloseSlot={onCloseSlot}
               onContextMenu={(instanceId, x, y) => {
                 onFocusPane(pane.id);
-                setContextMenu({ instanceId, x, y });
+                setContextMenu({ target: { kind: "pty", instanceId }, x, y });
               }}
             />
           )}
         </div>
         <div className="pty-pane-actions">
-          {canCloseEmptyPane && paneSlots.length === 0 && (
-            <button
-              type="button"
-              className="icon-button"
-              title={t("pty.closeEmptyPane")}
-              aria-label={t("pty.closeEmptyPane")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCloseEmptyPane(pane.id);
-              }}
-            >
-              <X size={14} />
-            </button>
-          )}
+          {canCloseEmptyPane &&
+            paneSlots.length === 0 &&
+            pane.contents.length === 0 && (
+              <button
+                type="button"
+                className="icon-button"
+                title={t("pty.closeEmptyPane")}
+                aria-label={t("pty.closeEmptyPane")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCloseEmptyPane(pane.id);
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
           <button
             type="button"
             className="icon-button"
@@ -2181,50 +3166,162 @@ function WorkspacePaneView({
         </div>
       </header>
       <div className="pty-pane-content" ref={contentRef}>
-        {paneSlots.length === 0 && (
+        <WorkspaceContentView
+          content={pane.activeContent}
+          fileDocument={activeFile}
+          fileBuffer={activeFileBuffer}
+          onEditFile={onEditFile}
+          onSaveFile={onSaveFile}
+        />
+        {paneSlots.length === 0 && !activeFile && (
           <div className="pty-workspace-empty">{t("pty.empty")}</div>
         )}
       </div>
-      {contextMenu && (
-        <PtySessionContextMenu
-          pane={pane}
-          instanceId={contextMenu.instanceId}
-          slots={slots}
-          ptySessionsById={ptySessionsById}
-          workspacePanes={workspacePanes}
-          directories={directories}
-          x={contextMenu.x}
-          y={contextMenu.y}
-          onClose={() => setContextMenu(null)}
-          onActivateSession={() =>
-            onActivateSession(pane.id, contextMenu.instanceId)
-          }
-          onCloseSlot={(slot) => {
+      {contextMenu &&
+        (() => {
+          const target = contextMenu.target;
+          const isPty = target.kind === "pty";
+          const targetId = isPty ? target.instanceId : target.documentId;
+          const targetSlot = isPty
+            ? slots.find((slot) => slot.instanceId === targetId)
+            : undefined;
+          const targetFile = isPty
+            ? undefined
+            : fileDocuments.find((file) => file.id === targetId);
+          if (!targetSlot && !targetFile) return null;
+          const sameKindIds = isPty
+            ? paneSlots.map((slot) => slot.instanceId)
+            : paneFiles.map((file) => file.id);
+          const sameKindOtherIds = sameKindIds.filter((id) => id !== targetId);
+          const itemTitle = targetSlot
+            ? workspaceSlotTitle(targetSlot, directories)
+            : (targetFile?.relativePath ?? "");
+          const adapter = getWorkspaceContentAdapter(target.kind);
+          const labels = {
+            menu: t(adapter.labels.menu),
+            closeCurrent: (name: string) =>
+              t(adapter.labels.closeCurrent, { name }),
+            closeOthers: (count: number) =>
+              t(adapter.labels.closeOthers, { count }),
+            closeAll: (count: number) => t(adapter.labels.closeAll, { count }),
+            splitAndMoveRight: t(adapter.labels.splitAndMoveRight),
+            splitAndMoveDown: t(adapter.labels.splitAndMoveDown),
+          };
+          const closeIds = (ids: string[]) => {
             setContextMenu(null);
-            void onCloseSlot(slot);
-          }}
-          onCloseSlots={(targetSlots) => {
-            setContextMenu(null);
-            void onCloseSlots(targetSlots);
-          }}
-          onSplitPane={(direction, instanceId) => {
-            setContextMenu(null);
-            requestSplit(direction, instanceId);
-          }}
-          onSplitAndMove={(direction, instanceId) => {
-            setContextMenu(null);
-            requestSplitAndMove(direction, instanceId);
-          }}
-          onMoveSession={(destinationPaneId, instanceId) => {
-            setContextMenu(null);
-            onMoveSession(pane.id, destinationPaneId, instanceId);
-          }}
-          onDetachSession={(instanceId) => {
-            setContextMenu(null);
-            onDetachSession(instanceId);
-          }}
-        />
-      )}
+            if (isPty) {
+              void onCloseSlots(
+                ids
+                  .map((id) => slots.find((slot) => slot.instanceId === id))
+                  .filter((slot): slot is PtyWorkspaceSlot => Boolean(slot)),
+              );
+            } else {
+              const isDirty = ids.some((id) => {
+                const buffer = fileBuffers[id];
+                return Boolean(
+                  buffer && buffer.content !== buffer.savedContent,
+                );
+              });
+              requestWorkspaceContentClose(
+                getWorkspaceContentAdapter("file").beforeClose,
+                {
+                  isDirty,
+                  confirmDiscard: () =>
+                    window.confirm(t("workspaceFiles.discardChanges")),
+                },
+                () => onCloseFiles(ids, true),
+              );
+            }
+          };
+          return (
+            <WorkspaceContentContextMenu
+              title={itemTitle}
+              x={contextMenu.x}
+              y={contextMenu.y}
+              labels={labels}
+              allowDetach={
+                targetFile !== undefined ||
+                (targetSlot?.sessionId
+                  ? ptySessionsById[targetSlot.sessionId]?.state === "running"
+                  : false)
+              }
+              otherContentCount={sameKindOtherIds.length}
+              paneContentCount={sameKindIds.length}
+              otherPanes={workspacePanes
+                .filter((candidate) => candidate.id !== pane.id)
+                .map((candidate) => ({
+                  id: candidate.id,
+                  title: workspacePaneTitle(
+                    candidate,
+                    slots,
+                    directories,
+                    t("pty.paneNumber", { number: candidate.paneNumber }),
+                    t("pty.emptyPane"),
+                  ),
+                }))}
+              onClose={() => setContextMenu(null)}
+              onSplit={(direction) => {
+                setContextMenu(null);
+                if (targetSlot)
+                  onActivateSession(pane.id, targetSlot.instanceId);
+                requestSplit(direction);
+              }}
+              onSplitAndMove={(direction) => {
+                setContextMenu(null);
+                if (targetSlot)
+                  requestSplitAndMove(direction, targetSlot.instanceId);
+                else if (targetFile) {
+                  const bounds =
+                    contentRef.current?.parentElement?.getBoundingClientRect();
+                  if (
+                    !bounds ||
+                    !canSplitWorkspacePane(
+                      bounds.width,
+                      bounds.height,
+                      direction,
+                    )
+                  ) {
+                    toast.info(
+                      t("pty.splitTooSmall", {
+                        axis:
+                          direction === "horizontal"
+                            ? t("pty.width")
+                            : t("pty.height"),
+                        size: minimumWorkspacePaneExtent(direction),
+                      }),
+                    );
+                    return;
+                  }
+                  onSplitAndMoveFile(pane.id, targetFile.id, direction);
+                }
+              }}
+              onMoveToPane={(destinationPaneId) => {
+                setContextMenu(null);
+                if (targetSlot)
+                  onMoveSession(
+                    pane.id,
+                    destinationPaneId,
+                    targetSlot.instanceId,
+                  );
+                else if (targetFile)
+                  onMoveFile(pane.id, destinationPaneId, targetFile.id);
+              }}
+              onDetach={() => {
+                setContextMenu(null);
+                if (targetSlot) onDetachSession(targetSlot.instanceId);
+                else if (targetFile) onDetachFile(targetFile.id);
+              }}
+              onCloseCurrent={() => closeIds([targetId])}
+              onCloseOthers={() => {
+                if (targetSlot)
+                  onActivateSession(pane.id, targetSlot.instanceId);
+                if (targetFile) onActivateFile(pane.id, targetFile.id);
+                closeIds(sameKindOtherIds);
+              }}
+              onCloseAll={() => closeIds(sameKindIds)}
+            />
+          );
+        })()}
     </section>
   );
 }
@@ -2369,307 +3466,20 @@ function beginWorkspaceSessionDrag(
   instanceId: string,
 ) {
   event.dataTransfer.effectAllowed = "move";
-  const payload = encodePtySessionDrag({
+  const payload = encodeWorkspaceContentDrag({
+    kind: "pty",
+    contentId: instanceId,
+    sourcePaneId,
+    sourceWindowLabel: "main",
+  });
+  const legacyPayload = encodePtySessionDrag({
     instanceId,
     sourcePaneId,
     sourceWindowLabel: "main",
   });
-  event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, payload);
+  event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
+  event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, legacyPayload);
   event.dataTransfer.setData("text/plain", payload);
-}
-
-interface PtySessionContextMenuProps {
-  pane: WorkspacePane;
-  instanceId: string;
-  slots: PtyWorkspaceSlot[];
-  ptySessionsById: Record<string, PtySession>;
-  workspacePanes: WorkspacePane[];
-  directories: { id: number; name: string }[];
-  x: number;
-  y: number;
-  onClose: () => void;
-  onActivateSession: () => void;
-  onCloseSlot: (slot: PtyWorkspaceSlot) => void;
-  onCloseSlots: (slots: PtyWorkspaceSlot[]) => void;
-  onSplitPane: (direction: SplitDirection, instanceId: string) => void;
-  onSplitAndMove: (direction: SplitDirection, instanceId: string) => void;
-  onMoveSession: (destinationPaneId: string, instanceId: string) => void;
-  onDetachSession: (instanceId: string) => void;
-}
-
-function PtySessionContextMenu({
-  pane,
-  instanceId,
-  slots,
-  ptySessionsById,
-  workspacePanes,
-  directories,
-  x,
-  y,
-  onClose,
-  onActivateSession,
-  onCloseSlot,
-  onCloseSlots,
-  onSplitPane,
-  onSplitAndMove,
-  onMoveSession,
-  onDetachSession,
-}: PtySessionContextMenuProps) {
-  const { t } = useTranslation();
-  const menuRef = useRef<HTMLDivElement>(null);
-  const submenuRef = useRef<HTMLDivElement>(null);
-  const moveButtonRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false);
-  const [submenuPosition, setSubmenuPosition] = useState({ left: 8, top: 8 });
-  const [position, setPosition] = useState({ left: x, top: y });
-  const slot = slots.find((candidate) => candidate.instanceId === instanceId);
-  const session =
-    slot?.sessionId && !slot.restoredState
-      ? ptySessionsById[slot.sessionId]
-      : undefined;
-  const paneSlots = pane.sessionIds
-    .map((sessionId) =>
-      slots.find((candidate) => candidate.instanceId === sessionId),
-    )
-    .filter((candidate): candidate is PtyWorkspaceSlot => Boolean(candidate));
-  const otherPanes = workspacePanes.filter(
-    (candidate) => candidate.id !== pane.id,
-  );
-  const otherSessions = paneSlots.filter(
-    (candidate) => candidate.instanceId !== instanceId,
-  );
-  onCloseRef.current = onClose;
-
-  useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const bounds = menu.getBoundingClientRect();
-    setPosition({
-      left: Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8)),
-    });
-  }, [moveSubmenuOpen, x, y]);
-
-  useLayoutEffect(() => {
-    if (!moveSubmenuOpen) return;
-    const anchor = moveButtonRef.current;
-    const submenu = submenuRef.current;
-    if (!anchor || !submenu) return;
-    const anchorBounds = anchor.getBoundingClientRect();
-    const submenuBounds = submenu.getBoundingClientRect();
-    const gap = 4;
-    const padding = 8;
-    const placeRight =
-      window.innerWidth - anchorBounds.right >=
-      submenuBounds.width + gap + padding;
-    const left = placeRight
-      ? anchorBounds.right + gap
-      : Math.max(padding, anchorBounds.left - submenuBounds.width - gap);
-    const top = Math.max(
-      padding,
-      Math.min(
-        anchorBounds.top - 5,
-        window.innerHeight - submenuBounds.height - padding,
-      ),
-    );
-    setSubmenuPosition({ left, top });
-    submenuRef.current
-      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
-      ?.focus();
-  }, [moveSubmenuOpen]);
-
-  useEffect(() => {
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
-      ?.focus();
-    const dismissOutside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        onCloseRef.current();
-      }
-    };
-    const dismissEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    document.addEventListener("pointerdown", dismissOutside, true);
-    document.addEventListener("keydown", dismissEscape, true);
-    return () => {
-      document.removeEventListener("pointerdown", dismissOutside, true);
-      document.removeEventListener("keydown", dismissEscape, true);
-    };
-  }, []);
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return;
-    }
-    if (event.key === "ArrowLeft" && moveSubmenuOpen) {
-      event.preventDefault();
-      setMoveSubmenuOpen(false);
-      moveButtonRef.current?.focus();
-      return;
-    }
-    if (
-      event.key === "ArrowRight" &&
-      event.target === moveButtonRef.current &&
-      otherPanes.length > 0
-    ) {
-      event.preventDefault();
-      setMoveSubmenuOpen(true);
-      return;
-    }
-    if (
-      event.key !== "ArrowDown" &&
-      event.key !== "ArrowUp" &&
-      event.key !== "Home" &&
-      event.key !== "End"
-    ) {
-      return;
-    }
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
-      ) ?? [],
-    ).filter((item) => item.getClientRects().length > 0);
-    if (items.length === 0) return;
-    event.preventDefault();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
-            items.length;
-    items[nextIndex].focus();
-  };
-
-  if (!slot) return null;
-
-  return createPortal(
-    <div
-      ref={menuRef}
-      className="pty-session-context-menu"
-      role="menu"
-      aria-label={t("pty.sessionMenu")}
-      style={{ left: position.left, top: position.top }}
-      onContextMenu={(event) => event.preventDefault()}
-      onKeyDown={handleKeyDown}
-    >
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onSplitPane("horizontal", instanceId)}
-      >
-        {t("pty.splitRight")}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onSplitPane("vertical", instanceId)}
-      >
-        {t("pty.splitDown")}
-      </button>
-      <div className="pty-session-menu-separator" role="separator" />
-      <button
-        type="button"
-        role="menuitem"
-        disabled={session?.state !== "running"}
-        onClick={() => onDetachSession(instanceId)}
-      >
-        {t("pty.openSeparateWindow")}
-      </button>
-      <div className="pty-session-menu-separator" role="separator" />
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onSplitAndMove("horizontal", instanceId)}
-      >
-        {t("pty.splitAndMoveRight")}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onSplitAndMove("vertical", instanceId)}
-      >
-        {t("pty.splitAndMoveDown")}
-      </button>
-      <div className="pty-session-menu-submenu">
-        <button
-          ref={moveButtonRef}
-          type="button"
-          role="menuitem"
-          aria-haspopup="menu"
-          aria-expanded={moveSubmenuOpen}
-          disabled={otherPanes.length === 0}
-          onClick={() => setMoveSubmenuOpen((open) => !open)}
-        >
-          <span>{t("pty.moveToPane")}</span>
-          <ChevronRight size={14} />
-        </button>
-        {moveSubmenuOpen && otherPanes.length > 0 && (
-          <div
-            ref={submenuRef}
-            className="pty-session-submenu-items"
-            role="menu"
-            aria-label={t("pty.moveToPane")}
-            style={{ left: submenuPosition.left, top: submenuPosition.top }}
-          >
-            {otherPanes.map((targetPane) => (
-              <button
-                type="button"
-                role="menuitem"
-                key={targetPane.id}
-                onClick={() => onMoveSession(targetPane.id, instanceId)}
-              >
-                {workspacePaneTitle(
-                  targetPane,
-                  slots,
-                  directories,
-                  t("pty.paneNumber", { number: targetPane.paneNumber }),
-                  t("pty.emptyPane"),
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="pty-session-menu-separator" role="separator" />
-      <button
-        type="button"
-        role="menuitem"
-        className="danger"
-        onClick={() => onCloseSlot(slot)}
-      >
-        {t("pty.closeCurrent")}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="danger"
-        disabled={otherSessions.length === 0}
-        onClick={() => {
-          onActivateSession();
-          onCloseSlots(otherSessions);
-        }}
-      >
-        {t("pty.closeOthers", { count: otherSessions.length })}
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="danger"
-        disabled={paneSlots.length === 0}
-        onClick={() => onCloseSlots(paneSlots)}
-      >
-        {t("pty.closeAllInPane", { count: paneSlots.length })}
-      </button>
-    </div>,
-    document.body,
-  );
 }
 
 function workspacePaneTitle(
@@ -2679,9 +3489,11 @@ function workspacePaneTitle(
   paneName: string,
   emptyPaneLabel: string,
 ): string {
-  const activeSlot = pane.activeSessionId
-    ? slots.find((slot) => slot.instanceId === pane.activeSessionId)
-    : undefined;
+  const activeContent = pane.activeContent;
+  const activeSlot =
+    activeContent?.kind === "pty"
+      ? slots.find((slot) => slot.instanceId === activeContent.slotId)
+      : undefined;
   const targetTitle = activeSlot
     ? workspaceSlotTitle(activeSlot, directories)
     : emptyPaneLabel;
