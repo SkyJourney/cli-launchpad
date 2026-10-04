@@ -121,10 +121,10 @@ export const ko = {
     restoredMissingSession: "세션 기록이 더 이상 없습니다.",
     restoredSessionMismatch:
       "세션이 더 이상 이 프로젝트 또는 CLI에 연결되어 있지 않습니다.",
-    previousSessions: "이전 세션 {{count}}개",
-    nextSessions: "다음 세션 {{count}}개",
-    previousSessionsHeading: "이전 터미널 세션",
-    nextSessionsHeading: "다음 터미널 세션",
+    previousSessions: "이전 항목 {{count}}개",
+    nextSessions: "다음 항목 {{count}}개",
+    previousSessionsHeading: "이전 항목",
+    nextSessionsHeading: "다음 항목",
     emptyPane: "빈 창",
     empty:
       "오른쪽에서 세션을 복원하거나 이 창에서 파일을 열거나 CLI를 시작하세요.",
@@ -166,8 +166,8 @@ export const ko = {
     namedLayoutMissing:
       "이름이 지정된 레이아웃이 더 이상 없습니다. 목록을 새로 고친 후 다시 시도하세요.",
     closeCurrent: "이 터미널 닫기",
-    closeOthers: "창의 다른 터미널 {{count}}개 닫기",
-    closeAllInPane: "창의 모든 터미널 {{count}}개 닫기",
+    closeOthers: "창의 다른 항목 {{count}}개 닫기",
+    closeAllInPane: "창의 모든 항목 {{count}}개 닫기",
     splitTooSmall:
       "창을 다시 분할하려면 {{axis}}이(가) 최소 {{size}}px 필요합니다.",
     width: "너비",
@@ -551,8 +551,8 @@ export const ko = {
     closeFile: "파일 닫기",
     closeFileNamed: "{{name}} 닫기",
     fileMenu: "파일 창 메뉴",
-    closeOthers: "창의 다른 파일 {{count}}개 닫기",
-    closeAllInPane: "창의 모든 파일 {{count}}개 닫기",
+    closeOthers: "창의 다른 항목 {{count}}개 닫기",
+    closeAllInPane: "창의 모든 항목 {{count}}개 닫기",
     splitAndMoveRight: "오른쪽으로 분할하고 이 파일 이동",
     splitAndMoveDown: "아래로 분할하고 이 파일 이동",
     discardChanges:

@@ -70,17 +70,20 @@ export function App() {
   const sessionId = params.get("detachedSessionId");
   const handoffToken = params.get("handoffToken");
   const instanceId = params.get("instanceId");
+  const sourcePaneId = params.get("sourcePaneId");
   const detachedToolKey = TOOLS.find(
     (tool) => tool.key === params.get("detachedToolKey"),
   )?.key;
   const detachedFileId = params.get("detachedFileId");
   const fileHandoffToken = params.get("fileHandoffToken");
+  const fileSourcePaneId = params.get("sourcePaneId");
   if (detachedFileId && fileHandoffToken) {
     return (
       <Suspense fallback={null}>
         <StandaloneWorkspaceFileWindow
           documentId={detachedFileId}
           token={fileHandoffToken}
+          sourcePaneId={fileSourcePaneId ?? "unknown-pane"}
         />
       </Suspense>
     );
@@ -92,6 +95,7 @@ export function App() {
           sessionId={sessionId}
           handoffToken={handoffToken}
           instanceId={instanceId}
+          sourcePaneId={sourcePaneId ?? "unknown-pane"}
           toolKey={detachedToolKey}
           title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
         />

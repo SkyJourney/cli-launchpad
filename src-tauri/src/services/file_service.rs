@@ -1,9 +1,10 @@
 use std::fs::{self, OpenOptions};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
@@ -264,6 +265,9 @@ pub fn save_text_file(
     if content.len() as u64 > MAX_TEXT_FILE_BYTES {
         bail!("文件超过 2 MiB 文本编辑限制");
     }
+    if !is_plain_text(content.as_bytes()) {
+        bail!("只能保存 UTF-8 文本文件");
+    }
     let canonical_root = canonical_root(root)?;
     let path = resolve_existing(&canonical_root, relative_path)?;
     let metadata = fs::metadata(&path).context("无法读取文件属性")?;
@@ -331,7 +335,7 @@ fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn is_ignored_name(name: &str) -> bool {
+pub(crate) fn is_ignored_name(name: &str) -> bool {
     matches!(
         name,
         ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".venv"
@@ -339,23 +343,15 @@ fn is_ignored_name(name: &str) -> bool {
 }
 
 fn content_revision(content: &[u8]) -> String {
-    let hash = content.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    });
-    format!("{hash:016x}")
+    let digest = Sha256::digest(content);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
-    let temporary = sibling_suffix(destination, ".writing");
+    let mut temporary = create_synced_temporary(destination, bytes)?;
     let previous = sibling_suffix(destination, ".previous");
-    let _ = fs::remove_file(&temporary);
-    fs::write(&temporary, bytes)?;
-    OpenOptions::new()
-        .write(true)
-        .open(&temporary)?
-        .sync_all()?;
-
-    commit_replacement(destination, &temporary, &previous)
+    temporary.finish_writing()?;
+    temporary.commit(destination, &previous)
 }
 
 fn replace_file_if_revision(
@@ -363,23 +359,84 @@ fn replace_file_if_revision(
     bytes: &[u8],
     expected_revision: &str,
 ) -> Result<()> {
-    let temporary = sibling_suffix(destination, ".writing");
     let previous = sibling_suffix(destination, ".previous");
     let permissions = fs::metadata(destination)?.permissions();
-    let _ = fs::remove_file(&temporary);
-    fs::write(&temporary, bytes)?;
-    OpenOptions::new()
-        .write(true)
-        .open(&temporary)?
-        .sync_all()?;
-    fs::set_permissions(&temporary, permissions)?;
+    let mut temporary = create_synced_temporary(destination, bytes)?;
+    temporary.finish_writing()?;
+    temporary.set_permissions(permissions)?;
 
     let current = read_bounded(destination, MAX_TEXT_FILE_BYTES)?;
     if content_revision(&current) != expected_revision {
-        let _ = fs::remove_file(&temporary);
         bail!("文件已在其他位置修改，请重新载入后再保存");
     }
-    commit_replacement(destination, &temporary, &previous)
+    temporary.commit(destination, &previous)
+}
+
+struct TemporaryReplacement {
+    path: PathBuf,
+    file: Option<fs::File>,
+    committed: bool,
+}
+
+impl Drop for TemporaryReplacement {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.file.take();
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+impl TemporaryReplacement {
+    fn finish_writing(&mut self) -> Result<()> {
+        let file = self.file.as_mut().context("临时文件句柄已关闭")?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn set_permissions(&self, permissions: fs::Permissions) -> Result<()> {
+        self.file
+            .as_ref()
+            .context("临时文件句柄已关闭")?
+            .set_permissions(permissions)?;
+        Ok(())
+    }
+
+    fn commit(mut self, destination: &Path, previous: &Path) -> Result<()> {
+        self.file.take();
+        commit_replacement(destination, &self.path, previous)?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+fn create_synced_temporary(destination: &Path, bytes: &[u8]) -> Result<TemporaryReplacement> {
+    for _ in 0..8 {
+        let suffix = format!(".{}.writing", uuid::Uuid::new_v4().simple());
+        let temporary = sibling_suffix(destination, &suffix);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error.into());
+                }
+                return Ok(TemporaryReplacement {
+                    path: temporary,
+                    file: Some(file),
+                    committed: false,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    bail!("无法创建唯一的临时文件")
 }
 
 fn sibling_suffix(destination: &Path, suffix: &str) -> PathBuf {
@@ -518,6 +575,50 @@ mod tests {
                 .contains("其他位置修改")
         );
         assert_eq!(fs::read_to_string(file).unwrap(), "external");
+    }
+
+    #[test]
+    fn text_file_save_rejects_control_characters() {
+        let directory = tempdir().unwrap();
+        let file = directory.path().join("note.txt");
+        fs::write(&file, "first").unwrap();
+        let opened = read_text_file(directory.path(), "note.txt").unwrap();
+
+        assert!(save_text_file(
+            directory.path(),
+            "note.txt",
+            "invalid\0text",
+            &opened.revision,
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(file).unwrap(), "first");
+    }
+
+    #[test]
+    fn content_revision_uses_sha256() {
+        assert_eq!(
+            content_revision(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn temporary_replacements_are_unique_and_cleaned_up_on_drop() {
+        let directory = tempdir().unwrap();
+        let destination = directory.path().join("note.txt");
+        let first = create_synced_temporary(&destination, b"first").unwrap();
+        let second = create_synced_temporary(&destination, b"second").unwrap();
+
+        assert_ne!(first.path, second.path);
+        assert_eq!(fs::read(&first.path).unwrap(), b"first");
+        assert_eq!(fs::read(&second.path).unwrap(), b"second");
+
+        let first_path = first.path.clone();
+        let second_path = second.path.clone();
+        drop(first);
+        drop(second);
+        assert!(!first_path.exists());
+        assert!(!second_path.exists());
     }
 
     #[cfg(unix)]

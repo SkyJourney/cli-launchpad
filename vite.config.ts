@@ -10,6 +10,16 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.replace(/\\/g, "/");
           if (
+            normalizedId.includes("/src/lib/workspaceContentCoordinator") ||
+            normalizedId.includes("/src/lib/workspaceContentLifecycle") ||
+            normalizedId.includes("/src/lib/workspaceContentWindowProtocol") ||
+            normalizedId.includes(
+              "/src/components/workspaceContentHandoffRuntime",
+            )
+          ) {
+            return "workspace-content-lifecycle";
+          }
+          if (
             normalizedId.includes("/node_modules/react/") ||
             normalizedId.includes("/node_modules/react-dom/") ||
             normalizedId.includes("/node_modules/scheduler/")

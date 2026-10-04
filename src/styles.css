@@ -1966,6 +1966,7 @@ pre,
 }
 
 .pty-pane-content,
+.workspace-content-renderer,
 .pty-pane-session,
 .pty-pane-session > .pty-panel {
   display: flex;

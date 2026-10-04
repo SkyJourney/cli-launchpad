@@ -127,10 +127,10 @@ export const de = {
     restoredMissingSession: "Der Sitzungseintrag ist nicht mehr vorhanden.",
     restoredSessionMismatch:
       "Die Sitzung ist nicht mehr mit diesem Projekt oder dieser CLI verknüpft.",
-    previousSessions: "{{count}} frühere Sitzungen",
-    nextSessions: "{{count}} spätere Sitzungen",
-    previousSessionsHeading: "Frühere Terminalsitzungen",
-    nextSessionsHeading: "Spätere Terminalsitzungen",
+    previousSessions: "{{count}} frühere Einträge",
+    nextSessions: "{{count}} spätere Einträge",
+    previousSessionsHeading: "Frühere Inhalte",
+    nextSessionsHeading: "Spätere Inhalte",
     emptyPane: "Leerer Bereich",
     empty:
       "Stelle rechts eine Sitzung wieder her oder öffne hier eine Datei bzw. starte eine CLI.",
@@ -179,8 +179,8 @@ export const de = {
     namedLayoutMissing:
       "Dieses benannte Layout ist nicht mehr vorhanden. Aktualisiere die Liste und versuche es erneut.",
     closeCurrent: "Dieses Terminal schließen",
-    closeOthers: "Andere Terminals in diesem Bereich schließen ({{count}})",
-    closeAllInPane: "Alle Terminals in diesem Bereich schließen ({{count}})",
+    closeOthers: "Andere Inhalte in diesem Bereich schließen ({{count}})",
+    closeAllInPane: "Alle Inhalte in diesem Bereich schließen ({{count}})",
     splitTooSmall:
       "Der Bereich benötigt mindestens {{size}} px {{axis}}, um erneut geteilt zu werden.",
     width: "Breite",
@@ -578,8 +578,8 @@ export const de = {
     closeFile: "Datei schließen",
     closeFileNamed: "{{name}} schließen",
     fileMenu: "Dateifenstermenü",
-    closeOthers: "Andere Dateien in diesem Bereich schließen ({{count}})",
-    closeAllInPane: "Alle Dateien in diesem Bereich schließen ({{count}})",
+    closeOthers: "Andere Inhalte in diesem Bereich schließen ({{count}})",
+    closeAllInPane: "Alle Inhalte in diesem Bereich schließen ({{count}})",
     splitAndMoveRight: "Rechts teilen und diese Datei verschieben",
     splitAndMoveDown: "Unten teilen und diese Datei verschieben",
     discardChanges:

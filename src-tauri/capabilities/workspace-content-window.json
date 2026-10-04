@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "workspace-content-window",
+  "description": "独立工作区内容窗口所需的事件与窗口控制能力。",
+  "windows": ["workspace-content-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-is-maximized",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-toggle-maximize",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    "allow-save-project-text-file"
+  ]
+}

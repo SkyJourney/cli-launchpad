@@ -18,6 +18,8 @@ export {
 export type {
   WorkspaceContentAdapter,
   WorkspaceContentAdapterLabels,
+  WorkspaceContentAdapterLifecycle,
+  WorkspaceContentHandoffHookContext,
   WorkspaceContentRenderContext,
 } from "./workspaceContentAdapterRegistry";
 
@@ -25,12 +27,14 @@ export function WorkspaceContentView({
   content,
   fileDocument,
   fileBuffer,
+  ptyPortalTarget,
   onEditFile,
   onSaveFile,
 }: {
   content: WorkspacePaneContentRef | null | undefined;
   fileDocument: WorkspaceFileDocument | undefined;
   fileBuffer: WorkspaceFileBuffer | undefined;
+  ptyPortalTarget?: HTMLElement;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
 }) {
@@ -43,6 +47,9 @@ export function WorkspaceContentView({
   const adapter = getWorkspaceContentAdapter(content.kind);
   return adapter.render({
     content,
+    ...(content.kind === "pty"
+      ? { pty: { portalTarget: ptyPortalTarget } }
+      : {}),
     ...(content.kind === "file"
       ? {
           file: {

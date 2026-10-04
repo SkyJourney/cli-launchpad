@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
@@ -15,9 +15,21 @@ const unsupportedReasonKeys = {
   unsupportedImage: "workspaceFiles.unsupported.unsupportedImage",
 } as const;
 
-function PtyContentAdapter() {
-  // PTY DOM portals are attached and hidden by the PTY session registry.
-  return null;
+function PtyContentAdapter({ portalTarget }: { portalTarget?: HTMLElement }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host || !portalTarget) return;
+    portalTarget.hidden = false;
+    host.append(portalTarget);
+    return () => {
+      portalTarget.hidden = true;
+      if (portalTarget.parentElement === host) portalTarget.remove();
+    };
+  }, [portalTarget]);
+
+  return <div ref={hostRef} className="workspace-content-renderer" />;
 }
 
 function TextFileContentAdapter({
@@ -126,12 +138,24 @@ function TextFileContentAdapter({
   );
 }
 
-const builtinAdapters: WorkspaceContentAdapter[] = [
-  {
-    id: "core.pty",
-    apiVersion: 1,
-    kind: "pty",
-    render: () => <PtyContentAdapter />,
+const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
+  id: "core.pty",
+  apiVersion: 1,
+  kind: "pty",
+  render: (context) => {
+    if (context.content.kind !== "pty") return null;
+    return <PtyContentAdapter portalTarget={context.pty?.portalTarget} />;
+  },
+  lifecycle: {
+    prepareHandoff: async ({ capabilities }) => {
+      const payload = await capabilities.prepare();
+      return { transferId: payload.handoff.token, payload };
+    },
+    attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
+    rollbackHandoff: ({ capabilities }, payload, reason) =>
+      capabilities.rollback(payload, reason),
+  },
+  presentation: {
     labels: {
       menu: "pty.sessionMenu",
       close: "pty.close",
@@ -142,24 +166,36 @@ const builtinAdapters: WorkspaceContentAdapter[] = [
       splitAndMoveDown: "pty.splitAndMoveDown",
     },
   },
-  {
-    id: "core.file-editor",
-    apiVersion: 1,
-    kind: "file",
-    render: (context) => {
-      if (context.content.kind !== "file" || !context.file?.document) {
-        return null;
-      }
-      return (
-        <TextFileContentAdapter
-          fileDocument={context.file.document}
-          fileBuffer={context.file.buffer}
-          onEditFile={context.file.edit}
-          onSaveFile={context.file.save}
-        />
-      );
-    },
+};
+
+const fileAdapter: WorkspaceContentAdapter<"file"> = {
+  id: "core.file-editor",
+  apiVersion: 1,
+  kind: "file",
+  render: (context) => {
+    if (context.content.kind !== "file" || !context.file?.document) {
+      return null;
+    }
+    return (
+      <TextFileContentAdapter
+        fileDocument={context.file.document}
+        fileBuffer={context.file.buffer}
+        onEditFile={context.file.edit}
+        onSaveFile={context.file.save}
+      />
+    );
+  },
+  lifecycle: {
     beforeClose: ({ isDirty, confirmDiscard }) => !isDirty || confirmDiscard(),
+    prepareHandoff: async ({ transferId, capabilities }) => ({
+      transferId,
+      payload: await capabilities.prepare(),
+    }),
+    attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
+    rollbackHandoff: ({ capabilities }, payload, reason) =>
+      capabilities.rollback(payload, reason),
+  },
+  presentation: {
     labels: {
       menu: "workspaceFiles.fileMenu",
       close: "workspaceFiles.closeFile",
@@ -170,9 +206,12 @@ const builtinAdapters: WorkspaceContentAdapter[] = [
       splitAndMoveDown: "workspaceFiles.splitAndMoveDown",
     },
   },
-];
+};
 
 export function registerBuiltinWorkspaceContentAdapters(): () => void {
-  const unregister = builtinAdapters.map(registerWorkspaceContentAdapter);
+  const unregister = [
+    registerWorkspaceContentAdapter(ptyAdapter),
+    registerWorkspaceContentAdapter(fileAdapter),
+  ];
   return () => unregister.reverse().forEach((dispose) => dispose());
 }

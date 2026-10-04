@@ -133,6 +133,23 @@ export interface ProjectDirectoryListing {
   truncated: boolean;
 }
 
+export interface WorkspaceFileMetadata {
+  relativePath: string;
+  kind: "directory" | "file" | "other";
+  extension: string | null;
+  size: number;
+  modifiedAtMs: number | null;
+  hidden: boolean;
+  ignored: boolean;
+  symbolicLink: boolean;
+}
+
+export interface WorkspaceFileIndex {
+  entries: WorkspaceFileMetadata[];
+  truncated: boolean;
+  scannedAtMs: number;
+}
+
 export interface ProjectTextFile {
   content: string;
   revision: string;
@@ -457,6 +474,16 @@ export function listProjectFiles(directoryId: number, relativePath = "") {
   return invoke<ProjectDirectoryListing>("list_project_files", {
     directoryId,
     relativePath,
+  });
+}
+
+export function getWorkspaceFileIndex(
+  directoryId: number,
+  forceRefresh = false,
+) {
+  return invoke<WorkspaceFileIndex>("get_workspace_file_index", {
+    directoryId,
+    forceRefresh,
   });
 }
 

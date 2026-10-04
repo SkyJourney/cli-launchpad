@@ -13,4 +13,5 @@ pub mod pty_session_service;
 pub mod session_service;
 pub mod storage_service;
 pub mod version_service;
+pub mod workspace_file_index_service;
 pub mod workspace_layout_service;

@@ -1,9 +1,8 @@
-import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ArrowLeft, Terminal as TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ToolKey } from "../lib/tauri";
+import type { PtySession, ToolKey } from "../lib/tauri";
 import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
 import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
@@ -21,28 +20,34 @@ import {
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../lib/workspaceContentDrag";
 import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
+import {
+  emitWorkspaceContentWindowEvent,
+  listenWorkspaceContentWindowEvent,
+} from "../lib/workspaceContentWindowProtocol";
+import {
+  attachWorkspaceContentHandoff,
+  prepareWorkspaceContentHandoff,
+  rollbackWorkspaceContentHandoff,
+  WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
+} from "./workspaceContentHandoffRuntime";
+import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 
 interface StandalonePtyWindowProps {
   sessionId: string;
   handoffToken: string;
   instanceId: string;
+  sourcePaneId: string;
   toolKey?: ToolKey;
   title: string;
 }
 
-interface WindowHandoffEvent {
-  instanceId: string;
-  token: string;
-  message?: string;
-  targetPaneId?: string;
-}
-
-const RETURN_HANDOFF_TIMEOUT_MS = 15_000;
+const RETURN_HANDOFF_TIMEOUT_MS = WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS;
 
 export function StandalonePtyWindow({
   sessionId,
   handoffToken,
   instanceId,
+  sourcePaneId,
   toolKey,
   title,
 }: StandalonePtyWindowProps) {
@@ -53,6 +58,11 @@ export function StandalonePtyWindow({
   const returnInProgressRef = useRef(false);
   const returnAttemptRef = useRef(0);
   const currentReturnTokenRef = useRef(handoffToken);
+  const returnHandoffContextRef =
+    useRef<WorkspaceContentHandoffHookContext<"pty"> | null>(null);
+  const returnHandoffPayloadRef = useRef<
+    { handoff: { token: string; sequence?: number } } | undefined
+  >(undefined);
   const returnTimeoutRef = useRef<number | null>(null);
   const handoffStartedRef = useRef(false);
   const closeAfterExitRef = useRef<() => void>(() => undefined);
@@ -95,16 +105,27 @@ export function StandalonePtyWindow({
       const attempt = ++returnAttemptRef.current;
       const isCurrentAttempt = () => returnAttemptRef.current === attempt;
       returnInProgressRef.current = true;
+      returnHandoffContextRef.current = null;
+      returnHandoffPayloadRef.current = undefined;
       setReturning(true);
       setError(null);
       let token: string | null = null;
       const terminal = terminalRef.current;
+      let driverContext: WorkspaceContentHandoffHookContext<"pty"> | null =
+        null;
+      let handoffPayload:
+        | { handoff: { token: string; sequence?: number } }
+        | undefined;
       returnTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentAttempt()) return;
         returnTimeoutRef.current = null;
         const timeoutAttempt = ++returnAttemptRef.current;
-        if (token) {
-          void terminal?.cancelHandoff(token).catch(() => undefined);
+        if (driverContext) {
+          void rollbackWorkspaceContentHandoff(
+            driverContext,
+            handoffPayload,
+            new Error(t("pty.returnTimedOut")),
+          ).catch(() => undefined);
         }
         void reconcileWindowStatus().then((handled) => {
           if (returnAttemptRef.current !== timeoutAttempt || handled) return;
@@ -114,27 +135,64 @@ export function StandalonePtyWindow({
         });
       }, RETURN_HANDOFF_TIMEOUT_MS);
       try {
-        const handoff = await terminal?.captureHandoff();
-        if (!handoff) throw new Error(t("pty.terminalNotReady"));
-        token = handoff.token;
-        currentReturnTokenRef.current = handoff.token;
+        if (!terminal) throw new Error(t("pty.terminalNotReady"));
+        const currentWindow = getCurrentWindow();
+        driverContext = {
+          content: { kind: "pty", slotId: instanceId },
+          source: { kind: "window", windowLabel: currentWindow.label },
+          target: {
+            kind: "pane",
+            windowLabel: "main",
+            paneId: targetPaneId ?? sourcePaneId,
+          },
+          transferId: crypto.randomUUID(),
+          generation: 2,
+          capabilities: {
+            prepare: async () => ({ handoff: await terminal.captureHandoff() }),
+            attach: async (payload) => {
+              await terminal.attachHandoff(sessionId, payload.handoff.token);
+            },
+            rollback: async (payload) => {
+              if (payload) await terminal.cancelHandoff(payload.handoff.token);
+            },
+          },
+        };
+        const prepared = await prepareWorkspaceContentHandoff(driverContext);
+        driverContext = { ...driverContext, transferId: prepared.transferId };
+        handoffPayload = prepared.payload;
+        returnHandoffContextRef.current = driverContext;
+        returnHandoffPayloadRef.current = prepared.payload;
+        token = prepared.transferId;
+        currentReturnTokenRef.current = prepared.transferId;
         if (!isCurrentAttempt()) {
-          await terminal?.cancelHandoff(handoff.token).catch(() => undefined);
+          await rollbackWorkspaceContentHandoff(
+            driverContext,
+            prepared.payload,
+            new Error("返回请求已过期"),
+          ).catch(() => undefined);
           return;
         }
-        await emitTo("main", "pty-return-requested", {
+        await emitWorkspaceContentWindowEvent("main", "pty-return-requested", {
           instanceId,
           sessionId,
-          windowLabel: getCurrentWindow().label,
-          token: handoff.token,
+          windowLabel: currentWindow.label,
+          token: prepared.transferId,
           targetPaneId,
         });
         if (!isCurrentAttempt()) {
-          await terminal?.cancelHandoff(handoff.token).catch(() => undefined);
+          await rollbackWorkspaceContentHandoff(
+            driverContext,
+            prepared.payload,
+            new Error("返回请求已过期"),
+          ).catch(() => undefined);
         }
       } catch (reason) {
-        if (token) {
-          await terminal?.cancelHandoff(token).catch(() => undefined);
+        if (driverContext && token) {
+          await rollbackWorkspaceContentHandoff(
+            driverContext,
+            handoffPayload,
+            reason,
+          ).catch(() => undefined);
         }
         if (!isCurrentAttempt()) return;
         if (await reconcileWindowStatus()) return;
@@ -149,14 +207,14 @@ export function StandalonePtyWindow({
         setReturning(false);
       }
     },
-    [instanceId, reconcileWindowStatus, sessionId, t],
+    [instanceId, reconcileWindowStatus, sessionId, sourcePaneId, t],
   );
   const requestReturnRef = useRef(requestReturn);
   requestReturnRef.current = requestReturn;
 
   const reportExited = useCallback(
     () =>
-      emitTo("main", "pty-detached-exited", {
+      emitWorkspaceContentWindowEvent("main", "pty-detached-exited", {
         instanceId,
         sessionId,
         windowLabel: getCurrentWindow().label,
@@ -228,7 +286,7 @@ export function StandalonePtyWindow({
           if (status === "ended") {
             closeAfterExitRef.current();
           } else if (status === "ownedByAnotherWindow") {
-            emitTo("main", "pty-detached-failed", {
+            emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
               instanceId,
               sessionId,
               windowLabel: currentWindow.label,
@@ -257,9 +315,16 @@ export function StandalonePtyWindow({
       const currentWindow = getCurrentWindow();
       try {
         const registeredListeners = await Promise.all([
-          listen<WindowHandoffEvent>("pty-return-complete", (event) => {
-            if (event.payload.instanceId !== instanceId) return;
+          listenWorkspaceContentWindowEvent("pty-return-complete", (event) => {
+            if (
+              event.payload.instanceId !== instanceId ||
+              event.payload.token !== currentReturnTokenRef.current
+            ) {
+              return;
+            }
             returnAttemptRef.current += 1;
+            returnHandoffContextRef.current = null;
+            returnHandoffPayloadRef.current = undefined;
             if (returnTimeoutRef.current !== null) {
               window.clearTimeout(returnTimeoutRef.current);
               returnTimeoutRef.current = null;
@@ -270,7 +335,7 @@ export function StandalonePtyWindow({
                 console.error("Failed to destroy returned PTY window", reason),
               );
           }),
-          listen<WindowHandoffEvent>("pty-return-failed", (event) => {
+          listenWorkspaceContentWindowEvent("pty-return-failed", (event) => {
             if (
               event.payload.instanceId !== instanceId ||
               event.payload.token !== currentReturnTokenRef.current
@@ -289,11 +354,18 @@ export function StandalonePtyWindow({
             }
             returnInProgressRef.current = false;
             setReturning(false);
-            void terminalRef.current
-              ?.cancelHandoff(event.payload.token)
-              .catch(() => undefined);
+            const context = returnHandoffContextRef.current;
+            if (context?.transferId === event.payload.token) {
+              void rollbackWorkspaceContentHandoff(
+                context,
+                returnHandoffPayloadRef.current,
+                new Error(event.payload.message ?? "返回请求失败"),
+              ).catch(() => undefined);
+            }
+            returnHandoffContextRef.current = null;
+            returnHandoffPayloadRef.current = undefined;
           }),
-          listen<{ instanceId: string; targetPaneId?: string }>(
+          listenWorkspaceContentWindowEvent(
             "pty-return-drop-requested",
             (event) => {
               if (event.payload.instanceId === instanceId) {
@@ -314,20 +386,39 @@ export function StandalonePtyWindow({
         if (!terminal) {
           throw new Error(translationRef.current("pty.terminalNotReady"));
         }
-        const attachedSession = await terminal.attachHandoff(
-          sessionId,
-          handoffToken,
-        );
+        const currentWindow = getCurrentWindow();
+        let attachedState: PtySession["state"] | null = null;
+        const driverContext: WorkspaceContentHandoffHookContext<"pty"> = {
+          content: { kind: "pty", slotId: instanceId },
+          source: { kind: "pane", windowLabel: "main", paneId: sourcePaneId },
+          target: { kind: "window", windowLabel: currentWindow.label },
+          transferId: handoffToken,
+          generation: 1,
+          capabilities: {
+            prepare: async () => ({ handoff: { token: handoffToken } }),
+            attach: async (payload) => {
+              attachedState = (
+                await terminal.attachHandoff(sessionId, payload.handoff.token)
+              ).state;
+            },
+            rollback: async (payload) => {
+              if (payload) await terminal.cancelHandoff(payload.handoff.token);
+            },
+          },
+        };
+        const attachedPayload = { handoff: { token: handoffToken } };
+        await attachWorkspaceContentHandoff(driverContext, attachedPayload);
+        const attachedSession = attachedState;
         if (disposed) return;
         if (
-          attachedSession.state === "exited" ||
-          attachedSession.state === "terminated" ||
-          attachedSession.state === "failed"
+          attachedSession === "exited" ||
+          attachedSession === "terminated" ||
+          attachedSession === "failed"
         ) {
           closeAfterExitRef.current();
           return;
         }
-        await emitTo("main", "pty-detached-ready", {
+        await emitWorkspaceContentWindowEvent("main", "pty-detached-ready", {
           instanceId,
           sessionId,
           windowLabel: currentWindow.label,
@@ -358,7 +449,7 @@ export function StandalonePtyWindow({
             return;
           }
           setError(String(reason));
-          await emitTo("main", "pty-detached-failed", {
+          await emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
             instanceId,
             sessionId,
             windowLabel: currentWindow.label,
@@ -385,7 +476,9 @@ export function StandalonePtyWindow({
 
   return (
     <WorkspaceContentWindowShell
-      beforeClose={getWorkspaceContentAdapter("pty").beforeWindowClose}
+      beforeClose={
+        getWorkspaceContentAdapter("pty").lifecycle?.beforeWindowClose
+      }
       onCloseRequested={handleWindowCloseRequest}
       actions={
         <button

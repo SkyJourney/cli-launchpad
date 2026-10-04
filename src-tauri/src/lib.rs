@@ -251,6 +251,7 @@ pub fn run() {
             commands::files::read_project_text_file,
             commands::files::open_project_file,
             commands::files::save_project_text_file,
+            commands::workspace_file_index::get_workspace_file_index,
             commands::execution::start_execution_task,
             commands::execution::list_execution_tasks,
             commands::execution::get_execution_task,

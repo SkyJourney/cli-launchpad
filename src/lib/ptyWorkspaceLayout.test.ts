@@ -23,10 +23,59 @@ import {
   setWorkspaceSplitRatio,
   splitAndMoveWorkspaceSession,
   splitWorkspacePane,
+  splitWorkspaceContentSequence,
+  workspacePaneOtherContents,
   workspaceSplitSizes,
 } from "./ptyWorkspaceLayout";
 
 describe("PTY workspace split tree", () => {
+  it("keeps mixed PTY and file tabs in one ordered overflow sequence", () => {
+    const entries = [
+      { content: { kind: "pty", slotId: "terminal-a" }, label: "Terminal" },
+      { content: { kind: "file", documentId: "file-a" }, label: "README" },
+      { content: { kind: "pty", slotId: "terminal-b" }, label: "Terminal 2" },
+    ] as const;
+
+    expect(
+      splitWorkspaceContentSequence(entries, {
+        kind: "file",
+        documentId: "file-a",
+      }),
+    ).toEqual({
+      before: [entries[0]],
+      active: entries[1],
+      after: [entries[2]],
+    });
+  });
+
+  it("puts all resolvable content in overflow if the active reference is missing", () => {
+    const entries = [
+      { content: { kind: "file", documentId: "file-a" }, label: "README" },
+    ] as const;
+
+    expect(
+      splitWorkspaceContentSequence(entries, {
+        kind: "pty",
+        slotId: "missing-terminal",
+      }),
+    ).toEqual({ before: [], after: [...entries] });
+  });
+
+  it("includes all content kinds when selecting other pane contents", () => {
+    const contents = [
+      { kind: "pty", slotId: "terminal-a" },
+      { kind: "file", documentId: "file-a" },
+      { kind: "pty", slotId: "terminal-b" },
+    ] as const;
+
+    expect(
+      workspacePaneOtherContents(contents, {
+        kind: "file",
+        documentId: "file-a",
+      }),
+    ).toEqual([contents[0], contents[2]]);
+  });
+
   it("counts detached sessions in the project and CLI window sequence", () => {
     const allManagedSlots = [
       { directoryId: 42, toolKey: "codex", sequence: 1 },

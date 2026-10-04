@@ -124,10 +124,10 @@ export const ru = {
     restoredMissingSession: "Запись сессии больше не существует.",
     restoredSessionMismatch:
       "Сессия больше не связана с этим проектом или CLI.",
-    previousSessions: "Предыдущих сессий: {{count}}",
-    nextSessions: "Следующих сессий: {{count}}",
-    previousSessionsHeading: "Предыдущие сессии терминала",
-    nextSessionsHeading: "Следующие сессии терминала",
+    previousSessions: "Предыдущих элементов: {{count}}",
+    nextSessions: "Следующих элементов: {{count}}",
+    previousSessionsHeading: "Предыдущие элементы",
+    nextSessionsHeading: "Следующие элементы",
     emptyPane: "Пустая область",
     empty:
       "Восстановите сессию справа или откройте файл либо запустите CLI в этой области.",
@@ -172,8 +172,8 @@ export const ru = {
     namedLayoutMissing:
       "Эта именованная раскладка больше не существует. Обновите список и повторите попытку.",
     closeCurrent: "Закрыть этот терминал",
-    closeOthers: "Закрыть остальные терминалы в области ({{count}})",
-    closeAllInPane: "Закрыть все терминалы в области ({{count}})",
+    closeOthers: "Закрыть другое содержимое области ({{count}})",
+    closeAllInPane: "Закрыть всё содержимое области ({{count}})",
     splitTooSmall:
       "Для повторного разделения области требуется не менее {{size}} px по {{axis}}.",
     width: "ширина",
@@ -567,8 +567,8 @@ export const ru = {
     closeFile: "Закрыть файл",
     closeFileNamed: "Закрыть {{name}}",
     fileMenu: "Меню окна файла",
-    closeOthers: "Закрыть остальные файлы в области ({{count}})",
-    closeAllInPane: "Закрыть все файлы в области ({{count}})",
+    closeOthers: "Закрыть другое содержимое области ({{count}})",
+    closeAllInPane: "Закрыть всё содержимое области ({{count}})",
     splitAndMoveRight: "Разделить справа и переместить этот файл",
     splitAndMoveDown: "Разделить снизу и переместить этот файл",
     discardChanges:

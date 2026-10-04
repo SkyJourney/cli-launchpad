@@ -13,4 +13,5 @@ pub mod launch_history;
 pub mod pty_session;
 pub mod session;
 pub mod terminal;
+pub mod workspace_file_index;
 pub mod workspace_layout;

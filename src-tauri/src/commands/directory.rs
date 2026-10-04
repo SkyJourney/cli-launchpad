@@ -64,6 +64,10 @@ pub fn remove_directory(
     })?;
     with_cache(&cache, |connection| {
         cache_service::remove_prefix(connection, "sessions:")?;
+        cache_service::remove_prefix(
+            connection,
+            &crate::services::workspace_file_index_service::cache_prefix(id),
+        )?;
         crate::db::session_search_repo::remove_directory(connection, id)?;
         Ok(())
     })?;

@@ -126,10 +126,10 @@ export const ja = {
     restoredMissingSession: "セッションの記録は存在しません。",
     restoredSessionMismatch:
       "このセッションは、現在このプロジェクトまたは CLI に関連付けられていません。",
-    previousSessions: "前のセッション {{count}} 件",
-    nextSessions: "次のセッション {{count}} 件",
-    previousSessionsHeading: "前のターミナルセッション",
-    nextSessionsHeading: "次のターミナルセッション",
+    previousSessions: "前の項目 {{count}} 件",
+    nextSessions: "後の項目 {{count}} 件",
+    previousSessionsHeading: "前の項目",
+    nextSessionsHeading: "後の項目",
     emptyPane: "空のペイン",
     empty:
       "右側からセッションを復元するか、このペインでファイルを開くか CLI を起動してください。",
@@ -173,8 +173,8 @@ export const ja = {
     namedLayoutMissing:
       "この名前付きレイアウトは存在しません。リストを更新して、もう一度お試しください。",
     closeCurrent: "このターミナルを閉じる",
-    closeOthers: "ペイン内の他のターミナルを閉じる（{{count}}）",
-    closeAllInPane: "ペイン内のすべてのターミナルを閉じる（{{count}}）",
+    closeOthers: "ペイン内の他の項目を閉じる（{{count}}）",
+    closeAllInPane: "ペイン内のすべての項目を閉じる（{{count}}）",
     splitTooSmall:
       "再分割するには、ペインの{{axis}}が少なくとも {{size}} px 必要です。",
     width: "幅",
@@ -562,8 +562,8 @@ export const ja = {
     closeFile: "ファイルを閉じる",
     closeFileNamed: "{{name}} を閉じる",
     fileMenu: "ファイルウィンドウメニュー",
-    closeOthers: "ペイン内の他のファイルを閉じる（{{count}}）",
-    closeAllInPane: "ペイン内のすべてのファイルを閉じる（{{count}}）",
+    closeOthers: "ペイン内の他の項目を閉じる（{{count}}）",
+    closeAllInPane: "ペイン内のすべての項目を閉じる（{{count}}）",
     splitAndMoveRight: "右に分割してこのファイルを移動",
     splitAndMoveDown: "下に分割してこのファイルを移動",
     discardChanges: "未保存の変更があります。閉じて変更を破棄しますか？",

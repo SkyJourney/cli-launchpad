@@ -13,6 +13,17 @@
     "core:window:allow-start-resize-dragging",
     "core:window:allow-toggle-maximize",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "allow-begin-pty-handoff",
+    "allow-stage-pty-handoff-snapshot",
+    "allow-complete-pty-handoff",
+    "allow-finalize-pty-handoff",
+    "allow-cancel-pty-handoff",
+    "allow-get-pty-session-window-status",
+    "allow-write-pty-session",
+    "allow-resize-pty-session",
+    "allow-acknowledge-pty-output",
+    "allow-report-pty-frontend-stage",
+    "allow-terminate-pty-session"
   ]
 }

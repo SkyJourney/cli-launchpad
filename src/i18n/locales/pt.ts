@@ -126,10 +126,10 @@ export const pt = {
     restoredMissingSession: "O registro da sessão não existe mais.",
     restoredSessionMismatch:
       "A sessão não está mais vinculada a este projeto ou CLI.",
-    previousSessions: "{{count}} sessões anteriores",
-    nextSessions: "{{count}} sessões seguintes",
-    previousSessionsHeading: "Sessões de terminal anteriores",
-    nextSessionsHeading: "Sessões de terminal seguintes",
+    previousSessions: "{{count}} itens anteriores",
+    nextSessions: "{{count}} itens seguintes",
+    previousSessionsHeading: "Itens anteriores",
+    nextSessionsHeading: "Itens seguintes",
     emptyPane: "Painel vazio",
     empty:
       "Restaure uma sessão à direita ou abra um arquivo ou inicie uma CLI neste painel.",
@@ -176,8 +176,8 @@ export const pt = {
     namedLayoutMissing:
       "Este layout nomeado não existe mais. Atualize a lista e tente novamente.",
     closeCurrent: "Fechar este terminal",
-    closeOthers: "Fechar outros terminais no painel ({{count}})",
-    closeAllInPane: "Fechar todos os terminais no painel ({{count}})",
+    closeOthers: "Fechar outros conteúdos no painel ({{count}})",
+    closeAllInPane: "Fechar todo o conteúdo no painel ({{count}})",
     splitTooSmall:
       "O painel precisa de pelo menos {{size}} px de {{axis}} para ser dividido novamente.",
     width: "largura",
@@ -575,8 +575,8 @@ export const pt = {
     closeFile: "Fechar arquivo",
     closeFileNamed: "Fechar {{name}}",
     fileMenu: "Menu da janela do arquivo",
-    closeOthers: "Fechar outros arquivos no painel ({{count}})",
-    closeAllInPane: "Fechar todos os arquivos no painel ({{count}})",
+    closeOthers: "Fechar outros conteúdos no painel ({{count}})",
+    closeAllInPane: "Fechar todo o conteúdo no painel ({{count}})",
     splitAndMoveRight: "Dividir à direita e mover este arquivo",
     splitAndMoveDown: "Dividir abaixo e mover este arquivo",
     discardChanges:

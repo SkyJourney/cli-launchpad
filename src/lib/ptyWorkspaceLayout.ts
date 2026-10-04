@@ -127,6 +127,32 @@ export function listWorkspacePaneContents(
     : [...pane.contents];
 }
 
+export function splitWorkspaceContentSequence<
+  T extends {
+    content: WorkspacePaneContentRef;
+  },
+>(
+  entries: readonly T[],
+  activeContent: WorkspacePaneContentRef | null | undefined,
+): { before: T[]; active?: T; after: T[] } {
+  const activeIndex = entries.findIndex((entry) =>
+    sameWorkspaceContent(entry.content, activeContent),
+  );
+  if (activeIndex < 0) return { before: [], after: [...entries] };
+  return {
+    before: entries.slice(0, activeIndex),
+    active: entries[activeIndex],
+    after: entries.slice(activeIndex + 1),
+  };
+}
+
+export function workspacePaneOtherContents(
+  contents: readonly WorkspacePaneContentRef[],
+  target: WorkspacePaneContentRef,
+): WorkspacePaneContentRef[] {
+  return contents.filter((content) => !sameWorkspaceContent(content, target));
+}
+
 export function hasWorkspaceContent(
   pane: WorkspacePane,
   content: WorkspacePaneContentRef,

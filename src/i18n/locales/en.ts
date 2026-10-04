@@ -118,10 +118,10 @@ export const en = {
     restoredMissingSession: "The session record no longer exists.",
     restoredSessionMismatch:
       "The session is no longer linked to this project or CLI.",
-    previousSessions: "{{count}} earlier sessions",
-    nextSessions: "{{count}} later sessions",
-    previousSessionsHeading: "Earlier terminal sessions",
-    nextSessionsHeading: "Later terminal sessions",
+    previousSessions: "{{count}} earlier items",
+    nextSessions: "{{count}} later items",
+    previousSessionsHeading: "Earlier items",
+    nextSessionsHeading: "Later items",
     emptyPane: "Empty pane",
     empty:
       "Restore a session from the right, or open a file or start a CLI in this pane.",
@@ -165,8 +165,8 @@ export const en = {
     namedLayoutMissing:
       "This named layout no longer exists. Refresh the list and try again.",
     closeCurrent: "Close this terminal",
-    closeOthers: "Close other terminals in pane ({{count}})",
-    closeAllInPane: "Close all terminals in pane ({{count}})",
+    closeOthers: "Close other pane contents ({{count}})",
+    closeAllInPane: "Close all pane contents ({{count}})",
     splitTooSmall:
       "The pane needs at least {{size}} px of {{axis}} to split again.",
     width: "width",
@@ -555,8 +555,8 @@ export const en = {
     closeFile: "Close file",
     closeFileNamed: "Close {{name}}",
     fileMenu: "File window menu",
-    closeOthers: "Close other files in pane ({{count}})",
-    closeAllInPane: "Close all files in pane ({{count}})",
+    closeOthers: "Close other pane contents ({{count}})",
+    closeAllInPane: "Close all pane contents ({{count}})",
     splitAndMoveRight: "Split right and move this file",
     splitAndMoveDown: "Split down and move this file",
     discardChanges: "This file has unsaved changes. Close and discard them?",

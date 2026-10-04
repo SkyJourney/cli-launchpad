@@ -126,10 +126,10 @@ export const fr = {
     restoredMissingSession: "L’enregistrement de la session n’existe plus.",
     restoredSessionMismatch:
       "La session n’est plus associée à ce projet ou à cette CLI.",
-    previousSessions: "{{count}} sessions précédentes",
-    nextSessions: "{{count}} sessions suivantes",
-    previousSessionsHeading: "Sessions de terminal précédentes",
-    nextSessionsHeading: "Sessions de terminal suivantes",
+    previousSessions: "{{count}} éléments précédents",
+    nextSessions: "{{count}} éléments suivants",
+    previousSessionsHeading: "Éléments précédents",
+    nextSessionsHeading: "Éléments suivants",
     emptyPane: "Panneau vide",
     empty:
       "Restaurez une session depuis la droite ou ouvrez un fichier ou démarrez une CLI dans ce panneau.",
@@ -176,8 +176,8 @@ export const fr = {
     namedLayoutMissing:
       "Cette disposition nommée n’existe plus. Actualisez la liste et réessayez.",
     closeCurrent: "Fermer ce terminal",
-    closeOthers: "Fermer les autres terminaux du panneau ({{count}})",
-    closeAllInPane: "Fermer tous les terminaux du panneau ({{count}})",
+    closeOthers: "Fermer les autres contenus du panneau ({{count}})",
+    closeAllInPane: "Fermer tout le contenu du panneau ({{count}})",
     splitTooSmall:
       "Le panneau doit avoir au moins {{size}} px de {{axis}} pour être divisé à nouveau.",
     width: "largeur",
@@ -578,8 +578,8 @@ export const fr = {
     closeFile: "Fermer le fichier",
     closeFileNamed: "Fermer {{name}}",
     fileMenu: "Menu de la fenêtre du fichier",
-    closeOthers: "Fermer les autres fichiers du panneau ({{count}})",
-    closeAllInPane: "Fermer tous les fichiers du panneau ({{count}})",
+    closeOthers: "Fermer les autres contenus du panneau ({{count}})",
+    closeAllInPane: "Fermer tout le contenu du panneau ({{count}})",
     splitAndMoveRight: "Scinder à droite et déplacer ce fichier",
     splitAndMoveDown: "Scinder en bas et déplacer ce fichier",
     discardChanges:
