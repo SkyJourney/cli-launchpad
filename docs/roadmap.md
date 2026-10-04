@@ -119,6 +119,19 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 - M5 已整体关闭；历史逐项记录与未覆盖边界见[跨平台对齐记录](milestones/0.3.0/cross-platform-alignment.md)。之后发现的平台问题使用 bug+fix 流程独立处理，不重开 M5。
 - [0.3.0 正式 Release](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0) 已发布 12 个平台安装包和 SHA-256 校验清单；发布前预检与正式 tag workflow 均通过。
 
-## 0.3.0 之后
+## 0.4.0：项目文件、编辑与 Git 工作区
 
-根据 0.3.0 使用反馈再评估后台 PTY 守护进程、跨设备签名与公证、更多布局预设等能力。应用自身自动更新和远程 Agent 编排不属于当前承诺范围。
+0.4.0 在 0.3.0 的本地项目与 PTY 工作台上，增加项目文件浏览与编辑、Markdown 连续预览和完整本地/远程 Git 协作。整个版本拆为 M6–M10 顺序推进；里程碑共同构成 0.4.0，不分别代表版本发布。
+
+产品仍以用户已登记的本地项目目录为中心，不提供仓库克隆。窗格容器从 PTY 专用布局扩展为多内容容器，先以静态适配器承载 PTY 终端、文本编辑器和 Markdown 预览。文件与 Git 能力由 Rust services 以项目根目录为安全边界提供；系统 Git、凭据助手、操作系统凭据存储和 SSH agent 作为 Git 执行与认证路径。Launchpad 不建立独立账号库，不存储 Git 密钥。
+
+| 里程碑 | 范围 | 依赖 |
+| --- | --- | --- |
+| [0.4.0 里程碑索引](milestones/0.4.0/README.md) | M6–M10 总览、依赖与版本验收门禁 | 0.3.0 |
+| [M6：内容窗格与文件工作区](milestones/0.4.0/M6-workspace-files.md) | 窗格内容宿主/适配器、项目文件树、文本编辑和保存 | 0.3.0 |
+| [M7：Markdown 连续预览](milestones/0.4.0/M7-markdown-preview.md) | 先优化 md-to-pdf 功能分包，再由 Launchpad 按配置接入安全渲染、文档主题与 ECharts；评估独立 npm 发布条件 | M6 |
+| [M8：本地 Git 管理与编辑器联动](milestones/0.4.0/M8-local-git.md) | 分支、工作区状态、diff、暂存/提交、blame 和行标记 | M6 |
+| [M9：远程与系统认证](milestones/0.4.0/M9-git-remotes-auth.md) | remote 管理、认证交互、fetch/push/快进拉取 | M8 |
+| [M10：Rebase 与冲突恢复](milestones/0.4.0/M10-rebase-conflicts.md) | rebase/冲突状态、三方编辑、继续/跳过/中止及恢复 | M9 |
+
+0.4.0 的发布门禁是 M6–M10 完成后进行全量审查和跨平台验收。每一阶段都要求维护现有 PTY、布局保存/恢复和独立终端窗口行为；变更、认证和冲突状态必须以文件系统与系统 Git 的真实状态为准。详细范围和测试要求见 [0.4.0 里程碑索引](milestones/0.4.0/README.md)。
