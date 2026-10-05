@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn native_update_command_uses_install_home_not_isolated_app_home() {
         let root = tempdir().unwrap();
-        let home = root.path();
+        let home = std::fs::canonicalize(root.path()).unwrap();
         let versions = home.join(".local/share/claude/versions");
         let bin = home.join(".local/bin");
         std::fs::create_dir_all(&versions).unwrap();
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn version_probe_disables_automatic_updates_and_uses_native_home() {
         let root = tempdir().unwrap();
-        let home = root.path();
+        let home = std::fs::canonicalize(root.path()).unwrap();
         let versions = home.join(".local/share/claude/versions");
         std::fs::create_dir_all(&versions).unwrap();
         let binary = versions.join("2.1.280");

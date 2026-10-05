@@ -97,15 +97,10 @@ impl FileCasAdapter for NativeFileCasAdapter {
         locked_target: Option<&File>,
         permissions: Option<std::fs::Permissions>,
     ) -> Result<()> {
+        // The caller keeps this handle alive through commit to retain the CAS lock.
+        let _ = locked_target;
         #[cfg(windows)]
         {
-            if let Some(target) = locked_target {
-                preserve_windows_dacl(
-                    target,
-                    temporary_file.as_ref().context("临时文件句柄已关闭")?,
-                )
-                .context("无法保留项目文件 ACL")?;
-            }
             if let Some(permissions) = permissions {
                 temporary_file
                     .as_ref()
@@ -252,10 +247,20 @@ fn parent_and_name(root: &Dir, destination: &Path) -> Result<(Dir, PathBuf)> {
 }
 
 fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
-    let file = open_target(directory, path)
-        .context("无法打开待保存文件")?
-        .into_std();
     let deadline = Instant::now() + LOCK_TIMEOUT;
+    let file = loop {
+        match open_target(directory, path) {
+            Ok(file) => break file.into_std(),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
+            {
+                // A concurrent Windows ReplaceFileW can briefly make the
+                // destination unavailable while its pathname is being swapped.
+                thread::sleep(LOCK_RETRY_INTERVAL);
+            }
+            Err(error) => return Err(error).context("无法打开待保存文件"),
+        }
+    };
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(file),
@@ -564,115 +569,6 @@ fn restrict_to_current_user(file: &File) -> std::io::Result<()> {
         return Err(std::io::Error::from_raw_os_error(status as i32));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<()> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::{
-        Foundation::LocalFree,
-        Security::Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
-        Security::{
-            AddAce, GetAce, GetSecurityDescriptorControl, InitializeAcl, ACE_HEADER, ACL,
-            DACL_SECURITY_INFORMATION, INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
-            SE_DACL_PROTECTED, UNPROTECTED_DACL_SECURITY_INFORMATION,
-        },
-    };
-    let mut dacl = std::ptr::null_mut::<ACL>();
-    let mut descriptor = std::ptr::null_mut();
-    let status = unsafe {
-        GetSecurityInfo(
-            target.as_raw_handle() as _,
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut dacl,
-            std::ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    if status != 0 {
-        return Err(std::io::Error::from_raw_os_error(status as i32));
-    }
-
-    let result = (|| {
-        let mut control = 0;
-        let mut revision = 0;
-        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let dacl_is_protected = control & SE_DACL_PROTECTED != 0;
-        let (dacl_to_apply, security_information, _filtered_acl) = if dacl_is_protected {
-            (
-                dacl as *const ACL,
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                None,
-            )
-        } else if dacl.is_null() {
-            // A null DACL grants full access. Preserve it as null while allowing
-            // the replacement to retain the target directory's inheritance mode.
-            (
-                std::ptr::null(),
-                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                None,
-            )
-        } else {
-            let source_acl = unsafe { &*dacl };
-            let acl_size = source_acl.AclSize as usize;
-            let mut storage = vec![0u64; acl_size.div_ceil(std::mem::size_of::<u64>())];
-            let filtered_acl = storage.as_mut_ptr().cast::<ACL>();
-            if unsafe {
-                InitializeAcl(filtered_acl, acl_size as u32, source_acl.AclRevision as u32)
-            } == 0
-            {
-                return Err(std::io::Error::last_os_error());
-            }
-            for ace_index in 0..source_acl.AceCount as u32 {
-                let mut ace = std::ptr::null_mut();
-                if unsafe { GetAce(dacl, ace_index, &mut ace) } == 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                let header = unsafe { &*ace.cast::<ACE_HEADER>() };
-                if header.AceFlags & INHERITED_ACE as u8 == 0
-                    && unsafe {
-                        AddAce(
-                            filtered_acl,
-                            source_acl.AclRevision as u32,
-                            u32::MAX,
-                            ace,
-                            header.AceSize as u32,
-                        )
-                    } == 0
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-            (
-                filtered_acl as *const ACL,
-                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                Some(storage),
-            )
-        };
-        let status = unsafe {
-            SetSecurityInfo(
-                replacement.as_raw_handle() as _,
-                SE_FILE_OBJECT,
-                security_information,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                dacl_to_apply,
-                std::ptr::null_mut(),
-            )
-        };
-        drop(_filtered_acl);
-        if status != 0 {
-            return Err(std::io::Error::from_raw_os_error(status as i32));
-        }
-        Ok(())
-    })();
-    unsafe { LocalFree(descriptor) };
-    result
 }
 
 #[cfg(test)]
@@ -1052,6 +948,27 @@ mod tests {
         holder.join().unwrap();
         assert!(result.unwrap_err().to_string().contains("占用"));
         assert!(elapsed < LOCK_TIMEOUT + Duration::from_secs(5));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+    }
+
+    #[test]
+    fn lock_current_retries_a_temporary_missing_path() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("note.txt");
+        let moved_path = root.path().join("note.txt.replacement");
+        std::fs::write(&path, "before").unwrap();
+        std::fs::rename(&path, &moved_path).unwrap();
+        let restore_path = path.clone();
+        let restore_from = moved_path.clone();
+        let restore = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            std::fs::rename(restore_from, restore_path).unwrap();
+        });
+
+        let directory = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let locked = lock_current(&directory, Path::new("note.txt")).unwrap();
+        restore.join().unwrap();
+        drop(locked);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
     }
 

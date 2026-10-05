@@ -58,7 +58,7 @@
 
 ## 1. 执行摘要
 
-**结论：M6 当前不满足关闭条件。** 除已知的跨平台实机验收未完成外，代码中存在 1 项 P0、7 项 P1。M6 文档中还有 3 项被写成“已交付/已满足”的能力实际没有做到：标题自适应、宿主统一命令模型、权限闭环证据。
+**结论：M6 当前不满足关闭条件。** 除已知的跨平台实机验收未完成外，代码中存在 1 项 P0、8 项 P1。M6 文档中还有 3 项被写成“已交付/已满足”的能力实际没有做到：标题自适应、宿主统一命令模型、权限闭环证据。
 
 | 指标                  | 数值                                                  |
 | --------------------- | ----------------------------------------------------- |
@@ -344,8 +344,9 @@ WP0 是其余工作包的验证前提，应最先完成。
 #### WP0 实施记录（2026-10-05）
 
 - `J3`：已建立 DOM 测试环境与 Tauri mock；`src/test/tauriMock.test.tsx` 的 `Tauri DOM test environment > renders React and records invocations while allowing events to be triggered` 验证 React 渲染、结构化 invoke 记录和手动事件触发。契约测试另验证 `src/lib/workspaceContentWindowProtocol.ts` 的窗口 label 前缀与 `contracts/window-kinds.json` 一致。第 6 节列出的宿主行为场景将在各自问题对应的波次中验收，本条不提前宣称这些场景已通过。
-- `J2`：已增加三平台 CI 工作流并由发布工作流复用。首轮 Actions run [37300368429](https://github.com/SkyJourney/cli-launchpad/actions/runs/37300368429) 中 Ubuntu 通过，macOS 因 Vite 构建 Node 堆内存不足失败，Windows 发现锁超时断言依赖 runner 调度、Codex 安装计划测试依赖机器上存在 `codex` 命令，以及下列 `J4` ACL 语义缺陷。已分别将构建堆上限设为 4 GiB、用显式释放信号稳健化锁测试并从合成路径测试计划构造；修复后的三平台 CI 结果待 WP0 后续提交推送后补记，故 `J2` 暂不关闭。
-- 契约清单：Rust 与 TypeScript 契约测试已加入；本机 `pnpm test` 178 项、Rust 全量 261 项通过。ACL 修复后 Windows 文件 CAS 相关测试 11 项通过；三平台 CI 结果待 WP0 后续提交验证。
+- `J2`：已增加三平台 CI 工作流并由发布工作流复用。首轮 run [37300368429](https://github.com/SkyJourney/cli-launchpad/actions/runs/37300368429) 中 Ubuntu 通过，macOS 因 Vite 构建 Node 堆内存不足失败，Windows 发现锁超时断言依赖 runner 调度、Codex 安装计划测试依赖机器上存在 `codex` 命令，以及下列 `J4` ACL 语义缺陷。已分别将构建堆上限设为 4 GiB、用显式释放信号稳健化锁测试并从合成路径测试计划构造。
+- `J2` 复验：后续 run [37304043792](https://github.com/SkyJourney/cli-launchpad/actions/runs/37304043792) 中 Ubuntu 全通过；macOS 前端、构建、格式、编译通过，但 3 项 Claude 临时目录断言因 `/var` 与 `/private/var` 规范路径差异失败（测试 `native_update_command_uses_install_home_not_isolated_app_home`、`version_probe_disables_automatic_updates_and_uses_native_home`、`resolves_home_from_native_versioned_binary`）。Windows 前端、构建、格式、编译通过，Rust 259 项通过、2 项失败：继承 ACL 被复制两次（J4），以及并发 ReplaceFileW 期间另一个 CAS worker 短暂遇到目标路径 NotFound。Claude 测试现改用规范路径；`lock_current` 增加有界 NotFound 重试并由 `lock_current_retries_a_temporary_missing_path` 覆盖。当前本机所有门禁已通过；上述修复提交后的三平台 CI 尚未运行，因此 `J2` 仍未关闭。
+- 契约清单：Rust 与 TypeScript 契约测试已加入。本机 `pnpm test` 178 项通过，`cargo test --manifest-path src-tauri/Cargo.toml` 262 项通过；Windows 文件 CAS 的 12 项定向测试也通过。`pnpm run build`、`cargo fmt --check`、`cargo check` 和 `git diff --check` 通过。三平台 CI 仍是 WP0 关闭前置条件。
 
 ### WP1 退出、关闭与中止路径（数据安全）
 
@@ -918,8 +919,8 @@ type WorkspaceContentCommand =
 #### J4（P1·A）Windows CAS 替换必须保留 DACL 继承语义
 
 - **发现**：首轮三平台 CI 的 Windows `temporary_acl_is_private_and_replacement_preserves_target_acl` 失败。目标 DACL 含 3 个继承 ACE，替换后变成 3 个显式复制 ACE 加 3 个新继承 ACE；这不仅重复 ACL，还会使复制来的 ACE 脱离父目录后续权限变更。
-- **修复**：`src-tauri/src/platform/file_cas.rs::preserve_windows_dacl` 读取目标 descriptor 的保护标志。未保护 DACL 只复制显式 ACE，并通过 `UNPROTECTED_DACL_SECURITY_INFORMATION` 让替换文件重新继承同目录 ACL；受保护 DACL 复制完整 ACL 并保留 `PROTECTED_DACL_SECURITY_INFORMATION`。空 DACL 保持 null 语义。
-- **验收证据**：Windows 测试 `temporary_acl_is_private_and_replacement_preserves_inherited_target_acl` 覆盖继承型目标，`replacement_preserves_protected_target_acl` 覆盖受保护目标；两项在本机通过。修复后的 macOS/Linux/Windows CI 尚待 WP0 后续推送验证。
+- **修复状态**：首轮尝试在 `src-tauri/src/platform/file_cas.rs::preserve_windows_dacl` 中按 DACL 保护状态复制 ACL；本机继承型和受保护型测试都通过，但 CI 的继承型测试观察到替换后 6 个 ACE，而目标原有 3 个，证明调用 `ReplaceFileW` 前人工设置 DACL 与系统自身的 ACL 合并叠加。[Microsoft 的 `ReplaceFileW` 文档](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)说明该函数会保留被替换文件的 DACL。用户确认删除冗余的 `preserve_windows_dacl`，由 `ReplaceFileW` 负责保留目标 ACL；实现已移除该人工复制逻辑，继续在替换前创建仅当前用户可访问的临时文件。
+- **验收证据**：`temporary_acl_is_private_and_replacement_preserves_inherited_target_acl` 验证临时 ACL 私有，并断言继承型目标替换后的原始 DACL 字节一致且仍未受保护；`replacement_preserves_protected_target_acl` 验证受保护型目标的 DACL 保留。本机 Windows 文件 CAS 定向测试 12 项通过，全量 Rust 测试 262 项通过。首轮 CI run [37304043792](https://github.com/SkyJourney/cli-launchpad/actions/runs/37304043792) 的旧实现测试曾失败并输出 6 ACE/3 ACE 差异；新实现的三平台 CI 尚待复验，J4 暂不关闭。
 
 #### B3R-F06（P2·A 文档 / B 代码）索引扫描遇到单项错误就整体失败
 

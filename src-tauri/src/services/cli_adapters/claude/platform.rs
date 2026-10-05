@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn resolves_home_from_native_versioned_binary() {
         let root = tempdir().unwrap();
-        let home = root.path();
+        let home = std::fs::canonicalize(root.path()).unwrap();
         let versions = home.join(".local/share/claude/versions");
         let bin = home.join(".local/bin");
         std::fs::create_dir_all(&versions).unwrap();
