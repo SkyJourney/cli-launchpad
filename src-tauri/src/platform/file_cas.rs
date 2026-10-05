@@ -572,7 +572,11 @@ fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<(
     use windows_sys::Win32::{
         Foundation::LocalFree,
         Security::Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
-        Security::{ACL, DACL_SECURITY_INFORMATION},
+        Security::{
+            AddAce, GetAce, GetSecurityDescriptorControl, InitializeAcl, ACE_HEADER, ACL,
+            DACL_SECURITY_INFORMATION, INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+            SE_DACL_PROTECTED, UNPROTECTED_DACL_SECURITY_INFORMATION,
+        },
     };
     let mut dacl = std::ptr::null_mut::<ACL>();
     let mut descriptor = std::ptr::null_mut();
@@ -591,22 +595,84 @@ fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<(
     if status != 0 {
         return Err(std::io::Error::from_raw_os_error(status as i32));
     }
-    let result = unsafe {
-        SetSecurityInfo(
-            replacement.as_raw_handle() as _,
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            dacl,
-            std::ptr::null_mut(),
-        )
-    };
+
+    let result = (|| {
+        let mut control = 0;
+        let mut revision = 0;
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let dacl_is_protected = control & SE_DACL_PROTECTED != 0;
+        let (dacl_to_apply, security_information, _filtered_acl) = if dacl_is_protected {
+            (
+                dacl as *const ACL,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None,
+            )
+        } else if dacl.is_null() {
+            // A null DACL grants full access. Preserve it as null while allowing
+            // the replacement to retain the target directory's inheritance mode.
+            (
+                std::ptr::null(),
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                None,
+            )
+        } else {
+            let source_acl = unsafe { &*dacl };
+            let acl_size = source_acl.AclSize as usize;
+            let mut storage = vec![0u64; acl_size.div_ceil(std::mem::size_of::<u64>())];
+            let filtered_acl = storage.as_mut_ptr().cast::<ACL>();
+            if unsafe {
+                InitializeAcl(filtered_acl, acl_size as u32, source_acl.AclRevision as u32)
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            for ace_index in 0..source_acl.AceCount as u32 {
+                let mut ace = std::ptr::null_mut();
+                if unsafe { GetAce(dacl, ace_index, &mut ace) } == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+                if header.AceFlags & INHERITED_ACE as u8 == 0
+                    && unsafe {
+                        AddAce(
+                            filtered_acl,
+                            source_acl.AclRevision as u32,
+                            u32::MAX,
+                            ace,
+                            header.AceSize as u32,
+                        )
+                    } == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            (
+                filtered_acl as *const ACL,
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                Some(storage),
+            )
+        };
+        let status = unsafe {
+            SetSecurityInfo(
+                replacement.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                security_information,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl_to_apply,
+                std::ptr::null_mut(),
+            )
+        };
+        drop(_filtered_acl);
+        if status != 0 {
+            return Err(std::io::Error::from_raw_os_error(status as i32));
+        }
+        Ok(())
+    })();
     unsafe { LocalFree(descriptor) };
-    if result != 0 {
-        return Err(std::io::Error::from_raw_os_error(result as i32));
-    }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
@@ -962,12 +1028,13 @@ mod tests {
         let path = root.path().join("note.txt");
         std::fs::write(&path, "before").unwrap();
         let (locked_tx, locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let lock_path = path.clone();
         let holder = thread::spawn(move || {
             let file = File::open(lock_path).unwrap();
             file.lock().unwrap();
             locked_tx.send(()).unwrap();
-            thread::sleep(Duration::from_secs(3));
+            release_rx.recv().unwrap();
         });
         locked_rx.recv().unwrap();
         let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
@@ -980,9 +1047,11 @@ mod tests {
             1024,
             revision,
         );
-        assert!(result.unwrap_err().to_string().contains("占用"));
-        assert!(started.elapsed() < Duration::from_secs(3));
+        let elapsed = started.elapsed();
+        release_tx.send(()).unwrap();
         holder.join().unwrap();
+        assert!(result.unwrap_err().to_string().contains("占用"));
+        assert!(elapsed < LOCK_TIMEOUT + Duration::from_secs(5));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
     }
 
@@ -1027,14 +1096,17 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn temporary_acl_is_private_and_replacement_preserves_target_acl() {
+    fn temporary_acl_is_private_and_replacement_preserves_inherited_target_acl() {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::{
             Foundation::LocalFree,
             Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
-            Security::{ACL, DACL_SECURITY_INFORMATION},
+            Security::{
+                GetAce, GetSecurityDescriptorControl, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION,
+                INHERITED_ACE, SE_DACL_PROTECTED,
+            },
         };
-        fn dacl(file: &File) -> (Vec<u8>, u16) {
+        fn dacl(file: &File) -> (Vec<u8>, u16, u16, bool) {
             let mut dacl = std::ptr::null_mut::<ACL>();
             let mut descriptor = std::ptr::null_mut();
             let result = unsafe {
@@ -1050,11 +1122,30 @@ mod tests {
                 )
             };
             assert_eq!(result, 0);
+            let mut control = 0;
+            let mut revision = 0;
+            assert_eq!(
+                unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+                1
+            );
+            let protected = control & SE_DACL_PROTECTED != 0;
+            if dacl.is_null() {
+                unsafe { LocalFree(descriptor) };
+                return (Vec::new(), 0, 0, protected);
+            }
             let count = unsafe { (*dacl).AceCount };
             let length = unsafe { (*dacl).AclSize } as usize;
             let bytes = unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), length) }.to_vec();
+            let mut inherited_count = 0;
+            for ace_index in 0..count as u32 {
+                let mut ace = std::ptr::null_mut();
+                assert_eq!(unsafe { GetAce(dacl, ace_index, &mut ace) }, 1);
+                if unsafe { (*ace.cast::<ACE_HEADER>()).AceFlags } & INHERITED_ACE as u8 != 0 {
+                    inherited_count += 1;
+                }
+            }
             unsafe { LocalFree(descriptor) };
-            (bytes, count)
+            (bytes, count, inherited_count, protected)
         }
 
         let root = tempdir().unwrap();
@@ -1062,11 +1153,18 @@ mod tests {
         std::fs::write(&path, "before").unwrap();
         let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
         let temporary = create_temporary(&NativeFileCasAdapter, &dir, b"after").unwrap();
-        let (_, private_ace_count) = dacl(temporary.file.as_ref().unwrap());
+        let (_, private_ace_count, _, private_acl_is_protected) =
+            dacl(temporary.file.as_ref().unwrap());
         assert_eq!(private_ace_count, 1);
+        assert!(private_acl_is_protected);
         drop(temporary);
         let target = dir.open("note.txt").unwrap().into_std();
-        let (expected_acl, _) = dacl(&target);
+        let (expected_acl, _, inherited_ace_count, target_acl_is_protected) = dacl(&target);
+        assert!(!target_acl_is_protected);
+        assert!(
+            inherited_ace_count > 0,
+            "fixture must inherit its directory DACL"
+        );
 
         compare_and_swap_in_directory(
             &dir,
@@ -1078,6 +1176,115 @@ mod tests {
         )
         .unwrap();
         let replacement = dir.open("note.txt").unwrap().into_std();
-        assert_eq!(dacl(&replacement).0, expected_acl);
+        let (actual_acl, _, _, replacement_acl_is_protected) = dacl(&replacement);
+        assert_eq!(actual_acl, expected_acl);
+        assert!(!replacement_acl_is_protected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn replacement_preserves_protected_target_acl() {
+        use cap_std::fs::OpenOptionsExt;
+        use windows_sys::Win32::{
+            Foundation::{GENERIC_READ, GENERIC_WRITE},
+            Storage::FileSystem::{READ_CONTROL, WRITE_DAC},
+        };
+
+        let root = tempdir().unwrap();
+        let path = root.path().join("note.txt");
+        std::fs::write(&path, "before").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .access_mode(GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_DAC);
+        let target = dir.open_with("note.txt", &options).unwrap().into_std();
+        restrict_to_current_user(&target).unwrap();
+        let (expected_acl, _, inherited_ace_count, target_acl_is_protected) = {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::{
+                Foundation::LocalFree,
+                Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+                Security::{
+                    GetSecurityDescriptorControl, ACL, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+                },
+            };
+            let mut dacl = std::ptr::null_mut::<ACL>();
+            let mut descriptor = std::ptr::null_mut();
+            let result = unsafe {
+                GetSecurityInfo(
+                    target.as_raw_handle() as _,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut dacl,
+                    std::ptr::null_mut(),
+                    &mut descriptor,
+                )
+            };
+            assert_eq!(result, 0);
+            let mut control = 0;
+            let mut revision = 0;
+            assert_eq!(
+                unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+                1
+            );
+            let protected = control & SE_DACL_PROTECTED != 0;
+            let length = unsafe { (*dacl).AclSize } as usize;
+            let bytes = unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), length) }.to_vec();
+            unsafe { LocalFree(descriptor) };
+            (bytes, 1, 0, protected)
+        };
+        assert!(target_acl_is_protected);
+        assert_eq!(inherited_ace_count, 0);
+        drop(target);
+
+        compare_and_swap_in_directory(
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap();
+        let replacement = dir.open("note.txt").unwrap().into_std();
+        let mut dacl = std::ptr::null_mut::<ACL>();
+        let mut descriptor = std::ptr::null_mut();
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Foundation::LocalFree,
+            Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            Security::{
+                GetSecurityDescriptorControl, ACL, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+            },
+        };
+        let result = unsafe {
+            GetSecurityInfo(
+                replacement.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(result, 0);
+        let length = unsafe { (*dacl).AclSize } as usize;
+        let actual_acl = unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), length) }.to_vec();
+        let mut control = 0;
+        let mut revision = 0;
+        assert_eq!(
+            unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+            1
+        );
+        let replacement_acl_is_protected = control & SE_DACL_PROTECTED != 0;
+        unsafe { LocalFree(descriptor) };
+        assert_eq!(actual_acl, expected_acl);
+        assert!(replacement_acl_is_protected);
     }
 }

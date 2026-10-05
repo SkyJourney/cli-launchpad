@@ -63,8 +63,8 @@
 | 指标                  | 数值                                                  |
 | --------------------- | ----------------------------------------------------- |
 | 分项原始发现          | 59 项（B1 15、B2 13、B3 前端 13、B3 Rust 10、横切 8） |
-| 去重后 + 交叉探查新增 | 57 + 3 = **60 项**                                    |
-| 严重级分布            | P0 1 项、P1 7 项、P2 38 项、P3 14 项                  |
+| 去重后 + 交叉探查新增 | 57 + 3 + 1（首轮 CI 追加）= **61 项**                 |
+| 严重级分布            | P0 1 项、P1 8 项、P2 38 项、P3 14 项                  |
 | 汇总人亲自复核        | 全部 P0/P1，以及 17 项关键 P2                         |
 
 ### 1.1 最高风险
@@ -77,6 +77,7 @@
 6. **B3F-F04（P1）**：PTY 分离超时后，主窗口的回滚可能发生在子窗口已经接管之后，然后子窗口被销毁。Rust 不会回收会话归属，该会话从此不可控。
 7. **J2（P1）**：CI 不运行任何测试。M6 文档中“macOS/Linux 待 CI 验证”的门禁在现有流水线下无法完成。
 8. **B1-F01（P1）**：用户在确认浮层里看到的安装/更新计划，与实际执行的计划是两次独立生成的。
+9. **J4（P1）**：Windows 文件 CAS 替换时把目标文件的继承 ACE 当成显式 ACE 复制，并再次继承目录 ACL，导致 ACL 重复且后续不再随父目录更新。
 
 ### 1.2 各基线收口程度
 
@@ -258,6 +259,7 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 | X-F06   | P2   | 10 个已注册命令没有生产调用方（含外部终端启动）             | WP3     | A                   | 审查         |
 | J1      | P2   | 备份恢复不协调运行态；文件 I/O 不核对路径身份               | WP5     | A                   | 亲核         |
 | J3      | P2   | 前端没有 DOM 测试环境，宿主无法测试                         | WP0     | A                   | 亲核         |
+| J4      | P1   | Windows CAS 替换复制继承 ACE，破坏 DACL 继承语义            | WP5     | A                   | CI 发现      |
 | B1-F13  | P3   | 前端契约中的死字段和单 CLI 字段                             | WP4     | A（死字段）/B       | 审查         |
 | B1-F14  | P3   | trait 中有只服务单个 CLI 的方法；adapter 自行解析路径       | WP4     | B                   | 审查         |
 | B1-F15  | P3   | G4 承诺清理的代码仍有残留                                   | WP4     | B                   | 审查         |
@@ -342,8 +344,8 @@ WP0 是其余工作包的验证前提，应最先完成。
 #### WP0 实施记录（2026-10-05）
 
 - `J3`：已建立 DOM 测试环境与 Tauri mock；`src/test/tauriMock.test.tsx` 的 `Tauri DOM test environment > renders React and records invocations while allowing events to be triggered` 验证 React 渲染、结构化 invoke 记录和手动事件触发。契约测试另验证 `src/lib/workspaceContentWindowProtocol.ts` 的窗口 label 前缀与 `contracts/window-kinds.json` 一致。第 6 节列出的宿主行为场景将在各自问题对应的波次中验收，本条不提前宣称这些场景已通过。
-- `J2`：已增加三平台 CI 工作流并由发布工作流复用；本机门禁通过，但三平台运行结果尚未产生，待 WP0 提交推送后补记 run 链接和结果。
-- 契约清单：Rust 与 TypeScript 契约测试已加入；当前本机 `pnpm test` 178 项、`cargo test --manifest-path src-tauri/Cargo.toml` 260 项通过。三平台 CI 仍是 WP0 关闭前置条件。
+- `J2`：已增加三平台 CI 工作流并由发布工作流复用。首轮 Actions run [37300368429](https://github.com/SkyJourney/cli-launchpad/actions/runs/37300368429) 中 Ubuntu 通过，macOS 因 Vite 构建 Node 堆内存不足失败，Windows 发现锁超时断言依赖 runner 调度、Codex 安装计划测试依赖机器上存在 `codex` 命令，以及下列 `J4` ACL 语义缺陷。已分别将构建堆上限设为 4 GiB、用显式释放信号稳健化锁测试并从合成路径测试计划构造；修复后的三平台 CI 结果待 WP0 后续提交推送后补记，故 `J2` 暂不关闭。
+- 契约清单：Rust 与 TypeScript 契约测试已加入；本机 `pnpm test` 178 项、Rust 全量 261 项通过。ACL 修复后 Windows 文件 CAS 相关测试 11 项通过；三平台 CI 结果待 WP0 后续提交验证。
 
 ### WP1 退出、关闭与中止路径（数据安全）
 
@@ -913,6 +915,12 @@ type WorkspaceContentCommand =
   - 宿主集成测试覆盖：存在阻断条件时拒绝恢复；恢复后布局与数据库的 revision 一致。
   - 实机：在两个项目的 ID 互换的场景下验证。
 
+#### J4（P1·A）Windows CAS 替换必须保留 DACL 继承语义
+
+- **发现**：首轮三平台 CI 的 Windows `temporary_acl_is_private_and_replacement_preserves_target_acl` 失败。目标 DACL 含 3 个继承 ACE，替换后变成 3 个显式复制 ACE 加 3 个新继承 ACE；这不仅重复 ACL，还会使复制来的 ACE 脱离父目录后续权限变更。
+- **修复**：`src-tauri/src/platform/file_cas.rs::preserve_windows_dacl` 读取目标 descriptor 的保护标志。未保护 DACL 只复制显式 ACE，并通过 `UNPROTECTED_DACL_SECURITY_INFORMATION` 让替换文件重新继承同目录 ACL；受保护 DACL 复制完整 ACL 并保留 `PROTECTED_DACL_SECURITY_INFORMATION`。空 DACL 保持 null 语义。
+- **验收证据**：Windows 测试 `temporary_acl_is_private_and_replacement_preserves_inherited_target_acl` 覆盖继承型目标，`replacement_preserves_protected_target_acl` 覆盖受保护目标；两项在本机通过。修复后的 macOS/Linux/Windows CI 尚待 WP0 后续推送验证。
+
 #### B3R-F06（P2·A 文档 / B 代码）索引扫描遇到单项错误就整体失败
 
 - **现状**：`workspace_file_index_service.rs:136`、`:142`、`:155-158` 遇到单个条目错误就中止整次扫描；该命令在前端也没有生产调用方。
@@ -1175,6 +1183,6 @@ flowchart TD
 ## 附录 C：编号对照
 
 - 分项审查编号保持原样，便于对照原始审查记录：B1-Fxx（Provider）、B2-Fxx（生命周期与主题）、B3F-Fxx（窗口内容前端）、B3R-Fxx（窗口内容 Rust）、X-Fxx（横切）。
-- 新增编号 J1–J3 是汇总时交叉探查发现的问题。
+- 新增编号 J1–J3 是汇总时交叉探查发现的问题；J4 是 WP0 首轮三平台 CI 发现并纳入 A 层门禁的 Windows DACL 继承缺陷。
 - 合并的重复项：B3F-F01 并入 B2-F01；B2-F02 并入 B3R-F02；B2-F12 中的 `colorPrimary` 与 B1-F13 合并处理。
 - 原始审查中的“延期”建议已按用户决定全部改为 B 层（M7 开工前必须完成）。

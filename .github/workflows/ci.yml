@@ -71,6 +71,8 @@ jobs:
         run: pnpm test
 
       - name: Build frontend
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run build
 
       - name: Check Rust formatting

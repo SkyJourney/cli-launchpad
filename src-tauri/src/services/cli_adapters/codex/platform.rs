@@ -13,10 +13,15 @@ pub(super) fn build_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
 #[cfg(windows)]
 fn update_plan(_kind: InstallKind) -> anyhow::Result<InstallPlan> {
     let codex = crate::services::install_service::resolve_program("codex")?;
+    codex_update_plan_for(&codex)
+}
+
+#[cfg(windows)]
+pub(crate) fn codex_update_plan_for(codex: &str) -> anyhow::Result<InstallPlan> {
     let program = windows_powershell_51()?;
     let command = format!(
         "$env:PSModulePath = @((Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\\Modules'), (Join-Path $env:ProgramFiles 'WindowsPowerShell\\Modules'), (Join-Path $PSHOME 'Modules')) -join [IO.Path]::PathSeparator; & {} update; exit $LASTEXITCODE",
-        quote_powershell_arg(&codex)
+        quote_powershell_arg(codex)
     );
     let args = vec![
         "-NoProfile".to_string(),

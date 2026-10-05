@@ -132,7 +132,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn codex_update_uses_builtin_command_under_windows_powershell_5_1() {
-        let plan = plan(ToolKey::Codex, InstallKind::Update).unwrap();
+        let plan = crate::services::cli_adapters::codex::platform::codex_update_plan_for(
+            r"C:\Program Files\Codex\codex.exe",
+        )
+        .unwrap();
         assert!(plan
             .program
             .to_ascii_lowercase()
