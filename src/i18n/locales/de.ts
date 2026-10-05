@@ -586,6 +586,8 @@ export const de = {
       "Diese Datei enthält nicht gespeicherte Änderungen. Schließen und verwerfen?",
     save: "Speichern",
     reload: "Neu laden",
+    saveConflict:
+      "Die Datei auf dem Datenträger wurde geändert. Deine Änderungen bleiben erhalten. Lade die Datei vor dem erneuten Speichern neu.",
     directoryLimitReached:
       "Zu viele Einträge. Die ersten 5.000 werden angezeigt.",
     loadingFile: "Datei wird geladen…",

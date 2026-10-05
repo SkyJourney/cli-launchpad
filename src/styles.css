@@ -2636,6 +2636,15 @@ h1 {
   width: 100%;
 }
 
+.workspace-file-conflict {
+  background: var(--color-warning-bg);
+  border-bottom: 1px solid var(--color-warning-border);
+  color: var(--color-warning-text);
+  flex: 0 0 auto;
+  font-size: var(--font-size-caption);
+  padding: 6px 10px;
+}
+
 .workspace-text-editor-toolbar {
   align-items: center;
   background: var(--color-surface);

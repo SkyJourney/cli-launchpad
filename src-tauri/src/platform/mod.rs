@@ -1,5 +1,6 @@
 pub mod detect;
 pub mod execution_process;
+pub mod file_cas;
 #[cfg(target_os = "macos")]
 pub mod macos_launch_artifacts;
 pub mod opener;

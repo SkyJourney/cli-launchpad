@@ -520,6 +520,8 @@ export const zh = {
     discardChanges: "此文件有未保存的修改。确定关闭并丢弃修改吗？",
     save: "保存",
     reload: "重新载入",
+    saveConflict:
+      "文件已在磁盘中修改，你的编辑内容已保留。重新载入文件后再继续保存。",
     directoryLimitReached: "目录条目过多，仅显示前 5,000 项。",
     loadingFile: "正在读取文件…",
     fileCannotOpen: "此文件无法在此处打开",

@@ -22,6 +22,7 @@ export interface WorkspaceContentRenderContext {
   file?: {
     document: WorkspaceFileDocument | undefined;
     buffer: WorkspaceFileBuffer | undefined;
+    readOnly: boolean;
     edit: (documentId: string, content: string) => void;
     save: (documentId: string) => Promise<void>;
   };

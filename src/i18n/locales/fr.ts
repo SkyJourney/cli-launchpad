@@ -586,6 +586,8 @@ export const fr = {
       "Ce fichier contient des modifications non enregistrées. Le fermer et les abandonner ?",
     save: "Enregistrer",
     reload: "Recharger",
+    saveConflict:
+      "Le fichier sur le disque a été modifié. Vos modifications sont conservées. Rechargez le fichier avant de l’enregistrer à nouveau.",
     directoryLimitReached: "Trop d’éléments. Les 5 000 premiers sont affichés.",
     loadingFile: "Chargement du fichier…",
     fileCannotOpen: "Ce fichier ne peut pas être ouvert ici",

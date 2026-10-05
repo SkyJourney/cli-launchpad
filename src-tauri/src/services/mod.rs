@@ -9,6 +9,7 @@ pub mod execution_service;
 pub mod file_service;
 pub mod install_service;
 pub mod launch_service;
+pub mod project_directory;
 pub mod pty_session_service;
 pub mod session_service;
 pub mod storage_service;

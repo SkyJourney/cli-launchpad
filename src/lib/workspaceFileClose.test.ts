@@ -25,6 +25,8 @@ describe("workspace file close state", () => {
         relativePath: "README.md",
       };
       const buffer = {
+        epoch: 0,
+        version: 0,
         content: "contents",
         savedContent: "contents",
         revision: "revision-a",

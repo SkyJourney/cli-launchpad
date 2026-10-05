@@ -569,6 +569,8 @@ export const ja = {
     discardChanges: "未保存の変更があります。閉じて変更を破棄しますか？",
     save: "保存",
     reload: "再読み込み",
+    saveConflict:
+      "ファイルがディスク上で変更されました。編集内容は保持されています。再読み込みしてから保存してください。",
     directoryLimitReached:
       "項目数が多いため、最初の5,000件のみ表示しています。",
     loadingFile: "ファイルを読み込み中…",

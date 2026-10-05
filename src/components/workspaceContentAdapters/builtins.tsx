@@ -35,11 +35,13 @@ function PtyContentAdapter({ portalTarget }: { portalTarget?: HTMLElement }) {
 function TextFileContentAdapter({
   fileDocument,
   fileBuffer,
+  readOnly,
   onEditFile,
   onSaveFile,
 }: {
   fileDocument: WorkspaceFileDocument | undefined;
   fileBuffer: WorkspaceFileBuffer | undefined;
+  readOnly: boolean;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
 }) {
@@ -108,6 +110,11 @@ function TextFileContentAdapter({
   }
   return (
     <div className="workspace-text-editor">
+      {fileBuffer.conflict && (
+        <div className="workspace-file-conflict" role="alert">
+          {t("workspaceFiles.saveConflict")}
+        </div>
+      )}
       <div className="workspace-text-editor-toolbar">
         <span title={fileDocument.relativePath}>
           {fileDocument.relativePath}
@@ -116,7 +123,9 @@ function TextFileContentAdapter({
           type="button"
           className="icon-button workspace-text-editor-save"
           disabled={
-            fileBuffer.saving || fileBuffer.content === fileBuffer.savedContent
+            readOnly ||
+            fileBuffer.saving ||
+            fileBuffer.content === fileBuffer.savedContent
           }
           onClick={() => void onSaveFile(fileDocument.id)}
         >
@@ -131,6 +140,7 @@ function TextFileContentAdapter({
           fileDocument.relativePath,
         )}
         theme={theme}
+        readOnly={readOnly}
         onChange={(content) => onEditFile(fileDocument.id, content)}
         onSave={() => void onSaveFile(fileDocument.id)}
       />
@@ -180,6 +190,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
       <TextFileContentAdapter
         fileDocument={context.file.document}
         fileBuffer={context.file.buffer}
+        readOnly={context.file.readOnly}
         onEditFile={context.file.edit}
         onSaveFile={context.file.save}
       />

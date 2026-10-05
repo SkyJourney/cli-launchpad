@@ -123,7 +123,12 @@ import { getTerminalTitleLabel, TOOLS } from "../lib/tools";
 import {
   createWorkspaceFileBuffer,
   completeWorkspaceFileSave,
+  editWorkspaceFileBuffer,
+  beginWorkspaceFileSave,
   failWorkspaceFileSave,
+  isWorkspaceFileBufferNewer,
+  markWorkspaceFileSaveConflict,
+  WorkspaceFileOperationFlights,
 } from "../lib/workspaceFileBuffer";
 import { closeWorkspaceFileState } from "../lib/workspaceFileClose";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -221,6 +226,7 @@ interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
+  handoffFileIds: Set<string>;
   detachedFileIds: Set<string>;
   tree: WorkspaceNode;
   workspaceTreeRevision: number;
@@ -323,6 +329,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [fileBuffers, setFileBuffers] = useState<
     Record<string, WorkspaceFileBuffer>
   >({});
+  const [handoffFileIds, setHandoffFileIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const handoffFileIdsRef = useRef(handoffFileIds);
   const [detachedFileIds, setDetachedFileIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -349,7 +359,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const slotsRef = useRef(slots);
   const fileDocumentsRef = useRef(fileDocuments);
   const fileBuffersRef = useRef(fileBuffers);
+  const fileOperationGenerationsRef = useRef(new Map<string, number>());
   const openingFileRequestsRef = useRef(new Map<string, Promise<void>>());
+  const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
   const treeRef = useRef(tree);
   const focusedPaneIdRef = useRef(focusedPaneId);
   const detachedByInstanceRef = useRef(
@@ -374,7 +386,17 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   focusedPaneIdRef.current = focusedPaneId;
   detachedInstanceIdsRef.current = detachedInstanceIds;
   detachedFileIdsRef.current = detachedFileIds;
+  handoffFileIdsRef.current = handoffFileIds;
   hydrationStatusRef.current = hydrationStatus;
+
+  const getFileOperationGeneration = (documentId: string) =>
+    fileOperationGenerationsRef.current.get(documentId) ?? 0;
+  const invalidateFileOperationGeneration = (documentId: string) => {
+    fileOperationGenerationsRef.current.set(
+      documentId,
+      getFileOperationGeneration(documentId) + 1,
+    );
+  };
 
   const createSaveQueue = useCallback(
     (revision: number) =>
@@ -450,6 +472,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           slots: markWorkspaceSlotsRestored(restored.slots, read.slotStates),
         });
         const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
+
+        new Set([
+          ...fileDocumentsRef.current.map((document) => document.id),
+          ...(restoredSnapshot.documents ?? []).map((document) => document.id),
+        ]).forEach(invalidateFileOperationGeneration);
 
         slotsRef.current = restoredSlots;
         treeRef.current = restoredSnapshot.tree;
@@ -634,6 +661,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
       const restoredDocuments = [...(restored.documents ?? [])];
       const currentDocuments = fileDocumentsRef.current;
+      new Set([
+        ...currentDocuments.map((document) => document.id),
+        ...restoredDocuments.map((document) => document.id),
+      ]).forEach(invalidateFileOperationGeneration);
       const currentDocumentByIdentity = new Map(
         currentDocuments.map((document) => [
           `${document.directoryId}:${document.relativePath}`,
@@ -703,6 +734,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const pending = openingFileRequestsRef.current.get(identity);
       if (pending) return pending;
       const operation = (async () => {
+        const hydrationAtStart = hydrationRequestRef.current;
         let document = fileDocumentsRef.current.find(
           (entry) =>
             entry.directoryId === directoryId &&
@@ -712,6 +744,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           const loaded = createWorkspaceFileBuffer(
             await openProjectFileContent(directoryId, relativePath),
           );
+          if (hydrationAtStart !== hydrationRequestRef.current) {
+            return;
+          }
           document = {
             id: crypto.randomUUID(),
             directoryId,
@@ -728,9 +763,23 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           fileBuffersRef.current = nextBuffers;
           setFileBuffers(nextBuffers);
         } else if (!fileBuffersRef.current[document.id]) {
+          const generationAtStart = getFileOperationGeneration(document.id);
           const loaded = createWorkspaceFileBuffer(
             await openProjectFileContent(directoryId, relativePath),
           );
+          const currentDocument = fileDocumentsRef.current.find(
+            (entry) => entry.id === document?.id,
+          );
+          if (
+            hydrationAtStart !== hydrationRequestRef.current ||
+            generationAtStart !== getFileOperationGeneration(document.id) ||
+            !currentDocument ||
+            currentDocument.directoryId !== directoryId ||
+            currentDocument.relativePath !== relativePath ||
+            fileBuffersRef.current[document.id]
+          ) {
+            return;
+          }
           const nextBuffers = {
             ...fileBuffersRef.current,
             [document.id]: loaded,
@@ -785,118 +834,189 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [commitTree],
   );
 
-  const loadFile = useCallback(async (documentId: string) => {
-    if (fileBuffersRef.current[documentId]) return;
-    const document = fileDocumentsRef.current.find(
-      (entry) => entry.id === documentId,
-    );
-    if (!document) return;
-    const loaded = createWorkspaceFileBuffer(
-      await openProjectFileContent(document.directoryId, document.relativePath),
-    );
-    if (fileBuffersRef.current[documentId]) return;
-    const next = {
-      ...fileBuffersRef.current,
-      [documentId]: loaded,
-    };
-    fileBuffersRef.current = next;
-    setFileBuffers(next);
-  }, []);
+  const loadFile = useCallback(
+    (documentId: string) =>
+      fileOperationFlightsRef.current.load(documentId, async () => {
+        if (fileBuffersRef.current[documentId]) return;
+        const document = fileDocumentsRef.current.find(
+          (entry) => entry.id === documentId,
+        );
+        if (!document) return;
+        const generationAtStart = getFileOperationGeneration(documentId);
+        const loaded = createWorkspaceFileBuffer(
+          await openProjectFileContent(
+            document.directoryId,
+            document.relativePath,
+          ),
+        );
+        const currentDocument = fileDocumentsRef.current.find(
+          (entry) => entry.id === documentId,
+        );
+        if (
+          !currentDocument ||
+          currentDocument.directoryId !== document.directoryId ||
+          currentDocument.relativePath !== document.relativePath ||
+          generationAtStart !== getFileOperationGeneration(documentId) ||
+          fileBuffersRef.current[documentId]
+        ) {
+          return;
+        }
+        const next = { ...fileBuffersRef.current, [documentId]: loaded };
+        fileBuffersRef.current = next;
+        setFileBuffers(next);
+      }),
+    [],
+  );
 
   const editFile = useCallback((documentId: string, content: string) => {
+    if (handoffFileIdsRef.current.has(documentId)) return;
     const buffer = fileBuffersRef.current[documentId];
     if (!buffer) return;
     const next = {
       ...fileBuffersRef.current,
-      [documentId]: { ...buffer, content },
+      [documentId]: editWorkspaceFileBuffer(buffer, content),
     };
     fileBuffersRef.current = next;
     setFileBuffers(next);
   }, []);
 
-  const reloadFile = useCallback(async (documentId: string) => {
-    const document = fileDocumentsRef.current.find(
-      (entry) => entry.id === documentId,
-    );
-    if (!document) return;
-    try {
-      const loaded = createWorkspaceFileBuffer(
-        await openProjectFileContent(
-          document.directoryId,
-          document.relativePath,
-        ),
-      );
-      const next = {
-        ...fileBuffersRef.current,
-        [documentId]: loaded,
-      };
-      fileBuffersRef.current = next;
-      setFileBuffers(next);
-    } catch (reason) {
-      toast.error(String(reason));
-    }
-  }, []);
+  const reloadFile = useCallback(
+    (documentId: string) =>
+      fileOperationFlightsRef.current.load(documentId, async () => {
+        await fileOperationFlightsRef.current.waitForSave(documentId);
+        const document = fileDocumentsRef.current.find(
+          (entry) => entry.id === documentId,
+        );
+        const startingBuffer = fileBuffersRef.current[documentId];
+        if (!document || !startingBuffer) return;
+        const generationAtStart = getFileOperationGeneration(documentId);
+        try {
+          const loaded = createWorkspaceFileBuffer(
+            await openProjectFileContent(
+              document.directoryId,
+              document.relativePath,
+            ),
+            startingBuffer.epoch + 1,
+          );
+          const currentDocument = fileDocumentsRef.current.find(
+            (entry) => entry.id === documentId,
+          );
+          const currentBuffer = fileBuffersRef.current[documentId];
+          if (
+            !currentDocument ||
+            currentDocument.directoryId !== document.directoryId ||
+            currentDocument.relativePath !== document.relativePath ||
+            !currentBuffer ||
+            currentBuffer.epoch !== startingBuffer.epoch ||
+            currentBuffer.version !== startingBuffer.version ||
+            generationAtStart !== getFileOperationGeneration(documentId)
+          ) {
+            return;
+          }
+          const next = { ...fileBuffersRef.current, [documentId]: loaded };
+          fileBuffersRef.current = next;
+          setFileBuffers(next);
+        } catch (reason) {
+          toast.error(String(reason));
+        }
+      }),
+    [],
+  );
 
   const saveFile = useCallback(
-    async (documentId: string) => {
-      const document = fileDocumentsRef.current.find(
-        (entry) => entry.id === documentId,
-      );
-      const buffer = fileBuffersRef.current[documentId];
-      if (
-        !document ||
-        !buffer ||
-        buffer.content === buffer.savedContent ||
-        buffer.saving
-      ) {
-        return;
-      }
-      const pending = { ...buffer, saving: true };
-      fileBuffersRef.current = {
-        ...fileBuffersRef.current,
-        [documentId]: pending,
-      };
-      setFileBuffers(fileBuffersRef.current);
-      try {
-        const result = await saveProjectTextFile(
-          document.directoryId,
-          document.relativePath,
-          buffer.content,
-          buffer.revision,
+    (documentId: string) =>
+      fileOperationFlightsRef.current.save(documentId, async () => {
+        if (handoffFileIdsRef.current.has(documentId)) return;
+        const document = fileDocumentsRef.current.find(
+          (entry) => entry.id === documentId,
         );
-        const next = {
-          ...fileBuffersRef.current,
-          [documentId]: completeWorkspaceFileSave(
-            fileBuffersRef.current[documentId],
-            buffer,
-            result,
-          ),
-        };
-        fileBuffersRef.current = next;
-        setFileBuffers(next);
-      } catch (reason) {
-        const next = {
-          ...fileBuffersRef.current,
-          [documentId]: failWorkspaceFileSave(
-            fileBuffersRef.current[documentId],
-            buffer,
-          ),
-        };
-        fileBuffersRef.current = next;
-        setFileBuffers(next);
-        const message = String(reason);
-        if (message.includes("其他位置修改")) {
-          toast.error(message, {
-            action: {
-              label: t("workspaceFiles.reload"),
-              onClick: () => void reloadFile(documentId),
-            },
-          });
-        } else {
-          toast.error(message);
+        const buffer = fileBuffersRef.current[documentId];
+        if (
+          !document ||
+          !buffer ||
+          buffer.kind !== "text" ||
+          buffer.content === buffer.savedContent ||
+          buffer.saving
+        ) {
+          return;
         }
-      }
-    },
+        const ownerAtStart = contentCoordinatorRef.current.get({
+          kind: "file",
+          documentId,
+        });
+        const ownerGeneration = ownerAtStart?.generation;
+        const operationGeneration = getFileOperationGeneration(documentId);
+        const submitted = beginWorkspaceFileSave(buffer);
+        fileBuffersRef.current = {
+          ...fileBuffersRef.current,
+          [documentId]: submitted,
+        };
+        setFileBuffers(fileBuffersRef.current);
+        const currentRequestIsOwned = () => {
+          const currentDocument = fileDocumentsRef.current.find(
+            (entry) => entry.id === documentId,
+          );
+          const currentBuffer = fileBuffersRef.current[documentId];
+          const currentOwner = contentCoordinatorRef.current.get({
+            kind: "file",
+            documentId,
+          });
+          return (
+            Boolean(currentDocument) &&
+            currentDocument?.directoryId === document.directoryId &&
+            currentDocument?.relativePath === document.relativePath &&
+            currentBuffer?.epoch === submitted.epoch &&
+            operationGeneration === getFileOperationGeneration(documentId) &&
+            (ownerGeneration === undefined ||
+              currentOwner?.generation === ownerGeneration)
+          );
+        };
+        try {
+          const result = await saveProjectTextFile(
+            document.directoryId,
+            document.relativePath,
+            submitted.content,
+            submitted.revision,
+          );
+          if (!currentRequestIsOwned()) return;
+          if (result.kind === "conflict") {
+            const current = fileBuffersRef.current[documentId];
+            if (!current) return;
+            const next = {
+              ...fileBuffersRef.current,
+              [documentId]: markWorkspaceFileSaveConflict(current, submitted),
+            };
+            fileBuffersRef.current = next;
+            setFileBuffers(next);
+            toast.error(t("workspaceFiles.saveConflict"), {
+              action: {
+                label: t("workspaceFiles.reload"),
+                onClick: () => void reloadFile(documentId),
+              },
+            });
+            return;
+          }
+          const current = fileBuffersRef.current[documentId];
+          if (!current) return;
+          const next = {
+            ...fileBuffersRef.current,
+            [documentId]: completeWorkspaceFileSave(current, submitted, result),
+          };
+          fileBuffersRef.current = next;
+          setFileBuffers(next);
+        } catch (reason) {
+          if (!currentRequestIsOwned()) return;
+          const current = fileBuffersRef.current[documentId];
+          if (!current) return;
+          const next = {
+            ...fileBuffersRef.current,
+            [documentId]: failWorkspaceFileSave(current, submitted),
+          };
+          fileBuffersRef.current = next;
+          setFileBuffers(next);
+          toast.error(String(reason));
+        }
+      }),
     [reloadFile, t],
   );
 
@@ -969,6 +1089,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           setFileDocuments(next.documents);
           fileBuffersRef.current = next.buffers;
           setFileBuffers(next.buffers);
+          next.closedDocumentIds.forEach(invalidateFileOperationGeneration);
           return next.closedDocumentIds.map((documentId) => ({
             kind: "file" as const,
             documentId,
@@ -988,40 +1109,50 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const detachFile = useCallback(
     async (documentId: string) => {
-      if (detachedFilesRef.current.has(documentId)) return;
-      let fileBuffer = fileBuffersRef.current[documentId];
-      if (!fileBuffer) {
-        await loadFile(documentId);
-        fileBuffer = fileBuffersRef.current[documentId];
+      if (
+        detachedFilesRef.current.has(documentId) ||
+        handoffFileIdsRef.current.has(documentId)
+      ) {
+        return;
       }
-      const fileDocument = fileDocumentsRef.current.find(
-        (document) => document.id === documentId,
-      );
-      if (!fileDocument || !fileBuffer) {
-        throw new Error(t("workspaceFiles.loadingFile"));
-      }
-      const token = crypto.randomUUID();
-      const windowLabel = `${getWorkspaceContentWindowLabelPrefix("file")}${crypto.randomUUID()}`;
-      const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
-        hasWorkspaceContent(pane, { kind: "file", documentId }),
-      );
-      if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
-      const lifecycle = contentCoordinatorRef.current.beginDetach(
-        { kind: "file", documentId },
-        { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
-        { kind: "window", windowLabel },
-        token,
-      );
-      if (lifecycle?.outcome !== "changed") {
-        throw new Error(t("pty.detachedMoveUnavailable"));
-      }
-      const childUrl = new URL(window.location.href);
-      childUrl.search = "";
-      childUrl.hash = "";
-      childUrl.searchParams.set("detachedFileId", documentId);
-      childUrl.searchParams.set("fileHandoffToken", token);
-      childUrl.searchParams.set("sourcePaneId", sourcePane.id);
+      const nextHandoffIds = new Set(handoffFileIdsRef.current).add(documentId);
+      handoffFileIdsRef.current = nextHandoffIds;
+      setHandoffFileIds(nextHandoffIds);
+      let token: string | undefined;
+      let lifecycleStarted = false;
       try {
+        if (!fileBuffersRef.current[documentId]) await loadFile(documentId);
+        await fileOperationFlightsRef.current.waitForSave(documentId);
+        const fileBuffer = fileBuffersRef.current[documentId];
+        const fileDocument = fileDocumentsRef.current.find(
+          (document) => document.id === documentId,
+        );
+        if (!fileDocument || !fileBuffer || fileBuffer.saving) {
+          throw new Error(t("workspaceFiles.loadingFile"));
+        }
+        const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
+          hasWorkspaceContent(pane, { kind: "file", documentId }),
+        );
+        if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
+        token = crypto.randomUUID();
+        const windowLabel = `${getWorkspaceContentWindowLabelPrefix("file")}${crypto.randomUUID()}`;
+        const handoffToken = token;
+        const lifecycle = contentCoordinatorRef.current.beginDetach(
+          { kind: "file", documentId },
+          { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
+          { kind: "window", windowLabel },
+          handoffToken,
+        );
+        if (lifecycle?.outcome !== "changed") {
+          throw new Error(t("pty.detachedMoveUnavailable"));
+        }
+        lifecycleStarted = true;
+        const childUrl = new URL(window.location.href);
+        childUrl.search = "";
+        childUrl.hash = "";
+        childUrl.searchParams.set("detachedFileId", documentId);
+        childUrl.searchParams.set("fileHandoffToken", handoffToken);
+        childUrl.searchParams.set("sourcePaneId", sourcePane.id);
         await new Promise<void>((resolve, reject) => {
           const child = createWorkspaceContentWindow({
             label: windowLabel,
@@ -1040,7 +1171,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             },
             record: {
               documentId,
-              token,
+              token: handoffToken,
               windowLabel,
               sourcePaneId: sourcePane.id,
               window: child,
@@ -1066,12 +1197,19 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           });
         });
       } catch (reason) {
-        contentCoordinatorRef.current.failHandoff(
-          { kind: "file", documentId },
-          "detachFailed",
-          token,
-        );
+        if (lifecycleStarted && token) {
+          contentCoordinatorRef.current.failHandoff(
+            { kind: "file", documentId },
+            "detachFailed",
+            token,
+          );
+        }
         throw reason;
+      } finally {
+        const restoredHandoffIds = new Set(handoffFileIdsRef.current);
+        restoredHandoffIds.delete(documentId);
+        handoffFileIdsRef.current = restoredHandoffIds;
+        setHandoffFileIds(restoredHandoffIds);
       }
     },
     [loadFile, t],
@@ -2258,6 +2396,22 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             ) {
               return;
             }
+            const owner = contentCoordinatorRef.current.get({
+              kind: "file",
+              documentId: managed.documentId,
+            });
+            const currentBuffer = fileBuffersRef.current[managed.documentId];
+            if (
+              owner?.phase !== "detached" ||
+              owner.owner.kind !== "window" ||
+              owner.owner.windowLabel !== managed.windowLabel ||
+              !isWorkspaceFileBufferNewer(
+                event.payload.fileBuffer,
+                currentBuffer,
+              )
+            ) {
+              return;
+            }
             const next = {
               ...fileBuffersRef.current,
               [managed.documentId]: event.payload.fileBuffer,
@@ -2397,6 +2551,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               | undefined;
             try {
               const document = event.payload.fileDocument;
+              const incomingBuffer = event.payload.fileBuffer;
+              const currentBuffer = fileBuffersRef.current[document.id];
+              const returnedBuffer =
+                currentBuffer &&
+                isWorkspaceFileBufferNewer(currentBuffer, incomingBuffer)
+                  ? currentBuffer
+                  : incomingBuffer;
               let targetPane = event.payload.targetPaneId
                 ? findWorkspacePane(treeRef.current, event.payload.targetPaneId)
                 : null;
@@ -2429,7 +2590,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
                 capabilities: {
                   prepare: async () => ({
                     document,
-                    buffer: event.payload.fileBuffer!,
+                    buffer: returnedBuffer,
                   }),
                   attach: async (handoffPayload) => {
                     const nextBuffers = {
@@ -2444,7 +2605,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               };
               fileReturnDriverPayload = {
                 document,
-                buffer: event.payload.fileBuffer,
+                buffer: returnedBuffer,
               };
               await attachWorkspaceContentHandoff(
                 fileReturnDriverContext,
@@ -2668,6 +2829,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       slots,
       fileDocuments,
       fileBuffers,
+      handoffFileIds,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -2714,6 +2876,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       slots,
       fileDocuments,
       fileBuffers,
+      handoffFileIds,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -2807,6 +2970,7 @@ export function PtyWorkspaceRegion() {
     slots,
     fileDocuments,
     fileBuffers,
+    handoffFileIds,
     detachedFileIds,
     tree,
     workspaceTreeRevision,
@@ -2920,6 +3084,7 @@ export function PtyWorkspaceRegion() {
           slots={slots}
           fileDocuments={fileDocuments}
           fileBuffers={fileBuffers}
+          handoffFileIds={handoffFileIds}
           detachedFileIds={detachedFileIds}
           focusedPaneId={focusedPaneId}
           portalTargets={portalTargets}
@@ -3269,6 +3434,7 @@ interface WorkspaceTreeViewProps {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
+  handoffFileIds: Set<string>;
   detachedFileIds: Set<string>;
   focusedPaneId: string;
   portalTargets: Record<string, HTMLDivElement>;
@@ -3488,6 +3654,7 @@ function WorkspacePaneView({
   slots,
   fileDocuments,
   fileBuffers,
+  handoffFileIds,
   detachedFileIds,
   focusedPaneId,
   portalTargets,
@@ -4000,6 +4167,7 @@ function WorkspacePaneView({
           content={pane.activeContent}
           fileDocument={activeFile}
           fileBuffer={activeFileBuffer}
+          readOnly={Boolean(activeFileId && handoffFileIds.has(activeFileId))}
           ptyPortalTarget={
             activeSlot ? portalTargets[activeSlot.instanceId] : undefined
           }

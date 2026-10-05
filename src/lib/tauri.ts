@@ -155,6 +155,10 @@ export interface ProjectTextFile {
   revision: string;
 }
 
+export type ProjectTextFileSaveResult =
+  | { kind: "saved"; content: string; revision: string }
+  | { kind: "conflict" };
+
 export type ProjectFileOpenResult =
   | { kind: "text"; content: string; revision: string }
   | { kind: "image"; mimeType: string; base64Data: string }
@@ -507,7 +511,7 @@ export function saveProjectTextFile(
   content: string,
   expectedRevision: string,
 ) {
-  return invoke<ProjectTextFile>("save_project_text_file", {
+  return invoke<ProjectTextFileSaveResult>("save_project_text_file", {
     directoryId,
     relativePath,
     content,

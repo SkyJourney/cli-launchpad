@@ -1,10 +1,11 @@
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use super::project_directory::ProjectDirectory;
 
 pub const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
@@ -35,6 +36,13 @@ pub enum ProjectFileKind {
 pub struct ProjectTextFile {
     pub content: String,
     pub revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProjectTextFileSaveResult {
+    Saved { content: String, revision: String },
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -77,26 +85,29 @@ pub struct ProjectDirectoryListing {
 }
 
 pub fn list_directory(root: &Path, relative_path: &str) -> Result<ProjectDirectoryListing> {
-    list_directory_with_limit(root, relative_path, MAX_PROJECT_DIRECTORY_ENTRIES)
+    let root = ProjectDirectory::open(root)?;
+    list_directory_with_limit(&root, relative_path, MAX_PROJECT_DIRECTORY_ENTRIES)
 }
 
 fn list_directory_with_limit(
-    root: &Path,
+    root: &ProjectDirectory,
     relative_path: &str,
     max_entries: usize,
 ) -> Result<ProjectDirectoryListing> {
-    let canonical_root = canonical_root(root)?;
-    let directory = resolve_existing(&canonical_root, relative_path)?;
-    if !directory.is_dir() {
+    let directory_path = ProjectDirectory::path(relative_path)?;
+    if !relative_path.is_empty() && !root.dir().metadata(&directory_path)?.is_dir() {
         bail!("所选项目路径不是目录");
     }
 
     let mut entries = Vec::new();
     let mut truncated = false;
-    for item in fs::read_dir(&directory)
-        .context("无法读取项目目录")?
-        .take(max_entries.saturating_add(1))
-    {
+    let read_dir = if relative_path.is_empty() {
+        root.dir().entries()
+    } else {
+        root.dir().read_dir(&directory_path)
+    }
+    .context("无法读取项目目录")?;
+    for item in read_dir.take(max_entries.saturating_add(1)) {
         if entries.len() == max_entries {
             truncated = true;
             break;
@@ -105,9 +116,16 @@ fn list_directory_with_limit(
         let Some(name) = item.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let path = item.path();
-        let metadata = fs::symlink_metadata(&path).context("无法读取文件属性")?;
-        let symbolic_link = metadata.file_type().is_symlink();
+        let child_relative = if relative_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative_path}/{name}")
+        };
+        let metadata = root
+            .dir()
+            .symlink_metadata(ProjectDirectory::path(&child_relative)?)
+            .context("无法读取文件属性")?;
+        let symbolic_link = item.file_type().context("无法读取文件属性")?.is_symlink();
         let kind = if symbolic_link {
             ProjectFileKind::Other
         } else if metadata.is_dir() {
@@ -117,12 +135,6 @@ fn list_directory_with_limit(
         } else {
             ProjectFileKind::Other
         };
-        let child_relative = if relative_path.is_empty() {
-            name.clone()
-        } else {
-            format!("{relative_path}/{name}")
-        };
-        validate_relative_path(&child_relative)?;
         entries.push(ProjectFileEntry {
             hidden: name.starts_with('.'),
             ignored: is_ignored_name(&name),
@@ -144,16 +156,21 @@ fn list_directory_with_limit(
 }
 
 pub fn read_text_file(root: &Path, relative_path: &str) -> Result<ProjectTextFile> {
-    let canonical_root = canonical_root(root)?;
-    let path = resolve_existing(&canonical_root, relative_path)?;
-    let metadata = fs::metadata(&path).context("无法读取文件属性")?;
+    let root = ProjectDirectory::open(root)?;
+    read_text_file_in(&root, relative_path)
+}
+
+fn read_text_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<ProjectTextFile> {
+    let path = ProjectDirectory::path(relative_path)?;
+    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
+    let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
         bail!("只能打开普通文本文件");
     }
     if metadata.len() > MAX_TEXT_FILE_BYTES {
         bail!("文件超过 2 MiB 文本编辑限制");
     }
-    let bytes = read_bounded(&path, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
+    let bytes = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
     if !is_plain_text(&bytes) {
         bail!("该文件包含二进制内容，不能作为文本编辑");
     }
@@ -165,13 +182,18 @@ pub fn read_text_file(root: &Path, relative_path: &str) -> Result<ProjectTextFil
 }
 
 pub fn open_file(root: &Path, relative_path: &str) -> Result<ProjectFileOpenResult> {
-    let canonical_root = canonical_root(root)?;
-    let path = resolve_existing(&canonical_root, relative_path)?;
-    let metadata = fs::metadata(&path).context("无法读取文件属性")?;
+    let root = ProjectDirectory::open(root)?;
+    open_file_in(&root, relative_path)
+}
+
+fn open_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<ProjectFileOpenResult> {
+    let path = ProjectDirectory::path(relative_path)?;
+    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
+    let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
         bail!("只能打开普通文件");
     }
-    let extension = path
+    let extension = Path::new(relative_path)
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
@@ -185,7 +207,7 @@ pub fn open_file(root: &Path, relative_path: &str) -> Result<ProjectFileOpenResu
                 reason: ProjectFileUnsupportedReason::TooLarge,
             });
         }
-        let bytes = read_bounded(&path, MAX_IMAGE_PREVIEW_BYTES).context("无法读取图片")?;
+        let bytes = read_bounded(file, MAX_IMAGE_PREVIEW_BYTES).context("无法读取图片")?;
         return Ok(match image_preview_from_bytes(&extension, &bytes) {
             Some(image) => ProjectFileOpenResult::Image {
                 mime_type: image.mime_type,
@@ -209,7 +231,7 @@ pub fn open_file(root: &Path, relative_path: &str) -> Result<ProjectFileOpenResu
             reason: ProjectFileUnsupportedReason::TooLarge,
         });
     }
-    let bytes = read_bounded(&path, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
+    let bytes = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
     if !is_plain_text(&bytes) {
         return Ok(ProjectFileOpenResult::Unsupported {
             reason: ProjectFileUnsupportedReason::Binary,
@@ -261,72 +283,49 @@ pub fn save_text_file(
     relative_path: &str,
     content: &str,
     expected_revision: &str,
-) -> Result<ProjectTextFile> {
+) -> Result<ProjectTextFileSaveResult> {
+    let root = ProjectDirectory::open(root)?;
+    save_text_file_in(&root, relative_path, content, expected_revision)
+}
+
+fn save_text_file_in(
+    root: &ProjectDirectory,
+    relative_path: &str,
+    content: &str,
+    expected_revision: &str,
+) -> Result<ProjectTextFileSaveResult> {
     if content.len() as u64 > MAX_TEXT_FILE_BYTES {
         bail!("文件超过 2 MiB 文本编辑限制");
     }
     if !is_plain_text(content.as_bytes()) {
         bail!("只能保存 UTF-8 文本文件");
     }
-    let canonical_root = canonical_root(root)?;
-    let path = resolve_existing(&canonical_root, relative_path)?;
-    let metadata = fs::metadata(&path).context("无法读取文件属性")?;
+    let path = ProjectDirectory::path(relative_path)?;
+    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
+    let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
         bail!("只能保存普通文本文件");
     }
-    let current = read_bounded(&path, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
+    let current = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
     if !is_plain_text(&current) {
         bail!("只能保存 UTF-8 文本文件");
     }
     if content_revision(&current) != expected_revision {
-        bail!("文件已在其他位置修改，请重新载入后再保存");
+        return Ok(ProjectTextFileSaveResult::Conflict);
     }
-    replace_file_if_revision(&path, content.as_bytes(), expected_revision)
-        .context("无法安全保存文件")?;
-    Ok(ProjectTextFile {
+    let saved =
+        replace_file_if_revision(root, relative_path, content.as_bytes(), expected_revision)
+            .context("无法安全保存文件")?;
+    if !saved {
+        return Ok(ProjectTextFileSaveResult::Conflict);
+    }
+    Ok(ProjectTextFileSaveResult::Saved {
         content: content.to_string(),
         revision: content_revision(content.as_bytes()),
     })
 }
 
-fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let root = fs::canonicalize(root).context("项目目录不存在或无法访问")?;
-    if !root.is_dir() {
-        bail!("项目路径不是目录");
-    }
-    Ok(root)
-}
-
-fn resolve_existing(root: &Path, relative_path: &str) -> Result<PathBuf> {
-    validate_relative_path(relative_path)?;
-    let candidate = relative_path
-        .split('/')
-        .fold(root.to_path_buf(), |path, part| path.join(part));
-    let canonical = fs::canonicalize(&candidate).context("项目文件不存在或无法访问")?;
-    if !canonical.starts_with(root) {
-        bail!("项目文件不能越过项目目录访问");
-    }
-    Ok(canonical)
-}
-
-fn validate_relative_path(relative_path: &str) -> Result<()> {
-    if relative_path.is_empty() {
-        return Ok(());
-    }
-    if relative_path.starts_with('/')
-        || relative_path.contains('\\')
-        || relative_path.contains(':')
-        || relative_path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        bail!("文件路径必须是规范的项目内相对路径");
-    }
-    Ok(())
-}
-
-fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<Vec<u8>> {
-    let file = fs::File::open(path)?;
+fn read_bounded(file: impl Read, maximum_bytes: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
     file.take(maximum_bytes + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > maximum_bytes {
@@ -348,150 +347,35 @@ fn content_revision(content: &[u8]) -> String {
 }
 
 pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
-    let mut temporary = create_synced_temporary(destination, bytes)?;
-    let previous = sibling_suffix(destination, ".previous");
-    temporary.finish_writing()?;
-    temporary.commit(destination, &previous)
+    crate::platform::file_cas::replace_file(destination, bytes)
 }
 
 fn replace_file_if_revision(
-    destination: &Path,
+    root: &ProjectDirectory,
+    relative_path: &str,
     bytes: &[u8],
     expected_revision: &str,
-) -> Result<()> {
-    let previous = sibling_suffix(destination, ".previous");
-    let permissions = fs::metadata(destination)?.permissions();
-    let mut temporary = create_synced_temporary(destination, bytes)?;
-    temporary.finish_writing()?;
-    temporary.set_permissions(permissions)?;
+) -> Result<bool> {
+    use crate::platform::file_cas::compare_and_swap_in_directory;
+    use crate::platform::file_cas::CompareAndSwapOutcome;
 
-    let current = read_bounded(destination, MAX_TEXT_FILE_BYTES)?;
-    if content_revision(&current) != expected_revision {
-        bail!("文件已在其他位置修改，请重新载入后再保存");
+    match compare_and_swap_in_directory(
+        root.dir(),
+        Path::new(relative_path),
+        bytes,
+        &expected_revision.to_owned(),
+        MAX_TEXT_FILE_BYTES,
+        content_revision,
+    )? {
+        CompareAndSwapOutcome::Written => Ok(true),
+        CompareAndSwapOutcome::Conflict => Ok(false),
     }
-    temporary.commit(destination, &previous)
-}
-
-struct TemporaryReplacement {
-    path: PathBuf,
-    file: Option<fs::File>,
-    committed: bool,
-}
-
-impl Drop for TemporaryReplacement {
-    fn drop(&mut self) {
-        if !self.committed {
-            self.file.take();
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
-impl TemporaryReplacement {
-    fn finish_writing(&mut self) -> Result<()> {
-        let file = self.file.as_mut().context("临时文件句柄已关闭")?;
-        file.flush()?;
-        file.sync_all()?;
-        Ok(())
-    }
-
-    fn set_permissions(&self, permissions: fs::Permissions) -> Result<()> {
-        self.file
-            .as_ref()
-            .context("临时文件句柄已关闭")?
-            .set_permissions(permissions)?;
-        Ok(())
-    }
-
-    fn commit(mut self, destination: &Path, previous: &Path) -> Result<()> {
-        self.file.take();
-        commit_replacement(destination, &self.path, previous)?;
-        self.committed = true;
-        Ok(())
-    }
-}
-
-fn create_synced_temporary(destination: &Path, bytes: &[u8]) -> Result<TemporaryReplacement> {
-    for _ in 0..8 {
-        let suffix = format!(".{}.writing", uuid::Uuid::new_v4().simple());
-        let temporary = sibling_suffix(destination, &suffix);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
-            Ok(mut file) => {
-                if let Err(error) = file.write_all(bytes) {
-                    drop(file);
-                    let _ = fs::remove_file(&temporary);
-                    return Err(error.into());
-                }
-                return Ok(TemporaryReplacement {
-                    path: temporary,
-                    file: Some(file),
-                    committed: false,
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
-    bail!("无法创建唯一的临时文件")
-}
-
-fn sibling_suffix(destination: &Path, suffix: &str) -> PathBuf {
-    let mut result = destination.as_os_str().to_os_string();
-    result.push(suffix);
-    PathBuf::from(result)
-}
-
-#[cfg(windows)]
-fn commit_replacement(destination: &Path, temporary: &Path, previous: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
-
-    if !destination.exists() {
-        fs::rename(temporary, destination)?;
-        return Ok(());
-    }
-
-    let _ = fs::remove_file(previous);
-    let wide = |path: &Path| {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>()
-    };
-    let destination_wide = wide(destination);
-    let temporary_wide = wide(temporary);
-    let previous_wide = wide(previous);
-    let replaced = unsafe {
-        ReplaceFileW(
-            destination_wide.as_ptr(),
-            temporary_wide.as_ptr(),
-            previous_wide.as_ptr(),
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    if replaced == 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    let _ = fs::remove_file(previous);
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn commit_replacement(destination: &Path, temporary: &Path, _previous: &Path) -> Result<()> {
-    fs::rename(temporary, destination)?;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -504,13 +388,28 @@ mod tests {
     }
 
     #[test]
-    fn temporary_path_keeps_original_extension_identity() {
-        let json = Path::new("report.json");
-        let text = Path::new("report.txt");
-        assert_ne!(
-            sibling_suffix(json, ".writing"),
-            sibling_suffix(text, ".writing")
-        );
+    fn atomically_creates_missing_destination() {
+        let directory = tempdir().unwrap();
+        let destination = directory.path().join("new-export.json");
+
+        replace_file(&destination, b"created").unwrap();
+
+        assert_eq!(fs::read_to_string(destination).unwrap(), "created");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomically_replaces_write_only_destination() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().unwrap();
+        let destination = directory.path().join("write-only-export.json");
+        fs::write(&destination, "old").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o200)).unwrap();
+
+        replace_file(&destination, b"new").unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
     }
 
     #[test]
@@ -548,11 +447,12 @@ mod tests {
             fs::write(directory.path().join(name), "x").unwrap();
         }
 
-        let listing = list_directory_with_limit(directory.path(), "", 2).unwrap();
+        let root = ProjectDirectory::open(directory.path()).unwrap();
+        let listing = list_directory_with_limit(&root, "", 2).unwrap();
         assert_eq!(listing.entries.len(), 2);
         assert!(listing.truncated);
 
-        let complete = list_directory_with_limit(directory.path(), "", 3).unwrap();
+        let complete = list_directory_with_limit(&root, "", 3).unwrap();
         assert_eq!(complete.entries.len(), 3);
         assert!(!complete.truncated);
     }
@@ -563,18 +463,62 @@ mod tests {
         let file = directory.path().join("note.txt");
         fs::write(&file, "first").unwrap();
         let opened = read_text_file(directory.path(), "note.txt").unwrap();
-        let saved =
-            save_text_file(directory.path(), "note.txt", "second", &opened.revision).unwrap();
-        assert_eq!(saved.content, "second");
+        let saved = save_text_file(directory.path(), "note.txt", "second", &opened.revision)
+            .unwrap_or_else(|error| panic!("{error:#}"));
+        let ProjectTextFileSaveResult::Saved { content, revision } = saved else {
+            panic!("first write must save");
+        };
+        assert_eq!(content, "second");
 
         fs::write(&file, "external").unwrap();
-        assert!(
-            save_text_file(directory.path(), "note.txt", "ours", &saved.revision,)
-                .unwrap_err()
-                .to_string()
-                .contains("其他位置修改")
+        assert_eq!(
+            save_text_file(directory.path(), "note.txt", "ours", &revision).unwrap(),
+            ProjectTextFileSaveResult::Conflict
         );
         assert_eq!(fs::read_to_string(file).unwrap(), "external");
+    }
+
+    #[test]
+    fn concurrent_text_file_saves_with_same_revision_have_one_winner() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let directory = tempdir().unwrap();
+        let file = directory.path().join("note.txt");
+        fs::write(&file, "original").unwrap();
+        let opened = read_text_file(directory.path(), "note.txt").unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let writers = ["writer-a", "writer-b"].map(|content| {
+            let root = directory.path().to_path_buf();
+            let revision = opened.revision.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                save_text_file(&root, "note.txt", content, &revision)
+            })
+        });
+
+        barrier.wait();
+        let results = writers.map(|writer| writer.join().unwrap());
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Saved { .. })))
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Conflict)))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            fs::read_to_string(file).unwrap().as_str(),
+            "writer-a" | "writer-b"
+        ));
     }
 
     #[test]
@@ -600,25 +544,6 @@ mod tests {
             content_revision(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-    }
-
-    #[test]
-    fn temporary_replacements_are_unique_and_cleaned_up_on_drop() {
-        let directory = tempdir().unwrap();
-        let destination = directory.path().join("note.txt");
-        let first = create_synced_temporary(&destination, b"first").unwrap();
-        let second = create_synced_temporary(&destination, b"second").unwrap();
-
-        assert_ne!(first.path, second.path);
-        assert_eq!(fs::read(&first.path).unwrap(), b"first");
-        assert_eq!(fs::read(&second.path).unwrap(), b"second");
-
-        let first_path = first.path.clone();
-        let second_path = second.path.clone();
-        drop(first);
-        drop(second);
-        assert!(!first_path.exists());
-        assert!(!second_path.exists());
     }
 
     #[cfg(unix)]
@@ -734,5 +659,59 @@ mod tests {
         }
 
         assert!(read_text_file(root.path(), "escape/private.txt").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_project_capability_survives_root_path_replacement() {
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        fs::write(root_path.join("note.txt"), "original root").unwrap();
+        let capability = ProjectDirectory::open(&root_path).unwrap();
+        let detached_path = root_path.with_extension("detached");
+        fs::rename(&root_path, &detached_path).unwrap();
+        fs::create_dir(&root_path).unwrap();
+        fs::write(root_path.join("note.txt"), "replacement directory").unwrap();
+
+        let opened = read_text_file_in(&capability, "note.txt").unwrap();
+        assert_eq!(opened.content, "original root");
+        assert!(list_directory_with_limit(&capability, "", 10)
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| entry.name == "note.txt"));
+        let saved = save_text_file_in(
+            &capability,
+            "note.txt",
+            "saved through retained handle",
+            &opened.revision,
+        )
+        .unwrap();
+        assert!(matches!(saved, ProjectTextFileSaveResult::Saved { .. }));
+        assert_eq!(
+            fs::read_to_string(detached_path.join("note.txt")).unwrap(),
+            "saved through retained handle"
+        );
+        assert_eq!(
+            fs::read_to_string(root_path.join("note.txt")).unwrap(),
+            "replacement directory"
+        );
+        fs::remove_dir_all(detached_path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_project_handle_prevents_root_directory_replacement() {
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        fs::write(root_path.join("note.txt"), "original root").unwrap();
+        let capability = ProjectDirectory::open(&root_path).unwrap();
+        let replacement_path = root_path.with_extension("replacement");
+
+        assert!(fs::rename(&root_path, &replacement_path).is_err());
+        assert_eq!(
+            read_text_file_in(&capability, "note.txt").unwrap().content,
+            "original root"
+        );
     }
 }

@@ -4,6 +4,7 @@ export interface WorkspaceEditorEngineProps {
   relativePath: string;
   modelUri: string;
   theme: "light" | "dark";
+  readOnly: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
 }

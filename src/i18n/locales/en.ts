@@ -562,6 +562,8 @@ export const en = {
     discardChanges: "This file has unsaved changes. Close and discard them?",
     save: "Save",
     reload: "Reload",
+    saveConflict:
+      "The file changed on disk. Your edits are preserved; reload the file before saving again.",
     directoryLimitReached:
       "This directory has too many entries. Showing the first 5,000.",
     loadingFile: "Loading file…",

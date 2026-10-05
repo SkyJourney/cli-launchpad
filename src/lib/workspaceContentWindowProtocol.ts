@@ -119,6 +119,172 @@ const subscribers = new Set<Subscriber>();
 let unlistenProtocol: UnlistenFn | null = null;
 let protocolRegistration: Promise<void> | null = null;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasStringFields(
+  value: Record<string, unknown>,
+  fields: string[],
+): boolean {
+  return fields.every((field) => typeof value[field] === "string");
+}
+
+function hasOptionalStringFields(
+  value: Record<string, unknown>,
+  fields: string[],
+): boolean {
+  return fields.every(
+    (field) => value[field] === undefined || typeof value[field] === "string",
+  );
+}
+
+function isFileDocument(value: unknown): value is WorkspaceFileDocument {
+  return (
+    isRecord(value) &&
+    hasStringFields(value, ["id", "directoryPath", "relativePath"]) &&
+    typeof value.directoryId === "number" &&
+    Number.isSafeInteger(value.directoryId) &&
+    value.directoryId > 0
+  );
+}
+
+function isFileBuffer(value: unknown): value is WorkspaceFileBuffer {
+  return (
+    isRecord(value) &&
+    Number.isSafeInteger(value.epoch) &&
+    Number(value.epoch) >= 0 &&
+    Number.isSafeInteger(value.version) &&
+    Number(value.version) >= 0 &&
+    hasStringFields(value, ["content", "savedContent", "revision"]) &&
+    typeof value.saving === "boolean" &&
+    (value.kind === undefined ||
+      value.kind === "text" ||
+      value.kind === "image" ||
+      value.kind === "unsupported") &&
+    (value.conflict === undefined || typeof value.conflict === "boolean") &&
+    (value.previewDataUrl === undefined ||
+      typeof value.previewDataUrl === "string") &&
+    (value.unsupportedReason === undefined ||
+      ["binary", "tooLarge", "invalidImage", "unsupportedImage"].includes(
+        String(value.unsupportedReason),
+      ))
+  );
+}
+
+function isValidEventPayload(
+  type: WorkspaceContentWindowEventName,
+  value: unknown,
+): boolean {
+  if (!isRecord(value)) return false;
+  switch (type) {
+    case "pty-detached-ready":
+    case "pty-detached-exited":
+      return hasStringFields(value, ["instanceId", "sessionId", "windowLabel"]);
+    case "pty-detached-failed":
+      return (
+        hasStringFields(value, ["instanceId", "sessionId", "windowLabel"]) &&
+        hasOptionalStringFields(value, ["message"])
+      );
+    case "pty-return-requested":
+      return (
+        hasStringFields(value, [
+          "instanceId",
+          "sessionId",
+          "windowLabel",
+          "token",
+        ]) && hasOptionalStringFields(value, ["targetPaneId"])
+      );
+    case "pty-return-complete":
+      return hasStringFields(value, ["instanceId", "token"]);
+    case "pty-return-failed":
+      return (
+        hasStringFields(value, ["instanceId", "token"]) &&
+        hasOptionalStringFields(value, ["message"])
+      );
+    case "pty-return-drop-requested":
+      return (
+        hasStringFields(value, ["instanceId"]) &&
+        hasOptionalStringFields(value, ["targetPaneId"])
+      );
+    case "workspace-file-window-ready":
+    case "workspace-file-window-attached":
+      return hasStringFields(value, ["documentId", "token", "windowLabel"]);
+    case "workspace-file-window-attach-failed":
+      return (
+        hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
+        hasOptionalStringFields(value, ["message"])
+      );
+    case "workspace-file-window-buffer-changed":
+      return (
+        hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
+        (value.fileDocument === undefined ||
+          isFileDocument(value.fileDocument)) &&
+        (value.fileBuffer === undefined || isFileBuffer(value.fileBuffer))
+      );
+    case "workspace-file-window-return-requested":
+      return (
+        hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
+        hasOptionalStringFields(value, ["targetPaneId"]) &&
+        (value.fileDocument === undefined ||
+          isFileDocument(value.fileDocument)) &&
+        (value.fileBuffer === undefined || isFileBuffer(value.fileBuffer))
+      );
+    case "workspace-file-window-return-complete":
+      return hasStringFields(value, ["documentId", "token"]);
+    case "workspace-file-window-return-failed":
+      return (
+        hasStringFields(value, ["documentId", "token"]) &&
+        hasOptionalStringFields(value, ["message"])
+      );
+    case "workspace-file-window-return-drop-requested":
+      return (
+        hasStringFields(value, ["documentId"]) &&
+        hasOptionalStringFields(value, ["targetPaneId"])
+      );
+    case "workspace-file-window-init":
+      return (
+        hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
+        isFileDocument(value.fileDocument) &&
+        isFileBuffer(value.fileBuffer)
+      );
+  }
+}
+
+function isWorkspaceContentWindowEventName(
+  value: unknown,
+): value is WorkspaceContentWindowEventName {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(
+      workspaceContentWindowEventPayloadKeys,
+      value,
+    )
+  );
+}
+
+const workspaceContentWindowEventPayloadKeys: Record<
+  WorkspaceContentWindowEventName,
+  true
+> = {
+  "pty-detached-ready": true,
+  "pty-detached-failed": true,
+  "pty-return-requested": true,
+  "pty-detached-exited": true,
+  "pty-return-complete": true,
+  "pty-return-failed": true,
+  "pty-return-drop-requested": true,
+  "workspace-file-window-ready": true,
+  "workspace-file-window-attached": true,
+  "workspace-file-window-attach-failed": true,
+  "workspace-file-window-buffer-changed": true,
+  "workspace-file-window-return-requested": true,
+  "workspace-file-window-return-complete": true,
+  "workspace-file-window-return-failed": true,
+  "workspace-file-window-return-drop-requested": true,
+  "workspace-file-window-init": true,
+};
+
 async function ensureProtocolListener(): Promise<void> {
   if (unlistenProtocol || protocolRegistration) {
     await protocolRegistration;
@@ -130,20 +296,28 @@ async function ensureProtocolListener(): Promise<void> {
       if (
         !payload ||
         payload.apiVersion !== PROTOCOL_VERSION ||
-        typeof payload.type !== "string"
+        !isWorkspaceContentWindowEventName(payload.type) ||
+        !isValidEventPayload(payload.type, payload.payload)
       ) {
         return;
       }
       for (const subscriber of subscribers) {
         if (subscriber.type === payload.type) {
-          Promise.resolve(
-            subscriber.handler({ payload: payload.payload }),
-          ).catch((reason) =>
+          try {
+            Promise.resolve(
+              subscriber.handler({ payload: payload.payload }),
+            ).catch((reason) =>
+              console.error(
+                `Workspace content event handler failed: ${payload.type}`,
+                reason,
+              ),
+            );
+          } catch (reason) {
             console.error(
               `Workspace content event handler failed: ${payload.type}`,
               reason,
-            ),
-          );
+            );
+          }
         }
       }
     },

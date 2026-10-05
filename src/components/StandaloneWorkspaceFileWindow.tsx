@@ -3,10 +3,15 @@ import { ArrowLeft, FileText } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceFileDocument } from "../lib/tauri";
-import { saveProjectTextFile } from "../lib/tauri";
+import { openProjectFile, saveProjectTextFile } from "../lib/tauri";
 import {
+  beginWorkspaceFileSave,
   completeWorkspaceFileSave,
+  createWorkspaceFileBuffer,
+  editWorkspaceFileBuffer,
   failWorkspaceFileSave,
+  markWorkspaceFileSaveConflict,
+  WorkspaceFileOperationFlights,
   type WorkspaceFileBuffer,
 } from "../lib/workspaceFileBuffer";
 import {
@@ -41,18 +46,48 @@ export function StandaloneWorkspaceFileWindow({
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentBufferRef = useRef<WorkspaceFileBuffer | undefined>(undefined);
+  const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
   const returningRef = useRef(false);
   const returnTimeoutRef = useRef<number | null>(null);
   currentBufferRef.current = fileBuffer;
   returningRef.current = returning;
 
+  const updateFileBuffer = useCallback(
+    (
+      update: (
+        current: WorkspaceFileBuffer | undefined,
+      ) => WorkspaceFileBuffer | undefined,
+    ) => {
+      const next = update(currentBufferRef.current);
+      currentBufferRef.current = next;
+      setFileBuffer(next);
+      return next;
+    },
+    [],
+  );
+
   const requestReturn = useCallback(
     async (targetPaneId?: string) => {
-      const buffer = currentBufferRef.current;
-      if (!fileDocument || !buffer || returningRef.current) return;
+      if (!fileDocument || !currentBufferRef.current || returningRef.current)
+        return;
       returningRef.current = true;
       setReturning(true);
       setError(null);
+      try {
+        await fileOperationFlightsRef.current.waitForSave(documentId);
+      } catch (reason) {
+        returningRef.current = false;
+        setReturning(false);
+        setError(String(reason));
+        return;
+      }
+      const buffer = currentBufferRef.current;
+      if (!buffer || buffer.saving) {
+        returningRef.current = false;
+        setReturning(false);
+        setError(t("workspaceFiles.loadingFile"));
+        return;
+      }
       if (returnTimeoutRef.current !== null) {
         window.clearTimeout(returnTimeoutRef.current);
       }
@@ -88,37 +123,107 @@ export function StandaloneWorkspaceFileWindow({
   const requestReturnRef = useRef(requestReturn);
   requestReturnRef.current = requestReturn;
 
-  const saveFile = useCallback(async () => {
-    if (!fileDocument || !fileBuffer) return;
-    const submitted = { ...fileBuffer, saving: true };
-    setFileBuffer(submitted);
-    try {
-      const saved = await saveProjectTextFile(
-        fileDocument.directoryId,
-        fileDocument.relativePath,
-        submitted.content,
-        submitted.revision,
-      );
-      setFileBuffer((current) => {
-        const next = completeWorkspaceFileSave(current, submitted, saved);
-        void emitWorkspaceContentWindowEvent(
-          "main",
-          "workspace-file-window-buffer-changed",
-          {
-            documentId,
-            token,
-            windowLabel: getCurrentWindow().label,
-            fileDocument,
-            fileBuffer: next,
-          },
-        );
-        return next;
-      });
-    } catch (reason) {
-      setFileBuffer((current) => failWorkspaceFileSave(current, submitted));
-      setError(String(reason));
-    }
-  }, [documentId, fileBuffer, fileDocument, token]);
+  const saveFile = useCallback(
+    () =>
+      fileOperationFlightsRef.current.save(documentId, async () => {
+        if (returningRef.current || !fileDocument) return;
+        const buffer = currentBufferRef.current;
+        if (
+          !buffer ||
+          buffer.kind !== "text" ||
+          buffer.saving ||
+          buffer.content === buffer.savedContent
+        ) {
+          return;
+        }
+        const submitted = beginWorkspaceFileSave(buffer);
+        updateFileBuffer(() => submitted);
+        const publish = (next: WorkspaceFileBuffer) => {
+          void emitWorkspaceContentWindowEvent(
+            "main",
+            "workspace-file-window-buffer-changed",
+            {
+              documentId,
+              token,
+              windowLabel: getCurrentWindow().label,
+              fileDocument,
+              fileBuffer: next,
+            },
+          );
+        };
+        try {
+          const saved = await saveProjectTextFile(
+            fileDocument.directoryId,
+            fileDocument.relativePath,
+            submitted.content,
+            submitted.revision,
+          );
+          if (currentBufferRef.current?.epoch !== submitted.epoch) return;
+          if (saved.kind === "conflict") {
+            const next = updateFileBuffer((current) =>
+              markWorkspaceFileSaveConflict(current, submitted),
+            );
+            if (next) publish(next);
+            setError(t("workspaceFiles.saveConflict"));
+            return;
+          }
+          const next = updateFileBuffer((current) =>
+            completeWorkspaceFileSave(current, submitted, saved),
+          );
+          if (next) publish(next);
+        } catch (reason) {
+          if (currentBufferRef.current?.epoch !== submitted.epoch) return;
+          updateFileBuffer((current) =>
+            failWorkspaceFileSave(current, submitted),
+          );
+          setError(String(reason));
+        }
+      }),
+    [documentId, fileDocument, t, updateFileBuffer, token],
+  );
+
+  const reloadFile = useCallback(
+    () =>
+      fileOperationFlightsRef.current.load(documentId, async () => {
+        await fileOperationFlightsRef.current.waitForSave(documentId);
+        const startingBuffer = currentBufferRef.current;
+        if (!fileDocument || !startingBuffer || returningRef.current) return;
+        try {
+          const loaded = createWorkspaceFileBuffer(
+            await openProjectFile(
+              fileDocument.directoryId,
+              fileDocument.relativePath,
+            ),
+            startingBuffer.epoch + 1,
+          );
+          const current = currentBufferRef.current;
+          if (
+            current?.epoch !== startingBuffer.epoch ||
+            current.version !== startingBuffer.version ||
+            fileDocument.id !== documentId ||
+            returningRef.current
+          ) {
+            return;
+          }
+          updateFileBuffer(() => loaded);
+          setError(null);
+          await emitWorkspaceContentWindowEvent(
+            "main",
+            "workspace-file-window-buffer-changed",
+            {
+              documentId,
+              token,
+              windowLabel: getCurrentWindow().label,
+              fileDocument,
+              fileBuffer: loaded,
+            },
+          );
+        } catch (reason) {
+          setError(String(reason));
+        }
+      }),
+    [documentId, fileDocument, token, updateFileBuffer],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -156,7 +261,7 @@ export function StandaloneWorkspaceFileWindow({
                 }),
                 attach: async (payload) => {
                   setFileDocument(payload.document);
-                  setFileBuffer(payload.buffer);
+                  updateFileBuffer(() => payload.buffer);
                 },
                 rollback: async () => undefined,
               },
@@ -321,11 +426,13 @@ export function StandaloneWorkspaceFileWindow({
             content={{ kind: "file", documentId }}
             fileDocument={fileDocument}
             fileBuffer={fileBuffer}
-            onEditFile={(_id, content) =>
-              setFileBuffer((current) =>
-                current ? { ...current, content } : current,
-              )
-            }
+            readOnly={returning}
+            onEditFile={(_id, content) => {
+              if (returningRef.current) return;
+              updateFileBuffer((current) =>
+                current ? editWorkspaceFileBuffer(current, content) : current,
+              );
+            }}
             onSaveFile={saveFile}
           />
         ) : (
@@ -333,7 +440,16 @@ export function StandaloneWorkspaceFileWindow({
             {t("workspaceFiles.loadingFile")}
           </p>
         )}
-        {error && <p className="error standalone-pty-error">{error}</p>}
+        {error && (
+          <div className="error standalone-pty-error">
+            {error}
+            {fileBuffer?.conflict && (
+              <button type="button" onClick={() => void reloadFile()}>
+                {t("workspaceFiles.reload")}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </WorkspaceContentWindowShell>
   );

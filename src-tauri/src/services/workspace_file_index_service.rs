@@ -1,12 +1,14 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use cap_std::fs::ReadDir;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::services::{cache_service, file_service, file_service::ProjectFileKind};
+use crate::services::{
+    cache_service, file_service, file_service::ProjectFileKind, project_directory::ProjectDirectory,
+};
 
 pub const WORKSPACE_FILE_INDEX_TTL_MS: i64 = 5 * 60 * 1000;
 pub const MAX_WORKSPACE_FILE_INDEX_ENTRIES: usize = 50_000;
@@ -53,6 +55,9 @@ pub fn get_fresh_cached_index(
     directory_id: i64,
     root: &Path,
 ) -> Result<Option<WorkspaceFileIndex>> {
+    // Keep the pre-capability behavior: a cached view must not make a deleted
+    // project appear available. The index itself remains metadata-only.
+    let _root_capability = ProjectDirectory::open(root)?;
     let Some(cached) = cache_service::get_fresh::<CachedWorkspaceFileIndex>(
         connection,
         &cache_key(directory_id),
@@ -61,8 +66,7 @@ pub fn get_fresh_cached_index(
     else {
         return Ok(None);
     };
-    let canonical_root = canonical_root(root)?;
-    if cached.root_fingerprint != root_fingerprint(&canonical_root) {
+    if cached.root_fingerprint != root_fingerprint(root) {
         return Ok(None);
     }
     Ok(Some(cached.index))
@@ -74,12 +78,11 @@ pub fn save_cached_index(
     root: &Path,
     index: &WorkspaceFileIndex,
 ) -> Result<()> {
-    let canonical_root = canonical_root(root)?;
     cache_service::put(
         connection,
         &cache_key(directory_id),
         &CachedWorkspaceFileIndex {
-            root_fingerprint: root_fingerprint(&canonical_root),
+            root_fingerprint: root_fingerprint(root),
             index: index.clone(),
         },
     )
@@ -100,17 +103,38 @@ fn scan_workspace_with_limits(
     max_directory_entries: usize,
     max_depth: usize,
 ) -> Result<WorkspaceFileIndex> {
-    let canonical_root = canonical_root(root)?;
+    let root = ProjectDirectory::open(root)?;
+    scan_workspace_cap(&root, max_entries, max_directory_entries, max_depth)
+}
+
+fn scan_workspace_cap(
+    root: &ProjectDirectory,
+    max_entries: usize,
+    max_directory_entries: usize,
+    max_depth: usize,
+) -> Result<WorkspaceFileIndex> {
+    scan_workspace_cap_with_limits(root, max_entries, max_directory_entries, max_depth)
+}
+
+fn scan_workspace_cap_with_limits(
+    root: &ProjectDirectory,
+    max_entries: usize,
+    max_directory_entries: usize,
+    max_depth: usize,
+) -> Result<WorkspaceFileIndex> {
     let mut entries = Vec::new();
     let mut truncated = false;
     let mut pending = vec![(PathBuf::new(), 0usize)];
 
     while let Some((relative_directory, depth)) = pending.pop() {
-        let absolute_directory = canonical_root.join(&relative_directory);
         let mut children = Vec::new();
-        for child in fs::read_dir(&absolute_directory)
-            .with_context(|| format!("无法读取工作区目录：{}", relative_directory.display()))?
-        {
+        let read_dir: ReadDir = if relative_directory.as_os_str().is_empty() {
+            root.dir().entries()
+        } else {
+            root.dir().read_dir(&relative_directory)
+        }
+        .with_context(|| format!("无法读取工作区目录：{}", relative_directory.display()))?;
+        for child in read_dir {
             if children.len() == max_directory_entries {
                 truncated = true;
                 break;
@@ -127,8 +151,12 @@ fn scan_workspace_with_limits(
             let Some(name) = child.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            let metadata = fs::symlink_metadata(child.path()).context("无法读取文件属性")?;
-            let symbolic_link = metadata.file_type().is_symlink();
+            let relative_path = relative_directory.join(&name);
+            let metadata = root
+                .dir()
+                .symlink_metadata(&relative_path)
+                .context("无法读取文件属性")?;
+            let symbolic_link = child.file_type().context("无法读取文件属性")?.is_symlink();
             let kind = if symbolic_link {
                 ProjectFileKind::Other
             } else if metadata.is_dir() {
@@ -138,7 +166,6 @@ fn scan_workspace_with_limits(
             } else {
                 ProjectFileKind::Other
             };
-            let relative_path = relative_directory.join(&name);
             let ignored = file_service::is_ignored_name(&name);
             if kind == ProjectFileKind::Directory && !ignored {
                 if depth < max_depth {
@@ -147,8 +174,7 @@ fn scan_workspace_with_limits(
                     truncated = true;
                 }
             }
-            let extension = child
-                .path()
+            let extension = Path::new(&name)
                 .extension()
                 .and_then(|value| value.to_str())
                 .map(str::to_ascii_lowercase);
@@ -160,6 +186,7 @@ fn scan_workspace_with_limits(
                 modified_at_ms: metadata
                     .modified()
                     .ok()
+                    .map(cap_std::time::SystemTime::into_std)
                     .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
                     .and_then(|duration| u64::try_from(duration.as_millis()).ok()),
                 hidden: name.starts_with('.'),
@@ -185,12 +212,6 @@ fn scan_workspace_with_limits(
     })
 }
 
-fn canonical_root(root: &Path) -> Result<PathBuf> {
-    let canonical = fs::canonicalize(root).context("项目目录不存在或无法访问")?;
-    anyhow::ensure!(canonical.is_dir(), "项目路径不是目录");
-    Ok(canonical)
-}
-
 fn root_fingerprint(root: &Path) -> String {
     let value = root.to_string_lossy();
     let hash = value
@@ -206,6 +227,7 @@ fn root_fingerprint(root: &Path) -> String {
 mod tests {
     use super::*;
     use crate::db::cache_connection;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -296,6 +318,47 @@ mod tests {
             .any(|entry| entry.relative_path == "escape/private.txt"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn index_remains_anchored_when_the_root_path_is_replaced() {
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        fs::write(root_path.join("original.txt"), "inside").unwrap();
+        let capability = ProjectDirectory::open(&root_path).unwrap();
+        let detached_path = root_path.with_extension("detached-index");
+        fs::rename(&root_path, &detached_path).unwrap();
+        fs::create_dir(&root_path).unwrap();
+        fs::write(root_path.join("outside.txt"), "outside").unwrap();
+
+        let index = scan_workspace_cap(&capability, 100, 100, 2).unwrap();
+        assert!(index
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "original.txt"));
+        assert!(!index
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "outside.txt"));
+        fs::remove_dir_all(detached_path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_project_handle_prevents_index_root_replacement() {
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        fs::write(root_path.join("original.txt"), "inside").unwrap();
+        let capability = ProjectDirectory::open(&root_path).unwrap();
+        let replacement_path = root_path.with_extension("replacement-index");
+
+        assert!(fs::rename(&root_path, replacement_path).is_err());
+        assert!(scan_workspace_cap(&capability, 100, 100, 2)
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "original.txt"));
+    }
+
     #[test]
     fn fresh_cache_is_reused_for_the_same_root_but_rejected_after_root_change() {
         let cache = cache_connection::init_ephemeral_cache().unwrap();
@@ -323,5 +386,17 @@ mod tests {
         assert!(get_fresh_cached_index(&cache, 7, first_root.path())
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn fresh_cache_is_not_returned_after_the_project_root_is_removed() {
+        let cache = cache_connection::init_ephemeral_cache().unwrap();
+        let root = tempdir().unwrap();
+        let index = scan_workspace(root.path()).unwrap();
+        save_cached_index(&cache, 12, root.path(), &index).unwrap();
+        let root_path = root.keep();
+        fs::remove_dir_all(&root_path).unwrap();
+
+        assert!(get_fresh_cached_index(&cache, 12, &root_path).is_err());
     }
 }

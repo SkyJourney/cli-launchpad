@@ -559,6 +559,8 @@ export const ko = {
       "저장하지 않은 변경 사항이 있습니다. 닫고 변경 사항을 버릴까요?",
     save: "저장",
     reload: "다시 불러오기",
+    saveConflict:
+      "디스크의 파일이 변경되었습니다. 편집 내용은 보존되었습니다. 파일을 다시 불러온 후 저장하세요.",
     directoryLimitReached: "항목이 너무 많아 처음 5,000개만 표시합니다.",
     loadingFile: "파일을 읽는 중…",
     fileCannotOpen: "이 파일은 여기서 열 수 없습니다",

@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+cap-std = "4.0.3"
 log = "0.4"
 portable-pty = "0.9"
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
@@ -47,6 +48,7 @@ plist = "1"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_JobObjects",
   "Win32_System_Registry",

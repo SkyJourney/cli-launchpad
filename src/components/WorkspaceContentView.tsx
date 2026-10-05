@@ -27,6 +27,7 @@ export function WorkspaceContentView({
   content,
   fileDocument,
   fileBuffer,
+  readOnly = false,
   ptyPortalTarget,
   onEditFile,
   onSaveFile,
@@ -34,6 +35,7 @@ export function WorkspaceContentView({
   content: WorkspacePaneContentRef | null | undefined;
   fileDocument: WorkspaceFileDocument | undefined;
   fileBuffer: WorkspaceFileBuffer | undefined;
+  readOnly?: boolean;
   ptyPortalTarget?: HTMLElement;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
@@ -55,6 +57,7 @@ export function WorkspaceContentView({
           file: {
             document: fileDocument,
             buffer: fileBuffer,
+            readOnly,
             edit: onEditFile,
             save: onSaveFile,
           },

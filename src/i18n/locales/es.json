@@ -482,6 +482,7 @@
     "discardChanges": "Este archivo tiene cambios sin guardar. ¿Quieres cerrarlo y descartarlos?",
     "save": "Guardar",
     "reload": "Volver a cargar",
+    "saveConflict": "El archivo del disco ha cambiado. Se conservaron tus ediciones. Vuelve a cargarlo antes de guardarlo de nuevo.",
     "directoryLimitReached": "Hay demasiados elementos. Se muestran los primeros 5.000.",
     "loadingFile": "Cargando archivo…",
     "fileCannotOpen": "No se puede abrir este archivo aquí",

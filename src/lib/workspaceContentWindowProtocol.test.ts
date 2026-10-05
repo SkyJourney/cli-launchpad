@@ -100,7 +100,49 @@ describe("workspace content window protocol", () => {
     );
   });
 
-  it("ignores invalid versions and isolates rejected async handlers", async () => {
+  it("rejects file buffer events without safe epoch and version fields", async () => {
+    let deliver: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(async (_name, handler) => {
+      deliver = handler;
+      return vi.fn();
+    });
+    const changed = vi.fn();
+    const stop = await listenWorkspaceContentWindowEvent(
+      "workspace-file-window-buffer-changed",
+      changed,
+    );
+    const envelope = (fileBuffer: Record<string, unknown>) => ({
+      payload: {
+        apiVersion: 1,
+        type: "workspace-file-window-buffer-changed",
+        payload: {
+          documentId: "doc-1",
+          token: "transfer-1",
+          windowLabel: "workspace-content-1",
+          fileBuffer,
+        },
+      },
+    });
+    const validBase = {
+      kind: "text",
+      content: "text",
+      savedContent: "text",
+      revision: "rev-1",
+      saving: false,
+    };
+
+    deliver?.(envelope({ ...validBase, version: 0 }));
+    deliver?.(envelope({ ...validBase, epoch: 0 }));
+    deliver?.(envelope({ ...validBase, epoch: -1, version: 0 }));
+    deliver?.(envelope({ ...validBase, epoch: 0, version: 1.5 }));
+    expect(changed).not.toHaveBeenCalled();
+
+    deliver?.(envelope({ ...validBase, epoch: 0, version: 0 }));
+    expect(changed).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it("validates payloads and isolates sync and async subscriber failures", async () => {
     let deliver: ((event: { payload: unknown }) => void) | undefined;
     const unlisten = vi.fn();
     listenMock.mockImplementation(async (_name, handler) => {
@@ -108,10 +150,17 @@ describe("workspace content window protocol", () => {
       return unlisten;
     });
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const thrown = vi.fn(() => {
+      throw new Error("synchronous handler failed");
+    });
     const rejected = vi.fn(async () => {
       throw new Error("handler failed");
     });
     const laterHandler = vi.fn();
+    const stopThrown = await listenWorkspaceContentWindowEvent(
+      "pty-detached-ready",
+      thrown,
+    );
     const stopRejected = await listenWorkspaceContentWindowEvent(
       "pty-detached-ready",
       rejected,
@@ -132,6 +181,18 @@ describe("workspace content window protocol", () => {
         },
       },
     });
+    expect(thrown).not.toHaveBeenCalled();
+    expect(rejected).not.toHaveBeenCalled();
+    expect(laterHandler).not.toHaveBeenCalled();
+
+    deliver?.({
+      payload: {
+        apiVersion: 1,
+        type: "pty-detached-ready",
+        payload: { instanceId: "slot-1", sessionId: "session-1" },
+      },
+    });
+    expect(thrown).not.toHaveBeenCalled();
     expect(rejected).not.toHaveBeenCalled();
     expect(laterHandler).not.toHaveBeenCalled();
 
@@ -146,9 +207,11 @@ describe("workspace content window protocol", () => {
         },
       },
     });
-    await vi.waitFor(() => expect(log).toHaveBeenCalledOnce());
+    expect(thrown).toHaveBeenCalledOnce();
     expect(laterHandler).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2));
 
+    stopThrown();
     stopRejected();
     stopLater();
     log.mockRestore();

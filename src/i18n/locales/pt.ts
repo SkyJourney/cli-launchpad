@@ -583,6 +583,8 @@ export const pt = {
       "Este arquivo tem alterações não salvas. Fechar e descartá-las?",
     save: "Salvar",
     reload: "Recarregar",
+    saveConflict:
+      "O arquivo no disco foi alterado. Suas edições foram preservadas. Recarregue o arquivo antes de salvá-lo novamente.",
     directoryLimitReached: "Há muitos itens. Exibindo os primeiros 5.000.",
     loadingFile: "Carregando arquivo…",
     fileCannotOpen: "Este arquivo não pode ser aberto aqui",

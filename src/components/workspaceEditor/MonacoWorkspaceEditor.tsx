@@ -105,6 +105,7 @@ export function MonacoWorkspaceEditor({
   relativePath,
   modelUri,
   theme,
+  readOnly,
   onChange,
   onSave,
 }: {
@@ -112,6 +113,7 @@ export function MonacoWorkspaceEditor({
   relativePath: string;
   modelUri: string;
   theme: "light" | "dark";
+  readOnly: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
 }) {
@@ -162,6 +164,7 @@ export function MonacoWorkspaceEditor({
         }}
         options={{
           automaticLayout: true,
+          readOnly,
           fontFamily: "Maple Mono NF CN, monospace",
           fontSize: 14,
           lineNumbers: "on",
