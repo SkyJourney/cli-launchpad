@@ -61,9 +61,16 @@ jobs:
           echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           echo "Validated CLI Launchpad $PACKAGE_VERSION"
 
+  ci:
+    name: Cross-platform test suite
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build ${{ matrix.label }}
-    needs: validate
+    needs:
+      - validate
+      - ci
     strategy:
       fail-fast: false
       matrix:

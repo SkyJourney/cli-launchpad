@@ -339,6 +339,12 @@ WP0 是其余工作包的验证前提，应最先完成。
   - `build.rs` 改为从 `app-commands.json` 读取命令列表，消除一份手写清单。
 - **验收**：在任意一端增删一个键，CI 会失败；失败信息指出具体缺少哪一端。
 
+#### WP0 实施记录（2026-10-05）
+
+- `J3`：已建立 DOM 测试环境与 Tauri mock；`src/test/tauriMock.test.tsx` 的 `Tauri DOM test environment > renders React and records invocations while allowing events to be triggered` 验证 React 渲染、结构化 invoke 记录和手动事件触发。契约测试另验证 `src/lib/workspaceContentWindowProtocol.ts` 的窗口 label 前缀与 `contracts/window-kinds.json` 一致。第 6 节列出的宿主行为场景将在各自问题对应的波次中验收，本条不提前宣称这些场景已通过。
+- `J2`：已增加三平台 CI 工作流并由发布工作流复用；本机门禁通过，但三平台运行结果尚未产生，待 WP0 提交推送后补记 run 链接和结果。
+- 契约清单：Rust 与 TypeScript 契约测试已加入；当前本机 `pnpm test` 178 项、`cargo test --manifest-path src-tauri/Cargo.toml` 260 项通过。三平台 CI 仍是 WP0 关闭前置条件。
+
 ### WP1 退出、关闭与中止路径（数据安全）
 
 本工作包按 S3 的五出口原则补齐缺失的出口。先定义共用的“处置影响”描述，WP2 的关闭流程和本工作包的退出流程都使用它：

@@ -144,10 +144,19 @@ mod tests {
     #[test]
     fn migrations_seed_default_tools() {
         let connection = memory_db();
-        let count: i64 = connection
-            .query_row("select count(*) from tools", [], |row| row.get(0))
-            .expect("count tools");
-        assert_eq!(count, 5);
+        let mut statement = connection
+            .prepare("select key from tools order by key")
+            .expect("prepare seeded tools query");
+        let seeded_keys: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("query seeded tools")
+            .collect::<rusqlite::Result<_>>()
+            .expect("read seeded tool keys");
+        let mut contract_keys: Vec<String> =
+            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
+                .expect("parse ToolKey contract");
+        contract_keys.sort();
+        assert_eq!(seeded_keys, contract_keys);
     }
 
     #[test]

@@ -1,77 +1,23 @@
+use std::{fs, path::PathBuf};
+
 fn main() {
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
-        tauri_build::AppManifest::new().commands(&[
-            "list_backups",
-            "create_backup",
-            "restore_backup",
-            "get_cache_stats",
-            "clear_cache",
-            "export_diagnostics_to_path",
-            "preview_launch",
-            "launch_tool",
-            "list_launch_history",
-            "clear_launch_history",
-            "get_launch_history_limit",
-            "set_launch_history_limit",
-            "list_sessions",
-            "search_sessions",
-            "refresh_session_search_index",
-            "set_session_alias",
-            "delete_session_alias",
-            "resume_session",
-            "create_pty_session",
-            "begin_pty_handoff",
-            "stage_pty_handoff_snapshot",
-            "complete_pty_handoff",
-            "finalize_pty_handoff",
-            "cancel_pty_handoff",
-            "get_pty_session_window_status",
-            "write_pty_session",
-            "resize_pty_session",
-            "acknowledge_pty_output",
-            "report_pty_frontend_stage",
-            "terminate_pty_session",
-            "list_pty_sessions",
-            "confirm_pty_exit",
-            "list_directories",
-            "add_directory",
-            "update_directory",
-            "remove_directory",
-            "set_directory_pinned",
-            "reorder_directories",
-            "open_project_directory",
-            "list_project_files",
-            "read_project_text_file",
-            "open_project_file",
-            "save_project_text_file",
-            "get_workspace_file_index",
-            "start_execution_task",
-            "list_execution_tasks",
-            "get_execution_task",
-            "cancel_execution_task",
-            "clear_execution_task",
-            "clear_execution_history",
-            "detect_cli_status",
-            "fetch_latest_version",
-            "get_install_plan",
-            "detect_terminal_environment",
-            "get_launch_target",
-            "set_launch_target",
-            "export_config_to_path",
-            "import_config_from_path",
-            "get_close_behavior",
-            "set_close_behavior",
-            "get_workspace_layout",
-            "save_workspace_layout",
-            "reset_workspace_layout",
-            "list_workspace_layout_presets",
-            "get_workspace_layout_preset",
-            "create_workspace_layout_preset",
-            "update_workspace_layout_preset",
-            "rename_workspace_layout_preset",
-            "delete_workspace_layout_preset",
-            "plan_apply_workspace_layout_preset",
-        ]),
-    ))
+    let manifest_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/app-commands.json");
+    println!("cargo:rerun-if-changed={}", manifest_path.display());
+
+    let manifest =
+        fs::read_to_string(&manifest_path).expect("failed to read contracts/app-commands.json");
+    let commands: Vec<String> =
+        serde_json::from_str(&manifest).expect("invalid contracts/app-commands.json");
+    let commands: Vec<&'static str> = commands
+        .into_iter()
+        .map(|command| Box::leak(command.into_boxed_str()) as &'static str)
+        .collect();
+    let command_names: &'static [&'static str] = Box::leak(commands.into_boxed_slice());
+
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(command_names)),
+    )
     .expect("failed to configure Tauri command permissions");
 }

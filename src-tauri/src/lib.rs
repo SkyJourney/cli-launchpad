@@ -1,4 +1,6 @@
 mod commands;
+#[cfg(test)]
+mod contracts;
 mod db;
 mod error;
 mod models;

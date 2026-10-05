@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "kinds": [
+    {
+      "id": "main",
+      "capability": "default",
+      "route": "main",
+      "label": "main",
+      "appCommands": "all",
+      "corePermissions": [
+        "core:default",
+        "core:webview:allow-create-webview-window",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
+        "core:window:allow-is-maximized",
+        "core:window:allow-minimize",
+        "core:window:allow-start-dragging",
+        "core:window:allow-start-resize-dragging",
+        "core:window:allow-toggle-maximize"
+      ]
+    },
+    {
+      "id": "terminal",
+      "capability": "terminal-window",
+      "route": "terminal",
+      "labelPrefix": "terminal-",
+      "appCommands": [
+        "begin_pty_handoff",
+        "stage_pty_handoff_snapshot",
+        "complete_pty_handoff",
+        "finalize_pty_handoff",
+        "cancel_pty_handoff",
+        "get_pty_session_window_status",
+        "write_pty_session",
+        "resize_pty_session",
+        "acknowledge_pty_output",
+        "report_pty_frontend_stage",
+        "terminate_pty_session"
+      ],
+      "corePermissions": [
+        "core:default",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
+        "core:window:allow-is-maximized",
+        "core:window:allow-minimize",
+        "core:window:allow-start-dragging",
+        "core:window:allow-start-resize-dragging",
+        "core:window:allow-toggle-maximize"
+      ]
+    },
+    {
+      "id": "workspaceContent",
+      "capability": "workspace-content-window",
+      "route": "workspace-content",
+      "labelPrefix": "workspace-content-",
+      "appCommands": ["open_project_file", "save_project_text_file"],
+      "corePermissions": [
+        "core:default",
+        "core:window:allow-close",
+        "core:window:allow-destroy",
+        "core:window:allow-is-maximized",
+        "core:window:allow-minimize",
+        "core:window:allow-start-dragging",
+        "core:window:allow-start-resize-dragging",
+        "core:window:allow-toggle-maximize"
+      ]
+    }
+  ]
+}
