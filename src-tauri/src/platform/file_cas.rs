@@ -98,7 +98,6 @@ impl FileCasAdapter for NativeFileCasAdapter {
         permissions: Option<std::fs::Permissions>,
     ) -> Result<()> {
         // The caller keeps this handle alive through commit to retain the CAS lock.
-        let _ = locked_target;
         #[cfg(windows)]
         {
             if let Some(permissions) = permissions {
@@ -108,9 +107,25 @@ impl FileCasAdapter for NativeFileCasAdapter {
                     .set_permissions(permissions)
                     .context("无法恢复 Windows 文件属性")?;
             }
+            if let Some(target) = locked_target {
+                if !same_file(directory, destination, target)? {
+                    bail!("待保存文件在应用原 ACL 前已被替换");
+                }
+                preserve_windows_dacl(
+                    target,
+                    temporary_file.as_ref().context("临时文件句柄已关闭")?,
+                )
+                .context("无法保留项目文件 ACL")?;
+            }
+            replace_windows_anchored(
+                directory,
+                destination,
+                temporary_file.as_ref().context("临时文件句柄已关闭")?,
+                locked_target,
+            )
+            .context("无法原子替换项目文件")?;
             temporary_file.take();
-            replace_windows_anchored(directory, destination, temporary)
-                .context("无法原子替换项目文件")?;
+            let _ = temporary;
             Ok(())
         }
         #[cfg(unix)]
@@ -223,9 +238,27 @@ pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
     let name = destination.file_name().context("目标文件名无效")?;
     let directory = Dir::open_ambient_dir(parent, cap_std::ambient_authority())
         .context("无法打开目标文件所在目录")?;
+    #[cfg(windows)]
+    let target = match open_target_for_replacement_metadata(&directory, Path::new(name)) {
+        Ok(target) => Some(target),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("无法读取目标文件安全属性"),
+    };
+    #[cfg(not(windows))]
+    let target: Option<File> = None;
+    let permissions = target
+        .as_ref()
+        .map(File::metadata)
+        .transpose()?
+        .map(|metadata| metadata.permissions());
     let mut temporary = create_temporary(&NativeFileCasAdapter, &directory, bytes)?;
     temporary.finish_writing()?;
-    temporary.commit(&NativeFileCasAdapter, Path::new(name), None, None)
+    temporary.commit(
+        &NativeFileCasAdapter,
+        Path::new(name),
+        target.as_ref(),
+        permissions,
+    )
 }
 
 fn parent_and_name(root: &Dir, destination: &Path) -> Result<(Dir, PathBuf)> {
@@ -254,8 +287,8 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
             Err(error)
                 if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
             {
-                // A concurrent Windows ReplaceFileW can briefly make the
-                // destination unavailable while its pathname is being swapped.
+                // A concurrent Windows atomic replacement can briefly make
+                // the destination unavailable while its pathname is swapped.
                 thread::sleep(LOCK_RETRY_INTERVAL);
             }
             Err(error) => return Err(error).context("无法打开待保存文件"),
@@ -326,6 +359,22 @@ fn open_target(directory: &Dir, path: &Path) -> std::io::Result<cap_std::fs::Fil
         options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
     }
     directory.open_with(path, &options)
+}
+
+#[cfg(windows)]
+fn open_target_for_replacement_metadata(directory: &Dir, path: &Path) -> std::io::Result<File> {
+    use cap_std::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
+    };
+
+    let mut options = OpenOptions::new();
+    options
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    directory
+        .open_with(path, &options)
+        .map(cap_std::fs::File::into_std)
 }
 
 fn read_bounded(file: &File, maximum_bytes: u64) -> Result<Vec<u8>> {
@@ -416,72 +465,278 @@ fn create_temporary(
 }
 
 #[cfg(windows)]
-fn replace_windows_anchored(
-    directory: &Dir,
-    destination: &Path,
-    temporary: &Path,
-) -> std::io::Result<()> {
-    use std::os::windows::{
-        ffi::{OsStrExt, OsStringExt},
-        io::AsRawHandle,
-    };
+struct WindowsRenameDirectory {
+    handle: File,
+    path: Vec<u16>,
+    is_remote: bool,
+}
+
+#[cfg(windows)]
+fn open_windows_rename_directory(directory: &Dir) -> std::io::Result<WindowsRenameDirectory> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFinalPathNameByHandleW, ReplaceFileW, FILE_NAME_NORMALIZED, VOLUME_NAME_DOS,
+        CreateFileW, GetDriveTypeW, GetFinalPathNameByHandleW, FILE_ADD_FILE, FILE_DELETE_CHILD,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
+        OPEN_EXISTING, SYNCHRONIZE, VOLUME_NAME_DOS,
     };
 
-    let handle = directory.try_clone()?.into_std_file();
-    let mut buffer = vec![0u16; 32768];
-    let length = unsafe {
+    let original = directory.try_clone()?.into_std_file();
+    let mut path = vec![0u16; 32768];
+    let path_length = unsafe {
         GetFinalPathNameByHandleW(
-            handle.as_raw_handle() as _,
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
+            original.as_raw_handle() as _,
+            path.as_mut_ptr(),
+            path.len() as u32,
             FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
         )
     };
-    if length == 0 || length as usize >= buffer.len() {
+    if path_length == 0 || path_length as usize >= path.len() {
         return Err(std::io::Error::last_os_error());
     }
-    buffer.truncate(length as usize);
-    let base = std::ffi::OsString::from_wide(&buffer);
-    let destination = Path::new(&base).join(destination);
-    let temporary = Path::new(&base).join(temporary);
-    let wide = |path: &Path| {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect::<Vec<_>>()
+    path.truncate(path_length as usize);
+    path.push(0);
+    let is_unc = windows_path_is_unc(&path);
+    const DRIVE_REMOTE_TYPE: u32 = 4;
+    let is_mapped_remote_drive = windows_drive_root(&path)
+        .is_some_and(|root| unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_REMOTE_TYPE });
+    let is_remote = is_unc || is_mapped_remote_drive;
+    let directory_access = if is_remote {
+        FILE_READ_ATTRIBUTES
+    } else {
+        FILE_ADD_FILE
+            | FILE_DELETE_CHILD
+            | FILE_LIST_DIRECTORY
+            | FILE_READ_ATTRIBUTES
+            | FILE_TRAVERSE
+            | SYNCHRONIZE
     };
-    let destination = wide(&destination);
-    let temporary = wide(&temporary);
-    if unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            temporary.as_ptr(),
+    let reopened = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            directory_access,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             std::ptr::null(),
-            0,
-            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
             std::ptr::null_mut(),
         )
-    } == 0
-    {
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::NotFound {
-            return Err(error);
-        }
+    };
+    if reopened == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    let reopened = unsafe { File::from_raw_handle(reopened as _) };
+
+    fn identity(file: &File) -> std::io::Result<(u32, u64)> {
+        use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Storage::FileSystem::{
-            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
         };
+        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok((
+            information.dwVolumeSerialNumber,
+            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+        ))
+    }
+
+    if identity(&original)? != identity(&reopened)? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "重新打开的目标目录与保留的目录能力不一致",
+        ));
+    }
+    Ok(WindowsRenameDirectory {
+        handle: reopened,
+        path,
+        is_remote,
+    })
+}
+
+#[cfg(windows)]
+fn windows_path_is_unc(path: &[u16]) -> bool {
+    path.starts_with(&"\\\\?\\UNC\\".encode_utf16().collect::<Vec<_>>())
+}
+
+#[cfg(windows)]
+fn windows_drive_root(path: &[u16]) -> Option<[u16; 4]> {
+    let prefix = "\\\\?\\".encode_utf16().collect::<Vec<_>>();
+    if path.len() >= 7
+        && path.starts_with(&prefix)
+        && path[5] == ':' as u16
+        && path[6] == '\\' as u16
+    {
+        Some([path[4], ':' as u16, '\\' as u16, 0])
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn windows_remote_destination(path: &[u16], file_name: &[u16]) -> Vec<u16> {
+    let mut destination = path.to_vec();
+    if destination.last() == Some(&0) {
+        destination.pop();
+    }
+    if destination.last() != Some(&('\\' as u16)) {
+        destination.push('\\' as u16);
+    }
+    destination.extend_from_slice(file_name);
+    destination
+}
+
+#[cfg(windows)]
+fn replace_windows_anchored(
+    directory: &Dir,
+    destination: &Path,
+    temporary: &File,
+    locked_target: Option<&File>,
+) -> std::io::Result<()> {
+    use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
+    use windows_sys::Win32::{
+        Storage::FileSystem::{
+            FileRenameInfoEx, SetFileInformationByHandle, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
+        },
+        System::IO::IO_STATUS_BLOCK,
+    };
+    const FILE_RENAME_INFORMATION_EX_CLASS: i32 = 65;
+    const FILE_RENAME_REPLACE_IF_EXISTS: u32 = 0x0000_0001;
+    const FILE_RENAME_POSIX_SEMANTICS: u32 = 0x0000_0002;
+    const FILE_RENAME_IGNORE_READONLY_ATTRIBUTE: u32 = 0x0000_0040;
+    #[link(name = "ntdll")]
+    extern "system" {
+        #[link_name = "NtSetInformationFile"]
+        fn nt_set_information_file(
+            file_handle: windows_sys::Win32::Foundation::HANDLE,
+            io_status_block: *mut IO_STATUS_BLOCK,
+            file_information: *mut std::ffi::c_void,
+            length: u32,
+            file_information_class: i32,
+        ) -> i32;
+        #[link_name = "RtlNtStatusToDosError"]
+        fn rtl_nt_status_to_dos_error(status: i32) -> u32;
+    }
+
+    if let Some(target) = locked_target {
+        if !same_file(directory, destination, target)
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "待保存文件在原子替换前已被替换",
+            ));
+        }
+    }
+
+    let mut components = destination.components();
+    let Some(std::path::Component::Normal(name)) = components.next() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "目标文件名必须是单个相对路径分量",
+        ));
+    };
+    if components.next().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "目标文件名必须是单个相对路径分量",
+        ));
+    }
+    let file_name = name.encode_wide().collect::<Vec<_>>();
+    let directory_handle = open_windows_rename_directory(directory)?;
+    let rename_name = if directory_handle.is_remote {
+        windows_remote_destination(&directory_handle.path, &file_name)
+    } else {
+        file_name
+    };
+    let file_name_bytes = rename_name
+        .len()
+        .checked_mul(std::mem::size_of::<u16>())
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名过长"))?;
+    let file_name_length = u32::try_from(file_name_bytes)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名过长"))?;
+    let file_name_offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let buffer_length = std::mem::size_of::<FILE_RENAME_INFO>()
+        .checked_add(file_name_bytes)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名过长"))?;
+    let buffer_length_u32 = u32::try_from(buffer_length)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标文件名过长"))?;
+    let mut storage = vec![0u64; buffer_length.div_ceil(std::mem::size_of::<u64>())];
+    let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    let rename_flags = FILE_RENAME_REPLACE_IF_EXISTS
+        | FILE_RENAME_POSIX_SEMANTICS
+        | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    unsafe {
+        information.write(FILE_RENAME_INFO {
+            Anonymous: FILE_RENAME_INFO_0 {
+                Flags: rename_flags,
+            },
+            RootDirectory: if directory_handle.is_remote {
+                std::ptr::null_mut()
+            } else {
+                directory_handle.handle.as_raw_handle() as _
+            },
+            FileNameLength: file_name_length,
+            FileName: [0],
+        });
+        std::ptr::copy_nonoverlapping(
+            rename_name.as_ptr(),
+            (information.cast::<u8>().add(file_name_offset)).cast::<u16>(),
+            rename_name.len(),
+        );
+    }
+    let mut io_status: IO_STATUS_BLOCK = unsafe { std::mem::zeroed() };
+    // Local filesystems use a relative RootDirectory handle to retain
+    // directory-capability semantics. Network redirectors require a null root,
+    // so that branch supplies the verified canonical absolute destination path.
+    // POSIX replacement also permits the locked destination handle to remain open.
+    let status = if directory_handle.is_remote {
         if unsafe {
-            MoveFileExW(
-                temporary.as_ptr(),
-                destination.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            SetFileInformationByHandle(
+                temporary.as_raw_handle() as _,
+                FileRenameInfoEx,
+                information.cast(),
+                buffer_length_u32,
             )
         } == 0
         {
             return Err(std::io::Error::last_os_error());
         }
+        0
+    } else {
+        unsafe {
+            nt_set_information_file(
+                temporary.as_raw_handle() as _,
+                &mut io_status,
+                information.cast(),
+                buffer_length_u32,
+                FILE_RENAME_INFORMATION_EX_CLASS,
+            )
+        }
+    };
+    if status < 0 {
+        let error = unsafe { rtl_nt_status_to_dos_error(status) };
+        return Err(std::io::Error::new(
+            std::io::Error::from_raw_os_error(error as i32).kind(),
+            format!("相对文件重命名失败（NTSTATUS 0x{:08X}）", status as u32),
+        ));
+    }
+    let completion_status = if directory_handle.is_remote {
+        0
+    } else {
+        unsafe { io_status.Anonymous.Status }
+    };
+    if completion_status < 0 {
+        let error = unsafe { rtl_nt_status_to_dos_error(completion_status) };
+        return Err(std::io::Error::new(
+            std::io::Error::from_raw_os_error(error as i32).kind(),
+            format!(
+                "相对文件重命名完成失败（NTSTATUS 0x{:08X}）",
+                completion_status as u32
+            ),
+        ));
     }
     Ok(())
 }
@@ -571,6 +826,113 @@ fn restrict_to_current_user(file: &File) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
+        Security::{
+            AddAce, GetAce, GetSecurityDescriptorControl, InitializeAcl, ACE_HEADER, ACL,
+            DACL_SECURITY_INFORMATION, INHERITED_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+            SE_DACL_PROTECTED, UNPROTECTED_DACL_SECURITY_INFORMATION,
+        },
+    };
+    let mut dacl = std::ptr::null_mut::<ACL>();
+    let mut descriptor = std::ptr::null_mut();
+    let status = unsafe {
+        GetSecurityInfo(
+            target.as_raw_handle() as _,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != 0 {
+        return Err(std::io::Error::from_raw_os_error(status as i32));
+    }
+
+    let result = (|| {
+        let mut control = 0;
+        let mut revision = 0;
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let dacl_is_protected = control & SE_DACL_PROTECTED != 0;
+        let (dacl_to_apply, security_information, _filtered_acl) = if dacl_is_protected {
+            (
+                dacl as *const ACL,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None,
+            )
+        } else if dacl.is_null() {
+            (
+                std::ptr::null(),
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                None,
+            )
+        } else {
+            let source_acl = unsafe { &*dacl };
+            let acl_size = source_acl.AclSize as usize;
+            let mut storage = vec![0u64; acl_size.div_ceil(std::mem::size_of::<u64>())];
+            let filtered_acl = storage.as_mut_ptr().cast::<ACL>();
+            if unsafe {
+                InitializeAcl(filtered_acl, acl_size as u32, source_acl.AclRevision as u32)
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            for ace_index in 0..source_acl.AceCount as u32 {
+                let mut ace = std::ptr::null_mut();
+                if unsafe { GetAce(dacl, ace_index, &mut ace) } == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+                if header.AceFlags & INHERITED_ACE as u8 == 0
+                    && unsafe {
+                        AddAce(
+                            filtered_acl,
+                            source_acl.AclRevision as u32,
+                            u32::MAX,
+                            ace,
+                            header.AceSize as u32,
+                        )
+                    } == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            (
+                filtered_acl as *const ACL,
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                Some(storage),
+            )
+        };
+        let status = unsafe {
+            SetSecurityInfo(
+                replacement.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                security_information,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl_to_apply,
+                std::ptr::null_mut(),
+            )
+        };
+        drop(_filtered_acl);
+        if status != 0 {
+            return Err(std::io::Error::from_raw_os_error(status as i32));
+        }
+        Ok(())
+    })();
+    unsafe { LocalFree(descriptor) };
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +941,36 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_network_rename_paths_are_classified_and_built_without_root_handle() {
+        let unc_path = "\\\\?\\UNC\\server\\share\\project"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        assert!(windows_path_is_unc(&unc_path));
+        assert_eq!(windows_drive_root(&unc_path), None);
+
+        let mapped_path = "\\\\?\\Z:\\project"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        assert!(!windows_path_is_unc(&mapped_path));
+        assert_eq!(
+            windows_drive_root(&mapped_path),
+            Some(['Z' as u16, ':' as u16, '\\' as u16, 0])
+        );
+
+        let destination = windows_remote_destination(
+            &unc_path,
+            &"layout.json".encode_utf16().collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            String::from_utf16(&destination).unwrap(),
+            "\\\\?\\UNC\\server\\share\\project\\layout.json"
+        );
+    }
 
     #[derive(Default)]
     struct CountingAdapter {
@@ -1082,6 +1474,7 @@ mod tests {
             inherited_ace_count > 0,
             "fixture must inherit its directory DACL"
         );
+        drop(target);
 
         compare_and_swap_in_directory(
             &dir,
@@ -1096,6 +1489,35 @@ mod tests {
         let (actual_acl, _, _, replacement_acl_is_protected) = dacl(&replacement);
         assert_eq!(actual_acl, expected_acl);
         assert!(!replacement_acl_is_protected);
+        drop(replacement);
+
+        replace_file(&path, b"replaced without CAS").unwrap();
+        let unconditional_replacement = dir.open("note.txt").unwrap().into_std();
+        let (unconditional_acl, _, _, unconditional_acl_is_protected) =
+            dacl(&unconditional_replacement);
+        assert_eq!(unconditional_acl, expected_acl);
+        assert!(!unconditional_acl_is_protected);
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "replaced without CAS"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unconditional_replacement_preserves_readonly_attribute() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("readonly.txt");
+        std::fs::write(&path, "before").unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        replace_file(&path, b"after").unwrap();
+
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "after");
+        assert!(metadata.permissions().readonly());
     }
 
     #[cfg(windows)]
