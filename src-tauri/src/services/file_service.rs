@@ -506,7 +506,7 @@ mod tests {
         assert_eq!(listing.skipped_count, 0);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn listing_skips_non_utf8_names_and_reports_the_count() {
         use std::os::unix::ffi::OsStringExt;
@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(listing.skipped_count, 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn listing_scan_budget_covers_entries_skipped_for_unreadable_names() {
         use std::os::unix::ffi::OsStringExt;
