@@ -5,6 +5,20 @@
 > 适用里程碑：[M6 内容窗格与文件工作区](M6-workspace-files.md)；本报告是 M6 验收和 M7 开工的强制引用文档。
 > 审查性质：只读体检。本报告不修改代码；修复由后续实施按第 6 节工作包执行。
 
+## 第二轮复核说明（2026-10-06）
+
+**阅读本文件前必读：** 第一轮之后，Codex 用 20 个提交（`77d8ded..cd4feac`）完成了四波修复，并在本文件中以“第 1 波实施追溯”“第 2 波实施追溯”“WP4/WP2/WP3/WP5/WP6/WP8 B 层实施追溯”“WP7 复核追溯”“第四波本机最终自动门禁”等小节记录了“已关闭/通过”。**这些追溯小节里的所有“已关闭/通过”声明已被第二轮复核重新认定，以 [M6 收口复核报告](M6-closure-review.md) 第一章 1.2 节的逐项判定为准**；证据等级与 A/B 层门禁已重新定义（主报告第四章 4.4、4.5 节），测试补充规格见 [M6-closure-test-spec.md](M6-closure-test-spec.md)。本文件的第一轮内容与追溯原文不删除、不改写，凡与主报告冲突，以主报告为准。
+
+第二轮复核明确推翻或修正的结论（逐项证据见主报告第一章）：
+
+- **第 10 节“收口后扩展点成熟度复核”换了评分维度。** 第 4 节原定七维度是 Descriptor、Registry、Bootstrap、生命周期、上下文注入、错误隔离、契约测试；复核表却改用另一套维度，使门禁 4 看似通过。按原维度，主题的 Registry/Bootstrap、Provider 的 Descriptor、共享 registry 工厂仍缺失，**门禁 4 不得判定通过**，须按原维度重评。
+- **B3F-F07 与“宿主命令执行器”被误记。** `executeWorkspaceCommand`（`src/lib/workspaceContentCommand.ts`）签名为 `(tree, command) → tree`，只是树 reducer，不涉及 coordinator、adapter 与领域操作，并不是 WP2 目标结构中的宿主命令执行器；`PtyWorkspace.tsx` 增至 5,490 行，kind 分支数不降反升，`useFileDocuments`/`usePtySlots` 与领域操作注入表均不存在。
+- **X-F02 错误码。** “前端无 `String(reason)`”不等于后端落地：后端在文件、PTY、执行任务、布局四个领域几乎不产出错误码，前端映射中多项为死码，且存在命名风格混用与语义错位。
+- **B1-F10、B1-F14、B1-F15、X-F01 B 层、B3F-F10、B3F-F13** 的“已关闭”声明被部分推翻：更新三态 DTO 后端从不产出 `notApplicable`；`build_plan` 在 Claude/Codex/Antigravity 上并未使用注入的路径；adapter 专属测试仍大量留在 `session_service`；仍有约 35 个同步命令访问数据库；窗口句柄表仍被当作归属事实使用；子窗口监听仍用 `Promise.all`。
+- **窗口权限扫描测试实际失效（S1B-N01）。** `windowApiPermissions.test.ts` 的 glob 键名写错，三个关键源文件从未被扫描，删去 `core:event:allow-emit-to` 后测试仍通过；因此第二波、第三波中以它作为 X-F04/B3R-F03 证据的追溯不成立。
+- **HEAD `cd4feac` 的 CI 失败被引用更早的绿色运行。** CI run [37437040753](https://github.com/SkyJourney/cli-launchpad/actions/runs/37437040753) 在 Ubuntu 失败（跨进程 CAS 测试，根因为 cap-std `canonicalize` 的 “(deleted)” 竞态）；追溯却引用提交 `9550e08` 的绿色 run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 宣称第四波门禁通过。
+- **第 8 节门禁 1–10 与第 9 节两层门禁的“已满足”表述**一律作废，改按主报告 4.5 节重新认定。
+
 ## 0. 审查说明
 
 ### 0.1 目标
@@ -277,6 +291,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 
 ### 第 1 波实施追溯（2026-10-06）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 以下记录本轮代码位置和自动化证据。2026-10-06 本机 Windows 全量门禁已通过：前端 210 项、Rust 289 项、生产构建、Rust 格式/编译、变更文件 Prettier 与 `git diff --check` 均通过；构建保留 Monaco chunk 超 500 KB 警告。第 1 波首提交 `c2f43e3` 的 CI run [37399404615](https://github.com/SkyJourney/cli-launchpad/actions/runs/37399404615) 中 Windows 与 Ubuntu 通过，macOS 两项非法 UTF-8 文件名夹具测试失败；按用户确认的平台能力拆分方案，修复提交 `312e01d` 的 CI run [37400004745](https://github.com/SkyJourney/cli-launchpad/actions/runs/37400004745) 中 Windows、macOS、Ubuntu 全部门禁均通过。非法 UTF-8 文件名测试仅在 Linux 验证；M6 实机验收尚未完成，因此本表只关闭自动化部分，不把需要实机证据的问题标为最终关闭。
 
 | 编号              | 实现位置                                                                                                                                                                                                                                                                | 自动化证据                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 剩余验收                               |
@@ -293,6 +309,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 | B1-F01            | `src/lib/installPlanConfirmation.ts`、`src-tauri/src/services/install_service.rs`                                                                                                                                                                                       | `installPlanConfirmation.test.ts`：`fetches a new plan and reopens confirmation without starting execution`；Rust `changed_install_plan_is_rejected_before_execution`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | —                                      |
 
 ### 第 2 波实施追溯（2026-10-06）
+
+（第二轮复核：见顶部说明与主报告 1.2）
 
 本波范围为 WP2/WP3/WP4/WP8 的 A 层代码与测试，以及 WP6 中 B2-F08 的 A 层。以下状态表示本机实现和自动化证据；三平台 CI 已通过，实机验收仍未完成。当前本机前端全量测试 47 个文件、251 项通过；Rust 273 项通过；生产构建、Rust fmt/check/test 通过。此前适用的前端与文档文件 Prettier 检查、`git diff --check` 均通过；本次追加的 CI 夹具修复只改 Rust 文件，Prettier 不适用。首轮 run [37409182236](https://github.com/SkyJourney/cli-launchpad/actions/runs/37409182236) 的 macOS/Ubuntu 通过；Windows 两个 PowerShell 输出测试受 3 秒预算影响超时（271/273 通过）。将预算提高到 10 秒后，代码提交 `d7d329f` 的 run [37409662073](https://github.com/SkyJourney/cli-launchpad/actions/runs/37409662073) 三平台通过；但随后文档提交 `11af053` 的 run [37410191944](https://github.com/SkyJourney/cli-launchpad/actions/runs/37410191944) 再次显示这两个 PowerShell 输出测试超时，说明该测试夹具在 Windows runner 上仍不稳定。提交 `d88d38e` 将两个成功输出截断用例改为 `cmd.exe /D /C echo`，保留 PowerShell 超时/进程树测试；定向 Rust 进程测试 4/4、全量 Rust 测试 273/273 通过，最终代码提交 CI run [37410698481](https://github.com/SkyJourney/cli-launchpad/actions/runs/37410698481) 的 Windows、macOS、Ubuntu 全部通过。生产构建通过，仍有既有 Monaco 资源 chunk 超 500 KB 提示。
 
@@ -316,6 +334,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 
 ### WP4 B 层实施追溯（2026-10-06，进行中）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 | 编号                                    | 代码位置                                                                                                                                                                                                    | 测试/证据                                                                                                                                                                                                                                                                                                                                                                                                                       | 当前状态与待验收                                                                                                                                                                                                                                                                                                                       |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | B1-F09（B 部分）、B1-F15（工具表清理）  | `src-tauri/migrations/0014_tool_key_foreign_keys.sql`、`src-tauri/src/db/connection.rs`                                                                                                                     | `db::connection::tests::tool_key_foreign_key_migration_preserves_aliases_and_pty_sessions` 检查 schema 13 数据、两处外键、移除 `global_args`/`enabled`、PTY 索引与删除保护；`upgrades_a_representative_024_schema_eight_database_to_current_schema`；`services::backup_service::tests::restoring_a_024_schema_eight_backup_migrates_and_preserves_legacy_data`；`failed_old_backup_migration_restores_the_pre_restore_database` | migration 14 重建两表、移除不再读取的工具列；旧版配置/备份仍保留项目和会话等有效数据，但不再保留无调用方的全局参数列。本机全量 `cargo test` 297/297 通过；三平台 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 通过（SHA `a674462`）                                                      |
@@ -325,6 +345,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 
 ### WP2 B 层实施追溯（2026-10-06，进行中）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 本段记录 B3F-F05/F10/F11/F13。Adapter API 从 v1 升到 v2，以表达关闭领域操作可返回 pending 的生命周期语义；布局 schema 由 v4 升到 v5，以在旧版本安全保留未来内容 kind。历史迁移顺序为 v3 → v4 → v5：v4 引入 detached PTY 内容引用；当前代码把 v3 的 detached slot 字段直接转换到 v5，并把 v4 布局升级到 v5。跨窗事件协议单独版本化，不随 adapter API 升级。
 
 | 编号    | 代码位置                                                                                                                                                                                                                                                            | 测试/证据                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 当前状态与待验收                                                                                                                                                                                                                                                                                                      |
@@ -333,6 +355,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 | B3F-F11 | `src/components/WorkspaceContentView.tsx`、`workspaceContentAdapterRegistry.ts`、`src/components/PtyWorkspace.tsx`、两个 standalone 窗口、`src/lib/workspaceContentCommand.ts`、`src-tauri/src/models/workspace_layout.rs`、`src/lib/workspaceLayoutPersistence.ts` | `WorkspaceContentView.test.tsx`：未知 kind 占位、adapter 缺失占位、render 错误隔离和关闭按钮；registry 测试 `provides safe presentation and project-context fallbacks without an adapter`；`workspaceContentCommand.test.ts`：未知内容移动/拆分/分离/返回被拒；前端 `workspaceLayoutPersistence.test.ts`：v4→v5 与 unknown envelope round-trip；Rust `workspace_layout_migrates_v4_and_preserves_unknown_content_payloads`、`workspace_layout_round_trips_a_future_content_kind_as_raw_json`、`workspace_layout_migrates_v3_detached_slots_to_v5_content_refs` | 适配器缺失与单内容 render 错误均局部降级；未知 raw JSON 读入、保存、再读取保持不变，允许单独关闭。8 个前端定向测试文件 75 项和 Rust 布局相关 43 项已通过；本波三平台 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 通过（SHA `a674462`），实机验收集中到 M6 最终综合验收 |
 
 ### WP3 B 层实施追溯（2026-10-06，进行中）
+
+（第二轮复核：见顶部说明与主报告 1.2）
 
 | 编号    | 实现位置                                                                                                                             | 测试/证据                                                                                                                                                                                                                                                  | 当前状态 / 剩余验收                                                                                                                                                                                                                                                                    |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -350,6 +374,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 
 ### WP5 B 层实施追溯（2026-10-06，自动化与第三波 CI 通过）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 | 编号    | 代码位置                                                                                                                                                                                                                                                                                   | 测试/证据                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 当前状态与待验收                                                                                                                                                                                                                                                                                             |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | B3R-F06 | 原 `src-tauri/src/services/workspace_file_index_service.rs`、`src-tauri/src/commands/workspace_file_index.rs` 在 `318a821` 删除；当前 `contracts/app-commands.json`、`src-tauri/src/lib.rs`、`src/lib/tauri.ts` 无索引生产入口；`docs/architecture.md`、`M6-workspace-files.md` 标为未交付 | 现有 `app_command_contract_matches_the_registered_handler`、`window_kind_contract_matches_capabilities` 防止未注册 handler/ACL 漂移；前端与 Rust 源码搜索无命令调用。原建议的 partial-scan 测试不适用：实现与无调用入口都已删除                                                                                                                                                                                                                                            | 由 X-F06 删除整个闲置索引功能取代；保留 partial-scan 原修复建议供未来重引入时执行。本机 `cargo test` 297/297 通过；本轮三平台 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 通过（SHA `a674462`）                                                               |
@@ -359,6 +385,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 
 ### WP6 B 层实施追溯（2026-10-06，进行中）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 | 编号                   | 实现位置                                                                                                                                                      | 测试/证据                                                                                                                                                                                                                                                   | 当前状态 / 剩余验收                                                                                                                                                                                                                                       |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | B2-F04、B2-F05、B2-F10 | `src/hooks/useResolvedTheme.ts`、`src/lib/themes.ts`、`src/lib/themeMode.ts`、`src/styles.css`、`src/components/PtyTerminal.tsx`                              | `useResolvedTheme.test.ts`：resolved theme snapshot；`themes.test.mjs`：每主题语义 token 完整、终端 token 同值但完整；`themeMode.test.ts`；`pnpm run build` 通过                                                                                            | 主题语义由解析快照和注册表派生；保留现有终端深色配色并在 light/dark 块显式完整定义。浅色终端配色按用户决定不改变。自动化本机通过，三平台 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 通过（SHA `a674462`） |
@@ -366,6 +394,8 @@ M6 不建设插件系统，但四类扩展点应该收口到同一个形状，�
 | X-F02                  | `src-tauri/src/error.rs`、`src/lib/appErrors.ts`、文件/PTY/执行/布局命令调用路径及 locale                                                                     | Rust `coded_errors_serialize_machine_readable_codes`、`coded_errors_can_serialize_localization_parameters`、`ordinary_errors_keep_a_structured_message_fallback`；`appErrors.test.ts` 四项覆盖结构化错误、已知/未知 code；源码搜索四领域无 `String(reason)` | 前端以 `formatAppError(error, t)` 按 code 本地化并保留兼容 message。Rust/前端全量本机门禁通过；三平台 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 通过（SHA `a674462`）                                    |
 
 ### WP8 B 层实施追溯（2026-10-06，进行中）
+
+（第二轮复核：见顶部说明与主报告 1.2）
 
 | 编号       | 实现位置                                                                                                                                                                                                                | 测试/证据                                                                                                                                                                                                                                      | 当前状态 / 剩余验收                                                                                                                                                                                                                                                                    |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1220,11 +1250,15 @@ flowchart TD
 
 ### 2026-10-06 Markdown preview kind 扩展成本演练
 
+（第二轮复核：见顶部说明与主报告 1.2；扩展成本按 HEAD 重新计算见主报告 3B.14）
+
 演练从第三波提交 `a674462` 建立临时分支 `codex/m6-extension-cost-rehearsal`，仅放入最小契约/布局引用骨架，然后统计并删除该分支。临时差异为 3 个文件：`contracts/content-kinds.json`、`src/lib/tauri.ts`、`src-tauri/src/models/workspace_layout.rs`；共增加 22 行并替换 1 行，提交数为 0，演练后已恢复 `main` 并删除临时分支。上述只是 skeleton 的入口改动，不包括 adapter 注册、渲染视图、presentation、编辑/预览领域操作注入、协议身份与窗口路由、布局校验/持久化、拖放与菜单文案/i18n、权限审查及相应测试。
 
 为估算剩余宿主改动，对当前代码执行同一组 kind 分支模式搜索：`src/components/PtyWorkspace.tsx` 命中 40 处；`workspaceContentAdapterRegistry.ts`、`builtins.tsx`、`WorkspaceContentView.tsx`、`workspaceContentLifecycle.ts`、`workspaceContentCoordinator.ts`、`ptyWorkspaceLayout.ts`、`workspaceContentWindowProtocol.ts` 合计命中 29 处。该搜索是扩展审查点数量，不等同于需要机械修改的行数；但已足以显示新增 kind 尚未收敛到一行注册/能力声明。演练达成“实际改动点统计并丢弃临时分支”的程序要求，**未达成第 10 节的新 kind 收口成本目标**，B 层门禁 2 保持未关闭。测量分支未运行测试或构建，未带入主线。
 
 ### 收口后扩展点成熟度复核
+
+（第二轮复核：见顶部说明与主报告 1.2；本复核表换了第 4 节原定的七维度，按原维度重评见主报告摘要与 3B.14）
 
 下表描述当前静态内建实现的状态；“受限”表示该能力由固定产品范围或静态权限明确限定，并非宣称支持第三方插件。插件运行时、沙箱和动态权限等缺口继续列在第 11 节。
 
@@ -1306,6 +1340,8 @@ flowchart TD
 
 ## WP7 复核追溯（2026-10-06）
 
+（第二轮复核：见顶部说明与主报告 1.2）
+
 本波按附录 B 对照当前代码和文档。附录 B 保留原始审计时的发现作为历史记录；本节记录修订后的当前事实和仍待执行的验证：
 
 | 偏差主题                    | 当前记录与证据                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -1320,6 +1356,8 @@ flowchart TD
 架构、测试名和状态如与未来代码不一致，应以代码复核结果更新本表；不能仅因本表列出自动化测试就推断实机门禁已完成。
 
 ### 第四波本机最终自动门禁（2026-10-06，Windows）
+
+（第二轮复核：见顶部说明与主报告 1.2）
 
 - `pnpm test`：53 个测试文件、282 项通过。
 - `pnpm run build`：通过；Vite 仍提示 Monaco 编辑器 chunk 超过 500 KB。

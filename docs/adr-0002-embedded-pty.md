@@ -37,3 +37,9 @@
 - 新增 `portable-pty`、xterm.js 及 Fit addon 依赖，并增加 PTY 会话表和 IPC 命令。
 - 输出回压与进程树管理增加实现复杂度，但可保持 UI 有界、输入独立和应用退出语义可验证。
 - M1 暂时借用旧项目详情视图展示终端；M2 再迁移到正式工作台布局，M3 再加入多终端布局。
+
+## 修订说明（2026-10-06，事实更新，不改变决策）
+
+- 决策 7 中“复用全局与项目参数合并”描述的是 M1 时的实现；0.3.0 M2 已移除全局/项目自定义启动参数，当前 PTY 只用 CLI 默认行为加适配器的内部恢复参数（`launch_service.rs`、各适配器 `resume_args`）。
+- “应用退出请求若有活动会话先交前端确认，不能绕过确认直接退出”当前有已知例外：macOS 的 Cmd+Q 等系统退出入口不产生可阻止的 `ExitRequested`，会绕过确认（S1C-N01，待修）。退出确认现在同时覆盖未保存文件缓冲；`confirm_app_exit` 尚未与待决请求关联（S3H-A02）。详见 `docs/architecture.md` 的“应用退出门与恢复门（现状）”与“已知限制与待收口项”。
+- 本 ADR 的“输入独立”由每会话专用写线程和容量 32 的有界队列实现（`pty_session_service.rs`），单次输入上限 64 KiB，超限或背压返回 `pty_input_backpressure`；独立窗口所有者被销毁时由 `reclaim_window` 把会话回收给主窗口并缓冲输出，主窗口通过 `reattach_pty_session` 重新接管（M6 期间新增，见 `docs/architecture.md`）。

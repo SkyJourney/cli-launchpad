@@ -131,29 +131,9 @@ GUI 应用从 Finder 或 Dock 启动时不能假设继承交互式 zsh 的完整
 本次 macOS 开发机只读审计确认三个官方命令均位于 `~/.local/bin`：Claude
 `2.1.234`、Codex `0.147.0`、AGY `1.1.14`。该结果只是测试基线，不写入产品逻辑。
 
-## macOS 终端探测与支持
+## 外部终端探测（历史，已删除）
 
-macOS 自动模式固定使用系统 Terminal.app。第三方终端只有在检测到可信应用包且
-用户显式选择后才参与启动，避免安装新终端后静默改变既有行为。
-
-| 稳定 target ID   | 终端         | Bundle ID / 校验方式     | 启动接口                                |
-| ---------------- | ------------ | ------------------------ | --------------------------------------- |
-| `macos:terminal` | Terminal.app | `com.apple.Terminal`     | LaunchServices 打开 `.command`          |
-| `macos:iterm2`   | iTerm2       | `com.googlecode.iterm2`  | LaunchServices 打开 `.command`          |
-| `macos:ghostty`  | Ghostty      | `com.mitchellh.ghostty`  | LaunchServices 打开 `.command`          |
-| `macos:wezterm`  | WezTerm      | `com.github.wez.wezterm` | `wezterm start --cwd <dir> -- <helper>` |
-| `macos:kitty`    | kitty        | 验证应用包与包内 `kitty` | `kitty --directory <dir> <helper>`      |
-
-探测顺序为标准 `/Applications`、用户 `~/Applications`，最后按 Bundle ID 使用
-Spotlight 查找非标准位置。每个结果都读取 `Info.plist` 复核；WezTerm 与 kitty
-还要验证包内 CLI。被动探测不启动终端，也不使用 AppleScript。
-
-Terminal.app、iTerm2、Ghostty 对 `.command` 文档的支持来自各自应用声明；
-WezTerm 与 kitty 使用官方 CLI 提供的工作目录与待执行程序参数。相关实现依据见
-[iTerm2 scripting](https://iterm2.com/documentation-scripting.html)、
-[Ghostty documentation](https://ghostty.org/docs)、
-[WezTerm CLI start](https://wezterm.org/cli/start.html)、
-[kitty invocation](https://sw.kovidgoyal.net/kitty/invocation/)。
+0.2.x 曾在 macOS 上探测 Terminal.app、iTerm2、Ghostty、WezTerm、kitty，并以 `.command` 文档、AppleScript 或应用包内 CLI 参数启动外部终端；Windows 与 Linux 也有对应的终端探测与回退。该能力已在 0.4.0 M6 期间连同 `platform/terminal.rs`、`platform/terminal_launch.rs`、`platform/macos_launch_artifacts.rs` 一并删除，当前 CLI 只通过内置 PTY 启动，不再探测或选择外部终端。CLI 本身的检测（本文“检测模型”“Windows 检测策略”“macOS 检测策略”）与安装/更新（本文“安装模型”“更新模型”）不受影响。历史设计保留在 `docs/architecture.md` 的“0.2.x 外部终端启动组合（历史设计）”一节。
 
 ## 安装模型
 
@@ -284,6 +264,8 @@ Grok 也提供官方 npm 包 `@xai-official/grok`，但本应用 G1 只托管官
 不会调用更新命令。运行
 `grok update` 时会移除 pnpm 注入的 `npm_config_user_agent`，避免官方原生安装
 被误判为 npm 安装。
+
+文档修订说明（2026-10-06）：`docs/milestones/grok-build-cli.md` 与 `docs/architecture.md` 曾保留“`installer=internal` 且可执行文件位于官方安装目录”的旧描述，与本节及代码（`grok/common.rs` 的 `validate_execution`、`grok/version.rs`，只校验 `installer`）矛盾，现已统一到代码事实；是否重新引入路径校验已确认（PD-04，2026-10-06）：保留现行代码行为，只校验官方更新检查 JSON 的 `installer`，文档以代码事实为准（见 `docs/milestones/0.4.0/M6-closure-review.md` 4.7.1）。
 
 Hermes 的更新可用状态按已识别的官方 Windows/macOS/Linux 默认源码安装进行查询：设置页或手动刷新时仅运行一次 `hermes update --check`，使用 CLI 默认更新目标。Windows 要求可执行文件位于 `%LOCALAPPDATA%\\hermes\\bin` 且 checkout 位于 `%LOCALAPPDATA%\\hermes\\hermes-agent`；macOS/Linux 要求入口位于 `~/.local/bin/hermes` 且 checkout 位于 `~/.hermes/hermes-agent`。不额外运行 `--install-id` 和 `--plan`。状态不与 `--version` 中的语义版本比较；官方对浅克隆可能只报告是否存在更新而不给提交数。`--check` 不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata，因此可能更新本地比较引用，不能承诺零文件写入。用户确认后，Launchpad 直接执行已解析的 Hermes CLI 完整路径和 `update` 参数，并在任务启动前再次校验该路径和默认源码 checkout；MSIX、Microsoft Store、Hermes Desktop、Nix、其他包管理器和来源不明安装的更新行为交由其所属渠道处理。确认浮窗只显示来源与该完整路径命令。查询失败时保留可用缓存并明确标出查询错误；没有可用结果时显示未知状态，不猜测为已同步。
 

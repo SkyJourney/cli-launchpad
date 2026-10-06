@@ -1,0 +1,150 @@
+// @vitest-environment jsdom
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+
+vi.mock("react-i18next", async () => (await import("./host/mocks")).reactI18nextMock);
+vi.mock("sonner", async () => (await import("./host/mocks")).sonnerMock);
+vi.mock(
+  "C:/Projects/cli-launchpad/src/components/PtyTerminal.tsx",
+  async () => (await import("./host/mocks")).ptyTerminalMock,
+);
+
+import { tauriMock } from "C:/Projects/cli-launchpad/src/test/tauriMock";
+import { createBackend, emitToMain, flush, mountWorkspace } from "./host/harness";
+import { listWorkspacePanes } from "C:/Projects/cli-launchpad/src/lib/ptyWorkspaceLayout";
+import { WORKSPACE_LAYOUT_SCHEMA_VERSION } from "C:/Projects/cli-launchpad/src/lib/workspaceLayoutPersistence";
+
+beforeAll(() => {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
+afterEach(() => cleanup());
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+async function openAndDetach(host: Awaited<ReturnType<typeof mountWorkspace>>) {
+  await act(async () => {
+    await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+  });
+  await flush();
+  const document = host.ctx().fileDocuments[0];
+  await act(async () => {
+    void host.ctx().detachFile(document.id).catch(() => undefined);
+  });
+  await flush();
+  const created = tauriMock.state.createdWindows.at(-1)!;
+  const token = new URL((created.options as any).url, "http://x").searchParams.get("fileHandoffToken")!;
+  await emitToMain("workspace-file-window-ready", { documentId: document.id, token, windowLabel: created.label });
+  await flush();
+  await emitToMain("workspace-file-window-attached", { documentId: document.id, token, windowLabel: created.label });
+  await flush();
+  return { document, token, windowLabel: created.label };
+}
+
+describe("calibration", () => {
+  it("applies a named layout while a file is detached", async () => {
+    const host = await mountWorkspace();
+    const { document } = await openAndDetach(host);
+    const paneId = host.ctx().focusedPaneId;
+    host.backend.handlers.set("plan_apply_workspace_layout_preset", () => ({
+      layout: {
+        schemaVersion: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+        tree: { kind: "split", id: "s1", direction: "horizontal", ratio: 0.5,
+          first: { kind: "pane", id: "pa", paneNumber: 1, contents: [{ kind: "file", documentId: "preset-doc" }], activeContent: { kind: "file", documentId: "preset-doc" } },
+          second: { kind: "pane", id: "pb", paneNumber: 2, contents: [], activeContent: null } },
+        focusedPaneId: "pa",
+        slots: [],
+        documents: [{ id: "preset-doc", directoryId: 1, directoryPath: "C:/project", relativePath: "a.txt" }],
+        detachedContents: [],
+      },
+      slotStates: [],
+    }));
+    await act(async () => {
+      await host.ctx().applyWorkspaceLayoutPreset("preset-1");
+    });
+    await flush();
+    const panes = listWorkspacePanes(host.ctx().tree);
+    console.log("apply errors", host.errors.map(String), "tree files", JSON.stringify(panes.map((p) => p.contents)), "detached", [...host.ctx().detachedFileIds], document.id, paneId);
+    console.log("last save detached", JSON.stringify(host.backend.saved.at(-1)?.layout.detachedContents));
+    host.dispose();
+    await flush();
+    console.log("listeners after dispose", JSON.stringify(tauriMock.state.eventListeners.map((l) => [l.eventName, l.ownerLabel])));
+  });
+
+  it("save in flight then apply layout clears saving", async () => {
+    const host = await mountWorkspace();
+    await act(async () => {
+      await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+    });
+    await flush();
+    const document = host.ctx().fileDocuments[0];
+    const save = deferred<any>();
+    host.backend.handlers.set("save_project_text_file", () => save.promise);
+    await act(async () => host.ctx().editFile(document.id, "edited"));
+    let saving!: Promise<void>;
+    await act(async () => {
+      saving = host.ctx().saveFile(document.id);
+    });
+    console.log("saving flag", host.ctx().fileBuffers[document.id].saving);
+    host.backend.handlers.set("plan_apply_workspace_layout_preset", () => ({
+      layout: { schemaVersion: 5, tree: { kind: "pane", id: "pa", paneNumber: 1, contents: [{ kind: "file", documentId: "p-doc" }], activeContent: { kind: "file", documentId: "p-doc" } }, focusedPaneId: "pa", slots: [], documents: [{ id: "p-doc", directoryId: 1, directoryPath: "C:/project", relativePath: "a.txt" }], detachedContents: [] },
+      slotStates: [],
+    }));
+    await act(async () => {
+      await host.ctx().applyWorkspaceLayoutPreset("p");
+    });
+    await act(async () => {
+      save.resolve({ kind: "saved", content: "edited", revision: "r2", warning: null });
+      await saving;
+    });
+    await flush();
+    const buffer = host.ctx().fileBuffers[document.id];
+    console.log("after apply+save buffer", JSON.stringify({ saving: buffer?.saving, savedContent: buffer?.savedContent, revision: buffer?.revision }), "docs", host.ctx().fileDocuments.map((d) => d.id), document.id);
+    host.dispose();
+  });
+
+  it("unknown content round trip", async () => {
+    const unknown = { kind: "unknown", originalKind: "markdownPreview", raw: { kind: "markdownPreview", source: "README.md", extra: { a: 1 } } };
+    const backend = createBackend({
+      status: { status: "ready" }, revision: 2, schemaVersion: 5,
+      layout: { schemaVersion: 5, tree: { kind: "pane", id: "p1", paneNumber: 1, contents: [unknown as any], activeContent: unknown as any }, focusedPaneId: "p1", slots: [], documents: [], detachedContents: [] },
+    });
+    const host = await mountWorkspace(backend);
+    console.log("alerts", screen.queryAllByRole("alert").map((a) => a.textContent));
+    console.log("saved unknown", JSON.stringify(backend.saved.at(-1)?.layout.tree));
+    const button = screen.getAllByRole("button").find((b) => b.textContent === "workspaceContent.closeUnsupported");
+    await act(async () => fireEvent.click(button!));
+    await flush();
+    console.log("after close", JSON.stringify(backend.saved.at(-1)?.layout.tree), host.errors.length);
+    host.dispose();
+  });
+
+  it("double save → single invoke", async () => {
+    const host = await mountWorkspace();
+    await act(async () => {
+      await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+    });
+    await flush();
+    const document = host.ctx().fileDocuments[0];
+    const save = deferred<any>();
+    host.backend.handlers.set("save_project_text_file", () => save.promise);
+    await act(async () => host.ctx().editFile(document.id, "x"));
+    await act(async () => {
+      void host.ctx().saveFile(document.id);
+      void host.ctx().saveFile(document.id);
+    });
+    save.resolve({ kind: "saved", content: "x", revision: "r2", warning: null });
+    await flush();
+    console.log("save invokes", tauriMock.state.invokeCalls.filter((c) => c.command === "save_project_text_file").length);
+    host.dispose();
+    await flush();
+    console.log("listeners after dispose (plain)", JSON.stringify(tauriMock.state.eventListeners.map((l) => [l.eventName, l.ownerLabel])));
+  });
+});

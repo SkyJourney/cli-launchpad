@@ -1,0 +1,91 @@
+// @vitest-environment jsdom
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+
+vi.mock("react-i18next", async () => (await import("./host/mocks")).reactI18nextMock);
+vi.mock("sonner", async () => (await import("./host/mocks")).sonnerMock);
+vi.mock(
+  "C:/Projects/cli-launchpad/src/components/PtyTerminal.tsx",
+  async () => (await import("./host/mocks")).ptyTerminalMock,
+);
+
+import { flush, mountWorkspace, createBackend } from "./host/harness";
+import { registerWorkspaceEditorEngine } from "C:/Projects/cli-launchpad/src/components/workspaceEditorEngineRegistry";
+import { listWorkspacePanes } from "C:/Projects/cli-launchpad/src/lib/ptyWorkspaceLayout";
+
+beforeAll(() => {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
+afterEach(() => cleanup());
+
+describe("misc host prototype", () => {
+  it("rehydrate releases editor models (S1A-N12)", async () => {
+    const host = await mountWorkspace();
+    await act(async () => {
+      await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+    });
+    await flush();
+    const id = host.ctx().fileDocuments[0].id;
+    await act(async () => {
+      await host.ctx().rehydrateWorkspace();
+    });
+    await flush();
+    console.log("releaseDocument calls", JSON.stringify(host.releaseDocument.mock.calls), "doc", id);
+    host.dispose();
+  });
+
+  it("restart hydration rehomes a detached file into the focused pane", async () => {
+    const backend = createBackend({
+      status: { status: "ready" },
+      revision: 3,
+      schemaVersion: 5,
+      layout: {
+        schemaVersion: 5,
+        tree: { kind: "pane", id: "pane-1", paneNumber: 1, contents: [], activeContent: null },
+        focusedPaneId: "pane-1",
+        slots: [],
+        documents: [{ id: "doc-1", directoryId: 1, directoryPath: "C:/project", relativePath: "a.txt" }],
+        detachedContents: [{ kind: "file", documentId: "doc-1" }],
+      },
+    });
+    const host = await mountWorkspace(backend);
+    const panes = listWorkspacePanes(host.ctx().tree);
+    console.log("rehomed", JSON.stringify(panes[0].contents), "errors", host.errors.length, "first save", JSON.stringify(backend.saved[0]?.layout.detachedContents), backend.saved[0]?.revision);
+    host.dispose();
+  });
+
+  it("closing a render-error placeholder for a known kind (S1A-N04)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = await mountWorkspace();
+    await act(async () => {
+      await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+    });
+    await flush();
+    // swap the fake engine for a throwing one
+    host.unregisterEngine();
+    const stop = registerWorkspaceEditorEngine({
+      id: "core.monaco",
+      apiVersion: 1,
+      releaseDocument: vi.fn(),
+      View: () => {
+        throw new Error("engine exploded");
+      },
+    });
+    await flush();
+    const alert = screen.getAllByRole("alert").find((el) => el.textContent?.includes("engine exploded"));
+    console.log("placeholder", Boolean(alert));
+    if (alert) {
+      await act(async () => {
+        fireEvent.click(within(alert).getByRole("button"));
+      });
+      await flush();
+    }
+    console.log("docs after close click", host.ctx().fileDocuments.length);
+    stop();
+    host.dispose();
+  });
+});

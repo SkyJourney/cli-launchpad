@@ -1,0 +1,169 @@
+// @vitest-environment jsdom
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, cleanup } from "@testing-library/react";
+
+vi.mock("react-i18next", async () => (await import("./host/mocks")).reactI18nextMock);
+vi.mock("sonner", async () => (await import("./host/mocks")).sonnerMock);
+vi.mock(
+  "C:/Projects/cli-launchpad/src/components/PtyTerminal.tsx",
+  async () => (await import("./host/mocks")).ptyTerminalMock,
+);
+
+import { tauriMock } from "C:/Projects/cli-launchpad/src/test/tauriMock";
+import { validateWorkspaceLayoutDocument } from "C:/Projects/cli-launchpad/src/lib/workspaceLayoutPersistence";
+import { listWorkspacePanes } from "C:/Projects/cli-launchpad/src/lib/ptyWorkspaceLayout";
+import { emitToMain, flush, mountWorkspace } from "./host/harness";
+import { fakeTerminals, resetFakeTerminals } from "./host/mocks";
+
+beforeAll(() => {
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
+
+let disposers: Array<() => void> = [];
+afterEach(() => {
+  disposers.splice(0).forEach((dispose) => dispose());
+  cleanup();
+  resetFakeTerminals();
+});
+
+describe("PtyWorkspace host prototype", () => {
+  it("mounts in jsdom and persists a valid layout once hydrated", async () => {
+    const host = await mountWorkspace();
+    disposers.push(host.dispose);
+    expect(host.ctx().hydrationStatus).toBe("ready");
+    expect(host.errors).toEqual([]);
+    const saves = tauriMock.state.invokeCalls.filter(
+      (call) => call.command === "save_workspace_layout",
+    );
+    expect(saves.length).toBeGreaterThan(0);
+    for (const save of host.backend.saved) {
+      expect(() => validateWorkspaceLayoutDocument(save.layout)).not.toThrow();
+    }
+  });
+
+  it("opens a file, detaches it and returns it (S1A-N01 file path)", async () => {
+    const host = await mountWorkspace();
+    disposers.push(host.dispose);
+    await act(async () => {
+      await host.ctx().openProjectFile(1, "C:/project", "a.txt");
+    });
+    await flush();
+    const document = host.ctx().fileDocuments[0];
+    expect(document.relativePath).toBe("a.txt");
+    let detachDone = false;
+    let detachError: unknown;
+    await act(async () => {
+      void host
+        .ctx()
+        .detachFile(document.id)
+        .then(
+          () => (detachDone = true),
+          (reason) => (detachError = reason),
+        );
+    });
+    await flush();
+    const created = tauriMock.state.createdWindows.at(-1);
+    expect(created?.label).toMatch(/^workspace-content-/);
+    const url = new URL(
+      (created!.options as { url: string }).url,
+      "http://localhost",
+    );
+    const token = url.searchParams.get("fileHandoffToken")!;
+    const windowLabel = created!.label;
+    await emitToMain("workspace-file-window-ready", {
+      documentId: document.id,
+      token,
+      windowLabel,
+    });
+    await flush();
+    const init = tauriMock.state.emittedEvents.find(
+      (event) =>
+        event.target === windowLabel &&
+        (event.payload as { type: string }).type ===
+          "workspace-file-window-init",
+    );
+    expect(init).toBeDefined();
+    await emitToMain("workspace-file-window-attached", {
+      documentId: document.id,
+      token,
+      windowLabel,
+    });
+    await flush();
+    expect(detachError).toBeUndefined();
+    expect(detachDone).toBe(true);
+    expect(host.ctx().detachedFileIds.has(document.id)).toBe(true);
+    const savedBeforeReturn = host.backend.saved.length;
+
+    const buffer = (init!.payload as any).payload.fileBuffer;
+    await emitToMain("workspace-file-window-return-requested", {
+      documentId: document.id,
+      token,
+      windowLabel,
+      fileDocument: document,
+      fileBuffer: { ...buffer, content: "edited", version: buffer.version + 1 },
+    });
+    await flush();
+    console.log("file errors", host.errors.map(String));
+    console.log("saved after return", host.backend.saved.length - savedBeforeReturn);
+    const panes = listWorkspacePanes(host.ctx().tree);
+    console.log("file in tree after return", panes.some((p) => p.contents.some((c) => c.kind === "file")));
+  });
+
+  it("launches a PTY, detaches it, and holds the return attach (S1A-N01 PTY path)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = await mountWorkspace();
+    disposers.push(host.dispose);
+    await act(async () => {
+      host.ctx().launchSession(1, "claude");
+    });
+    await flush(10);
+    const slot = host.ctx().slots[0];
+    console.log("slot sessionId", slot?.sessionId, "terminals", fakeTerminals.length);
+    expect(slot?.sessionId).toBeTruthy();
+    const terminal = host.ctx().terminalRefs.current.get(slot.instanceId) as any;
+    expect(terminal).toBeDefined();
+    let detachError: unknown;
+    await act(async () => {
+      void host.ctx().detachSession(slot.instanceId).catch((r) => (detachError = r));
+    });
+    await flush();
+    const created = tauriMock.state.createdWindows.at(-1)!;
+    expect(created.label).toMatch(/^terminal-/);
+    await emitToMain("pty-detached-ready", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel: created.label,
+    });
+    await flush();
+    expect(detachError).toBeUndefined();
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+
+    let releaseAttach!: () => void;
+    terminal.attachHandoff.mockImplementation(
+      (sessionId: string) =>
+        new Promise((resolve) => {
+          releaseAttach = () => resolve({ sessionId, state: "running" });
+        }),
+    );
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel: created.label,
+      token: "return-token",
+    });
+    await flush();
+    console.log("pty errors while returning", host.errors.map(String));
+    // any unrelated host update while returning (e.g. focusing a pane)
+    await act(async () => {
+      host.ctx().splitPane(host.ctx().focusedPaneId, "horizontal");
+    });
+    await flush();
+    console.log("pty errors after split while returning", host.errors.map(String));
+    releaseAttach?.();
+    await flush();
+  });
+});

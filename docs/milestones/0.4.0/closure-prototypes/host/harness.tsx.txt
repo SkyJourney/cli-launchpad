@@ -1,0 +1,193 @@
+import { Component, type ReactNode } from "react";
+import { act, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { vi } from "vitest";
+import { tauriMock } from "C:/Projects/cli-launchpad/src/test/tauriMock";
+import {
+  PtyWorkspaceProvider,
+  PtyWorkspaceRegion,
+  usePtyWorkspace,
+} from "C:/Projects/cli-launchpad/src/components/PtyWorkspace";
+import { registerBuiltinWorkspaceContentAdapters } from "C:/Projects/cli-launchpad/src/components/workspaceContentAdapters/builtins";
+import { registerWorkspaceEditorEngine } from "C:/Projects/cli-launchpad/src/components/workspaceEditorEngineRegistry";
+import { useAppStore } from "C:/Projects/cli-launchpad/src/store/appStore";
+import { WORKSPACE_CONTENT_WINDOW_EVENT } from "C:/Projects/cli-launchpad/src/lib/workspaceContentWindowProtocol";
+import type {
+  Directory,
+  WorkspaceLayoutDocument,
+  WorkspaceLayoutStateRead,
+} from "C:/Projects/cli-launchpad/src/lib/tauri";
+
+export type WorkspaceContext = ReturnType<typeof usePtyWorkspace>;
+
+export const directory: Directory = {
+  id: 1,
+  name: "Project",
+  path: "C:/project",
+  sortOrder: 0,
+  pinned: false,
+  lastUsedAt: null,
+  note: null,
+};
+
+export class CapturingBoundary extends Component<
+  { errors: unknown[]; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: unknown) {
+    this.props.errors.push(error);
+  }
+  render() {
+    return this.state.failed ? (
+      <div role="alert">host crashed</div>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+function Probe({ onValue }: { onValue: (value: WorkspaceContext) => void }) {
+  onValue(usePtyWorkspace());
+  return null;
+}
+
+export interface HostBackend {
+  layout: WorkspaceLayoutStateRead;
+  saved: Array<{ revision: number; layout: WorkspaceLayoutDocument }>;
+  files: Map<string, { content: string; revision: string }>;
+  handlers: Map<string, (args: any) => unknown>;
+}
+
+export function createBackend(
+  layout?: Partial<WorkspaceLayoutStateRead>,
+): HostBackend {
+  return {
+    layout: {
+      status: { status: "missing" },
+      revision: 0,
+      schemaVersion: null,
+      updatedAtMs: null,
+      layout: null,
+      slotStates: [],
+      ...layout,
+    },
+    saved: [],
+    files: new Map([["a.txt", { content: "hello", revision: "r1" }]]),
+    handlers: new Map(),
+  };
+}
+
+export function installBackend(backend: HostBackend) {
+  tauriMock.setInvokeHandler((command, rawArgs) => {
+    const args = rawArgs as any;
+    const override = backend.handlers.get(command);
+    if (override) return override(args);
+    switch (command) {
+      case "list_directories":
+        return [directory];
+      case "get_workspace_layout":
+        return backend.layout;
+      case "save_workspace_layout":
+        backend.saved.push({ revision: args.revision, layout: args.layout });
+        return { saved: true, revision: args.revision };
+      case "open_project_file": {
+        const file = backend.files.get(args.relativePath);
+        if (!file) throw { code: "file.not_found", message: "missing" };
+        return { kind: "text", ...file };
+      }
+      case "save_project_text_file":
+        return {
+          kind: "saved",
+          content: args.content,
+          revision: `${args.expectedRevision}+`,
+          warning: null,
+        };
+      case "grant_content_window_file":
+      case "revoke_content_window_file":
+        return undefined;
+      case "get_pty_session_window_status":
+        return "ownedByAnotherWindow";
+      default:
+        return undefined;
+    }
+  });
+}
+
+export async function flush(times = 5) {
+  for (let i = 0; i < times; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
+export async function mountWorkspace(backend = createBackend()) {
+  installBackend(backend);
+  const unregisterAdapters = registerBuiltinWorkspaceContentAdapters();
+  const releaseDocument = vi.fn();
+  const unregisterEngine = registerWorkspaceEditorEngine({
+    id: "core.monaco",
+    apiVersion: 1,
+    releaseDocument,
+    View: ({ value, onChange, readOnly }) => (
+      <textarea
+        aria-label="editor"
+        value={value}
+        readOnly={readOnly}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    ),
+  });
+  useAppStore.setState({
+    view: "detail",
+    selectedDirectoryId: directory.id,
+    ptySessionsById: {},
+  });
+  const errors: unknown[] = [];
+  const ctx: { current: WorkspaceContext | null } = { current: null };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <CapturingBoundary errors={errors}>
+        <PtyWorkspaceProvider>
+          <Probe onValue={(value) => (ctx.current = value)} />
+          <PtyWorkspaceRegion />
+        </PtyWorkspaceProvider>
+      </CapturingBoundary>
+    </QueryClientProvider>,
+  );
+  await flush();
+  return {
+    view,
+    ctx: () => {
+      if (!ctx.current) throw new Error("workspace context unavailable");
+      return ctx.current;
+    },
+    errors,
+    backend,
+    releaseDocument,
+    unregisterEngine,
+    dispose() {
+      view.unmount();
+      unregisterAdapters();
+      unregisterEngine();
+      queryClient.clear();
+    },
+  };
+}
+
+export async function emitToMain(type: string, payload: unknown) {
+  await act(async () => {
+    tauriMock.emitEvent(
+      WORKSPACE_CONTENT_WINDOW_EVENT,
+      { apiVersion: 1, type, payload },
+      "main",
+    );
+  });
+}

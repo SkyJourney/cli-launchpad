@@ -29,16 +29,16 @@ CLI Launchpad 0.3.0 是一款以项目和内置 PTY 会话为中心的轻量级�
 
 发布产物统一使用 `CLI.Launchpad_<版本>_<系统>_<架构>[后缀]` 命名：
 
-| 平台                | 文件名示例                                            | 说明                               |
-| ------------------- | ----------------------------------------------------- | ---------------------------------- |
-| Windows x64         | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe`   | NSIS 在线安装包；按需下载 WebView2 |
-| Windows x64 离线版  | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`  | 内置 WebView2，体积较大            |
-| Windows ARM64       | `CLI.Launchpad_<版本>_windows_arm64-online-setup.exe` | ARM64 原生 NSIS 在线安装包         |
+| 平台                 | 文件名示例                                             | 说明                               |
+| -------------------- | ------------------------------------------------------ | ---------------------------------- |
+| Windows x64          | `CLI.Launchpad_<版本>_windows_x64-online-setup.exe`    | NSIS 在线安装包；按需下载 WebView2 |
+| Windows x64 离线版   | `CLI.Launchpad_<版本>_windows_x64-offline-setup.exe`   | 内置 WebView2，体积较大            |
+| Windows ARM64        | `CLI.Launchpad_<版本>_windows_arm64-online-setup.exe`  | ARM64 原生 NSIS 在线安装包         |
 | Windows ARM64 离线版 | `CLI.Launchpad_<版本>_windows_arm64-offline-setup.exe` | ARM64 原生 NSIS 离线安装包         |
-| macOS Apple Silicon | `CLI.Launchpad_<版本>_macos_arm64.dmg`                | 适用于 M 系列芯片                  |
-| macOS Intel         | `CLI.Launchpad_<版本>_macos_x64.dmg`                  | 适用于 Intel 芯片                  |
-| Linux x64           | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}`   | 三种格式任选，适用于 x86_64        |
-| Linux arm64         | `CLI.Launchpad_<版本>_linux_arm64.{deb,rpm,AppImage}` | 三种格式任选，适用于 ARM64         |
+| macOS Apple Silicon  | `CLI.Launchpad_<版本>_macos_arm64.dmg`                 | 适用于 M 系列芯片                  |
+| macOS Intel          | `CLI.Launchpad_<版本>_macos_x64.dmg`                   | 适用于 Intel 芯片                  |
+| Linux x64            | `CLI.Launchpad_<版本>_linux_x64.{deb,rpm,AppImage}`    | 三种格式任选，适用于 x86_64        |
+| Linux arm64          | `CLI.Launchpad_<版本>_linux_arm64.{deb,rpm,AppImage}`  | 三种格式任选，适用于 ARM64         |
 
 每个 Release 同时提供 `SHA256SUMS.txt`。当前 macOS DMG 使用 ad hoc 签名且未经过
 Apple 公证；首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中确认允许打开。
@@ -50,13 +50,13 @@ Intel DMG 已通过 CI 构建，但未在 Intel Mac 上进行实机验证。Linu
 
 ### 项目与 CLI 启动
 
-在常用项目之间快速切换，并直接启动 Claude Code、Codex 或 Antigravity。
+在常用项目之间快速切换，并直接启动 Claude Code、Codex、Antigravity、Grok Build 或 Hermes Agent。
 
 ![CLI Launchpad 项目页（浅色主题）](docs/images/overview-light.png)
 
 ### CLI 与终端管理
 
-统一查看 CLI 安装和版本状态，并选择适合当前平台的终端启动方式。
+统一查看 CLI 安装和版本状态，并在确认前预览安装/更新命令；CLI 一律在应用内置 PTY 终端中启动，不再提供外部终端选项（0.2.x 的外部终端启动链已在 0.4.0 M6 期间删除）。
 
 ![CLI Launchpad 设置页（深色主题）](docs/images/settings-dark.png)
 
@@ -71,7 +71,7 @@ Intel DMG 已通过 CI 构建，但未在 Intel Mac 上进行实机验证。Linu
 
 - React + TypeScript 负责桌面 UI。
 - Rust/Tauri commands 负责文件系统访问、SQLite 读写和进程启动。
-- SQLite 作为目录、工具、启动偏好和目录级参数的单一数据源。
+- SQLite 作为项目目录、工具状态、工作区布局、任务历史和应用设置的单一数据源。
 - 系统托盘提供常驻入口；默认关闭主窗口时隐藏到托盘，可在设置中切换为退出应用。
 
 正式运行的数据根目录为 `~/.cli-launchpad/`，当前业务数据库位于
@@ -81,10 +81,9 @@ Intel DMG 已通过 CI 构建，但未在 Intel Mac 上进行实机验证。Linu
 ## 目标
 
 - 将常用目录缓存在 SQLite 中。
-- 在选中目录中一键启动配置好的 CLI 工具。
-- 将终端启动偏好、全局 CLI 参数和目录专属 CLI 参数解耦。
+- 在选中目录中一键启动已接入的 CLI 工具，并在内置 PTY 中交互运行；普通启动使用 CLI 默认行为，不提供自定义启动参数。
 - 保持桌面应用体积轻量，不引入 Electron 或服务端运行时。
-- 在真正启动前，让用户可以预览最终命令。
+- 在执行安装/更新前，让用户可以预览最终命令与来源。
 - 通过托盘快速重新显示主界面，或显式退出应用。
 
 ## 技术栈
@@ -95,7 +94,7 @@ Intel DMG 已通过 CI 构建，但未在 Intel Mac 上进行实机验证。Linu
 - Vite
 - Rust
 - rusqlite
-- Windows Terminal Profile / PowerShell / CMD 分层回退集成
+- portable-pty（ConPTY / Unix PTY）与 xterm.js 内置终端
 - Noto Sans SC 与 Maple Mono NF CN 内置字体
 
 ## 本地依赖
@@ -241,10 +240,12 @@ src-tauri/migrations/         SQLite 迁移脚本
 src-tauri/src/commands/       暴露给 UI 的 IPC commands
 src-tauri/src/services/       业务逻辑
 src-tauri/src/db/             数据库连接和仓储
-src-tauri/src/platform/       平台相关启动逻辑
+src-tauri/src/platform/       平台相关逻辑（PTY 进程树、受限子进程、文件 CAS、路径规则）
 ```
 
-## 0.2.x 已有能力
+## 0.2.x 已有能力（历史基线）
+
+以下是 0.2.x 的能力清单，仅作历史记录：其中的终端探测、Profile 选择、命令预览和外部终端启动已在 0.4.0 M6 期间删除，当前版本只通过内置 PTY 启动 CLI。
 
 - 目录增删改查。
 - Antigravity、Codex 和 Claude Code 的工具配置。
