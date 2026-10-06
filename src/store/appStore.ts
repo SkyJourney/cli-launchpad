@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import type { ThemeMode } from "../lib/themeMode";
+import {
+  isThemeMode,
+  resolveThemeMode,
+  type ResolvedTheme,
+  type ThemeMode,
+} from "../lib/themes";
 import type { PtySession } from "../lib/tauri";
 
 export type { ThemeMode } from "../lib/themeMode";
@@ -21,26 +26,37 @@ const LAST_DIRECTORY_STORAGE_KEY = "cli-launchpad.last-directory";
 const SIDEBAR_OPEN_STORAGE_KEY = "cli-launchpad.sidebar-open";
 const CONTEXT_PANEL_STORAGE_KEY = "cli-launchpad.context-panel-open";
 
+function getBrowserStorage(): Storage | undefined {
+  return typeof window === "undefined" ? undefined : window.localStorage;
+}
+
 function getStoredThemeMode(): ThemeMode {
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return stored === "light" || stored === "dark" || stored === "system"
-    ? stored
-    : "system";
+  const stored = getBrowserStorage()?.getItem(THEME_STORAGE_KEY);
+  return isThemeMode(stored) ? stored : "system";
+}
+
+const initialThemeMode = getStoredThemeMode();
+
+function getInitialResolvedTheme(): ResolvedTheme {
+  const systemPrefersDark =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
+  return resolveThemeMode(initialThemeMode, systemPrefersDark);
 }
 
 function getStoredDirectoryId(): number | null {
-  const stored = window.localStorage.getItem(LAST_DIRECTORY_STORAGE_KEY);
+  const stored = getBrowserStorage()?.getItem(LAST_DIRECTORY_STORAGE_KEY);
   if (!stored) return null;
   const id = Number(stored);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 function getStoredContextPanelOpen(): boolean {
-  return window.localStorage.getItem(CONTEXT_PANEL_STORAGE_KEY) !== "false";
+  return getBrowserStorage()?.getItem(CONTEXT_PANEL_STORAGE_KEY) !== "false";
 }
 
 function getStoredSidebarOpen(): boolean {
-  return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
+  return getBrowserStorage()?.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
 }
 
 const initialDirectoryId = getStoredDirectoryId();
@@ -48,6 +64,7 @@ const initialDirectoryId = getStoredDirectoryId();
 interface AppState {
   view: ViewName;
   themeMode: ThemeMode;
+  resolvedTheme: ResolvedTheme;
   selectedDirectoryId: number | null;
   sidebarOpen: boolean;
   contextPanelOpen: boolean;
@@ -56,6 +73,7 @@ interface AppState {
   setView: (view: ViewName) => void;
   setThemeMode: (mode: ThemeMode) => void;
   applyRemoteThemeMode: (mode: ThemeMode) => void;
+  setResolvedTheme: (theme: ResolvedTheme) => void;
   selectDirectory: (id: number | null) => void;
   openDirectory: (id: number) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -68,7 +86,8 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   view: initialDirectoryId == null ? "projects" : "detail",
-  themeMode: getStoredThemeMode(),
+  themeMode: initialThemeMode,
+  resolvedTheme: getInitialResolvedTheme(),
   selectedDirectoryId: initialDirectoryId,
   sidebarOpen: getStoredSidebarOpen(),
   contextPanelOpen: getStoredContextPanelOpen(),
@@ -80,6 +99,13 @@ export const useAppStore = create<AppState>((set) => ({
     set({ themeMode: mode });
   },
   applyRemoteThemeMode: (mode) => set({ themeMode: mode }),
+  setResolvedTheme: (theme) =>
+    set((state) =>
+      state.resolvedTheme.id === theme.id &&
+      state.resolvedTheme.base === theme.base
+        ? state
+        : { resolvedTheme: theme },
+    ),
   selectDirectory: (id) => {
     if (id == null) window.localStorage.removeItem(LAST_DIRECTORY_STORAGE_KEY);
     else window.localStorage.setItem(LAST_DIRECTORY_STORAGE_KEY, String(id));

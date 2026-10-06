@@ -362,12 +362,6 @@ mod tests {
             .unwrap();
         legacy
             .execute(
-                "update tools set global_args = '--legacy-args' where key = 'claude'",
-                [],
-            )
-            .unwrap();
-        legacy
-            .execute(
                 "insert into directory_tool_args (directory_id, tool_key, args) values (8, 'claude', '--legacy-project-args')",
                 [],
             )
@@ -398,18 +392,8 @@ mod tests {
 
         restore(&mut connection, &paths, id).unwrap();
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 13);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
         assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
-        assert_eq!(
-            connection
-                .query_row(
-                    "select global_args from tools where key = 'claude'",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "--legacy-args"
-        );
         assert_eq!(
             connection
                 .query_row(
@@ -466,7 +450,7 @@ mod tests {
 
         assert!(restore(&mut connection, &paths, id).is_err());
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 13);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
         assert_eq!(
             directory_repo::list(&connection).unwrap()[0].name,
             "Keep current"

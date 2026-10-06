@@ -29,17 +29,27 @@ pub(crate) fn valid_session_id(session_id: &str) -> bool {
 }
 
 fn hermes_home() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let home = PathBuf::new();
+    #[cfg(not(windows))]
+    let home = home_dir()?;
+    hermes_home_in(&home)
+}
+
+fn hermes_home_in(home: &Path) -> Result<PathBuf> {
     if let Some(home) = std::env::var_os("HERMES_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(home));
     }
 
+    #[cfg(windows)]
+    let _ = home;
     #[cfg(windows)]
     let root = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("无法确定 Hermes Agent 的 Windows 数据目录"))?
         .join("hermes");
     #[cfg(not(windows))]
-    let root = home_dir()?.join(".hermes");
+    let root = home.join(".hermes");
 
     resolve_active_profile(&root)
 }
@@ -74,6 +84,10 @@ fn hermes_db_path() -> Result<PathBuf> {
     Ok(hermes_home()?.join("state.db"))
 }
 
+fn hermes_db_path_in(home: &Path) -> Result<PathBuf> {
+    Ok(hermes_home_in(home)?.join("state.db"))
+}
+
 fn open_read_only(path: &Path) -> Result<Connection> {
     let connection = Connection::open_with_flags(
         path,
@@ -86,6 +100,15 @@ fn open_read_only(path: &Path) -> Result<Connection> {
 
 fn list_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
     let path = hermes_db_path()?;
+    list_sessions_from_path(&path, directory_path)
+}
+
+fn list_sessions_in(directory_path: &str, home: &Path) -> Result<Vec<SessionInfo>> {
+    let path = hermes_db_path_in(home)?;
+    list_sessions_from_path(&path, directory_path)
+}
+
+fn list_sessions_from_path(path: &Path, directory_path: &str) -> Result<Vec<SessionInfo>> {
     list_sessions_from_db(&path, directory_path, false).map(|source| {
         source
             .documents
@@ -95,8 +118,8 @@ fn list_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
     })
 }
 
-fn search_documents(directory_path: &str) -> Result<SearchSource> {
-    let path = hermes_db_path()?;
+fn search_documents_in(directory_path: &str, home: &Path) -> Result<SearchSource> {
+    let path = hermes_db_path_in(home)?;
     list_sessions_from_db(&path, directory_path, true)
 }
 
@@ -287,17 +310,25 @@ pub(crate) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
+    context: crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     tauri::async_runtime::spawn_blocking(move || {
-        page_local(list_sessions(&directory_path)?, cursor.as_deref(), limit)
+        page_local(
+            list_sessions_in(&directory_path, &context.home)?,
+            cursor.as_deref(),
+            limit,
+        )
     })
     .await
     .map_err(|error| anyhow!("Hermes Agent 会话读取任务异常：{error}"))?
 }
 
-pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
+pub(crate) async fn search_index_source(
+    directory_path: String,
+    context: crate::services::cli_adapters::AdapterContext,
+) -> SessionSearchIndexSource {
     let result = crate::services::session_service::spawn_search_index_blocking(move || {
-        search_documents(&directory_path)
+        search_documents_in(&directory_path, &context.home)
     })
     .await
     .map_err(|error| anyhow!("Hermes Agent 搜索索引任务异常：{error}"));

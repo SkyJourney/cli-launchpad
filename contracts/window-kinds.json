@@ -58,7 +58,7 @@
       "capability": "workspace-content-window",
       "route": "workspace-content",
       "labelPrefix": "workspace-content-",
-      "appCommands": ["open_project_file", "save_project_text_file"],
+      "appCommands": ["open_granted_file", "save_granted_text_file"],
       "corePermissions": [
         "core:event:allow-emit-to",
         "core:event:allow-listen",

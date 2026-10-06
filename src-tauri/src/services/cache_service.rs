@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::models::cache::CacheStats;
@@ -14,65 +14,49 @@ pub fn get_fresh<T: DeserializeOwned>(
     ttl_ms: i64,
 ) -> Result<Option<T>> {
     let minimum_time = now_ms()? - ttl_ms;
-    let value: Option<String> = connection
-        .query_row(
-            "select value_json from cache_entries where key = ?1 and created_at_ms >= ?2",
-            params![key, minimum_time],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let value = crate::db::cache_repo::get(connection, key, Some(minimum_time))?;
     decode_or_remove(connection, key, value)
 }
 
 pub fn get_any<T: DeserializeOwned>(connection: &Connection, key: &str) -> Result<Option<T>> {
-    let value: Option<String> = connection
-        .query_row(
-            "select value_json from cache_entries where key = ?1",
-            params![key],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let value = crate::db::cache_repo::get(connection, key, None)?;
     decode_or_remove(connection, key, value)
 }
 
 pub fn put<T: Serialize>(connection: &Connection, key: &str, value: &T) -> Result<()> {
-    connection.execute(
-        "insert into cache_entries (key, value_json, created_at_ms) values (?1, ?2, ?3) \
-         on conflict(key) do update set value_json = excluded.value_json, created_at_ms = excluded.created_at_ms",
-        params![key, serde_json::to_string(value)?, now_ms()?],
-    )?;
+    crate::db::cache_repo::put(connection, key, &serde_json::to_string(value)?, now_ms()?)?;
     Ok(())
 }
 
 pub fn clear(connection: &Connection) -> Result<()> {
-    connection.execute("delete from cache_entries", [])?;
-    clear_session_search(connection)?;
-    connection.execute_batch("vacuum")?;
+    crate::db::cache_repo::clear(connection)?;
     Ok(())
 }
 
 pub fn clear_session_search(connection: &Connection) -> Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute("delete from session_search_documents", [])?;
-    transaction.execute("delete from session_search_sources", [])?;
-    transaction.commit()?;
+    crate::db::cache_repo::clear_session_search(connection)?;
     Ok(())
 }
 
 pub fn remove_prefix(connection: &Connection, prefix: &str) -> Result<()> {
-    connection.execute(
-        "delete from cache_entries where key like ?1",
-        params![format!("{prefix}%")],
-    )?;
+    crate::db::cache_repo::remove_prefix(connection, prefix)?;
     Ok(())
 }
 
+pub fn remove_workspace_file_index_for_directory(
+    connection: &Connection,
+    directory_id: i64,
+) -> Result<()> {
+    // Old index keys used `workspace-file-index:{id}` without a delimiter.
+    // Delete that exact legacy key, then clear only the delimited namespace;
+    // the old cache format is intentionally not read or migrated.
+    crate::db::cache_repo::remove(connection, &format!("workspace-file-index:{directory_id}"))?;
+    remove_prefix(connection, &format!("workspace-file-index:{directory_id}:"))
+}
+
 pub fn stats(connection: &Connection, database_path: &Path) -> Result<CacheStats> {
-    let (entry_count, session_entry_count, newest_entry_at_ms) = connection.query_row(
-        "select count(*), sum(case when key like 'sessions:%' then 1 else 0 end), max(created_at_ms) from cache_entries",
-        [],
-        |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(0), row.get(2)?)),
-    )?;
+    let (entry_count, session_entry_count, newest_entry_at_ms) =
+        crate::db::cache_repo::stats(connection)?;
     Ok(CacheStats {
         size_bytes: fs::metadata(database_path)
             .map(|metadata| metadata.len())
@@ -100,7 +84,7 @@ fn decode_or_remove<T: DeserializeOwned>(
     match serde_json::from_str(&json) {
         Ok(value) => Ok(Some(value)),
         Err(_) => {
-            connection.execute("delete from cache_entries where key = ?1", params![key])?;
+            crate::db::cache_repo::remove(connection, key)?;
             log::warn!("invalid cache entry discarded key={key}");
             Ok(None)
         }
@@ -172,6 +156,35 @@ mod tests {
         );
         assert_eq!(
             get_any::<Vec<String>>(&connection, "cli-status")
+                .unwrap()
+                .unwrap(),
+            vec!["keep"]
+        );
+    }
+
+    #[test]
+    fn removing_directory_index_cache_keeps_prefix_collision_directory() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("cache.db");
+        let connection = cache_connection::init_cache(&path).unwrap();
+        put(&connection, "workspace-file-index:1", &vec!["legacy"]).unwrap();
+        put(&connection, "workspace-file-index:1:root", &vec!["stale"]).unwrap();
+        put(&connection, "workspace-file-index:10:root", &vec!["keep"]).unwrap();
+
+        remove_workspace_file_index_for_directory(&connection, 1).unwrap();
+
+        assert!(
+            get_any::<Vec<String>>(&connection, "workspace-file-index:1")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            get_any::<Vec<String>>(&connection, "workspace-file-index:1:root")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            get_any::<Vec<String>>(&connection, "workspace-file-index:10:root")
                 .unwrap()
                 .unwrap(),
             vec!["keep"]

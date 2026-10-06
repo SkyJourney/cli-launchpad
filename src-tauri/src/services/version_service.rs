@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::models::install::LatestVersion;
+use crate::models::install::{LatestVersion, ManagedUpdateStatus, UpdateAvailability};
 use crate::models::tool::ToolKey;
 
 #[cfg(test)]
@@ -20,27 +20,89 @@ pub(crate) fn latest_from_version_result(
         Ok(latest) => LatestVersion {
             tool_key,
             latest: Some(latest),
-            update_available: None,
+            update_availability: UpdateAvailability::Unknown,
             commits_behind: None,
             error: None,
             from_cache: false,
-            managed_update_allowed: false,
-            management_message: None,
+            managed_update: managed_update_status(tool_key, None),
         },
         Err(error) => {
             log::warn!("latest version query failed tool={}", tool_key.as_str());
             LatestVersion {
                 tool_key,
                 latest: None,
-                update_available: None,
+                update_availability: UpdateAvailability::Unknown,
                 commits_behind: None,
                 error: Some(error),
                 from_cache: false,
-                managed_update_allowed: false,
-                management_message: None,
+                managed_update: managed_update_status(tool_key, None),
             }
         }
     }
+}
+
+pub(crate) fn managed_update_status(
+    tool_key: ToolKey,
+    source_verified: Option<bool>,
+) -> ManagedUpdateStatus {
+    match tool_key {
+        ToolKey::Claude | ToolKey::Codex | ToolKey::Antigravity => ManagedUpdateStatus::Allowed,
+        ToolKey::Grok if source_verified == Some(true) => ManagedUpdateStatus::Allowed,
+        ToolKey::Hermes if source_verified == Some(true) => ManagedUpdateStatus::Allowed,
+        ToolKey::Grok => ManagedUpdateStatus::Denied {
+            reason_key: "settings.grokUpdateSourceDenied".to_string(),
+        },
+        ToolKey::Hermes => ManagedUpdateStatus::Denied {
+            reason_key: "settings.hermesUpdateSourceDenied".to_string(),
+        },
+    }
+}
+
+/// Combine the version service result with the current version captured by CLI
+/// detection. Branch based tools provide their update state directly.
+pub(crate) fn apply_update_availability(latest: &mut LatestVersion, current_version: Option<&str>) {
+    if latest.tool_key == ToolKey::Hermes {
+        return;
+    }
+    latest.update_availability = match (
+        current_version.and_then(semver_tuple),
+        latest.latest.as_deref().and_then(semver_tuple),
+    ) {
+        (Some(current), Some(remote)) if remote > current => UpdateAvailability::Available,
+        (Some(_), Some(_)) => UpdateAvailability::UpToDate,
+        _ => UpdateAvailability::Unknown,
+    };
+}
+
+fn semver_tuple(value: &str) -> Option<(u64, u64, u64)> {
+    let bytes = value.as_bytes();
+    for start in 0..bytes.len() {
+        if !bytes[start].is_ascii_digit() {
+            continue;
+        }
+        if start > 0 && bytes[start - 1].is_ascii_digit() {
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+            end += 1;
+        }
+        let candidate = &value[start..end];
+        let mut parts = candidate.split('.');
+        let Some(major) = parts.next().and_then(|part| part.parse().ok()) else {
+            continue;
+        };
+        let Some(minor) = parts.next().and_then(|part| part.parse().ok()) else {
+            continue;
+        };
+        let Some(patch) = parts.next().and_then(|part| part.parse().ok()) else {
+            continue;
+        };
+        if parts.next().is_none() {
+            return Some((major, minor, patch));
+        }
+    }
+    None
 }
 
 pub(crate) fn fetch_release_text(url: &str) -> Result<String, String> {
@@ -83,12 +145,11 @@ pub(crate) fn normalize_semver(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::install::ManagedUpdateStatus;
     use crate::services::cli_adapters::grok::version::{
         grok_update_check_command, grok_update_management_message_for, parse_grok_latest,
         parse_grok_update_check,
     };
-    #[cfg(windows)]
-    use crate::services::cli_adapters::hermes::version::is_hermes_default_install_path;
     use crate::services::cli_adapters::hermes::version::parse_hermes_update_check;
 
     #[test]
@@ -164,31 +225,6 @@ mod tests {
         assert!(parse_hermes_update_check("network request failed").is_err());
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn hermes_source_update_requires_default_bin_and_git_checkout() {
-        let root = tempfile::tempdir().unwrap();
-        let local_app_data = root.path();
-        let bin = local_app_data.join("hermes").join("bin");
-        let checkout = local_app_data.join("hermes").join("hermes-agent");
-        std::fs::create_dir_all(&bin).unwrap();
-        std::fs::create_dir_all(checkout.join(".git")).unwrap();
-        let exe = bin.join("hermes.exe");
-        std::fs::write(&exe, []).unwrap();
-
-        assert!(is_hermes_default_install_path(&exe, &bin, &checkout));
-        assert!(!is_hermes_default_install_path(
-            &root.path().join("npm").join("hermes.exe"),
-            &bin,
-            &checkout
-        ));
-        assert!(!is_hermes_default_install_path(
-            &bin.join("hermes.cmd"),
-            &bin,
-            &root.path().join("other-checkout")
-        ));
-    }
-
     #[test]
     fn grok_update_check_ignores_pnpm_installer_hint() {
         let command = grok_update_check_command(std::path::Path::new("grok"));
@@ -234,5 +270,49 @@ mod tests {
             "linux_arm64"
         );
         assert!(antigravity_platform_for("freebsd", "x86_64").is_err());
+    }
+
+    #[test]
+    fn maps_managed_update_and_availability_for_all_five_clis() {
+        let cases = [
+            (ToolKey::Claude, ManagedUpdateStatus::Allowed, false),
+            (ToolKey::Codex, ManagedUpdateStatus::Allowed, false),
+            (ToolKey::Antigravity, ManagedUpdateStatus::Allowed, false),
+            (ToolKey::Grok, ManagedUpdateStatus::Allowed, false),
+            (ToolKey::Hermes, ManagedUpdateStatus::Allowed, true),
+        ];
+
+        for (tool_key, expected_managed, branch_based) in cases {
+            let mut latest = latest_from_version_result(tool_key, Ok("1.2.4".to_string()));
+            latest.managed_update = managed_update_status(tool_key, Some(true));
+            if branch_based {
+                latest.update_availability = UpdateAvailability::Available;
+            } else {
+                apply_update_availability(&mut latest, Some("CLI version 1.2.3"));
+            }
+
+            assert_eq!(latest.managed_update, expected_managed);
+            assert_eq!(latest.update_availability, UpdateAvailability::Available);
+        }
+
+        assert!(matches!(
+            managed_update_status(ToolKey::Grok, None),
+            ManagedUpdateStatus::Denied { .. }
+        ));
+        assert!(matches!(
+            managed_update_status(ToolKey::Hermes, Some(false)),
+            ManagedUpdateStatus::Denied { .. }
+        ));
+    }
+
+    #[test]
+    fn version_comparison_reports_up_to_date_and_unknown_states() {
+        let mut up_to_date = latest_from_version_result(ToolKey::Codex, Ok("1.2.3".to_string()));
+        apply_update_availability(&mut up_to_date, Some("v1.2.3-beta.1"));
+        assert_eq!(up_to_date.update_availability, UpdateAvailability::UpToDate);
+
+        let mut unknown = latest_from_version_result(ToolKey::Codex, Ok("1.2.3".to_string()));
+        apply_update_availability(&mut unknown, None);
+        assert_eq!(unknown.update_availability, UpdateAvailability::Unknown);
     }
 }

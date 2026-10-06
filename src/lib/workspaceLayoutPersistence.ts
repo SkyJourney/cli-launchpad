@@ -17,8 +17,9 @@ import {
   type WorkspaceSlotState,
   type WorkspaceSlotStateKind,
 } from "./tauri";
+import { workspaceContentKey } from "./workspaceContentKey";
 
-export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 4;
+export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
 
 export interface WorkspaceRuntimeSnapshot {
   tree: WorkspaceNode;
@@ -375,13 +376,7 @@ function sameWorkspaceContentRefs(
     left.length === right.length &&
     left.every((content, index) => {
       const other = right[index];
-      return (
-        content.kind === other.kind &&
-        (content.kind === "pty"
-          ? content.slotId === (other.kind === "pty" ? other.slotId : null)
-          : content.documentId ===
-            (other.kind === "file" ? other.documentId : null))
-      );
+      return workspaceContentKey(content) === workspaceContentKey(other);
     })
   );
 }
@@ -406,6 +401,8 @@ export function migrateWorkspaceLayoutDocument(
       ...legacySlotIds.map((slotId) => ({ kind: "pty", slotId })),
     ];
     delete value.detachedSlotIds;
+    value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
+  } else if (value.schemaVersion === 4) {
     value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
   }
   if (value.schemaVersion !== WORKSPACE_LAYOUT_SCHEMA_VERSION) {
@@ -447,6 +444,7 @@ export function validateWorkspaceLayoutDocument(
     }
     paneIds.add(node.id);
     for (const content of node.contents) {
+      if (content.kind === "unknown") continue;
       if (content.kind === "pty") {
         if (
           !slotIds.has(content.slotId) ||
@@ -468,6 +466,7 @@ export function validateWorkspaceLayoutDocument(
   };
   visit(document.tree);
   for (const content of document.detachedContents) {
+    if (content.kind === "unknown") continue;
     if (content.kind === "pty") {
       if (!slotIds.has(content.slotId) || referencedSlots.has(content.slotId)) {
         throw new Error(

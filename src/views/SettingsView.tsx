@@ -5,7 +5,15 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { Download, LoaderCircle, RefreshCw, Save, Upload } from "lucide-react";
+import {
+  Download,
+  LoaderCircle,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import clsx from "clsx";
 import { createRef, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,7 +35,9 @@ import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { refreshInstallPlanConfirmation } from "../lib/installPlanConfirmation";
 import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
-import { getAppErrorMessage } from "../lib/appErrors";
+import { formatAppError } from "../lib/appErrors";
+import { getWindowChromePolicy } from "../lib/windowChrome";
+import { useDirectories } from "../hooks/queries";
 import {
   hasWorkspaceDataRestoreBlockers,
   type WorkspaceDataRestoreBlockers,
@@ -53,6 +63,8 @@ import {
   importConfigFromPath,
   listBackups,
   listLaunchHistory,
+  listProjectFileCasResidues,
+  removeProjectFileCasResidue,
   startExecutionTask,
   restoreBackup,
   setCloseBehavior,
@@ -62,6 +74,7 @@ import {
   type ExecutionTask,
   type BackupManifest,
   type CloseBehavior,
+  type ProjectFileCasResidue,
   type ToolKey,
 } from "../lib/tauri";
 
@@ -83,12 +96,9 @@ export function SettingsView() {
   const { t, i18n } = useTranslation();
   const { getBackupRestoreBlockers, cancelBackupRestore } = usePtyWorkspace();
   const queryClient = useQueryClient();
-  const userAgent = navigator.userAgent;
-  const platform = /Windows/i.test(userAgent)
-    ? "windows"
-    : /Macintosh|Mac OS X|MacPPC|MacIntel/i.test(userAgent)
-      ? "macos"
-      : "linux";
+  const directories = useDirectories();
+  const windowChrome = getWindowChromePolicy(navigator.userAgent);
+  const platform = windowChrome.platform;
   const cliStatus = useCliStatus(true);
   const executionTasks = useExecutionTasks();
   const executionReconciliations = useExecutionReconciliations();
@@ -103,10 +113,13 @@ export function SettingsView() {
     queries: TOOLS.map((tool) => ({
       queryKey: qk.latestVersion(tool.key),
       queryFn: () => fetchLatestVersion(tool.key, true),
-      enabled: shouldQueryLatestVersion(
-        executionTasks.isLoading,
-        activeTaskByTool.has(tool.key),
-      ),
+      enabled:
+        !cliStatus.isLoading &&
+        !cliStatus.isFetching &&
+        shouldQueryLatestVersion(
+          executionTasks.isLoading,
+          activeTaskByTool.has(tool.key),
+        ),
       staleTime: 1000 * 60 * 30,
       refetchOnMount: "always" as const,
     })),
@@ -193,7 +206,7 @@ export function SettingsView() {
       restoreBackupMutation.mutate(pendingRestore.id);
     } catch (reason) {
       cancelBackupRestore();
-      setRestoreCheckError(getAppErrorMessage(reason));
+      setRestoreCheckError(formatAppError(reason, t));
     } finally {
       setRestoreChecking(false);
     }
@@ -303,6 +316,36 @@ export function SettingsView() {
       return true;
     },
   });
+  const [residueDirectoryId, setResidueDirectoryId] = useState<number | null>(
+    null,
+  );
+  const [residueScanRequested, setResidueScanRequested] = useState(false);
+  const [pendingResidueDelete, setPendingResidueDelete] = useState<
+    string | null
+  >(null);
+  const residueDirectory = directories.data?.find(
+    (directory) => directory.id === residueDirectoryId,
+  );
+  const residueQuery = useQuery({
+    queryKey: qk.fileCasResidues(residueDirectory?.id ?? null),
+    queryFn: () =>
+      listProjectFileCasResidues(residueDirectory!.id, residueDirectory!.path),
+    enabled: residueScanRequested && residueDirectory != null,
+  });
+  const residueDeleteMutation = useMutation({
+    mutationFn: (residue: ProjectFileCasResidue) => {
+      if (!residueDirectory) throw new Error("请选择项目目录");
+      return removeProjectFileCasResidue(
+        residueDirectory.id,
+        residueDirectory.path,
+        residue,
+      );
+    },
+    onSuccess: async () => {
+      setPendingResidueDelete(null);
+      await residueQuery.refetch();
+    },
+  });
 
   const startAction = async (toolKey: ToolKey, kind: InstallKind) => {
     if (planningToolKeysRef.current.has(toolKey)) {
@@ -324,7 +367,7 @@ export function SettingsView() {
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [toolKey]: String(error),
+        [toolKey]: formatAppError(error, t),
       }));
     } finally {
       planningToolKeysRef.current.delete(toolKey);
@@ -383,7 +426,7 @@ export function SettingsView() {
       }
       setActionErrors((current) => ({
         ...current,
-        [action.toolKey]: String(error),
+        [action.toolKey]: formatAppError(error, t),
       }));
     } finally {
       creatingToolKeysRef.current.delete(action.toolKey);
@@ -426,11 +469,7 @@ export function SettingsView() {
           const latestEntry = latestQuery?.data;
           const activeTask = activeTaskByTool.get(tool.key);
           const latestVersion = latestEntry?.latest ?? null;
-          const updatable = getLatestUpdateAvailability(
-            tool.key,
-            status?.version ?? null,
-            latestEntry,
-          );
+          const updatable = getLatestUpdateAvailability(latestEntry);
           const latestRefreshError =
             latestEntry?.error ??
             (latestQuery?.isError ? String(latestQuery.error) : null);
@@ -449,10 +488,10 @@ export function SettingsView() {
           const isMissing = availability === "missing";
           const installEffects = tool.installEffects?.(platform);
           const updateAvailable =
-            availability === "available" && updatable === true;
+            availability === "available" && updatable === "available";
           const canInstall = !cliStatus.isFetching && isMissing;
           const canUpdate =
-            updateAvailable && isManagedUpdateAllowed(tool.key, latestEntry);
+            updateAvailable && isManagedUpdateAllowed(latestEntry);
           const reconciliationKind = executionReconciliations.data[tool.key];
           const isReconciling = reconciliationKind != null;
           const busyKind = activeTask?.kind ?? reconciliationKind;
@@ -635,13 +674,13 @@ export function SettingsView() {
                       : latestQuery?.isFetching && !latestEntry
                         ? t("settings.checking")
                         : branchUpdateStatus
-                          ? latestEntry?.updateAvailable === true
+                          ? latestEntry?.updateAvailability === "available"
                             ? latestEntry.commitsBehind == null
                               ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
                               : `${t("settings.hermesUpdateBehind", {
                                   count: latestEntry.commitsBehind,
                                 })}${latestStatusAnnotation}`
-                            : latestEntry?.updateAvailable === false
+                            : latestEntry?.updateAvailability === "upToDate"
                               ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
                               : availability === "missing"
                                 ? "—"
@@ -660,15 +699,13 @@ export function SettingsView() {
                 </span>
               </div>
 
-              {tool.showManagementMessage &&
+              {latestEntry?.managedUpdate.status === "denied" &&
                 availability === "available" &&
                 activeTask == null &&
                 !isReconciling &&
-                !latestQuery?.isFetching &&
-                !latestEntry?.managedUpdateAllowed &&
-                latestEntry?.managementMessage && (
+                !latestQuery?.isFetching && (
                   <p className="muted cli-action-message">
-                    {latestEntry.managementMessage}
+                    {t(latestEntry.managedUpdate.reasonKey)}
                   </p>
                 )}
 
@@ -697,7 +734,7 @@ export function SettingsView() {
       <section className="shell-config">
         <div className="section-heading">{t("settings.closeBehavior")}</div>
         <p className="muted">
-          {/Macintosh|Mac OS X/i.test(navigator.userAgent)
+          {windowChrome.platform === "macos"
             ? t("settings.closeDescriptionMac")
             : t("settings.closeDescriptionOther")}
         </p>
@@ -766,6 +803,145 @@ export function SettingsView() {
               error: String(importMutation.error),
             })}
           </p>
+        )}
+      </section>
+
+      <section className="config-backup">
+        <div className="section-heading">{t("settings.fileCasResidues")}</div>
+        <p className="muted">{t("settings.fileCasResiduesDescription")}</p>
+        <div className="config-actions">
+          <label className="launch-history-retention">
+            <span>{t("settings.fileCasResiduesProject")}</span>
+            <select
+              value={residueDirectoryId ?? ""}
+              onChange={(event) => {
+                setResidueDirectoryId(
+                  event.target.value ? Number(event.target.value) : null,
+                );
+                setResidueScanRequested(false);
+                setPendingResidueDelete(null);
+                residueDeleteMutation.reset();
+              }}
+            >
+              <option value="">{t("settings.fileCasResiduesSelect")}</option>
+              {directories.data?.map((directory) => (
+                <option key={directory.id} value={directory.id}>
+                  {directory.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="ghost-button"
+            disabled={residueDirectory == null || residueQuery.isFetching}
+            onClick={() => {
+              setPendingResidueDelete(null);
+              residueDeleteMutation.reset();
+              setResidueScanRequested(true);
+              void residueQuery.refetch();
+            }}
+          >
+            {residueQuery.isFetching ? (
+              <LoaderCircle className="spinning" size={15} />
+            ) : (
+              <Search size={15} />
+            )}
+            {residueQuery.isFetching
+              ? t("settings.fileCasResiduesScanning")
+              : t("settings.fileCasResiduesScan")}
+          </button>
+        </div>
+        {directories.isError && (
+          <p className="error">{formatAppError(directories.error, t)}</p>
+        )}
+        {residueScanRequested && residueQuery.isError && (
+          <p className="error">
+            {t("settings.fileCasResiduesScanFailed", {
+              error: formatAppError(residueQuery.error, t),
+            })}
+          </p>
+        )}
+        {residueDeleteMutation.isError && (
+          <p className="error">
+            {t("settings.fileCasResiduesDeleteFailed", {
+              error: formatAppError(residueDeleteMutation.error, t),
+            })}
+          </p>
+        )}
+        {residueScanRequested && residueQuery.data && (
+          <>
+            {residueQuery.data.truncated && (
+              <p className="muted">{t("settings.fileCasResiduesTruncated")}</p>
+            )}
+            {residueQuery.data.skippedCount > 0 && (
+              <p className="muted">
+                {t("settings.fileCasResiduesSkipped", {
+                  count: residueQuery.data.skippedCount,
+                })}
+              </p>
+            )}
+            {residueQuery.data.entries.length === 0 ? (
+              <p className="muted">{t("settings.fileCasResiduesNone")}</p>
+            ) : (
+              <div className="backup-list">
+                {residueQuery.data.entries.map((residue) => (
+                  <article className="backup-row" key={residue.relativePath}>
+                    <div>
+                      <strong>{residue.relativePath}</strong>
+                      <span className="muted">
+                        {formatBytes(residue.sizeBytes)} ·{" "}
+                        {new Date(residue.modifiedAtMs).toLocaleString(
+                          i18n.resolvedLanguage,
+                        )}
+                      </span>
+                    </div>
+                    {pendingResidueDelete === residue.relativePath ? (
+                      <div className="config-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={
+                            residueDeleteMutation.isPending ||
+                            residueQuery.isFetching
+                          }
+                          onClick={() => {
+                            setPendingResidueDelete(null);
+                            residueDeleteMutation.reset();
+                          }}
+                        >
+                          {t("common.cancel")}
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={
+                            residueDeleteMutation.isPending ||
+                            residueQuery.isFetching
+                          }
+                          onClick={() => residueDeleteMutation.mutate(residue)}
+                        >
+                          <Trash2 size={15} />
+                          {t("settings.fileCasResiduesConfirmDelete")}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="ghost-button"
+                        disabled={
+                          residueDeleteMutation.isPending ||
+                          residueQuery.isFetching
+                        }
+                        onClick={() =>
+                          setPendingResidueDelete(residue.relativePath)
+                        }
+                      >
+                        <Trash2 size={15} />
+                        {t("settings.fileCasResiduesDelete")}
+                      </button>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -1008,7 +1184,7 @@ export function SettingsView() {
         {restoreBackupMutation.isError && (
           <p className="error">
             {t("settings.restoreFailed", {
-              error: getAppErrorMessage(restoreBackupMutation.error),
+              error: formatAppError(restoreBackupMutation.error, t),
             })}
           </p>
         )}

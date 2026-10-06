@@ -19,6 +19,17 @@ export interface WorkspaceWindowOwner {
 
 export type WorkspaceContentOwner = WorkspacePaneOwner | WorkspaceWindowOwner;
 
+export type ManagedWorkspacePaneContentRef = Extract<
+  WorkspacePaneContentRef,
+  { kind: "pty" | "file" }
+>;
+
+export function canChangeWorkspaceContentPane(
+  state: WorkspaceContentLifecycleState | undefined,
+): boolean {
+  return state?.phase === "attached";
+}
+
 interface LifecycleIdentity {
   content: WorkspacePaneContentRef;
   generation: number;
@@ -38,6 +49,7 @@ export type WorkspaceContentLifecycleState =
   | (LifecycleIdentity & {
       phase: "detached";
       owner: WorkspaceWindowOwner;
+      windowToken: string;
       lastPaneId: string;
     })
   | (LifecycleIdentity & {
@@ -45,12 +57,15 @@ export type WorkspaceContentLifecycleState =
       transferId: string;
       source: WorkspaceWindowOwner;
       target: WorkspacePaneOwner;
+      windowToken: string;
       lastPaneId: string;
     })
   | (LifecycleIdentity & {
       phase: "closing";
       requestId: string;
+      closeStatus: "approved" | "pending";
       owner: WorkspaceContentOwner;
+      windowToken?: string;
       lastPaneId?: string;
     })
   | (LifecycleIdentity & { phase: "disposed" });
@@ -125,6 +140,10 @@ export type WorkspaceContentLifecycleEvent =
       requestId: string;
     } & WorkspaceContentCloseEventIdentity)
   | ({
+      type: "closePending";
+      requestId: string;
+    } & WorkspaceContentCloseEventIdentity)
+  | ({
       type: "closeCancelled";
       requestId: string;
     } & WorkspaceContentCloseEventIdentity)
@@ -163,11 +182,13 @@ export type WorkspaceContentHandoffEnvelope = {
 }[keyof WorkspaceContentHandoffPayloadByKind];
 
 export function createWorkspaceContentLifecycle(
-  content: WorkspacePaneContentRef,
+  content: ManagedWorkspacePaneContentRef,
   owner: WorkspacePaneOwner,
 ): WorkspaceContentLifecycleState {
+  const contentId =
+    content.kind === "pty" ? content.slotId : content.documentId;
   if (
-    !hasText(content.kind === "pty" ? content.slotId : content.documentId) ||
+    !hasText(contentId) ||
     !hasText(owner.windowLabel) ||
     !hasText(owner.paneId)
   ) {
@@ -218,14 +239,25 @@ function sameContent(
   left: WorkspacePaneContentRef,
   right: WorkspacePaneContentRef,
 ): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "pty")
+    return (
+      left.slotId ===
+      (right as Extract<WorkspacePaneContentRef, { kind: "pty" }>).slotId
+    );
+  if (left.kind === "file")
+    return (
+      left.documentId ===
+      (right as Extract<WorkspacePaneContentRef, { kind: "file" }>).documentId
+    );
   return (
-    left.kind === right.kind &&
-    (left.kind === "pty"
-      ? left.slotId ===
-        (right as Extract<WorkspacePaneContentRef, { kind: "pty" }>).slotId
-      : left.documentId ===
-        (right as Extract<WorkspacePaneContentRef, { kind: "file" }>)
-          .documentId)
+    left.originalKind ===
+      (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>)
+        .originalKind &&
+    JSON.stringify(left.raw) ===
+      JSON.stringify(
+        (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>).raw,
+      )
   );
 }
 
@@ -285,6 +317,7 @@ export function transitionWorkspaceContentLifecycle(
         content: state.content,
         generation: state.generation,
         owner: state.target,
+        windowToken: state.transferId,
         lastPaneId: state.source.paneId,
       });
     }
@@ -322,6 +355,7 @@ export function transitionWorkspaceContentLifecycle(
           windowLabel: event.targetWindowLabel,
           paneId: targetPaneId,
         },
+        windowToken: state.windowToken,
         lastPaneId: state.lastPaneId,
       });
     }
@@ -346,6 +380,7 @@ export function transitionWorkspaceContentLifecycle(
         content: state.content,
         generation: state.generation,
         owner: state.source,
+        windowToken: state.windowToken,
         lastPaneId: state.lastPaneId,
       });
     }
@@ -362,13 +397,29 @@ export function transitionWorkspaceContentLifecycle(
         content: state.content,
         generation: state.generation,
         requestId: event.requestId,
+        closeStatus: "approved",
         owner: state.owner,
+        ...(state.phase === "detached"
+          ? { windowToken: state.windowToken }
+          : {}),
         ...(state.phase === "detached" ? { lastPaneId: state.lastPaneId } : {}),
       });
+    }
+    case "closePending": {
+      if (
+        state.phase !== "closing" ||
+        state.closeStatus !== "approved" ||
+        state.requestId !== event.requestId ||
+        !matchesCloseIdentity(state, event)
+      ) {
+        return ignored(state);
+      }
+      return changed({ ...state, closeStatus: "pending" });
     }
     case "disposeCompleted": {
       if (
         state.phase !== "closing" ||
+        state.closeStatus !== "approved" ||
         state.requestId !== event.requestId ||
         !matchesCloseIdentity(state, event)
       ) {
@@ -383,6 +434,7 @@ export function transitionWorkspaceContentLifecycle(
     case "closeCancelled": {
       if (
         state.phase !== "closing" ||
+        state.closeStatus !== "approved" ||
         state.requestId !== event.requestId ||
         !matchesCloseIdentity(state, event)
       ) {
@@ -394,7 +446,10 @@ export function transitionWorkspaceContentLifecycle(
         generation: state.generation,
         owner: state.owner,
         ...(state.owner.kind === "window"
-          ? { lastPaneId: state.lastPaneId ?? "" }
+          ? {
+              windowToken: state.windowToken,
+              lastPaneId: state.lastPaneId ?? "",
+            }
           : {}),
       } as WorkspaceContentLifecycleState);
     }

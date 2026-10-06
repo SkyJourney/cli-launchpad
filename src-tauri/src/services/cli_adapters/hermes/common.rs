@@ -1,10 +1,10 @@
 use super::version;
-use crate::models::install::{InstallKind, InstallPlan, LatestVersion};
+use crate::models::install::{InstallKind, InstallPlan, LatestVersion, UpdateAvailability};
 use crate::models::tool::ToolKey;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
 
 pub struct HermesAdapter;
 pub static ADAPTER: HermesAdapter = HermesAdapter;
@@ -43,35 +43,49 @@ impl CliAdapter for HermesAdapter {
         super::history::valid_session_id(session_id)
     }
 
-    fn query_update(&self) -> LatestVersion {
-        match version::fetch_hermes_update_check() {
-            Ok(check) => LatestVersion {
-                tool_key: ToolKey::Hermes,
-                latest: None,
-                update_available: check.update_available,
-                commits_behind: check.commits_behind,
-                error: check.error,
-                from_cache: false,
-                managed_update_allowed: check.managed_update_allowed,
-                management_message: check.management_message,
-            },
-            Err(error) => LatestVersion {
-                tool_key: ToolKey::Hermes,
-                latest: None,
-                update_available: None,
-                commits_behind: None,
-                error: Some(error),
-                from_cache: false,
-                managed_update_allowed: false,
-                management_message: Some(
-                    "无法确认 Hermes Agent 的官方源码安装状态；请检查 CLI 后重试".to_string(),
-                ),
-            },
-        }
+    fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
+        let path = context.resolved_path.clone();
+        let home = context.home.clone();
+        crate::services::cli_adapters::blocking_latest(ToolKey::Hermes, context, move || {
+            match version::fetch_hermes_update_check(path.as_deref(), &home) {
+                Ok(check) => LatestVersion {
+                    tool_key: ToolKey::Hermes,
+                    latest: None,
+                    update_availability: match check.update_available {
+                        Some(true) => UpdateAvailability::Available,
+                        Some(false) => UpdateAvailability::UpToDate,
+                        None => UpdateAvailability::Unknown,
+                    },
+                    commits_behind: check.commits_behind,
+                    error: check.error,
+                    from_cache: false,
+                    managed_update: crate::services::version_service::managed_update_status(
+                        ToolKey::Hermes,
+                        Some(check.managed_update_allowed),
+                    ),
+                },
+                Err(error) => LatestVersion {
+                    tool_key: ToolKey::Hermes,
+                    latest: None,
+                    update_availability: UpdateAvailability::Unknown,
+                    commits_behind: None,
+                    error: Some(error),
+                    from_cache: false,
+                    managed_update: crate::services::version_service::managed_update_status(
+                        ToolKey::Hermes,
+                        None,
+                    ),
+                },
+            }
+        })
     }
 
-    fn build_plan(&self, kind: InstallKind) -> anyhow::Result<InstallPlan> {
-        platform::build_plan(kind)
+    fn build_plan(
+        &self,
+        kind: InstallKind,
+        context: &AdapterContext,
+    ) -> anyhow::Result<InstallPlan> {
+        platform::build_plan(kind, context)
     }
 
     fn execution_preflight_message(&self, plan: &InstallPlan) -> Option<&'static str> {
@@ -90,19 +104,22 @@ impl CliAdapter for HermesAdapter {
         directory_path: String,
         cursor: Option<String>,
         limit: usize,
+        context: AdapterContext,
     ) -> AdapterFuture<anyhow::Result<SessionPage>> {
         Box::pin(super::history::list_sessions_page(
             directory_path,
             cursor,
             limit,
+            context,
         ))
     }
 
     fn search_index_source(
         &self,
         directory_path: String,
+        context: AdapterContext,
     ) -> AdapterFuture<SessionSearchIndexSource> {
-        Box::pin(super::history::search_index_source(directory_path))
+        Box::pin(super::history::search_index_source(directory_path, context))
     }
 
     fn session_belongs_to_directory(
@@ -114,5 +131,24 @@ impl CliAdapter for HermesAdapter {
             directory_path,
             session_id,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rejects_unsafe_hermes_session_ids() {
+        for session_id in [
+            "-resume-as-option".to_string(),
+            "x".repeat(257),
+            "session id".to_string(),
+            "session/child".to_string(),
+            "session\\child".to_string(),
+        ] {
+            assert!(!crate::services::cli_adapters::valid_session_id(
+                crate::models::tool::ToolKey::Hermes,
+                &session_id
+            ));
+        }
     }
 }

@@ -7,9 +7,52 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use cap_std::fs::{Dir, OpenOptions};
 
+/// Returns a stable, platform-specific identifier for a file reached through
+/// a retained directory capability. Services use this when they need to
+/// compare a previewed file with the file currently at the same relative path.
+pub fn file_identity(
+    directory: &Dir,
+    name: &str,
+    _metadata: &cap_std::fs::Metadata,
+) -> Result<String> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        let _ = (directory, name);
+        Ok(format!("unix:{}:{}", _metadata.dev(), _metadata.ino()))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+
+        let file = directory.open(name)?.into_std();
+        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let file_index =
+            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+        Ok(format!(
+            "windows:{}:{file_index}",
+            information.dwVolumeSerialNumber
+        ))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (directory, name);
+        Ok(format!("fallback:{}", _metadata.len()))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompareAndSwapOutcome {
     Written,
+    WrittenWithPermissionWarning,
     Conflict,
 }
 
@@ -33,7 +76,7 @@ pub trait FileCasAdapter {
         temporary_file: &mut Option<File>,
         locked_target: Option<&File>,
         permissions: Option<std::fs::Permissions>,
-    ) -> Result<()>;
+    ) -> Result<bool>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -96,7 +139,7 @@ impl FileCasAdapter for NativeFileCasAdapter {
         temporary_file: &mut Option<File>,
         locked_target: Option<&File>,
         permissions: Option<std::fs::Permissions>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // The caller keeps this handle alive through commit to retain the CAS lock.
         #[cfg(windows)]
         {
@@ -126,21 +169,24 @@ impl FileCasAdapter for NativeFileCasAdapter {
             .context("无法原子替换项目文件")?;
             temporary_file.take();
             let _ = temporary;
-            Ok(())
+            Ok(false)
         }
         #[cfg(unix)]
         {
             directory
                 .rename(temporary, directory, destination)
                 .context("无法原子替换项目文件")?;
-            if let Some(permissions) = permissions {
-                temporary_file
+            let permission_warning = if let Some(permissions) = permissions {
+                let restore_result = temporary_file
                     .as_ref()
-                    .context("替换文件句柄已关闭")?
-                    .set_permissions(permissions)?;
-            }
+                    .map(|file| file.set_permissions(permissions))
+                    .unwrap_or_else(|| Err(std::io::Error::other("替换文件句柄已关闭")));
+                post_commit_permission_warning(destination, restore_result)
+            } else {
+                false
+            };
             temporary_file.take();
-            Ok(())
+            Ok(permission_warning)
         }
         #[cfg(not(any(unix, windows)))]
         {
@@ -153,6 +199,20 @@ impl FileCasAdapter for NativeFileCasAdapter {
                 permissions,
             );
             bail!("当前平台尚未实现文件 CAS 适配")
+        }
+    }
+}
+
+#[cfg(unix)]
+fn post_commit_permission_warning(destination: &Path, result: std::io::Result<()>) -> bool {
+    match result {
+        Ok(()) => false,
+        Err(error) => {
+            log::warn!(
+                "file was replaced but original permissions could not be restored path={} error={error}",
+                destination.display()
+            );
+            true
         }
     }
 }
@@ -223,8 +283,13 @@ where
             continue;
         }
         let permissions = locked.metadata()?.permissions();
-        temporary.commit(adapter, &destination, Some(&locked), Some(permissions))?;
-        return Ok(CompareAndSwapOutcome::Written);
+        let permission_warning =
+            temporary.commit(adapter, &destination, Some(&locked), Some(permissions))?;
+        return Ok(if permission_warning {
+            CompareAndSwapOutcome::WrittenWithPermissionWarning
+        } else {
+            CompareAndSwapOutcome::Written
+        });
     }
 
     bail!("待保存文件在并发替换期间持续变化，请重试")
@@ -253,12 +318,16 @@ pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
         .map(|metadata| metadata.permissions());
     let mut temporary = create_temporary(&NativeFileCasAdapter, &directory, bytes)?;
     temporary.finish_writing()?;
-    temporary.commit(
+    let permission_warning = temporary.commit(
         &NativeFileCasAdapter,
         Path::new(name),
         target.as_ref(),
         permissions,
-    )
+    )?;
+    if permission_warning {
+        log::warn!("file was replaced but target permissions could not be restored");
+    }
+    Ok(())
 }
 
 fn parent_and_name(root: &Dir, destination: &Path) -> Result<(Dir, PathBuf)> {
@@ -418,8 +487,8 @@ impl TemporaryReplacement {
         destination: &Path,
         locked_target: Option<&File>,
         permissions: Option<std::fs::Permissions>,
-    ) -> Result<()> {
-        adapter.commit(
+    ) -> Result<bool> {
+        let warning = adapter.commit(
             &self.directory,
             destination,
             &self.name,
@@ -428,7 +497,7 @@ impl TemporaryReplacement {
             permissions,
         )?;
         self.committed = true;
-        Ok(())
+        Ok(warning)
     }
 }
 
@@ -942,6 +1011,30 @@ mod tests {
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    #[test]
+    fn permission_restore_failure_after_rename_is_a_warning_not_a_save_error() {
+        let directory = tempdir().unwrap();
+        let temporary = directory.path().join(".temporary.writing");
+        let destination = directory.path().join("saved.txt");
+        std::fs::write(&temporary, "saved content").unwrap();
+        std::fs::rename(&temporary, &destination).unwrap();
+
+        let warning = post_commit_permission_warning(
+            &destination,
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "simulated chmod failure",
+            )),
+        );
+
+        assert!(warning);
+        assert_eq!(
+            std::fs::read_to_string(destination).unwrap(),
+            "saved content"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_network_rename_paths_are_classified_and_built_without_root_handle() {
@@ -1022,7 +1115,7 @@ mod tests {
             temporary_file: &mut Option<File>,
             locked_target: Option<&File>,
             permissions: Option<std::fs::Permissions>,
-        ) -> Result<()> {
+        ) -> Result<bool> {
             self.native.commit(
                 directory,
                 destination,
@@ -1064,7 +1157,7 @@ mod tests {
             temporary_file: &mut Option<File>,
             locked_target: Option<&File>,
             permissions: Option<std::fs::Permissions>,
-        ) -> Result<()> {
+        ) -> Result<bool> {
             self.commits.fetch_add(1, Ordering::Relaxed);
             self.native.commit(
                 directory,

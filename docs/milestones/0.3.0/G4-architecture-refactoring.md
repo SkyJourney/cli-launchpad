@@ -195,7 +195,7 @@ Rust command/history/version/platform 实现位于 `src-tauri/src/services/cli_a
 - [x] 工作区拆分后布局水合/保存、比例、pane、焦点、标签、堆叠、DND 和独立窗口回归由现有自动测试与用户实机验收覆盖。
 - [x] 终端拆分后输入输出、启动、焦点、fit/resize、视口、终态、剪贴板、恢复和独立窗口交接由现有自动测试与用户实机验收覆盖。
 - [x] CLI 能力矩阵与五项 CLI 注册一致；Rust 序列化、SQLite 允许值及前端穷尽注册测试通过，未实现能力安全失败。
-- [x] CLI 适配器残留审查完成：Rust `ToolKey`/`ALL`/序列化与反序列化/registry、TypeScript `ToolKey`/`CLI_ADAPTERS`/`TOOLS`、SQLite 允许值、IPC 入口与契约测试一致；无已知未使用 helper 或重复旧路径；缺失能力不会被伪装成成功空结果。
+- [x] G4 当时完成了 CLI 适配器范围内的残留审查与契约核对。M6 0.4.0 的全仓抽象审计后来识别出额外残留（包括 B1-F15）；因此本条只记录 G4 当时的验收范围，不代表 M6 的残留审查已闭合。M6 追溯见 `docs/milestones/0.4.0/M6-abstraction-baseline-audit.md`。
 - [x] 数据库迁移、序列化格式、PTY 命令参数、CLI 官方安装/更新语义及任务并发语义没有未计划变化。
 - [x] `pnpm exec prettier --check`（本阶段修改的文件）、`pnpm run test`、`pnpm run build`、`cargo fmt --check --manifest-path src-tauri/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml`、`cargo check --manifest-path src-tauri/Cargo.toml` 和 `git diff --check` 通过。
 - [x] 最终代码审查的 P1/P2 问题已修复并复审；仅保留一项需用户对修复后运行中 xterm 主题更新作定点确认的事项。

@@ -196,7 +196,7 @@ pub fn plan_apply_preset(
         .iter()
         .filter_map(|content| match content {
             WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.as_str()),
-            WorkspacePaneContentRef::File { .. } => None,
+            WorkspacePaneContentRef::File { .. } | WorkspacePaneContentRef::Unknown { .. } => None,
         })
         .collect();
     let mut detached_tree_slot_ids = Vec::new();
@@ -770,7 +770,8 @@ mod tests {
                     .iter()
                     .filter_map(|content| match content {
                         WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.clone()),
-                        WorkspacePaneContentRef::File { .. } => None,
+                        WorkspacePaneContentRef::File { .. }
+                        | WorkspacePaneContentRef::Unknown { .. } => None,
                     })
                     .collect()
             }),

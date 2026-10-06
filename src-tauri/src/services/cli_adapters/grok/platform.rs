@@ -1,9 +1,15 @@
 use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
+use crate::services::cli_adapters::AdapterContext;
 
-pub(super) fn build_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
+pub(super) fn build_plan(
+    kind: InstallKind,
+    context: &AdapterContext,
+) -> anyhow::Result<InstallPlan> {
     if kind == InstallKind::Update {
-        let path = crate::services::cli_adapters::installed_path(&super::ADAPTER)
+        let path = context
+            .resolved_path
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("未检测到可运行的 Grok Build CLI"))?;
         return Ok(grok_update_plan_for(&path.display().to_string()));
     }
@@ -92,5 +98,25 @@ fn quote_command_path(path: &str) -> String {
         format!("\"{}\"", path.replace('"', "\\\""))
     } else {
         path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn update_plan_uses_the_injected_executable_path() {
+        let path = std::path::PathBuf::from("custom-bin/grok");
+        let context = AdapterContext {
+            resolved_path: Some(path.clone()),
+            home: std::env::temp_dir(),
+            budget: std::time::Duration::from_secs(10),
+        };
+
+        let plan = build_plan(InstallKind::Update, &context).unwrap();
+
+        assert_eq!(plan.program, path.display().to_string());
+        assert_eq!(plan.args, vec!["update".to_string()]);
     }
 }

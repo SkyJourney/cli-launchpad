@@ -1,16 +1,14 @@
 use std::process::Command;
 use std::time::Duration;
 
-use crate::models::tool::ToolKey;
 use crate::platform::process::{self, BoundedOutput};
 use crate::services::version_service::first_output_line;
 
 const GROK_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
-pub(crate) fn fetch_grok_update_check() -> Result<(GrokUpdateCheck, bool, Option<String>), String> {
-    let path = crate::services::cli_adapters::installed_path(crate::services::cli_adapters::get(
-        ToolKey::Grok,
-    ))
-    .ok_or_else(|| "未检测到可运行的 Grok Build CLI".to_string())?;
+pub(crate) fn fetch_grok_update_check(
+    path: Option<&std::path::Path>,
+) -> Result<(GrokUpdateCheck, bool, Option<String>), String> {
+    let path = path.ok_or_else(|| "未检测到可运行的 Grok Build CLI".to_string())?;
     let check = inspect_grok_update_check(&path)?;
     let management_message = grok_update_management_message(check.installer.as_deref());
     let managed_update_allowed = management_message.is_none();

@@ -5,6 +5,35 @@ type LocaleShape<T> = {
 };
 
 export const pt = {
+  errors: {
+    fileNotFound: "O arquivo não foi encontrado.",
+    fileTooLarge: "O arquivo excede o tamanho permitido.",
+    fileConflict:
+      "O arquivo no disco foi alterado. Recarregue-o antes de salvar.",
+    fileIdentityChanged:
+      "A identidade da pasta do projeto foi alterada. Recarregue o documento ou salve-o em outro local.",
+    ptyOwnerMismatch:
+      "Esta sessão de terminal não pertence mais a esta janela.",
+    ptyHandoffExpired: "A transferência do terminal expirou. Tente novamente.",
+    ptyInputBackpressure:
+      "A fila de entrada do terminal está cheia. Tente novamente em instantes.",
+    ptyInputUnavailable:
+      "O canal de entrada do terminal está fechado. Reconecte a sessão.",
+    ptySessionsActive:
+      "Ainda há {{count}} sessão(ões) de terminal em execução. Feche-as antes de restaurar um backup.",
+    backupRestoreInProgress:
+      "Uma restauração de backup está em andamento. Tente novamente quando terminar.",
+    ptySessionStarting:
+      "{{count}} sessão(ões) de terminal estão iniciando. Tente restaurar novamente em instantes.",
+    execPlanChanged:
+      "O plano de execução foi alterado. Revise e confirme novamente.",
+    execBusy: "Já existe uma tarefa em execução para esta ferramenta.",
+    layoutNeedsReset:
+      "O layout do espaço de trabalho é inválido e precisa ser redefinido.",
+    generic: "A operação falhou.",
+    directoryInUse:
+      "Ainda há uma sessão de terminal em execução neste projeto.",
+  },
   common: {
     back: "Voltar",
     browse: "Procurar",
@@ -28,6 +57,8 @@ export const pt = {
     unpinProject: "Desafixar projeto",
     openProjectFolder: "Abrir pasta do projeto",
     removeProject: "Remover projeto",
+    removeProjectBlocked:
+      "Feche {{files}} arquivo(s) aberto(s) e {{terminals}} terminal(is) em execução deste projeto antes de removê-lo.",
     confirmRemoveProject:
       "Remover o projeto “{{name}}”? Os arquivos no disco não serão excluídos.",
     pinProjectFailed: "Falha ao fixar o projeto: {{error}}",
@@ -44,6 +75,14 @@ export const pt = {
     activeTasks_other: "{{count}} tarefas ativas",
     managedCliSessions_one: "{{tool}}, {{count}} sessão gerenciada",
     managedCliSessions_other: "{{tool}}, {{count}} sessões gerenciadas",
+  },
+  tray: { show: "Mostrar janela principal", quit: "Sair" },
+  workspaceContent: {
+    unsupportedTitle: "Tipo de conteúdo não compatível: {{kind}}",
+    unsupportedDescription:
+      "Este conteúdo veio de uma versão mais recente e foi mantido no layout da área de trabalho.",
+    unsupportedError: "Não foi possível exibir este conteúdo: {{error}}",
+    closeUnsupported: "Fechar conteúdo não compatível",
   },
   theme: {
     current: "Tema: {{mode}}",
@@ -317,6 +356,10 @@ export const pt = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Atualize as informações de versão primeiro para verificar a origem da instalação do Grok Build.",
+    grokUpdateSourceDenied:
+      "Não foi possível verificar a origem da instalação do Grok Build para atualizações gerenciadas. Atualize pelo canal de instalação original.",
+    hermesUpdateSourceDenied:
+      "Não foi possível verificar a instalação ou o estado de atualização do Hermes Agent. As atualizações gerenciadas foram desativadas.",
     installing: "Instalando…",
     updating: "Atualizando…",
     refreshingVersion: "Atualizando versão…",
@@ -434,6 +477,21 @@ export const pt = {
     importFailed: "Falha na importação: {{error}}",
     diagnostics: "Diagnóstico",
     exportDiagnostics: "Exportar relatório de diagnóstico",
+    fileCasResidues: "Arquivos temporários antigos",
+    fileCasResiduesDescription:
+      "Verifique um projeto registrado em busca de arquivos temporários do Launchpad com mais de 24 horas. Revise cada caminho e confirme cada exclusão.",
+    fileCasResiduesProject: "Projeto",
+    fileCasResiduesSelect: "Selecionar projeto",
+    fileCasResiduesScan: "Verificar",
+    fileCasResiduesScanning: "Verificando…",
+    fileCasResiduesNone: "Nenhum arquivo temporário antigo encontrado.",
+    fileCasResiduesTruncated:
+      "O limite de segurança da verificação foi atingido. Os resultados podem estar incompletos.",
+    fileCasResiduesSkipped: "Não foi possível verificar {{count}} itens.",
+    fileCasResiduesDelete: "Revisar exclusão",
+    fileCasResiduesConfirmDelete: "Excluir este arquivo",
+    fileCasResiduesScanFailed: "Falha na verificação: {{error}}",
+    fileCasResiduesDeleteFailed: "Falha ao excluir: {{error}}",
     recentLaunch: "Inicializações recentes",
     launchHistoryRetention: "Manter histórico",
     launchHistoryRetentionCount: "Últimas {{count}} inicializações",
@@ -597,6 +655,8 @@ export const pt = {
     reload: "Recarregar",
     saveConflict:
       "O arquivo no disco foi alterado. Suas edições foram preservadas. Recarregue o arquivo antes de salvá-lo novamente.",
+    permissionsNotRestored:
+      "O arquivo foi salvo, mas não foi possível restaurar as permissões originais. Verifique as permissões de acesso.",
     directoryLimitReached: "Há muitos itens. Exibindo os primeiros 5.000.",
     directoryEntriesSkipped: "{{count}} itens não puderam ser exibidos.",
     projectIdentityChanged:

@@ -65,14 +65,36 @@ impl InstallPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ManagedUpdateStatus {
+    Allowed,
+    Denied { reason_key: String },
+    NotApplicable,
+}
+
+impl Default for ManagedUpdateStatus {
+    fn default() -> Self {
+        Self::NotApplicable
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateAvailability {
+    Available,
+    UpToDate,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestVersion {
     pub tool_key: ToolKey,
     pub latest: Option<String>,
-    /// Branch-based update state for tools without a semantic latest version.
     #[serde(default)]
-    pub update_available: Option<bool>,
+    pub update_availability: UpdateAvailability,
     /// Number of upstream commits behind the configured branch, when known.
     #[serde(default)]
     pub commits_behind: Option<u32>,
@@ -80,18 +102,13 @@ pub struct LatestVersion {
     pub error: Option<String>,
     #[serde(default)]
     pub from_cache: bool,
-    /// Whether Launchpad may run the tool's built-in updater. Grok is allowed
-    /// only when its native installer source and executable location agree.
     #[serde(default)]
-    pub managed_update_allowed: bool,
-    /// Why a managed update is unavailable, when source verification failed.
-    #[serde(default)]
-    pub management_message: Option<String>,
+    pub managed_update: ManagedUpdateStatus,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallKind, InstallPlan, LatestVersion};
+    use super::{InstallKind, InstallPlan, LatestVersion, ManagedUpdateStatus, UpdateAvailability};
     use crate::models::tool::ToolKey;
 
     fn plan() -> InstallPlan {
@@ -123,15 +140,14 @@ mod tests {
     }
 
     #[test]
-    fn older_latest_version_cache_defaults_grok_update_gate_to_closed() {
+    fn older_latest_version_cache_defaults_new_policy_fields_safely() {
         let cached: LatestVersion = serde_json::from_str(
             r#"{"toolKey":"grok","latest":"1.0.44","error":null,"fromCache":false}"#,
         )
         .unwrap();
 
-        assert!(!cached.managed_update_allowed);
-        assert_eq!(cached.management_message, None);
-        assert_eq!(cached.update_available, None);
+        assert_eq!(cached.managed_update, ManagedUpdateStatus::NotApplicable);
+        assert_eq!(cached.update_availability, UpdateAvailability::Unknown);
         assert_eq!(cached.commits_behind, None);
     }
 }

@@ -1,5 +1,6 @@
 pub mod app_setting_repo;
 pub mod cache_connection;
+pub mod cache_repo;
 pub mod connection;
 pub mod directory_repo;
 pub mod execution_task_repo;

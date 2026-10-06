@@ -1,7 +1,6 @@
 import grokIcon from "../../assets/icons/brands/grok.svg";
 import { createSvgAssetIcon } from "../../components/SvgAssetIcon";
 import type { ExecutionStream } from "../tauri";
-import { hasUpdate } from "../format";
 import type { CliAdapter } from "./types";
 
 const GrokIcon = createSvgAssetIcon(grokIcon, true);
@@ -35,11 +34,7 @@ export const grokAdapter: CliAdapter = {
           ],
         },
   showCommandNotice: () => true,
-  showManagementMessage: true,
   refreshLatestAfterExecution: () => true,
   displayExecutionStream: (_kind, stream): ExecutionStream =>
     stream === "stderr" ? "stdout" : stream,
-  isManagedUpdateAllowed: (latest) => latest?.managedUpdateAllowed === true,
-  getUpdateAvailability: (currentVersion, latest) =>
-    latest ? hasUpdate(currentVersion, latest.latest) : null,
 };

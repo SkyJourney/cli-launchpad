@@ -57,6 +57,7 @@ export function executeWorkspaceCommand(
         tree,
       );
     case "move": {
+      if (command.ref.kind === "unknown") return tree;
       const source = listWorkspacePanes(tree).find((pane) =>
         hasWorkspaceContent(pane, command.ref),
       );
@@ -77,6 +78,7 @@ export function executeWorkspaceCommand(
           );
     }
     case "split": {
+      if (command.ref.kind === "unknown") return tree;
       const source = listWorkspacePanes(tree).find((pane) =>
         hasWorkspaceContent(pane, command.ref),
       );
@@ -91,8 +93,10 @@ export function executeWorkspaceCommand(
       );
     }
     case "detach":
+      if (command.ref.kind === "unknown") return tree;
       return removeWorkspaceContentFromTree(tree, command.ref);
     case "return": {
+      if (command.ref.kind === "unknown") return tree;
       const destination = command.toPaneId ?? listWorkspacePanes(tree)[0]?.id;
       if (!destination || !findWorkspacePane(tree, destination)) {
         throw new Error("Workspace has no pane to receive returned content");

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { FileText, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
@@ -13,6 +13,7 @@ import {
 } from "../workspaceEditorEngineRegistry";
 import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
 import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 
 const unsupportedReasonKeys = {
   binary: "workspaceFiles.unsupported.binary",
@@ -52,22 +53,7 @@ function TextFileContentAdapter({
   onSaveFile: (documentId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    document.documentElement.dataset.theme === "light" ? "light" : "dark",
-  );
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const updateTheme = () =>
-      setTheme(root.dataset.theme === "light" ? "light" : "dark");
-    const observer = new MutationObserver(updateTheme);
-    observer.observe(root, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    updateTheme();
-    return () => observer.disconnect();
-  }, []);
+  const { id: theme } = useResolvedTheme();
 
   if (!fileDocument) return null;
 
@@ -162,7 +148,7 @@ function TextFileContentAdapter({
 
 const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   id: "core.pty",
-  apiVersion: 1,
+  apiVersion: 2,
   kind: "pty",
   render: (context) => {
     if (context.content.kind !== "pty") return null;
@@ -229,7 +215,7 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
 
 const fileAdapter: WorkspaceContentAdapter<"file"> = {
   id: "core.file-editor",
-  apiVersion: 1,
+  apiVersion: 2,
   kind: "file",
   render: (context) => {
     if (context.content.kind !== "file" || !context.file?.document) {

@@ -30,16 +30,13 @@ export function getTerminalTitleLabel(toolKey: ToolKey): string {
 }
 
 export function isManagedUpdateAllowed(
-  toolKey: ToolKey,
-  latest: Pick<LatestVersion, "managedUpdateAllowed"> | undefined,
+  latest: Pick<LatestVersion, "managedUpdate"> | undefined,
 ): boolean {
-  return getCliAdapter(toolKey).isManagedUpdateAllowed(latest);
+  return latest?.managedUpdate.status === "allowed";
 }
 
 export function getLatestUpdateAvailability(
-  toolKey: ToolKey,
-  currentVersion: string | null,
-  latest: LatestVersion | undefined,
-): boolean | null {
-  return getCliAdapter(toolKey).getUpdateAvailability(currentVersion, latest);
+  latest: Pick<LatestVersion, "updateAvailability"> | undefined,
+): NonNullable<LatestVersion["updateAvailability"]> {
+  return latest?.updateAvailability ?? "unknown";
 }

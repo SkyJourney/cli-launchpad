@@ -1,10 +1,5 @@
 import type { ComponentType } from "react";
-import type {
-  ExecutionStream,
-  InstallKind,
-  LatestVersion,
-  ToolKey,
-} from "../tauri";
+import type { ExecutionStream, InstallKind, ToolKey } from "../tauri";
 
 export type TerminalPasteBehavior = {
   controlV: "clipboard" | "control-v" | "terminal";
@@ -27,17 +22,9 @@ export interface CliAdapter {
   latestStatusKind: "version" | "branch-update";
   installEffects?: (platform: CliPlatform) => InstallEffectsNotice | undefined;
   showCommandNotice(kind: InstallKind): boolean;
-  showManagementMessage: boolean;
   refreshLatestAfterExecution(kind: InstallKind): boolean;
   displayExecutionStream(
     kind: InstallKind,
     stream: ExecutionStream,
   ): ExecutionStream;
-  isManagedUpdateAllowed(
-    latest: Pick<LatestVersion, "managedUpdateAllowed"> | undefined,
-  ): boolean;
-  getUpdateAvailability(
-    currentVersion: string | null,
-    latest: LatestVersion | undefined,
-  ): boolean | null;
 }

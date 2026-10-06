@@ -15,6 +15,10 @@ use crate::services::session_service::{
 };
 fn list_antigravity_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
     let home = home_dir()?;
+    list_antigravity_sessions_in(directory_path, &home)
+}
+
+fn list_antigravity_sessions_in(directory_path: &str, home: &Path) -> Result<Vec<SessionInfo>> {
     let db_path = home
         .join(".gemini")
         .join("antigravity-cli")
@@ -124,10 +128,9 @@ pub(crate) fn search_antigravity_rows(
     Ok(source)
 }
 
-fn search_antigravity_documents(directory_path: &str) -> Result<SearchSource> {
+fn search_antigravity_documents_in(directory_path: &str, home: &Path) -> Result<SearchSource> {
     const MAX_SUMMARIES_BYTES: u64 = 16 * 1024 * 1024;
 
-    let home = home_dir()?;
     let db_path = home
         .join(".gemini")
         .join("antigravity-cli")
@@ -236,10 +239,11 @@ pub(crate) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
+    context: crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     tauri::async_runtime::spawn_blocking(move || {
         page_local(
-            list_antigravity_sessions(&directory_path)?,
+            list_antigravity_sessions_in(&directory_path, &context.home)?,
             cursor.as_deref(),
             limit,
         )
@@ -248,9 +252,12 @@ pub(crate) async fn list_sessions_page(
     .map_err(|error| anyhow!(error.to_string()))?
 }
 
-pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
+pub(crate) async fn search_index_source(
+    directory_path: String,
+    context: crate::services::cli_adapters::AdapterContext,
+) -> SessionSearchIndexSource {
     let result = crate::services::session_service::spawn_search_index_blocking(move || {
-        search_antigravity_documents(&directory_path)
+        search_antigravity_documents_in(&directory_path, &context.home)
     })
     .await;
     index_source(ToolKey::Antigravity, result)

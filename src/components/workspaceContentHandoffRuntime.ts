@@ -1,10 +1,9 @@
-import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getWindowChromeOptions } from "../lib/windowChrome";
-import type { WorkspacePaneContentRef } from "../lib/tauri";
 import type { WorkspaceContentHandoffPayloadByKind } from "../lib/workspaceContentLifecycle";
 import {
   getWorkspaceContentAdapter,
+  type RegisteredWorkspaceContentKind,
   type WorkspaceContentAdapter,
   type WorkspaceContentHandoffHookContext,
   type WorkspaceContentPreparedHandoff,
@@ -32,19 +31,9 @@ export function createWorkspaceContentWindow({
   minWidth = 560,
   minHeight = 360,
 }: WorkspaceContentWindowOptions): WebviewWindow {
-  const { trafficLightPosition, ...chromeOptions } = getWindowChromeOptions(
-    navigator.userAgent,
-  );
+  const chromeOptions = getWindowChromeOptions(navigator.userAgent);
   return new WebviewWindow(label, {
     ...chromeOptions,
-    ...(trafficLightPosition
-      ? {
-          trafficLightPosition: new LogicalPosition(
-            trafficLightPosition.x,
-            trafficLightPosition.y,
-          ),
-        }
-      : {}),
     url,
     title,
     width,
@@ -55,7 +44,7 @@ export function createWorkspaceContentWindow({
   });
 }
 
-type ContentKind = WorkspacePaneContentRef["kind"];
+type ContentKind = RegisteredWorkspaceContentKind;
 
 function getLifecycle<Kind extends ContentKind>(
   adapter: WorkspaceContentAdapter<Kind>,
@@ -80,7 +69,7 @@ export function prepareWorkspaceContentHandoff<Kind extends ContentKind>(
   context: WorkspaceContentHandoffHookContext<Kind>,
 ): Promise<WorkspaceContentPreparedHandoff<Kind>> {
   const adapter = getWorkspaceContentAdapter(
-    context.content.kind,
+    (context.content as { kind: ContentKind }).kind,
   ) as unknown as WorkspaceContentAdapter<Kind>;
   return getLifecycle(adapter).prepareHandoff(context);
 }
@@ -90,7 +79,7 @@ export function attachWorkspaceContentHandoff<Kind extends ContentKind>(
   payload: WorkspaceContentHandoffPayloadByKind[Kind],
 ): Promise<void> {
   const adapter = getWorkspaceContentAdapter(
-    context.content.kind,
+    (context.content as { kind: ContentKind }).kind,
   ) as unknown as WorkspaceContentAdapter<Kind>;
   return getLifecycle(adapter).attachHandoff(context, payload);
 }
@@ -101,7 +90,7 @@ export function rollbackWorkspaceContentHandoff<Kind extends ContentKind>(
   reason: unknown,
 ): Promise<void> {
   const adapter = getWorkspaceContentAdapter(
-    context.content.kind,
+    (context.content as { kind: ContentKind }).kind,
   ) as unknown as WorkspaceContentAdapter<Kind>;
   return getLifecycle(adapter).rollbackHandoff(context, payload, reason);
 }

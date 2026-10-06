@@ -5,6 +5,30 @@ type LocaleShape<T> = {
 };
 
 export const ko = {
+  errors: {
+    fileNotFound: "파일을 찾을 수 없습니다.",
+    fileTooLarge: "파일 크기가 허용된 한도를 초과했습니다.",
+    fileConflict:
+      "디스크의 파일이 변경되었습니다. 저장하기 전에 다시 불러오세요.",
+    fileIdentityChanged:
+      "프로젝트 폴더의 식별 정보가 변경되었습니다. 문서를 다시 불러오거나 다른 위치에 저장하세요.",
+    ptyOwnerMismatch: "이 터미널 세션은 더 이상 현재 창에 속하지 않습니다.",
+    ptyHandoffExpired: "터미널 전달 시간이 초과되었습니다. 다시 시도하세요.",
+    ptyInputBackpressure:
+      "터미널 입력 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.",
+    ptyInputUnavailable:
+      "터미널 입력 채널이 닫혔습니다. 세션을 다시 연결하세요.",
+    ptySessionsActive:
+      "터미널 세션 {{count}}개가 아직 실행 중입니다. 백업을 복원하기 전에 종료하세요.",
+    backupRestoreInProgress: "백업을 복원 중입니다. 완료된 후 다시 시도하세요.",
+    ptySessionStarting:
+      "터미널 세션 {{count}}개를 시작하는 중입니다. 잠시 후 복원을 다시 시도하세요.",
+    execPlanChanged: "실행 계획이 변경되었습니다. 다시 검토하고 확인하세요.",
+    execBusy: "이 도구에서 이미 작업이 실행 중입니다.",
+    layoutNeedsReset: "작업 공간 레이아웃이 잘못되어 초기화해야 합니다.",
+    generic: "작업에 실패했습니다.",
+    directoryInUse: "이 프로젝트에서 실행 중인 터미널 세션이 있습니다.",
+  },
   common: {
     back: "뒤로",
     browse: "찾아보기",
@@ -28,6 +52,8 @@ export const ko = {
     unpinProject: "프로젝트 고정 해제",
     openProjectFolder: "프로젝트 폴더 열기",
     removeProject: "프로젝트 제거",
+    removeProjectBlocked:
+      "프로젝트를 제거하기 전에 열린 파일 {{files}}개와 실행 중인 터미널 {{terminals}}개를 닫으세요.",
     confirmRemoveProject:
       "프로젝트 ‘{{name}}’을(를) 제거할까요? 디스크의 파일은 삭제되지 않습니다.",
     pinProjectFailed: "프로젝트를 고정하지 못했습니다: {{error}}",
@@ -43,6 +69,14 @@ export const ko = {
     activeTasks_other: "활성 작업 {{count}}개",
     managedCliSessions_one: "{{tool}}, 관리 중인 세션 {{count}}개",
     managedCliSessions_other: "{{tool}}, 관리 중인 세션 {{count}}개",
+  },
+  tray: { show: "메인 창 표시", quit: "종료" },
+  workspaceContent: {
+    unsupportedTitle: "지원되지 않는 콘텐츠 유형: {{kind}}",
+    unsupportedDescription:
+      "이 콘텐츠는 최신 버전에서 만들어졌으며 작업 공간 레이아웃에 보존되었습니다.",
+    unsupportedError: "콘텐츠를 표시할 수 없습니다: {{error}}",
+    closeUnsupported: "지원되지 않는 콘텐츠 닫기",
   },
   theme: {
     current: "테마: {{mode}}",
@@ -304,6 +338,10 @@ export const ko = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Grok Build 설치 출처를 확인하려면 먼저 버전 정보를 새로 고치세요.",
+    grokUpdateSourceDenied:
+      "Grok Build 설치 출처를 확인할 수 없어 관리 업데이트를 사용할 수 없습니다. 기존 설치 경로로 업데이트하세요.",
+    hermesUpdateSourceDenied:
+      "Hermes Agent 설치 또는 업데이트 상태를 확인할 수 없어 관리 업데이트를 사용할 수 없습니다.",
     installing: "설치 중…",
     updating: "업데이트 중…",
     refreshingVersion: "버전 새로 고치는 중…",
@@ -418,6 +456,21 @@ export const ko = {
     importFailed: "가져오기 실패: {{error}}",
     diagnostics: "진단",
     exportDiagnostics: "진단 보고서 내보내기",
+    fileCasResidues: "오래된 파일 저장 임시 파일",
+    fileCasResiduesDescription:
+      "등록된 프로젝트 하나를 검사해 24시간이 지난 Launchpad 임시 파일을 찾습니다. 경로를 검토하고 파일별로 삭제를 확인하세요.",
+    fileCasResiduesProject: "프로젝트",
+    fileCasResiduesSelect: "프로젝트 선택",
+    fileCasResiduesScan: "검사",
+    fileCasResiduesScanning: "검사 중…",
+    fileCasResiduesNone: "오래된 임시 파일이 없습니다.",
+    fileCasResiduesTruncated:
+      "안전 검사 한도에 도달해 결과가 불완전할 수 있습니다.",
+    fileCasResiduesSkipped: "{{count}}개 항목을 확인할 수 없습니다.",
+    fileCasResiduesDelete: "삭제 검토",
+    fileCasResiduesConfirmDelete: "이 파일 삭제",
+    fileCasResiduesScanFailed: "검사 실패: {{error}}",
+    fileCasResiduesDeleteFailed: "삭제 실패: {{error}}",
     recentLaunch: "최근 실행",
     launchHistoryRetention: "기록 보관",
     launchHistoryRetentionCount: "최근 {{count}}회 실행",
@@ -571,6 +624,8 @@ export const ko = {
     reload: "다시 불러오기",
     saveConflict:
       "디스크의 파일이 변경되었습니다. 편집 내용은 보존되었습니다. 파일을 다시 불러온 후 저장하세요.",
+    permissionsNotRestored:
+      "파일은 저장했지만 원래 권한을 복원하지 못했습니다. 파일 접근 권한을 확인하세요.",
     directoryLimitReached: "항목이 너무 많아 처음 5,000개만 표시합니다.",
     directoryEntriesSkipped: "{{count}}개 항목을 표시할 수 없습니다.",
     projectIdentityChanged:

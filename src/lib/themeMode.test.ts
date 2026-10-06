@@ -12,7 +12,10 @@ describe("theme preference resolution", () => {
   ] as const)(
     "resolves %s against system dark=%s",
     (mode, systemDark, expected) => {
-      expect(resolveThemeMode(mode, systemDark)).toBe(expected);
+      expect(resolveThemeMode(mode, systemDark)).toEqual({
+        id: expected,
+        base: expected,
+      });
     },
   );
 

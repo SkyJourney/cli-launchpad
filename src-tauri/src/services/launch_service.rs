@@ -78,7 +78,7 @@ mod tests {
     use super::{apply_resume, resolve_payload_with, CliLaunchPayload};
 
     #[test]
-    fn normal_payload_ignores_saved_global_and_project_arguments() {
+    fn normal_payload_ignores_legacy_project_arguments() {
         use rusqlite::Connection;
 
         use crate::db::{connection, directory_repo};
@@ -97,12 +97,6 @@ mod tests {
             None,
         )
         .unwrap();
-        connection
-            .execute(
-                "update tools set global_args = '--ignored-global' where key = 'claude'",
-                [],
-            )
-            .unwrap();
         connection
             .execute(
                 "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', '--ignored-project')",

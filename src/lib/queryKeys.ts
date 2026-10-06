@@ -12,6 +12,10 @@ export const qk = {
   launchHistory: () => ["launch-history"],
   launchHistoryLimit: () => ["launch-history-limit"],
   cacheStats: () => ["cache-stats"],
+  fileCasResidues: (directoryId: number | null) => [
+    "file-cas-residues",
+    directoryId,
+  ],
   closeBehavior: () => ["close-behavior"],
   appVersion: () => ["app-version"],
   executionTasks: () => ["execution-tasks", "list"],

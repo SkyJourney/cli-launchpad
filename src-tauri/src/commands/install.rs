@@ -1,4 +1,5 @@
-use crate::models::install::{InstallKind, InstallPlan, LatestVersion};
+use crate::models::cli_status::{CliAvailability, CliStatus};
+use crate::models::install::{InstallKind, InstallPlan, LatestVersion, UpdateAvailability};
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_adapters, install_service};
 use crate::{with_cache, AppError, CacheDb};
@@ -11,46 +12,86 @@ pub async fn fetch_latest_version(
     force: Option<bool>,
 ) -> Result<LatestVersion, AppError> {
     let key = format!("latest-version:{}", tool_key.as_str());
+    let current_version = cached_current_version(&cache, tool_key)?;
     if !force.unwrap_or(false) {
-        if let Some(cached) = with_cache(&cache, |connection| {
+        if let Some(mut cached) = with_cache(&cache, |connection| {
             Ok(cache_service::get_fresh(connection, &key, 30 * 60 * 1000)?)
         })? {
+            crate::services::version_service::apply_update_availability(
+                &mut cached,
+                current_version.as_deref(),
+            );
             return Ok(cached);
         }
     }
     let stale = with_cache(&cache, |connection| {
         Ok(cache_service::get_any::<LatestVersion>(connection, &key)?)
     })?;
-    let mut fetched = match tauri::async_runtime::spawn_blocking(move || {
-        cli_adapters::get(tool_key).query_update()
-    })
-    .await
+    let context = match cli_adapters::context_for_tool(tool_key, std::time::Duration::from_secs(30))
     {
-        Ok(result) => result,
-        Err(error) => crate::services::version_service::latest_from_version_result(
-            tool_key,
-            Err(format!("{} 版本查询适配器异常：{error}", tool_key.as_str())),
-        ),
+        Ok(context) => context,
+        Err(error) => {
+            let mut failed = crate::services::version_service::latest_from_version_result(
+                tool_key,
+                Err(format!(
+                    "{} 版本查询上下文不可用：{error}",
+                    tool_key.as_str()
+                )),
+            );
+            crate::services::version_service::apply_update_availability(
+                &mut failed,
+                current_version.as_deref(),
+            );
+            return Ok(failed);
+        }
     };
+    let mut fetched = cli_adapters::query_update(tool_key, context).await;
+    crate::services::version_service::apply_update_availability(
+        &mut fetched,
+        current_version.as_deref(),
+    );
 
     cache_successful_latest_result(&cache, &key, &fetched)?;
 
     if let Some(stale) = stale {
-        let has_fresh_result = fetched.latest.is_some() || fetched.update_available.is_some();
+        let has_fresh_result =
+            fetched.latest.is_some() || fetched.update_availability != UpdateAvailability::Unknown;
         if !has_fresh_result && fetched.error.is_some() {
             fetched.latest = stale.latest;
-            fetched.update_available = stale.update_available;
+            fetched.update_availability = stale.update_availability;
             fetched.commits_behind = stale.commits_behind;
-            if fetched.management_message.is_none() {
-                fetched.managed_update_allowed = stale.managed_update_allowed;
-                fetched
-                    .management_message
-                    .clone_from(&stale.management_message);
-            }
             fetched.from_cache = true;
         }
     }
+    crate::services::version_service::apply_update_availability(
+        &mut fetched,
+        current_version.as_deref(),
+    );
     Ok(fetched)
+}
+
+fn cached_current_version(
+    cache: &State<'_, CacheDb>,
+    tool_key: ToolKey,
+) -> Result<Option<String>, AppError> {
+    let key = format!("cli-status:{}", tool_key.as_str());
+    let statuses = with_cache(cache, |connection| {
+        Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
+    })?;
+    Ok(current_version_from_statuses(statuses, tool_key))
+}
+
+fn current_version_from_statuses(
+    statuses: Option<Vec<CliStatus>>,
+    tool_key: ToolKey,
+) -> Option<String> {
+    statuses?.into_iter().find_map(|status| {
+        (status.tool_key == tool_key
+            && status.status == CliAvailability::Available
+            && status.path.is_some())
+        .then_some(status.version)
+        .flatten()
+    })
 }
 
 fn cache_successful_latest_result(
@@ -61,7 +102,7 @@ fn cache_successful_latest_result(
     if fetched.from_cache || fetched.error.is_some() {
         return Ok(());
     }
-    if fetched.latest.is_none() && fetched.update_available.is_none() {
+    if fetched.latest.is_none() && fetched.update_availability == UpdateAvailability::Unknown {
         return Ok(());
     }
     let connection = cache
@@ -89,6 +130,7 @@ pub async fn get_install_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::cli_status::CliAvailability;
     use crate::models::install::LatestVersion;
     use crate::models::tool::ToolKey;
     use rusqlite::{params, Connection};
@@ -97,13 +139,60 @@ mod tests {
         LatestVersion {
             tool_key: ToolKey::Codex,
             latest: Some("0.147.0".to_string()),
-            update_available: None,
+            update_availability: UpdateAvailability::Available,
             commits_behind: None,
             error: error.map(str::to_string),
             from_cache,
-            managed_update_allowed: true,
-            management_message: None,
+            managed_update: crate::models::install::ManagedUpdateStatus::Allowed,
         }
+    }
+
+    #[test]
+    fn current_version_requires_an_available_cli_with_a_resolved_path() {
+        let make_status = |status, path: Option<&str>, version: Option<&str>| CliStatus {
+            tool_key: ToolKey::Codex,
+            status,
+            path: path.map(str::to_string),
+            resolved_command: Some("codex".to_string()),
+            version: version.map(str::to_string),
+            version_error: None,
+            latest_version: None,
+        };
+
+        assert_eq!(
+            current_version_from_statuses(
+                Some(vec![make_status(
+                    CliAvailability::Available,
+                    Some("/bin/codex"),
+                    Some("0.147.0"),
+                )]),
+                ToolKey::Codex,
+            )
+            .as_deref(),
+            Some("0.147.0")
+        );
+        assert_eq!(
+            current_version_from_statuses(
+                Some(vec![make_status(
+                    CliAvailability::Unknown,
+                    Some("/bin/codex"),
+                    Some("0.147.0"),
+                )]),
+                ToolKey::Codex,
+            ),
+            None
+        );
+        assert_eq!(
+            current_version_from_statuses(
+                Some(vec![make_status(
+                    CliAvailability::Available,
+                    None,
+                    Some("0.147.0"),
+                )]),
+                ToolKey::Codex,
+            ),
+            None
+        );
     }
 
     #[test]
@@ -124,7 +213,7 @@ mod tests {
             .unwrap();
 
         let failed = latest(Some("network unavailable"), false);
-        let cache = CacheDb(std::sync::Mutex::new(connection));
+        let cache = CacheDb(std::sync::Arc::new(std::sync::Mutex::new(connection)));
         cache_successful_latest_result(&cache, "latest-version:codex", &failed).unwrap();
 
         let connection = cache.0.lock().unwrap();
@@ -159,7 +248,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let cache = CacheDb(std::sync::Mutex::new(connection));
+        let cache = CacheDb(std::sync::Arc::new(std::sync::Mutex::new(connection)));
 
         cache_successful_latest_result(&cache, "latest-version:codex", &latest(None, false))
             .unwrap();

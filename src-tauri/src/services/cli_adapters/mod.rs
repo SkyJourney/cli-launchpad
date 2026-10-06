@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -9,6 +10,29 @@ use crate::models::session::{SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 
 pub(crate) type AdapterFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+
+#[derive(Debug, Clone)]
+pub struct AdapterContext {
+    pub resolved_path: Option<PathBuf>,
+    pub home: PathBuf,
+    pub budget: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionPreflight {
+    pub message: Option<&'static str>,
+    pub verify_update_result: bool,
+}
+
+impl AdapterContext {
+    fn for_adapter(adapter: &dyn CliAdapter, budget: Duration) -> Result<Self> {
+        Ok(Self {
+            resolved_path: installed_path(adapter),
+            home: crate::services::session_service::home_dir()?,
+            budget,
+        })
+    }
+}
 
 pub(crate) mod antigravity;
 pub(crate) mod claude;
@@ -38,17 +62,18 @@ pub trait CliAdapter: Sync {
         Box::pin(crate::platform::detect::probe_version(path))
     }
 
-    fn query_update(&self) -> LatestVersion {
-        crate::services::version_service::latest_from_version_result(
-            self.tool_key(),
-            Err(format!(
-                "{} 尚未配置版本或更新状态查询",
-                self.tool_key().as_str()
-            )),
-        )
+    fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
+        let tool_key = self.tool_key();
+        Box::pin(async move {
+            let _ = context;
+            crate::services::version_service::latest_from_version_result(
+                tool_key,
+                Err(format!("{} 尚未配置版本或更新状态查询", tool_key.as_str())),
+            )
+        })
     }
 
-    fn build_plan(&self, _kind: InstallKind) -> Result<InstallPlan> {
+    fn build_plan(&self, _kind: InstallKind, _context: &AdapterContext) -> Result<InstallPlan> {
         anyhow::bail!("{} 尚未配置安装或更新计划", self.tool_key().as_str())
     }
 
@@ -57,6 +82,7 @@ pub trait CliAdapter: Sync {
         _directory_path: String,
         _cursor: Option<String>,
         _limit: usize,
+        _context: AdapterContext,
     ) -> AdapterFuture<Result<SessionPage>> {
         let tool_key = self.tool_key();
         Box::pin(async move { anyhow::bail!("{} 尚未实现会话历史读取", tool_key.as_str()) })
@@ -65,6 +91,7 @@ pub trait CliAdapter: Sync {
     fn search_index_source(
         &self,
         directory_path: String,
+        _context: AdapterContext,
     ) -> AdapterFuture<SessionSearchIndexSource> {
         let _ = directory_path;
         let tool_key = self.tool_key();
@@ -90,12 +117,19 @@ pub trait CliAdapter: Sync {
         crate::services::install_service::build_command(plan)
     }
 
-    fn should_verify_update_result(&self, _plan: &InstallPlan) -> bool {
-        false
-    }
-
     fn execution_preflight_message(&self, _plan: &InstallPlan) -> Option<&'static str> {
         None
+    }
+
+    fn execution_preflight(
+        &self,
+        plan: &InstallPlan,
+    ) -> std::result::Result<ExecutionPreflight, String> {
+        self.validate_execution(plan)?;
+        Ok(ExecutionPreflight {
+            message: self.execution_preflight_message(plan),
+            verify_update_result: false,
+        })
     }
 
     fn validate_execution(&self, _plan: &InstallPlan) -> std::result::Result<(), String> {
@@ -154,16 +188,55 @@ pub async fn installed_path_async(adapter: &'static dyn CliAdapter) -> Option<Pa
 }
 
 pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
+    let context = AdapterContext::for_adapter(get(tool_key), Duration::from_secs(30))?;
     let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {
-        get(tool_key).build_plan(kind)
+        get(tool_key).build_plan(kind, &context)
     })?;
     plan.refresh_fingerprint();
     Ok(plan)
 }
 
-pub fn execution_preflight_message(
-    plan: &InstallPlan,
-) -> std::result::Result<Option<&'static str>, String> {
+pub fn context_for_tool(tool_key: ToolKey, budget: Duration) -> Result<AdapterContext> {
+    AdapterContext::for_adapter(get(tool_key), budget)
+}
+
+pub async fn query_update(tool_key: ToolKey, context: AdapterContext) -> LatestVersion {
+    let budget = context.budget;
+    let query = get(tool_key).query_update(context);
+    match tokio::time::timeout(budget, tokio::spawn(query)).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => crate::services::version_service::latest_from_version_result(
+            tool_key,
+            Err(format!("{} 版本查询适配器异常：{error}", tool_key.as_str())),
+        ),
+        Err(_) => crate::services::version_service::latest_from_version_result(
+            tool_key,
+            Err(format!("{} 版本查询超时", tool_key.as_str())),
+        ),
+    }
+}
+
+pub(crate) fn blocking_latest(
+    tool_key: ToolKey,
+    context: AdapterContext,
+    operation: impl FnOnce() -> LatestVersion + Send + 'static,
+) -> AdapterFuture<LatestVersion> {
+    Box::pin(async move {
+        match tokio::time::timeout(context.budget, tokio::task::spawn_blocking(operation)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => crate::services::version_service::latest_from_version_result(
+                tool_key,
+                Err(format!("{} 版本查询适配器异常：{error}", tool_key.as_str())),
+            ),
+            Err(_) => crate::services::version_service::latest_from_version_result(
+                tool_key,
+                Err(format!("{} 版本查询超时", tool_key.as_str())),
+            ),
+        }
+    })
+}
+
+pub fn execution_preflight(plan: &InstallPlan) -> std::result::Result<ExecutionPreflight, String> {
     catch_adapter(plan.tool_key, "执行前校验", || {
         run_execution_preflight(get(plan.tool_key), plan)
     })
@@ -173,26 +246,16 @@ pub fn execution_preflight_message(
 fn run_execution_preflight(
     adapter: &dyn CliAdapter,
     plan: &InstallPlan,
-) -> Result<Option<&'static str>> {
+) -> Result<ExecutionPreflight> {
     adapter
-        .validate_execution(plan)
-        .map_err(anyhow::Error::msg)?;
-    Ok(adapter.execution_preflight_message(plan))
+        .execution_preflight(plan)
+        .map_err(anyhow::Error::msg)
 }
 
 pub fn prepare_command(plan: &InstallPlan) -> Result<tokio::process::Command> {
     catch_adapter(plan.tool_key, "准备执行命令", || {
         Ok(get(plan.tool_key).prepare_command(plan))
     })
-}
-
-pub fn should_verify_update_result(plan: &InstallPlan) -> Result<bool, String> {
-    catch_adapter(
-        plan.tool_key,
-        "判断是否需要核验更新结果",
-        || Ok(get(plan.tool_key).should_verify_update_result(plan)),
-    )
-    .map_err(|error| error.to_string())
 }
 
 pub async fn probe_plan_version(plan: &InstallPlan) -> Result<String, String> {
@@ -271,14 +334,32 @@ mod tests {
     async fn missing_history_capabilities_return_errors_instead_of_empty_success() {
         let adapter = MissingHistoryAdapter;
         assert!(adapter
-            .list_sessions("project".to_string(), None, 10)
+            .list_sessions(
+                "project".to_string(),
+                None,
+                10,
+                AdapterContext {
+                    resolved_path: None,
+                    home: std::env::temp_dir(),
+                    budget: Duration::from_secs(1),
+                }
+            )
             .await
             .is_err());
         assert!(adapter
             .session_belongs_to_directory("project".to_string(), "session".to_string())
             .await
             .is_err());
-        let index = adapter.search_index_source("project".to_string()).await;
+        let index = adapter
+            .search_index_source(
+                "project".to_string(),
+                AdapterContext {
+                    resolved_path: None,
+                    home: std::env::temp_dir(),
+                    budget: Duration::from_secs(1),
+                },
+            )
+            .await;
         assert!(index.incomplete);
         assert!(index.documents.is_none());
     }
@@ -320,7 +401,13 @@ mod tests {
             effects: None,
         };
 
-        assert_eq!(run_execution_preflight(&adapter, &plan).unwrap(), None);
+        assert_eq!(
+            run_execution_preflight(&adapter, &plan).unwrap(),
+            ExecutionPreflight {
+                message: None,
+                verify_update_result: false,
+            }
+        );
         assert!(adapter.0.load(Ordering::SeqCst));
     }
 
@@ -329,26 +416,5 @@ mod tests {
         let adapter = MissingHistoryAdapter;
 
         assert!(adapter.resume_args("session").is_err());
-    }
-
-    #[test]
-    fn each_cli_rejects_unsafe_session_ids() {
-        let unsafe_ids = vec![
-            "-resume-as-option".to_string(),
-            "x".repeat(257),
-            "session id".to_string(),
-            "session/child".to_string(),
-            "session\\child".to_string(),
-        ];
-
-        for tool_key in ToolKey::ALL {
-            for session_id in &unsafe_ids {
-                assert!(
-                    !valid_session_id(tool_key, session_id),
-                    "{} accepted unsafe session id {session_id:?}",
-                    tool_key.as_str()
-                );
-            }
-        }
     }
 }

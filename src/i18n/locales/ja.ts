@@ -5,6 +5,35 @@ type LocaleShape<T> = {
 };
 
 export const ja = {
+  errors: {
+    fileNotFound: "ファイルが見つかりません。",
+    fileTooLarge: "ファイルサイズが上限を超えています。",
+    fileConflict:
+      "ディスク上のファイルが変更されています。保存する前に再読み込みしてください。",
+    fileIdentityChanged:
+      "プロジェクトフォルダーの識別情報が変更されました。文書を再読み込みするか、別の場所に保存してください。",
+    ptyOwnerMismatch:
+      "このターミナルセッションは現在のウィンドウに属していません。",
+    ptyHandoffExpired:
+      "ターミナルの引き継ぎがタイムアウトしました。もう一度お試しください。",
+    ptyInputBackpressure:
+      "ターミナル入力キューがいっぱいです。少し待ってから再試行してください。",
+    ptyInputUnavailable:
+      "ターミナル入力チャネルが閉じています。セッションを再接続してください。",
+    ptySessionsActive:
+      "{{count}} 件のターミナルセッションが実行中です。バックアップを復元する前に終了してください。",
+    backupRestoreInProgress:
+      "バックアップを復元中です。完了してからもう一度お試しください。",
+    ptySessionStarting:
+      "{{count}} 件のターミナルセッションを起動中です。少し待ってから復元してください。",
+    execPlanChanged:
+      "実行計画が変更されました。内容を確認して再度承認してください。",
+    execBusy: "このツールではすでにタスクが実行中です。",
+    layoutNeedsReset:
+      "ワークスペースのレイアウトが無効です。リセットが必要です。",
+    generic: "操作に失敗しました。",
+    directoryInUse: "このプロジェクトではターミナルセッションが実行中です。",
+  },
   common: {
     back: "戻る",
     browse: "参照",
@@ -28,6 +57,8 @@ export const ja = {
     unpinProject: "プロジェクトのピン留めを解除",
     openProjectFolder: "プロジェクトフォルダーを開く",
     removeProject: "プロジェクトを削除",
+    removeProjectBlocked:
+      "プロジェクトを削除する前に、開いているファイル {{files}} 件と実行中のターミナル {{terminals}} 件を閉じてください。",
     confirmRemoveProject:
       "プロジェクト「{{name}}」を削除しますか？ディスク上のファイルは削除されません。",
     pinProjectFailed: "プロジェクトのピン留めに失敗しました: {{error}}",
@@ -44,6 +75,14 @@ export const ja = {
     activeTasks_other: "実行中のタスク {{count}} 件",
     managedCliSessions_one: "{{tool}}、管理中のセッション {{count}} 件",
     managedCliSessions_other: "{{tool}}、管理中のセッション {{count}} 件",
+  },
+  tray: { show: "メインウィンドウを表示", quit: "終了" },
+  workspaceContent: {
+    unsupportedTitle: "未対応のコンテンツタイプ: {{kind}}",
+    unsupportedDescription:
+      "このコンテンツは新しいバージョンで作成され、ワークスペースのレイアウトに保持されています。",
+    unsupportedError: "コンテンツを表示できませんでした: {{error}}",
+    closeUnsupported: "未対応のコンテンツを閉じる",
   },
   theme: {
     current: "テーマ: {{mode}}",
@@ -313,6 +352,10 @@ export const ja = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Grok Build のインストール元を確認するため、まずバージョン情報を更新してください。",
+    grokUpdateSourceDenied:
+      "Grok Build のインストール元を確認できないため、管理対象の更新は無効です。元のインストール経路から更新してください。",
+    hermesUpdateSourceDenied:
+      "Hermes Agent のインストールまたは更新状態を確認できないため、管理対象の更新は無効です。",
     installing: "インストール中…",
     updating: "更新中…",
     refreshingVersion: "バージョンを更新中…",
@@ -426,6 +469,21 @@ export const ja = {
     importFailed: "インポートに失敗しました: {{error}}",
     diagnostics: "診断",
     exportDiagnostics: "診断レポートをエクスポート",
+    fileCasResidues: "古いファイル保存用一時ファイル",
+    fileCasResiduesDescription:
+      "登録済みプロジェクトをスキャンし、24 時間以上経過した Launchpad の一時ファイルを探します。パスを確認し、ファイルごとに削除を確定してください。",
+    fileCasResiduesProject: "プロジェクト",
+    fileCasResiduesSelect: "プロジェクトを選択",
+    fileCasResiduesScan: "スキャン",
+    fileCasResiduesScanning: "スキャン中…",
+    fileCasResiduesNone: "古い一時ファイルは見つかりませんでした。",
+    fileCasResiduesTruncated:
+      "安全上限に達したため、結果が不完全な可能性があります。",
+    fileCasResiduesSkipped: "{{count}} 件を確認できませんでした。",
+    fileCasResiduesDelete: "削除内容を確認",
+    fileCasResiduesConfirmDelete: "このファイルを削除",
+    fileCasResiduesScanFailed: "スキャンに失敗しました：{{error}}",
+    fileCasResiduesDeleteFailed: "削除に失敗しました：{{error}}",
     recentLaunch: "最近の起動",
     launchHistoryRetention: "履歴を保持",
     launchHistoryRetentionCount: "直近 {{count}} 件",
@@ -582,6 +640,8 @@ export const ja = {
     reload: "再読み込み",
     saveConflict:
       "ファイルがディスク上で変更されました。編集内容は保持されています。再読み込みしてから保存してください。",
+    permissionsNotRestored:
+      "ファイルは保存されましたが、元のアクセス権を復元できませんでした。ファイルの権限を確認してください。",
     directoryLimitReached:
       "項目数が多いため、最初の5,000件のみ表示しています。",
     directoryEntriesSkipped: "{{count}} 件の項目を表示できませんでした。",

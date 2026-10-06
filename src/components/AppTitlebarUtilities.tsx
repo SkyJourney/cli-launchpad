@@ -22,6 +22,7 @@ import {
   type AppLanguage,
 } from "../i18n";
 import { useAppStore, type ThemeMode } from "../store/appStore";
+import { THEMES, THEME_IDS } from "../lib/themes";
 import { AnchoredPopover } from "./AnchoredPopover";
 
 const THEME_OPTIONS: {
@@ -29,8 +30,11 @@ const THEME_OPTIONS: {
   labelKey: "theme.light" | "theme.dark" | "theme.system";
   value: ThemeMode;
 }[] = [
-  { icon: Sun, labelKey: "theme.light", value: "light" },
-  { icon: Moon, labelKey: "theme.dark", value: "dark" },
+  ...THEME_IDS.map((id) => ({
+    icon: THEMES[id].base === "light" ? Sun : Moon,
+    labelKey: THEMES[id].labelKey,
+    value: id,
+  })),
   { icon: Monitor, labelKey: "theme.system", value: "system" },
 ];
 

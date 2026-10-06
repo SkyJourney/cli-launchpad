@@ -46,19 +46,24 @@ pub async fn create_pty_session(
         resume_session_id.as_deref(),
     )
     .await?;
-    with_conn(&db, |connection| {
-        state.create(
-            connection,
+    let manager = state.inner().clone();
+    let database = db.inner().clone();
+    let window_label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.create(
+            &database,
             &app,
             directory_id,
             tool_key,
             &payload,
             resume_session_id.as_deref(),
             size,
-            window.label(),
+            &window_label,
             on_event,
         )
     })
+    .await
+    .map_err(|error| AppError::msg(format!("PTY 启动任务失败: {error}")))?
 }
 
 #[tauri::command]

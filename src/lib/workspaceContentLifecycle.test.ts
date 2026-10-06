@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canChangeWorkspaceContentPane,
   createWorkspaceContentLifecycle,
   transitionWorkspaceContentLifecycle,
   type WorkspaceContentLifecycleEvent,
@@ -51,7 +52,7 @@ function transferEvent(
 
 function closeEvent(
   state: WorkspaceContentLifecycleState,
-  type: "closeApproved" | "disposeCompleted",
+  type: "closeApproved" | "closeCancelled" | "disposeCompleted",
   requestId: string,
 ): WorkspaceContentLifecycleEvent {
   if (
@@ -106,6 +107,7 @@ describe("workspace content lifecycle", () => {
     expect(result.state).toMatchObject({
       phase: "detached",
       owner: windowOwner,
+      windowToken: "detach-1",
       lastPaneId: paneOwner.paneId,
     });
   });
@@ -162,8 +164,33 @@ describe("workspace content lifecycle", () => {
     for (const type of ["returnFailed", "returnCancelled"] as const) {
       expect(
         transition(returning, transferEvent(returning, type, "return-1")),
-      ).toMatchObject({ phase: "detached", owner: windowOwner });
+      ).toMatchObject({
+        phase: "detached",
+        owner: windowOwner,
+        windowToken: "detach-1",
+      });
     }
+  });
+
+  it("keeps the detached window token when an approved close is cancelled", () => {
+    const detached = detachedState();
+    const closing = transition(
+      detached,
+      closeEvent(detached, "closeApproved", "close-1"),
+    );
+
+    expect(closing).toMatchObject({
+      phase: "closing",
+      owner: windowOwner,
+      windowToken: "detach-1",
+    });
+    expect(
+      transition(closing, closeEvent(closing, "closeCancelled", "close-1")),
+    ).toMatchObject({
+      phase: "detached",
+      owner: windowOwner,
+      windowToken: "detach-1",
+    });
   });
 
   it("ignores duplicate, stale and mismatched handoff events", () => {
@@ -288,6 +315,18 @@ describe("workspace content lifecycle", () => {
     expect(
       transition(closing, closeEvent(closing, "disposeCompleted", "close-1")),
     ).toMatchObject({ phase: "disposed", content });
+  });
+
+  it("allows pane moves only while the content is attached", () => {
+    const attached = createWorkspaceContentLifecycle(content, paneOwner);
+    const closing = transition(
+      attached,
+      closeEvent(attached, "closeApproved", "close-terminating"),
+    );
+
+    expect(canChangeWorkspaceContentPane(attached)).toBe(true);
+    expect(canChangeWorkspaceContentPane(closing)).toBe(false);
+    expect(canChangeWorkspaceContentPane(undefined)).toBe(false);
   });
 
   it("rejects close approvals and disposal events with stale owner identity", () => {

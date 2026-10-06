@@ -9,11 +9,53 @@ import {
   markWorkspaceFileSaveConflict,
   markWorkspaceFileIdentityChanged,
   resolveWorkspaceFileSaveCommitDisposition,
+  workspaceFileDocumentIdentityMatches,
   WorkspaceFileOperationFlights,
 } from "./workspaceFileBuffer";
 
 const textBuffer = (content = "original", revision = "revision") =>
   createWorkspaceFileBuffer({ kind: "text", content, revision });
+
+describe("workspace file document identity", () => {
+  const known = {
+    id: "document-1",
+    directoryId: 7,
+    directoryPath: "C:/projects/app",
+    relativePath: "README.md",
+  };
+
+  it("accepts only the exact document identity registered by the main window", () => {
+    expect(workspaceFileDocumentIdentityMatches(known, { ...known })).toBe(
+      true,
+    );
+    expect(
+      workspaceFileDocumentIdentityMatches(known, {
+        ...known,
+        id: "document-2",
+      }),
+    ).toBe(false);
+    expect(
+      workspaceFileDocumentIdentityMatches(known, {
+        ...known,
+        directoryId: 8,
+      }),
+    ).toBe(false);
+    expect(
+      workspaceFileDocumentIdentityMatches(known, {
+        ...known,
+        directoryPath: "C:/projects/other",
+      }),
+    ).toBe(false);
+    expect(
+      workspaceFileDocumentIdentityMatches(known, {
+        ...known,
+        relativePath: "private.txt",
+      }),
+    ).toBe(false);
+    expect(workspaceFileDocumentIdentityMatches(known, undefined)).toBe(false);
+    expect(workspaceFileDocumentIdentityMatches(undefined, known)).toBe(false);
+  });
+});
 
 describe("workspace file save transitions", () => {
   it("preserves the draft and marks a stale project identity", () => {

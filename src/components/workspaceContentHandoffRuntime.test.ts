@@ -32,7 +32,7 @@ describe("workspace content handoff runtime", () => {
     const rollback = vi.fn(async () => undefined);
     unregister = registerWorkspaceContentAdapter({
       id: "test.handoff-runtime",
-      apiVersion: 1,
+      apiVersion: 2,
       kind: "pty",
       render: () => null,
       presentation: () => ({
@@ -59,7 +59,6 @@ describe("workspace content handoff runtime", () => {
       source: { kind: "pane", windowLabel: "main", paneId: "pane-1" },
       target: { kind: "window", windowLabel: "terminal-1" },
       transferId: "frontend-request-id",
-      generation: 4,
       capabilities: { prepare, attach, rollback },
     } as const;
     const prepared = await prepareWorkspaceContentHandoff(context);

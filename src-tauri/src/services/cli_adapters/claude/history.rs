@@ -23,15 +23,17 @@ pub(crate) fn claude_slug(path: &str) -> String {
         .collect()
 }
 
-fn project_dir(directory_path: &str) -> Result<std::path::PathBuf> {
-    Ok(home_dir()?
-        .join(".claude")
+fn project_dir_for_home(home: &Path, directory_path: &str) -> std::path::PathBuf {
+    home.join(".claude")
         .join("projects")
-        .join(claude_slug(directory_path)))
+        .join(claude_slug(directory_path))
 }
 
-pub(crate) fn list_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
-    let dir = project_dir(directory_path)?;
+fn project_dir(directory_path: &str) -> Result<std::path::PathBuf> {
+    Ok(project_dir_for_home(&home_dir()?, directory_path))
+}
+
+fn list_sessions_in(dir: &Path) -> Result<Vec<SessionInfo>> {
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -68,10 +70,12 @@ pub(crate) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
+    context: crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     tauri::async_runtime::spawn_blocking(move || {
+        let dir = project_dir_for_home(&context.home, &directory_path);
         crate::services::session_service::page_local(
-            list_sessions(&directory_path)?,
+            list_sessions_in(&dir)?,
             cursor.as_deref(),
             limit,
         )
@@ -80,9 +84,12 @@ pub(crate) async fn list_sessions_page(
     .map_err(|error| anyhow!(error.to_string()))?
 }
 
-pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
+pub(crate) async fn search_index_source(
+    directory_path: String,
+    context: crate::services::cli_adapters::AdapterContext,
+) -> SessionSearchIndexSource {
     let result = crate::services::session_service::spawn_search_index_blocking(move || {
-        search_documents(&directory_path)
+        search_documents_for_home(&directory_path, &context.home)
     })
     .await;
     crate::services::session_service::index_source(ToolKey::Claude, result)
@@ -97,8 +104,8 @@ pub(crate) async fn session_belongs_to_directory(
         .map_err(|error| anyhow!(error.to_string()))?
 }
 
-pub(crate) fn search_documents(directory_path: &str) -> Result<SearchSource> {
-    let dir = project_dir(directory_path)?;
+fn search_documents_for_home(directory_path: &str, home: &Path) -> Result<SearchSource> {
+    let dir = project_dir_for_home(home, directory_path);
     search_documents_in(&dir)
 }
 
@@ -319,4 +326,33 @@ pub(crate) fn message_text(entry: &Value) -> Option<String> {
     super::super::super::session_service::extract_text_content(
         entry.get("message")?.get("content")?,
     )
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_sessions_uses_the_injected_context_home() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(claude_slug("C:/workspace"));
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("session-123.jsonl"), "\n").unwrap();
+        let context = crate::services::cli_adapters::AdapterContext {
+            resolved_path: None,
+            home: root.path().to_path_buf(),
+            budget: std::time::Duration::from_secs(1),
+        };
+
+        let page = list_sessions_page("C:/workspace".to_string(), None, 10, context)
+            .await
+            .unwrap();
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].session_id, "session-123");
+    }
 }

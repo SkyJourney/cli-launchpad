@@ -23,8 +23,23 @@ use models::app_setting::CloseBehavior;
 /// cannot accidentally read cache rows through the configuration connection.
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
-pub struct CacheDb(pub Mutex<Connection>);
+#[derive(Clone)]
+pub struct CacheDb(pub Arc<Mutex<Connection>>);
 pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
+pub struct TrayMenuLabelsState(
+    pub  Mutex<
+        Option<(
+            tauri::menu::MenuItem<tauri::Wry>,
+            tauri::menu::MenuItem<tauri::Wry>,
+        )>,
+    >,
+);
+
+impl Default for TrayMenuLabelsState {
+    fn default() -> Self {
+        Self(Mutex::new(None))
+    }
+}
 
 fn persistent_window_state_flags() -> StateFlags {
     StateFlags::all().difference(StateFlags::VISIBLE | StateFlags::DECORATIONS)
@@ -64,6 +79,13 @@ pub fn with_connection<T>(
 
 pub fn with_cache<T>(
     state: &State<'_, CacheDb>,
+    f: impl FnOnce(&Connection) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    with_cache_connection(state.inner(), f)
+}
+
+pub fn with_cache_connection<T>(
+    state: &CacheDb,
     f: impl FnOnce(&Connection) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let connection = state
@@ -191,8 +213,10 @@ pub fn run() {
             app.manage(Db(Arc::new(Mutex::new(connection))));
             app.manage(services::execution_service::ExecutionTaskManager::default());
             app.manage(services::pty_session_service::PtySessionManager::default());
+            app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
+            app.manage(TrayMenuLabelsState::default());
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
                 Ok(cache) => cache,
                 Err(error) => {
@@ -203,7 +227,7 @@ pub fn run() {
             };
             services::cache_service::remove_prefix(&cache, "sessions:")
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            app.manage(CacheDb(Mutex::new(cache)));
+            app.manage(CacheDb(Arc::new(Mutex::new(cache))));
             app.manage(paths);
 
             setup_tray(app.handle())?;
@@ -249,6 +273,12 @@ pub fn run() {
             commands::files::list_project_files,
             commands::files::open_project_file,
             commands::files::save_project_text_file,
+            commands::files::grant_content_window_file,
+            commands::files::open_granted_file,
+            commands::files::save_granted_text_file,
+            commands::files::revoke_content_window_file,
+            commands::files::list_project_file_cas_residues,
+            commands::files::remove_project_file_cas_residue,
             commands::execution::start_execution_task,
             commands::execution::list_execution_tasks,
             commands::execution::get_execution_task,
@@ -262,6 +292,7 @@ pub fn run() {
             commands::config::import_config_from_path,
             commands::app_setting::get_close_behavior,
             commands::app_setting::set_close_behavior,
+            commands::app_setting::set_tray_menu_labels,
             commands::workspace_layout::get_workspace_layout,
             commands::workspace_layout::save_workspace_layout,
             commands::workspace_layout::reset_workspace_layout,
@@ -275,6 +306,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 let label = window.label();
+                if crate::models::window_kind::window_kind_of(label)
+                    == Some(crate::models::window_kind::WindowKind::WorkspaceContent)
+                {
+                    let grants = window
+                        .state::<services::content_window_grants::ContentWindowGrantRegistry>();
+                    if let Err(error) = grants.revoke(label) {
+                        log::warn!("unable to revoke file window grant label={label}: {error}");
+                    }
+                }
                 if crate::models::window_kind::window_kind_of(label)
                     == Some(crate::models::window_kind::WindowKind::Terminal)
                 {
@@ -356,6 +396,14 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
+    {
+        let labels = app.state::<TrayMenuLabelsState>();
+        let mut current = labels
+            .0
+            .lock()
+            .map_err(|_| tauri::Error::Anyhow(anyhow::anyhow!("tray menu labels lock poisoned")))?;
+        *current = Some((show.clone(), quit.clone()));
+    }
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("CLI Launchpad")

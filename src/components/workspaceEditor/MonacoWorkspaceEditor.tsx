@@ -44,6 +44,7 @@ import "monaco-editor/features/unusualLineTerminators/register.js";
 import "monaco-editor/features/wordHighlighter/register.js";
 import "monaco-editor/features/wordOperations/register.js";
 import "monaco-editor/features/wordPartOperations/register.js";
+import { getThemeDefinition, type ThemeId } from "../../lib/themes";
 
 loader.config({ monaco });
 
@@ -118,7 +119,7 @@ export function MonacoWorkspaceEditor({
   value: string;
   relativePath: string;
   modelUri: string;
-  theme: "light" | "dark";
+  theme: ThemeId;
   readOnly: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
@@ -150,7 +151,7 @@ export function MonacoWorkspaceEditor({
     };
   }, [language]);
 
-  const editorTheme = theme === "dark" ? "vs-dark" : "vs";
+  const editorTheme = getThemeDefinition(theme).monacoTheme;
   return (
     <div className="workspace-editor-surface">
       <Editor

@@ -400,6 +400,71 @@ describe("workspace content close adapters", () => {
     expect(coordinator.get(file)).toBeUndefined();
   });
 
+  it("keeps a terminating PTY in closing until its owner ends", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "pty", slotId: "slot-terminating" } as const;
+    const pane = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    coordinator.ensureAttached(content, pane);
+
+    await closeWorkspaceContentBatch({
+      coordinator,
+      requestId: "close-pending",
+      requests: [{ content, beforeClose: () => true }],
+      execute: () => ({ closed: [], pending: [content] }),
+      dispose: vi.fn(),
+    });
+
+    expect(coordinator.get(content)).toMatchObject({
+      phase: "closing",
+      closeStatus: "pending",
+    });
+    expect(coordinator.cancelClose(content, "close-pending")).toBeNull();
+    expect(coordinator.get(content)?.phase).toBe("closing");
+    expect(
+      coordinator.beginDetach(
+        content,
+        pane,
+        { kind: "window", windowLabel: "terminal-child" },
+        "transfer-while-closing",
+      )?.outcome,
+    ).toBe("ignored");
+    const dispose = vi.fn();
+    await disposeWorkspaceContent({
+      coordinator,
+      content,
+      reason: "ownerEnded",
+      dispose,
+    });
+    expect(dispose).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "closed" }),
+    );
+    expect(coordinator.get(content)).toBeUndefined();
+  });
+
+  it("removes an unknown content placeholder without registering an adapter", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = {
+      kind: "unknown",
+      originalKind: "markdownPreview",
+      raw: { kind: "markdownPreview", previewId: "preview-1" },
+    } as const;
+
+    const closed = await closeWorkspaceContentBatch({
+      coordinator,
+      requestId: "close-unknown",
+      requests: [{ content, beforeClose: () => true }],
+      execute: () => [content],
+      dispose: vi.fn(),
+    });
+
+    expect(closed).toEqual([content]);
+    expect(coordinator.get(content)).toBeUndefined();
+  });
+
   it("cancels all lifecycle approvals if the domain close operation fails", async () => {
     const coordinator = new WorkspaceContentCoordinator();
     const content = { kind: "file", documentId: "file-1" } as const;

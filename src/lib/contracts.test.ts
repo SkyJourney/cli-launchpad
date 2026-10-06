@@ -24,6 +24,7 @@ const toolKeyTypeCoverage: Record<ToolKey, true> = {
 const contentKindTypeCoverage: Record<WorkspacePaneContentRef["kind"], true> = {
   pty: true,
   file: true,
+  unknown: true,
 };
 
 describe("shared contracts", () => {
@@ -33,7 +34,10 @@ describe("shared contracts", () => {
   });
 
   it("matches the TypeScript workspace content kinds", () => {
-    expect(Object.keys(contentKindTypeCoverage)).toEqual(contentKinds);
+    expect(contentKinds.adapterApiVersion).toBe(2);
+    expect(
+      Object.keys(contentKindTypeCoverage).filter((kind) => kind !== "unknown"),
+    ).toEqual(contentKinds.kinds);
   });
 
   it("declares each current window kind and registered app command", () => {

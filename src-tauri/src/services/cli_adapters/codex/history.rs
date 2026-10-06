@@ -27,29 +27,34 @@ async fn list_codex_page(
     directory_path: &str,
     cursor: Option<&str>,
     limit: usize,
+    context: &crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     if cursor.is_some_and(|value| value.starts_with(OFFSET_CURSOR_PREFIX)) {
-        return list_codex_fallback_page(directory_path, cursor, limit).await;
+        return list_codex_fallback_page(directory_path, cursor, limit, &context.home).await;
     }
 
     let app_cursor = decode_codex_cursor(cursor)?;
-    match list_codex_app_page(directory_path, app_cursor.as_deref(), limit).await {
+    match list_codex_app_page(directory_path, app_cursor.as_deref(), limit, context).await {
         Ok(page) => Ok(page),
         Err(error) if cursor.is_none() => {
             log::warn!("Codex App Server 会话读取失败，回退 JSONL：{error}");
-            list_codex_fallback_page(directory_path, None, limit).await
+            list_codex_fallback_page(directory_path, None, limit, &context.home).await
         }
         Err(error) => Err(error),
     }
 }
 
-async fn search_codex_documents(directory_path: &str) -> Result<SearchSource> {
+async fn search_codex_documents(
+    directory_path: &str,
+    context: &crate::services::cli_adapters::AdapterContext,
+) -> Result<SearchSource> {
     let mut source = SearchSource::default();
     let mut cursor: Option<String> = None;
     let mut seen_cursors = HashSet::new();
 
     for page_index in 0..MAX_CODEX_SEARCH_PAGES {
         let result = super::app_server::request(
+            context.resolved_path.as_deref(),
             "thread/list",
             json!({
                 "cursor": cursor.as_deref(),
@@ -59,6 +64,7 @@ async fn search_codex_documents(directory_path: &str) -> Result<SearchSource> {
                 "cwd": directory_path,
                 "archived": false
             }),
+            context.budget,
         )
         .await?;
         let data = result
@@ -124,8 +130,10 @@ async fn list_codex_app_page(
     directory_path: &str,
     cursor: Option<&str>,
     limit: usize,
+    context: &crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     let result = super::app_server::request(
+        context.resolved_path.as_deref(),
         "thread/list",
         json!({
             "cursor": cursor,
@@ -135,6 +143,7 @@ async fn list_codex_app_page(
             "cwd": directory_path,
             "archived": false
         }),
+        context.budget,
     )
     .await?;
 
@@ -194,12 +203,14 @@ async fn list_codex_fallback_page(
     directory_path: &str,
     cursor: Option<&str>,
     limit: usize,
+    home: &Path,
 ) -> Result<SessionPage> {
     let directory_path = directory_path.to_string();
     let cursor = cursor.map(str::to_string);
+    let home = home.to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
         page_local(
-            list_codex_sessions_legacy(&directory_path)?,
+            list_codex_sessions_in(&directory_path, &home)?,
             cursor.as_deref(),
             limit,
         )
@@ -209,7 +220,11 @@ async fn list_codex_fallback_page(
 }
 
 fn list_codex_sessions_legacy(directory_path: &str) -> Result<Vec<SessionInfo>> {
-    let root = home_dir()?.join(".codex").join("sessions");
+    list_codex_sessions_in(directory_path, &home_dir()?)
+}
+
+fn list_codex_sessions_in(directory_path: &str, home: &Path) -> Result<Vec<SessionInfo>> {
+    let root = home.join(".codex").join("sessions");
     let mut files = Vec::new();
     collect_rollout_files(&root, &mut files, 0)?;
     Ok(files
@@ -218,11 +233,11 @@ fn list_codex_sessions_legacy(directory_path: &str) -> Result<Vec<SessionInfo>> 
         .collect())
 }
 
-fn search_codex_rollout_metadata(directory_path: &str) -> Result<SearchSource> {
+fn search_codex_rollout_metadata_in(directory_path: &str, home: &Path) -> Result<SearchSource> {
     const MAX_ROLLOUT_FILES: usize = 10_000;
     const MAX_DIRECTORY_ENTRIES: usize = 20_000;
 
-    let root = home_dir()?.join(".codex").join("sessions");
+    let root = home.join(".codex").join("sessions");
     let mut files = Vec::new();
     let mut visited_entries = 0;
     let scan_incomplete = collect_rollout_files_bounded(
@@ -597,14 +612,18 @@ pub(crate) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
+    context: crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
-    list_codex_page(&directory_path, cursor.as_deref(), limit).await
+    list_codex_page(&directory_path, cursor.as_deref(), limit, &context).await
 }
 
-pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
+pub(crate) async fn search_index_source(
+    directory_path: String,
+    context: crate::services::cli_adapters::AdapterContext,
+) -> SessionSearchIndexSource {
     let result = match tokio::time::timeout(
-        CODEX_SEARCH_TIMEOUT,
-        search_codex_documents(&directory_path),
+        context.budget.min(CODEX_SEARCH_TIMEOUT),
+        search_codex_documents(&directory_path, &context),
     )
     .await
     {
@@ -612,15 +631,17 @@ pub(crate) async fn search_index_source(directory_path: String) -> SessionSearch
         Ok(Err(error)) => {
             log::warn!("Codex 会话搜索失败，改用本地会话 metadata：{error}");
             let path = directory_path.clone();
+            let home = context.home.clone();
             crate::services::session_service::spawn_search_index_blocking(move || {
-                search_codex_rollout_metadata(&path)
+                search_codex_rollout_metadata_in(&path, &home)
             })
             .await
         }
         Err(_) => {
             log::warn!("Codex 会话搜索超时，改用本地会话 metadata");
+            let home = context.home.clone();
             crate::services::session_service::spawn_search_index_blocking(move || {
-                search_codex_rollout_metadata(&directory_path)
+                search_codex_rollout_metadata_in(&directory_path, &home)
             })
             .await
         }

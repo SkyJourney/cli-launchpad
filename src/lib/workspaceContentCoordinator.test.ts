@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WorkspaceContentCoordinator } from "./workspaceContentCoordinator";
 import {
   addWorkspaceFileToPane,
@@ -9,6 +9,48 @@ import {
 } from "./ptyWorkspaceLayout";
 
 describe("workspace content coordinator", () => {
+  it("publishes phase changes for lifecycle-derived UI state", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "pty", slotId: "slot-closing" } as const;
+    const owner = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const listener = vi.fn();
+    const unsubscribe = coordinator.subscribe(listener);
+
+    coordinator.ensureAttached(content, owner);
+    coordinator.approveClose(content, "close-1");
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(coordinator.getRevision()).toBe(2);
+    expect(coordinator.listInPhases("closing")).toEqual([content]);
+    unsubscribe();
+  });
+
+  it("rebuilds hydrated pane owners and selects detached window ownership", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "pty", slotId: "slot-1" } as const;
+    coordinator.resetFromPanes([{ id: "pane-1", contents: [content] }], "main");
+    expect(coordinator.get(content)?.phase).toBe("attached");
+
+    coordinator.beginDetach(
+      content,
+      { kind: "pane", windowLabel: "main", paneId: "pane-1" },
+      { kind: "window", windowLabel: "terminal-1" },
+      "transfer-1",
+    );
+    coordinator.completeHandoff(content, "detachReady", "transfer-1");
+
+    expect(coordinator.listByPhase("detached")).toEqual([content]);
+    expect(coordinator.listWindowOwned()).toEqual([content]);
+
+    coordinator.resetFromPanes([{ id: "pane-2", contents: [content] }], "main");
+    expect(coordinator.get(content)).toMatchObject({ phase: "attached" });
+    expect(coordinator.listByPhase("detached")).toEqual([]);
+  });
+
   it("clears all content owners and completed transfers when workspace data is restored", () => {
     const coordinator = new WorkspaceContentCoordinator();
     const content = { kind: "file", documentId: "doc-1" } as const;

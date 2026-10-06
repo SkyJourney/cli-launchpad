@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { isValidElement } from "react";
 import {
   getWorkspaceContentAdapter,
+  presentWorkspaceContent,
   registerWorkspaceContentAdapter,
   subscribeWorkspaceContentAdapters,
+  workspaceContentProjectContext,
 } from "./workspaceContentAdapterRegistry";
 import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
 
@@ -18,6 +20,32 @@ const labels = {
 };
 
 describe("workspace content adapter registry", () => {
+  it("provides safe presentation and project-context fallbacks without an adapter", () => {
+    const context = {
+      directories: [],
+      ptySlots: [],
+      ptySessionsById: {},
+      fileDocuments: [],
+      fileBuffers: {},
+      selectedDirectoryId: null,
+    };
+
+    expect(
+      presentWorkspaceContent({ kind: "file", documentId: "file-1" }, context),
+    ).toMatchObject({
+      title: "file",
+      icon: null,
+      tooltip: "file",
+      closeLabelKey: "workspaceContent.closeUnsupported",
+    });
+    expect(
+      workspaceContentProjectContext(
+        { kind: "file", documentId: "file-1" },
+        context,
+      ),
+    ).toBeNull();
+  });
+
   it("renders PTY content through the adapter with the injected portal target", () => {
     const unregister = registerBuiltinWorkspaceContentAdapters();
     const portalTarget = {} as HTMLElement;
@@ -38,7 +66,7 @@ describe("workspace content adapter registry", () => {
   it("registers and resolves a built-in adapter by content kind", () => {
     const adapter = {
       id: "test.pty",
-      apiVersion: 1 as const,
+      apiVersion: 2 as const,
       kind: "pty" as const,
       render: () => null,
       presentation: () => ({
@@ -61,7 +89,7 @@ describe("workspace content adapter registry", () => {
   it("rejects duplicate IDs and duplicate content kinds", () => {
     const first = registerWorkspaceContentAdapter({
       id: "test.first",
-      apiVersion: 1,
+      apiVersion: 2,
       kind: "file",
       render: () => null,
       presentation: () => ({
@@ -75,7 +103,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.first",
-        apiVersion: 1,
+        apiVersion: 2,
         kind: "pty",
         render: () => null,
         presentation: () => ({
@@ -90,7 +118,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.second",
-        apiVersion: 1,
+        apiVersion: 2,
         kind: "file",
         render: () => null,
         presentation: () => ({
@@ -109,7 +137,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.unsupported-version",
-        apiVersion: 2,
+        apiVersion: 1,
         kind: "pty",
         render: () => null,
         presentation: () => ({
@@ -120,7 +148,7 @@ describe("workspace content adapter registry", () => {
         labels,
         projectContextOf: () => null,
       } as unknown as Parameters<typeof registerWorkspaceContentAdapter>[0]),
-    ).toThrow("不支持内容适配器 API 版本: 2");
+    ).toThrow("不支持内容适配器 API 版本: 1");
   });
 
   it("notifies subscribers when registrations are added and removed", () => {
@@ -128,7 +156,7 @@ describe("workspace content adapter registry", () => {
     const unsubscribe = subscribeWorkspaceContentAdapters(listener);
     const dispose = registerWorkspaceContentAdapter({
       id: "test.notify",
-      apiVersion: 1,
+      apiVersion: 2,
       kind: "pty",
       render: () => null,
       presentation: () => ({
@@ -150,7 +178,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.partial-handoff",
-        apiVersion: 1,
+        apiVersion: 2,
         kind: "pty",
         render: () => null,
         presentation: () => ({
@@ -173,7 +201,7 @@ describe("workspace content adapter registry", () => {
   it("accepts a complete typed handoff lifecycle", () => {
     const dispose = registerWorkspaceContentAdapter({
       id: "test.complete-handoff",
-      apiVersion: 1,
+      apiVersion: 2,
       kind: "pty",
       render: () => null,
       presentation: () => ({

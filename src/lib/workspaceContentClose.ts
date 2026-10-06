@@ -1,5 +1,6 @@
 import type { WorkspaceContentCoordinator } from "./workspaceContentCoordinator";
 import type { WorkspacePaneContentRef } from "./tauri";
+import { workspaceContentKey } from "./workspaceContentKey";
 import type { WorkspaceContentOwner } from "./workspaceContentLifecycle";
 
 export interface WorkspaceContentBeforeCloseContext {
@@ -11,6 +12,13 @@ export interface WorkspaceContentDisposalImpact {
   kind: "runningPty" | "dirtyFile";
   title: string;
 }
+
+export type WorkspaceContentCloseExecution =
+  | WorkspacePaneContentRef[]
+  | {
+      closed: WorkspacePaneContentRef[];
+      pending?: WorkspacePaneContentRef[];
+    };
 
 export interface WorkspaceContentDisposeContext<
   Kind extends WorkspacePaneContentRef["kind"] =
@@ -69,7 +77,10 @@ export async function disposeWorkspaceContent<
       owner,
       generation: state.generation,
       requestId,
-      reason,
+      reason:
+        reason === "ownerEnded" && state.phase === "closing"
+          ? "closed"
+          : reason,
     });
   } catch (error) {
     // Disposal is a post-commit notification. A plugin failure must not
@@ -92,12 +103,17 @@ export async function closeWorkspaceContentBatch(args: {
   ) => boolean | Promise<boolean>;
   onApproved?: () => void | Promise<void>;
   /** Performs domain-specific state changes and returns only committed closes. */
-  execute: () => WorkspacePaneContentRef[] | Promise<WorkspacePaneContentRef[]>;
+  execute: () =>
+    | WorkspaceContentCloseExecution
+    | Promise<WorkspaceContentCloseExecution>;
   dispose: (context: WorkspaceContentDisposeContext) => void | Promise<void>;
 }): Promise<WorkspacePaneContentRef[]> {
   const unique = [
     ...new Map(
-      args.requests.map((request) => [contentKey(request.content), request]),
+      args.requests.map((request) => [
+        workspaceContentKey(request.content),
+        request,
+      ]),
     ).values(),
   ];
   if (unique.length === 0) return [];
@@ -127,28 +143,38 @@ export async function closeWorkspaceContentBatch(args: {
   ) {
     return [];
   }
+  const managed = unique.filter(({ content }) => content.kind !== "unknown");
   if (
+    managed.length > 0 &&
     !args.coordinator.approveCloseBatch(
-      unique.map(({ content }) => content),
+      managed.map(({ content }) => content),
       args.requestId,
     )
   ) {
     return [];
   }
 
-  let committed: WorkspacePaneContentRef[];
+  let execution: WorkspaceContentCloseExecution;
   try {
     await args.onApproved?.();
-    committed = await args.execute();
+    execution = await args.execute();
   } catch (error) {
-    for (const { content } of unique) {
+    for (const { content } of managed) {
       args.coordinator.cancelClose(content, args.requestId);
     }
     throw error;
   }
-  const committedKeys = new Set(committed.map(contentKey));
+  const closed = Array.isArray(execution) ? execution : execution.closed;
+  const pending = Array.isArray(execution) ? [] : (execution.pending ?? []);
+  const pendingKeys = new Set(pending.map(workspaceContentKey));
+  const committedKeys = new Set(closed.map(workspaceContentKey));
   for (const { content } of unique) {
-    if (!committedKeys.has(contentKey(content))) {
+    if (content.kind === "unknown") continue;
+    if (pendingKeys.has(workspaceContentKey(content))) {
+      args.coordinator.markClosePending(content, args.requestId);
+      continue;
+    }
+    if (!committedKeys.has(workspaceContentKey(content))) {
       args.coordinator.cancelClose(content, args.requestId);
       continue;
     }
@@ -162,13 +188,7 @@ export async function closeWorkspaceContentBatch(args: {
       ) => void | Promise<void>,
     });
   }
-  return committed;
-}
-
-function contentKey(content: WorkspacePaneContentRef): string {
-  return content.kind === "pty"
-    ? `pty:${content.slotId}`
-    : `file:${content.documentId}`;
+  return closed;
 }
 
 export type WorkspaceContentBeforeCloseHook = (

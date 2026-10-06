@@ -1,10 +1,11 @@
 import type { ComponentType } from "react";
+import type { ThemeId } from "../lib/themes";
 export interface WorkspaceEditorEngineProps {
   documentKey: string;
   value: string;
   relativePath: string;
   modelUri: string;
-  theme: "light" | "dark";
+  theme: ThemeId;
   readOnly: boolean;
   onChange: (value: string) => void;
   onSave: () => void;

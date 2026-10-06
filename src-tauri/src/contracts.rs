@@ -11,6 +11,7 @@ const TOOL_KEYS_JSON: &str = include_str!("../../contracts/tool-keys.json");
 const CONTENT_KINDS_JSON: &str = include_str!("../../contracts/content-kinds.json");
 const WINDOW_KINDS_JSON: &str = include_str!("../../contracts/window-kinds.json");
 const LIB_RS: &str = include_str!("lib.rs");
+const TAURI_CONFIG_JSON: &str = include_str!("../tauri.conf.json");
 
 fn sorted_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut values: Vec<String> = values.into_iter().collect();
@@ -45,11 +46,44 @@ fn tool_key_contract_matches_the_rust_registry() {
 }
 
 #[test]
+fn tauri_csp_defines_production_and_development_policies() {
+    let config: Value = serde_json::from_str(TAURI_CONFIG_JSON).expect("parse tauri config");
+    let security = &config["app"]["security"];
+    let production = security["csp"]
+        .as_str()
+        .expect("production CSP is configured");
+    let development = security["devCsp"]
+        .as_str()
+        .expect("development CSP is configured");
+
+    for policy in [production, development] {
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob:",
+            "font-src 'self' data:",
+            "worker-src 'self' blob:",
+            "ipc:",
+            "http://ipc.localhost",
+        ] {
+            assert!(
+                policy.contains(directive),
+                "missing {directive} in {policy}"
+            );
+        }
+    }
+    assert!(development.contains("http://localhost:1420"));
+    assert!(development.contains("ws://localhost:1420"));
+}
+
+#[test]
 fn content_kind_contract_matches_rust_serialization() {
     use crate::models::workspace_layout::WorkspacePaneContentRef;
 
-    let contract: Vec<String> =
+    let contract: Value =
         serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kind contract");
+    assert_eq!(contract["adapterApiVersion"], 2);
     let pty = serde_json::to_value(WorkspacePaneContentRef::Pty {
         slot_id: "slot".to_string(),
     })
@@ -63,7 +97,7 @@ fn content_kind_contract_matches_rust_serialization() {
         file["kind"].as_str().unwrap().to_string(),
     ];
 
-    assert_eq!(contract, serialized_kinds);
+    assert_eq!(json_strings(&contract["kinds"]), serialized_kinds);
 }
 
 #[test]

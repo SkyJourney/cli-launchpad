@@ -45,10 +45,6 @@ export const hermesAdapter: CliAdapter = {
           }
         : undefined,
   showCommandNotice: (kind: InstallKind) => kind !== "update",
-  showManagementMessage: true,
   refreshLatestAfterExecution: (kind: InstallKind) => kind === "update",
   displayExecutionStream: (_kind, stream) => stream,
-  isManagedUpdateAllowed: (latest) => latest?.managedUpdateAllowed === true,
-  getUpdateAvailability: (_currentVersion, latest) =>
-    latest?.updateAvailable ?? null,
 };

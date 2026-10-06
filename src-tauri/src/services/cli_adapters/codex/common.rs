@@ -4,7 +4,7 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
 
 const LATEST_URL: &str = "https://releases.openai.com/codex/channels/latest";
 
@@ -36,13 +36,19 @@ impl CliAdapter for CodexAdapter {
         Ok(vec!["resume".to_string(), session_id.to_string()])
     }
 
-    fn query_update(&self) -> LatestVersion {
-        let latest = version_service::fetch_release_text(LATEST_URL)
-            .and_then(|body| super::version::parse_codex_latest(&body));
-        version_service::latest_from_version_result(ToolKey::Codex, latest)
+    fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
+        crate::services::cli_adapters::blocking_latest(ToolKey::Codex, context, || {
+            let latest = version_service::fetch_release_text(LATEST_URL)
+                .and_then(|body| super::version::parse_codex_latest(&body));
+            version_service::latest_from_version_result(ToolKey::Codex, latest)
+        })
     }
 
-    fn build_plan(&self, kind: InstallKind) -> anyhow::Result<InstallPlan> {
+    fn build_plan(
+        &self,
+        kind: InstallKind,
+        _context: &AdapterContext,
+    ) -> anyhow::Result<InstallPlan> {
         platform::build_plan(kind)
     }
 
@@ -51,12 +57,14 @@ impl CliAdapter for CodexAdapter {
         directory_path: String,
         cursor: Option<String>,
         limit: usize,
+        context: AdapterContext,
     ) -> AdapterFuture<anyhow::Result<SessionPage>> {
         Box::pin(
             crate::services::cli_adapters::codex::history::list_sessions_page(
                 directory_path,
                 cursor,
                 limit,
+                context,
             ),
         )
     }
@@ -64,8 +72,14 @@ impl CliAdapter for CodexAdapter {
     fn search_index_source(
         &self,
         directory_path: String,
+        context: AdapterContext,
     ) -> AdapterFuture<SessionSearchIndexSource> {
-        Box::pin(crate::services::cli_adapters::codex::history::search_index_source(directory_path))
+        Box::pin(
+            crate::services::cli_adapters::codex::history::search_index_source(
+                directory_path,
+                context,
+            ),
+        )
     }
 
     fn session_belongs_to_directory(
@@ -79,5 +93,24 @@ impl CliAdapter for CodexAdapter {
                 session_id,
             ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rejects_unsafe_codex_session_ids() {
+        for session_id in [
+            "-resume-as-option".to_string(),
+            "x".repeat(257),
+            "session id".to_string(),
+            "session/child".to_string(),
+            "session\\child".to_string(),
+        ] {
+            assert!(!crate::services::cli_adapters::valid_session_id(
+                crate::models::tool::ToolKey::Codex,
+                &session_id
+            ));
+        }
     }
 }

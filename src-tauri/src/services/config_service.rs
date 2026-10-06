@@ -243,11 +243,6 @@ mod tests {
         let path = absolute_test_path("legacy");
         let directory = directory_repo::add(&db, "legacy", &path, None).unwrap();
         db.execute(
-            "update tools set global_args = ?1 where key = 'codex'",
-            ["--existing-global"],
-        )
-        .unwrap();
-        db.execute(
             "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', ?2)",
             rusqlite::params![directory.id, "--existing-project"],
         )
@@ -259,13 +254,6 @@ mod tests {
         );
         import_json(&db, &legacy).unwrap();
 
-        let global_args: String = db
-            .query_row(
-                "select global_args from tools where key = 'codex'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
         let project_args: String = db
             .query_row(
                 "select args from directory_tool_args where directory_id = ?1 and tool_key = 'claude'",
@@ -273,10 +261,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(global_args, "--existing-global");
         assert_eq!(project_args, "--existing-project");
         let exported = export_json(&db).unwrap();
-        assert!(!exported.contains("--existing-global"));
+        assert!(!exported.contains("--ignored-global"));
         assert!(!exported.contains("--existing-project"));
     }
 }

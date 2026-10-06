@@ -4,7 +4,7 @@ use crate::db::directory_repo;
 use crate::models::directory::Directory;
 use crate::services::cache_service;
 use crate::services::directory_service;
-use crate::{with_cache, with_conn, AppError, CacheDb, Db};
+use crate::{with_conn, AppError, CacheDb, Db};
 
 fn contains_exactly(expected_ids: &[i64], submitted_ids: &[i64]) -> bool {
     let expected = expected_ids
@@ -49,26 +49,26 @@ pub fn update_directory(
 }
 
 #[tauri::command]
-pub fn remove_directory(
+pub async fn remove_directory(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
     id: i64,
 ) -> Result<(), AppError> {
-    with_conn(&state, |conn| {
-        if directory_repo::has_running_pty_session(conn, id)? {
-            return Err(AppError::msg(
-                "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
-            ));
-        }
-        Ok(())
-    })?;
-    with_cache(&cache, |connection| {
-        cache_service::remove_prefix(connection, "sessions:")?;
-        cache_service::remove_prefix(connection, &format!("workspace-file-index:{id}"))?;
-        crate::db::session_search_repo::remove_directory(connection, id)?;
-        Ok(())
-    })?;
-    with_conn(&state, |conn| Ok(directory_repo::remove(conn, id)?))
+    let db = state.inner().clone();
+    let cache = cache.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::with_connection(&db, |connection| {
+            directory_service::remove_directory(connection, id)
+        })?;
+        crate::with_cache_connection(&cache, |connection| {
+            cache_service::remove_prefix(connection, "sessions:")?;
+            cache_service::remove_workspace_file_index_for_directory(connection, id)?;
+            crate::db::session_search_repo::remove_directory(connection, id)?;
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|error| AppError::msg(format!("项目移除任务失败: {error}")))?
 }
 
 #[tauri::command]

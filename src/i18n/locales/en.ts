@@ -1,4 +1,29 @@
 export const en = {
+  errors: {
+    fileNotFound: "The file could not be found.",
+    fileTooLarge: "The file exceeds the allowed size.",
+    fileConflict: "The file changed on disk. Reload it before saving.",
+    fileIdentityChanged:
+      "The project folder identity changed. Reload or save the document elsewhere.",
+    ptyOwnerMismatch:
+      "This terminal session is no longer owned by this window.",
+    ptyHandoffExpired: "The terminal handoff expired. Try again.",
+    ptyInputBackpressure:
+      "The terminal input queue is full. Try again shortly.",
+    ptyInputUnavailable:
+      "The terminal input channel is closed. Reconnect the session.",
+    ptySessionsActive:
+      "{{count}} terminal session(s) are still running. Close them before restoring a backup.",
+    backupRestoreInProgress:
+      "A backup restore is in progress. Try again after it finishes.",
+    ptySessionStarting:
+      "{{count}} terminal session(s) are starting. Try restoring again shortly.",
+    execPlanChanged: "The execution plan changed. Review and confirm it again.",
+    execBusy: "This tool already has a running task.",
+    layoutNeedsReset: "The workspace layout is invalid and needs to be reset.",
+    generic: "The operation failed.",
+    directoryInUse: "This project still has a running terminal session.",
+  },
   common: {
     back: "Back",
     browse: "Browse",
@@ -22,6 +47,8 @@ export const en = {
     unpinProject: "Unpin project",
     openProjectFolder: "Open project folder",
     removeProject: "Remove project",
+    removeProjectBlocked:
+      "Close {{files}} open file(s) and {{terminals}} running terminal(s) for this project before removing it.",
     confirmRemoveProject:
       "Remove project “{{name}}”? Files on disk will not be deleted.",
     pinProjectFailed: "Failed to update project pin: {{error}}",
@@ -37,6 +64,14 @@ export const en = {
     activeTasks_other: "{{count}} active tasks",
     managedCliSessions_one: "{{tool}}, {{count}} managed session",
     managedCliSessions_other: "{{tool}}, {{count}} managed sessions",
+  },
+  tray: { show: "Show main window", quit: "Quit" },
+  workspaceContent: {
+    unsupportedTitle: "Unsupported content type: {{kind}}",
+    unsupportedDescription:
+      "This content came from a newer version and has been kept in the workspace layout.",
+    unsupportedError: "This content could not be displayed: {{error}}",
+    closeUnsupported: "Close unsupported content",
   },
   theme: {
     current: "Theme: {{mode}}",
@@ -303,6 +338,10 @@ export const en = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Refresh version information first to verify the Grok Build installation source.",
+    grokUpdateSourceDenied:
+      "The Grok Build installation source could not be verified for managed updates. Update it through its original installation channel.",
+    hermesUpdateSourceDenied:
+      "The Hermes Agent installation or update state could not be verified. Managed updates are disabled.",
     installing: "Installing…",
     updating: "Updating…",
     refreshingVersion: "Refreshing version…",
@@ -417,6 +456,21 @@ export const en = {
     importFailed: "Import failed: {{error}}",
     diagnostics: "Diagnostics",
     exportDiagnostics: "Export diagnostics",
+    fileCasResidues: "Stale file-save temporary files",
+    fileCasResiduesDescription:
+      "Scan one registered project for Launchpad temporary files older than 24 hours. Review each path and confirm before deletion.",
+    fileCasResiduesProject: "Project",
+    fileCasResiduesSelect: "Select a project",
+    fileCasResiduesScan: "Scan",
+    fileCasResiduesScanning: "Scanning…",
+    fileCasResiduesNone: "No stale temporary files found.",
+    fileCasResiduesTruncated:
+      "The scan reached its safety limit. The results may be incomplete.",
+    fileCasResiduesSkipped: "Could not inspect {{count}} entries.",
+    fileCasResiduesDelete: "Review deletion",
+    fileCasResiduesConfirmDelete: "Delete this file",
+    fileCasResiduesScanFailed: "Scan failed: {{error}}",
+    fileCasResiduesDeleteFailed: "Deletion failed: {{error}}",
     recentLaunch: "Recent launches",
     launchHistoryRetention: "Keep history",
     launchHistoryRetentionCount: "Last {{count}} launches",
@@ -573,6 +627,8 @@ export const en = {
     reload: "Reload",
     saveConflict:
       "The file changed on disk. Your edits are preserved; reload the file before saving again.",
+    permissionsNotRestored:
+      "The file was saved, but its original permissions could not be restored. Check its access permissions.",
     projectIdentityChanged:
       "The project directory changed. This document is stale; copy its contents before closing it.",
     directoryLimitReached:

@@ -20,16 +20,19 @@ pub(crate) const MAX_GROK_SUMMARY_BYTES: u64 = 256 * 1024;
 const MAX_GROK_SEARCH_SUMMARIES_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_GROK_CWD_BYTES: u64 = 4 * 1024;
 fn grok_sessions_dir() -> Result<PathBuf> {
+    grok_sessions_dir_in(&home_dir()?)
+}
+
+fn grok_sessions_dir_in(home: &Path) -> Result<PathBuf> {
     let grok_home = std::env::var_os("GROK_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(|| home_dir().map(|home| home.join(".grok")))?;
+        .unwrap_or_else(|| home.join(".grok"));
     Ok(grok_home.join("sessions"))
 }
 
-fn search_grok_documents(directory_path: &str) -> Result<SearchSource> {
-    let sessions_dir = grok_sessions_dir()?;
+fn search_grok_documents_with_home(directory_path: &str, home: &Path) -> Result<SearchSource> {
+    let sessions_dir = grok_sessions_dir_in(home)?;
     search_grok_documents_in(
         &sessions_dir,
         directory_path,
@@ -99,10 +102,6 @@ pub(crate) fn search_grok_documents_in(
         }
     }
     Ok(source)
-}
-
-fn list_grok_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
-    list_grok_sessions_in(&grok_sessions_dir()?, directory_path)
 }
 
 pub(crate) fn list_grok_sessions_in(
@@ -313,10 +312,11 @@ pub(crate) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
+    context: crate::services::cli_adapters::AdapterContext,
 ) -> Result<SessionPage> {
     tauri::async_runtime::spawn_blocking(move || {
         page_local(
-            list_grok_sessions(&directory_path)?,
+            list_grok_sessions_in(&grok_sessions_dir_in(&context.home)?, &directory_path)?,
             cursor.as_deref(),
             limit,
         )
@@ -325,9 +325,12 @@ pub(crate) async fn list_sessions_page(
     .map_err(|error| anyhow!(error.to_string()))?
 }
 
-pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
+pub(crate) async fn search_index_source(
+    directory_path: String,
+    context: crate::services::cli_adapters::AdapterContext,
+) -> SessionSearchIndexSource {
     let result = crate::services::session_service::spawn_search_index_blocking(move || {
-        search_grok_documents(&directory_path)
+        search_grok_documents_with_home(&directory_path, &context.home)
     })
     .await;
     index_source(ToolKey::Grok, result)

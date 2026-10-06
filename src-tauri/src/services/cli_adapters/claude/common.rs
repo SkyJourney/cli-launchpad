@@ -7,7 +7,7 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
 
 const LATEST_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
 
@@ -38,15 +38,21 @@ impl CliAdapter for ClaudeAdapter {
         Ok(vec!["--resume".to_string(), session_id.to_string()])
     }
 
-    fn query_update(&self) -> LatestVersion {
-        let latest = version_service::fetch_release_text(LATEST_URL).and_then(|body| {
-            version_service::normalize_semver(body.trim().trim_matches('"'))
-                .ok_or_else(|| "Claude 官方版本响应格式无效".to_string())
-        });
-        version_service::latest_from_version_result(ToolKey::Claude, latest)
+    fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
+        crate::services::cli_adapters::blocking_latest(ToolKey::Claude, context, || {
+            let latest = version_service::fetch_release_text(LATEST_URL).and_then(|body| {
+                version_service::normalize_semver(body.trim().trim_matches('"'))
+                    .ok_or_else(|| "Claude 官方版本响应格式无效".to_string())
+            });
+            version_service::latest_from_version_result(ToolKey::Claude, latest)
+        })
     }
 
-    fn build_plan(&self, kind: InstallKind) -> anyhow::Result<InstallPlan> {
+    fn build_plan(
+        &self,
+        kind: InstallKind,
+        _context: &AdapterContext,
+    ) -> anyhow::Result<InstallPlan> {
         platform::build_plan(kind)
     }
 
@@ -63,8 +69,15 @@ impl CliAdapter for ClaudeAdapter {
         command
     }
 
-    fn should_verify_update_result(&self, plan: &InstallPlan) -> bool {
-        plan.kind == InstallKind::Update
+    fn execution_preflight(
+        &self,
+        plan: &InstallPlan,
+    ) -> std::result::Result<crate::services::cli_adapters::ExecutionPreflight, String> {
+        self.validate_execution(plan)?;
+        Ok(crate::services::cli_adapters::ExecutionPreflight {
+            message: self.execution_preflight_message(plan),
+            verify_update_result: plan.kind == InstallKind::Update,
+        })
     }
 
     fn list_sessions(
@@ -72,19 +85,22 @@ impl CliAdapter for ClaudeAdapter {
         directory_path: String,
         cursor: Option<String>,
         limit: usize,
+        context: AdapterContext,
     ) -> AdapterFuture<anyhow::Result<SessionPage>> {
         Box::pin(super::history::list_sessions_page(
             directory_path,
             cursor,
             limit,
+            context,
         ))
     }
 
     fn search_index_source(
         &self,
         directory_path: String,
+        context: AdapterContext,
     ) -> AdapterFuture<SessionSearchIndexSource> {
-        Box::pin(super::history::search_index_source(directory_path))
+        Box::pin(super::history::search_index_source(directory_path, context))
     }
 
     fn session_belongs_to_directory(
@@ -169,5 +185,60 @@ mod tests {
         assert!(environment.iter().any(|(key, value)| {
             key == "XDG_DATA_HOME" && value == home.join(".local/share").as_os_str()
         }));
+    }
+}
+
+#[cfg(test)]
+mod session_id_tests {
+    use crate::models::tool::ToolKey;
+
+    #[test]
+    fn rejects_unsafe_claude_session_ids() {
+        for session_id in [
+            "-resume-as-option".to_string(),
+            "x".repeat(257),
+            "session id".to_string(),
+            "session/child".to_string(),
+            "session\\child".to_string(),
+        ] {
+            assert!(!crate::services::cli_adapters::valid_session_id(
+                ToolKey::Claude,
+                &session_id
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn plan(kind: InstallKind) -> InstallPlan {
+        InstallPlan {
+            tool_key: ToolKey::Claude,
+            kind,
+            program: "claude".to_string(),
+            args: Vec::new(),
+            fingerprint: String::new(),
+            source: "test".to_string(),
+            preview: "claude".to_string(),
+            effects: None,
+        }
+    }
+
+    #[test]
+    fn update_result_verification_is_part_of_execution_preflight() {
+        assert!(
+            !ADAPTER
+                .execution_preflight(&plan(InstallKind::Install))
+                .unwrap()
+                .verify_update_result
+        );
+        assert!(
+            ADAPTER
+                .execution_preflight(&plan(InstallKind::Update))
+                .unwrap()
+                .verify_update_result
+        );
     }
 }

@@ -3,10 +3,11 @@ import { ArrowLeft, Terminal as TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PtySession, ToolKey } from "../lib/tauri";
+import { formatAppError } from "../lib/appErrors";
 import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
 import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
-import { getWorkspaceContentAdapter } from "./WorkspaceContentView";
+import { tryGetWorkspaceContentAdapter } from "./WorkspaceContentView";
 import {
   getPtySessionWindowStatus,
   type PtySessionWindowStatus,
@@ -146,7 +147,6 @@ export function StandalonePtyWindow({
             paneId: targetPaneId ?? sourcePaneId,
           },
           transferId: crypto.randomUUID(),
-          generation: 2,
           capabilities: {
             prepare: async () => ({ handoff: await terminal.captureHandoff() }),
             attach: async (payload) => {
@@ -202,7 +202,7 @@ export function StandalonePtyWindow({
           returnTimeoutRef.current = null;
         }
         returnAttemptRef.current += 1;
-        setError(t("pty.returnFailed", { error: String(reason) }));
+        setError(t("pty.returnFailed", { error: formatAppError(reason, t) }));
         returnInProgressRef.current = false;
         setReturning(false);
       }
@@ -390,7 +390,6 @@ export function StandalonePtyWindow({
           source: { kind: "pane", windowLabel: "main", paneId: sourcePaneId },
           target: { kind: "window", windowLabel: currentWindow.label },
           transferId: handoffToken,
-          generation: 1,
           capabilities: {
             prepare: async () => ({ handoff: { token: handoffToken } }),
             attach: async (payload) => {
@@ -445,12 +444,12 @@ export function StandalonePtyWindow({
             closeAfterTransferRef.current();
             return;
           }
-          setError(String(reason));
+          setError(formatAppError(reason, t));
           await emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
             instanceId,
             sessionId,
             windowLabel: currentWindow.label,
-            message: String(reason),
+            message: formatAppError(reason, t),
           }).catch(() => undefined);
           await currentWindow.destroy().catch(() => undefined);
         }
@@ -469,7 +468,7 @@ export function StandalonePtyWindow({
   return (
     <WorkspaceContentWindowShell
       beforeClose={
-        getWorkspaceContentAdapter("pty").lifecycle?.beforeWindowClose
+        tryGetWorkspaceContentAdapter("pty")?.lifecycle?.beforeWindowClose
       }
       onCloseRequested={handleWindowCloseRequest}
       actions={

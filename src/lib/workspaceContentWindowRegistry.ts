@@ -4,6 +4,40 @@ export interface WorkspaceContentWindowIdentity {
 
 export interface WorkspaceContentWindowRecord extends WorkspaceContentWindowIdentity {
   timer: number;
+  cleanup?: () => void;
+}
+
+/** Retains an async listener's unlisten callback even when cleanup wins the race. */
+export function retainAsyncUnlisten(
+  register: () => Promise<() => void>,
+  onError: (error: unknown) => void = (error) =>
+    console.error("Workspace content listener registration failed", error),
+): () => void {
+  let disposed = false;
+  let unlisten: (() => void) | undefined;
+
+  void Promise.resolve()
+    .then(register)
+    .then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    })
+    .catch(onError);
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    unlisten?.();
+    unlisten = undefined;
+  };
+}
+
+function cleanupRecord(record: WorkspaceContentWindowRecord): void {
+  try {
+    record.cleanup?.();
+  } catch (error) {
+    console.error("Workspace content listener cleanup failed", error);
+  }
 }
 
 /** Shared pending-window registration and timer mechanics for all content kinds. */
@@ -23,7 +57,11 @@ export function registerPendingWorkspaceContentWindow<
   const timer = globalThis.setTimeout(() => {
     if (args.pending.get(args.key) !== registered) return;
     args.pending.delete(args.key);
-    args.onTimeout(registered);
+    try {
+      args.onTimeout(registered);
+    } finally {
+      cleanupRecord(registered);
+    }
   }, args.timeoutMs);
   registered = { ...args.record, timer } as Record;
   args.pending.set(args.key, registered);
@@ -47,6 +85,7 @@ export function takePendingWorkspaceContentWindow<
   }
   pending.delete(key);
   globalThis.clearTimeout(record.timer);
+  cleanupRecord(record);
   return record;
 }
 
@@ -73,7 +112,7 @@ export function clearPendingWorkspaceContentWindows<
 /** Atomically moves an accepted pending window to the detached owner map. */
 export function promotePendingWorkspaceContentWindow<
   Pending extends WorkspaceContentWindowRecord,
-  Detached extends WorkspaceContentWindowIdentity,
+  Detached,
 >(args: {
   pending: Map<string, Pending>;
   detached: Map<string, Detached>;

@@ -42,6 +42,8 @@ export interface WorkspaceContentAdapterLabels {
   splitAndMoveDown: string;
 }
 
+export type RegisteredWorkspaceContentKind = "pty" | "file";
+
 export interface WorkspaceContentPresentationContext {
   directories: readonly { id: number; name: string }[];
   ptySlots: readonly {
@@ -69,14 +71,12 @@ export interface WorkspaceContentPresentation {
 }
 
 export interface WorkspaceContentHandoffHookContext<
-  Kind extends WorkspacePaneContentRef["kind"] =
-    WorkspacePaneContentRef["kind"],
+  Kind extends RegisteredWorkspaceContentKind = RegisteredWorkspaceContentKind,
 > {
   content: Extract<WorkspacePaneContentRef, { kind: Kind }>;
   source: WorkspaceContentOwner;
   target: WorkspaceContentOwner;
   transferId: string;
-  generation: number;
   capabilities: WorkspaceContentHandoffCapabilitiesByKind[Kind];
 }
 
@@ -104,15 +104,14 @@ export interface WorkspaceContentHandoffCapabilitiesByKind {
 }
 
 export interface WorkspaceContentPreparedHandoff<
-  Kind extends WorkspacePaneContentRef["kind"],
+  Kind extends RegisteredWorkspaceContentKind,
 > {
   transferId: string;
   payload: WorkspaceContentHandoffPayloadByKind[Kind];
 }
 
 export interface WorkspaceContentAdapterLifecycle<
-  Kind extends WorkspacePaneContentRef["kind"] =
-    WorkspacePaneContentRef["kind"],
+  Kind extends RegisteredWorkspaceContentKind = RegisteredWorkspaceContentKind,
 > {
   beforeClose?: WorkspaceContentBeforeCloseHook;
   describeDisposalImpact?: (context: {
@@ -139,11 +138,10 @@ export interface WorkspaceContentAdapterLifecycle<
 }
 
 export interface WorkspaceContentAdapter<
-  Kind extends WorkspacePaneContentRef["kind"] =
-    WorkspacePaneContentRef["kind"],
+  Kind extends RegisteredWorkspaceContentKind = RegisteredWorkspaceContentKind,
 > {
   id: string;
-  apiVersion: 1;
+  apiVersion: 2;
   kind: Kind;
   render: (context: WorkspaceContentRenderContext) => ReactNode;
   presentation: (
@@ -159,7 +157,7 @@ export interface WorkspaceContentAdapter<
 }
 
 const adaptersByKind = new Map<
-  WorkspaceContentAdapter["kind"],
+  RegisteredWorkspaceContentKind,
   WorkspaceContentAdapter<any>
 >();
 const adaptersById = new Map<string, WorkspaceContentAdapter<any>>();
@@ -172,10 +170,10 @@ function notifyRegistryChanged() {
 }
 
 export function registerWorkspaceContentAdapter<
-  Kind extends WorkspacePaneContentRef["kind"],
+  Kind extends RegisteredWorkspaceContentKind,
 >(adapter: WorkspaceContentAdapter<Kind>): () => void {
   if (!adapter.id.trim()) throw new Error("内容适配器 ID 不能为空");
-  if (adapter.apiVersion !== 1) {
+  if (adapter.apiVersion !== 2) {
     throw new Error(`不支持内容适配器 API 版本: ${adapter.apiVersion}`);
   }
   if (adaptersById.has(adapter.id)) {
@@ -205,11 +203,17 @@ export function registerWorkspaceContentAdapter<
 }
 
 export function getWorkspaceContentAdapter<
-  Kind extends WorkspaceContentAdapter["kind"],
+  Kind extends RegisteredWorkspaceContentKind,
 >(kind: Kind): WorkspaceContentAdapter<Kind> {
-  const adapter = adaptersByKind.get(kind);
+  const adapter = tryGetWorkspaceContentAdapter(kind);
   if (!adapter) throw new Error(`未注册内容适配器: ${kind}`);
   return adapter as WorkspaceContentAdapter<Kind>;
+}
+
+export function tryGetWorkspaceContentAdapter<
+  Kind extends RegisteredWorkspaceContentKind,
+>(kind: Kind): WorkspaceContentAdapter<Kind> | undefined {
+  return adaptersByKind.get(kind) as WorkspaceContentAdapter<Kind> | undefined;
 }
 
 export function presentWorkspaceContent(
@@ -217,9 +221,31 @@ export function presentWorkspaceContent(
   context: WorkspaceContentPresentationContext,
 ): WorkspaceContentPresentation {
   if (content.kind === "pty") {
-    return getWorkspaceContentAdapter("pty").presentation(content, context);
+    return (
+      tryGetWorkspaceContentAdapter("pty")?.presentation(content, context) ?? {
+        title: content.kind,
+        icon: null,
+        tooltip: content.kind,
+        closeLabelKey: "workspaceContent.closeUnsupported",
+      }
+    );
   }
-  return getWorkspaceContentAdapter("file").presentation(content, context);
+  if (content.kind === "file") {
+    return (
+      tryGetWorkspaceContentAdapter("file")?.presentation(content, context) ?? {
+        title: content.kind,
+        icon: null,
+        tooltip: content.kind,
+        closeLabelKey: "workspaceContent.closeUnsupported",
+      }
+    );
+  }
+  return {
+    title: content.originalKind,
+    icon: null,
+    tooltip: content.originalKind,
+    closeLabelKey: "workspaceContent.closeUnsupported",
+  };
 }
 
 export function workspaceContentProjectContext(
@@ -227,9 +253,22 @@ export function workspaceContentProjectContext(
   context: WorkspaceContentPresentationContext,
 ): number | null {
   if (content.kind === "pty") {
-    return getWorkspaceContentAdapter("pty").projectContextOf(content, context);
+    return (
+      tryGetWorkspaceContentAdapter("pty")?.projectContextOf(
+        content,
+        context,
+      ) ?? null
+    );
   }
-  return getWorkspaceContentAdapter("file").projectContextOf(content, context);
+  if (content.kind === "file") {
+    return (
+      tryGetWorkspaceContentAdapter("file")?.projectContextOf(
+        content,
+        context,
+      ) ?? null
+    );
+  }
+  return null;
 }
 
 export function getWorkspaceContentAdapterRevision(): number {

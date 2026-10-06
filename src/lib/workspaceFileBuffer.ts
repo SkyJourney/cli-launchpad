@@ -1,4 +1,18 @@
-import type { ProjectFileOpenResult } from "./tauri";
+import type { ProjectFileOpenResult, WorkspaceFileDocument } from "./tauri";
+
+export function workspaceFileDocumentIdentityMatches(
+  known: WorkspaceFileDocument | undefined,
+  incoming: WorkspaceFileDocument | undefined,
+): boolean {
+  return (
+    known !== undefined &&
+    incoming !== undefined &&
+    incoming.id === known.id &&
+    incoming.directoryId === known.directoryId &&
+    incoming.directoryPath === known.directoryPath &&
+    incoming.relativePath === known.relativePath
+  );
+}
 
 export interface WorkspaceFileBuffer {
   kind?: "text" | "image" | "unsupported";
@@ -92,6 +106,7 @@ export function isWorkspaceFileBufferNewer(
 export interface WorkspaceFileSaveResult {
   content: string;
   revision: string;
+  warning?: "permissionsNotRestored" | null;
 }
 
 export type WorkspaceFileSaveCommitDisposition =

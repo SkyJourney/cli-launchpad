@@ -169,6 +169,9 @@
   --color-on-primary: #f3f5f9;
   --color-running-button: #f2a23a;
   --color-on-running: #251304;
+  --color-terminal-background: #101318;
+  --color-terminal-foreground: #e6e8eb;
+  --color-terminal-selection: #54627580;
   --color-success-bg: #123624;
   --color-success-hover: #19472f;
   --color-success-border: #2f7d52;
@@ -310,7 +313,7 @@ pre,
 }
 
 .window-titlebar-macos {
-  padding-left: 82px;
+  padding-left: var(--window-chrome-traffic-light-inset);
 }
 
 .window-titlebar-leading {
@@ -1935,6 +1938,10 @@ pre,
 
 .pty-pane-tab-status.failed {
   background: var(--color-danger);
+}
+
+.pty-pane-tab-status.terminating {
+  background: var(--color-warning-accent);
 }
 
 .pty-pane-tab-title {

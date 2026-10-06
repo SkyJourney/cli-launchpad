@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getCliAdapter,
   getTerminalTitleLabel,
+  getLatestUpdateAvailability,
   isManagedUpdateAllowed,
   TOOLS,
 } from "./tools";
@@ -42,16 +43,6 @@ describe("terminal title CLI labels", () => {
 });
 
 describe("managed CLI updates", () => {
-  it("requires a verified installer source for Grok Build", () => {
-    expect(isManagedUpdateAllowed("grok", undefined)).toBe(false);
-    expect(
-      isManagedUpdateAllowed("grok", { managedUpdateAllowed: false }),
-    ).toBe(false);
-    expect(isManagedUpdateAllowed("grok", { managedUpdateAllowed: true })).toBe(
-      true,
-    );
-  });
-
   it("provides platform-appropriate installer effects", () => {
     expect(getCliAdapter("grok").installEffects?.("windows")).toBeDefined();
     expect(getCliAdapter("grok").installEffects?.("macos")).toBeDefined();
@@ -61,20 +52,24 @@ describe("managed CLI updates", () => {
     expect(getCliAdapter("hermes").installEffects?.("linux")).toBeDefined();
   });
 
-  it("keeps the existing update flow for the other CLIs", () => {
-    expect(isManagedUpdateAllowed("claude", undefined)).toBe(true);
+  it("renders update policy and availability directly from the backend DTO", () => {
+    expect(isManagedUpdateAllowed(undefined)).toBe(false);
     expect(
-      isManagedUpdateAllowed("codex", { managedUpdateAllowed: false }),
+      isManagedUpdateAllowed({ managedUpdate: { status: "allowed" } }),
     ).toBe(true);
-  });
-
-  it("requires a verified official source for Hermes updates", () => {
-    expect(isManagedUpdateAllowed("hermes", undefined)).toBe(false);
     expect(
-      isManagedUpdateAllowed("hermes", { managedUpdateAllowed: false }),
+      isManagedUpdateAllowed({
+        managedUpdate: {
+          status: "denied",
+          reasonKey: "settings.grokUpdateSourceDenied",
+        },
+      }),
     ).toBe(false);
+    expect(getLatestUpdateAvailability(undefined)).toBe("unknown");
     expect(
-      isManagedUpdateAllowed("hermes", { managedUpdateAllowed: true }),
-    ).toBe(true);
+      getLatestUpdateAvailability({
+        updateAvailability: "upToDate",
+      }),
+    ).toBe("upToDate");
   });
 });

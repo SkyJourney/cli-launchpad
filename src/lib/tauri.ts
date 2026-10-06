@@ -46,7 +46,8 @@ export interface WorkspaceLayoutDocument {
 
 export type WorkspacePaneContentRef =
   | { kind: "pty"; slotId: string }
-  | { kind: "file"; documentId: string };
+  | { kind: "file"; documentId: string }
+  | { kind: "unknown"; originalKind: string; raw: Record<string, unknown> };
 
 export interface WorkspaceFileDocument {
   id: string;
@@ -128,8 +129,26 @@ export interface ProjectDirectoryListing {
   skippedCount: number;
 }
 
+export interface ProjectFileCasResidue {
+  relativePath: string;
+  sizeBytes: number;
+  modifiedAtMs: number;
+  fileIdentity: string;
+}
+
+export interface ProjectFileCasResidueListing {
+  entries: ProjectFileCasResidue[];
+  truncated: boolean;
+  skippedCount: number;
+}
+
 export type ProjectTextFileSaveResult =
-  | { kind: "saved"; content: string; revision: string }
+  | {
+      kind: "saved";
+      content: string;
+      revision: string;
+      warning: "permissionsNotRestored" | null;
+    }
   | { kind: "conflict" };
 
 export type ProjectFileOpenResult =
@@ -282,12 +301,14 @@ export interface ExecutionTaskDetail {
 export interface LatestVersion {
   toolKey: ToolKey;
   latest: string | null;
-  updateAvailable: boolean | null;
+  updateAvailability: "available" | "upToDate" | "unknown";
   commitsBehind: number | null;
   error: string | null;
   fromCache: boolean;
-  managedUpdateAllowed: boolean;
-  managementMessage: string | null;
+  managedUpdate:
+    | { status: "allowed" }
+    | { status: "denied"; reasonKey: string }
+    | { status: "notApplicable" };
 }
 
 export type BackupReason =
@@ -406,6 +427,60 @@ export function saveProjectTextFile(
     relativePath,
     content,
     expectedRevision,
+  });
+}
+
+export function grantContentWindowFile(
+  targetLabel: string,
+  directoryId: number,
+  directoryPath: string,
+  relativePath: string,
+) {
+  return invoke<void>("grant_content_window_file", {
+    targetLabel,
+    directoryId,
+    directoryPath,
+    relativePath,
+  });
+}
+
+export function openGrantedFile() {
+  return invoke<ProjectFileOpenResult>("open_granted_file");
+}
+
+export function saveGrantedTextFile(content: string, expectedRevision: string) {
+  return invoke<ProjectTextFileSaveResult>("save_granted_text_file", {
+    content,
+    expectedRevision,
+  });
+}
+
+export function revokeContentWindowFile(targetLabel: string) {
+  return invoke<boolean>("revoke_content_window_file", { targetLabel });
+}
+
+export function listProjectFileCasResidues(
+  directoryId: number,
+  directoryPath: string,
+) {
+  return invoke<ProjectFileCasResidueListing>(
+    "list_project_file_cas_residues",
+    { directoryId, directoryPath },
+  );
+}
+
+export function removeProjectFileCasResidue(
+  directoryId: number,
+  directoryPath: string,
+  residue: ProjectFileCasResidue,
+) {
+  return invoke<void>("remove_project_file_cas_residue", {
+    directoryId,
+    directoryPath,
+    relativePath: residue.relativePath,
+    sizeBytes: residue.sizeBytes,
+    modifiedAtMs: residue.modifiedAtMs,
+    fileIdentity: residue.fileIdentity,
   });
 }
 
@@ -668,6 +743,10 @@ export function getCloseBehavior() {
 
 export function setCloseBehavior(closeBehavior: CloseBehavior) {
   return invoke<void>("set_close_behavior", { closeBehavior });
+}
+
+export function setTrayMenuLabels(labels: { show: string; quit: string }) {
+  return invoke<void>("set_tray_menu_labels", labels);
 }
 
 // Sessions

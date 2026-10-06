@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { applyRemoteAppLanguage, setAppLanguage } from "../i18n";
 import { APP_PREFERENCES_EVENT } from "../lib/appPreferences";
 import { useAppStore } from "../store/appStore";
 import { tauriMock } from "../test/tauriMock";
@@ -9,8 +10,9 @@ import { useThemeSync } from "./useThemeSync";
 const preference = { apiVersion: 1, theme: "dark", language: "ar" } as const;
 
 describe("useThemeSync", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useAppStore.getState().applyRemoteThemeMode("system");
+    await applyRemoteAppLanguage("en");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -18,6 +20,20 @@ describe("useThemeSync", () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       })),
+    });
+  });
+
+  it("updates the native tray labels when the main window language changes", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    renderHook(() => useThemeSync());
+
+    await setAppLanguage("ar");
+
+    await vi.waitFor(() => {
+      expect(tauriMock.state.invokeCalls).toContainEqual({
+        command: "set_tray_menu_labels",
+        args: { show: "إظهار النافذة الرئيسية", quit: "إنهاء" },
+      });
     });
   });
 
@@ -40,6 +56,10 @@ describe("useThemeSync", () => {
 
     await vi.waitFor(() => {
       expect(useAppStore.getState().themeMode).toBe("dark");
+      expect(useAppStore.getState().resolvedTheme).toEqual({
+        id: "dark",
+        base: "dark",
+      });
       expect(document.documentElement.dir).toBe("rtl");
     });
     expect(setItem).not.toHaveBeenCalled();
@@ -76,6 +96,10 @@ describe("useThemeSync", () => {
 
     await vi.waitFor(() => {
       expect(useAppStore.getState().themeMode).toBe("dark");
+      expect(useAppStore.getState().resolvedTheme).toEqual({
+        id: "dark",
+        base: "dark",
+      });
       expect(document.documentElement.dir).toBe("rtl");
     });
   });

@@ -120,7 +120,7 @@ describe("workspace layout persistence mapping", () => {
     });
   });
 
-  it("migrates v3 detached slot IDs into v4 PTY content references", () => {
+  it("migrates v3 detached slot IDs into v5 PTY content references", () => {
     const v3 = JSON.parse(JSON.stringify(createDocument())) as Record<
       string,
       unknown
@@ -142,11 +142,43 @@ describe("workspace layout persistence mapping", () => {
 
     const migrated = migrateWorkspaceLayoutDocument(v3);
 
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.detachedContents).toEqual([
       { kind: "pty", slotId: "slot-1" },
     ]);
     expect(migrated).not.toHaveProperty("detachedSlotIds");
+  });
+
+  it("migrates v4 layouts and preserves unknown content payloads", () => {
+    const v4 = JSON.parse(JSON.stringify(createDocument())) as Record<
+      string,
+      unknown
+    >;
+    v4.schemaVersion = 4;
+    const tree = v4.tree as {
+      first: { contents: unknown[]; activeContent: unknown };
+    };
+    const unknownContent = {
+      kind: "unknown",
+      originalKind: "editor",
+      raw: {
+        kind: "editor",
+        documentId: "doc-1",
+        options: { wrap: true },
+      },
+    };
+    tree.first.contents.push(unknownContent);
+
+    const migrated = migrateWorkspaceLayoutDocument(v4);
+    const roundTripped = migrateWorkspaceLayoutDocument(migrated);
+
+    expect(migrated.schemaVersion).toBe(5);
+    expect(roundTripped.tree).toEqual(migrated.tree);
+    expect(roundTripped.tree).toMatchObject({
+      first: {
+        contents: expect.arrayContaining([unknownContent]),
+      },
+    });
   });
 
   it("rejects detached references that are also owned by a pane", () => {

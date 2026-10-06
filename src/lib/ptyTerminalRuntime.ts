@@ -6,6 +6,7 @@ import {
   type PtyFrontendStage,
   type PtySession,
 } from "./tauri";
+import { getAppErrorMessage } from "./appErrors";
 
 const MAX_PTY_COLUMNS = 500;
 const MAX_PTY_ROWS = 300;
@@ -30,7 +31,7 @@ export function fitTerminalToPtyBounds(fit: FitAddon, terminal: Terminal) {
 }
 
 export function isClipboardTextUnavailable(reason: unknown): boolean {
-  const message = String(reason).toLowerCase();
+  const message = getAppErrorMessage(reason).toLowerCase();
   return (
     message.includes("clipboard") &&
     (message.includes("empty") ||
@@ -79,7 +80,7 @@ export function handlePtyEvent(
     } catch (reason) {
       if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
       reportFrontendStage(event.sessionId, "outputDecodeFailed");
-      setError(String(reason));
+      setError(getAppErrorMessage(reason));
       return;
     }
 
@@ -97,12 +98,12 @@ export function handlePtyEvent(
         }
         void acknowledgePtyOutput(event.sessionId, event.sequence)
           .then(() => onOutputProcessed(event.sequence))
-          .catch((reason) => setError(String(reason)));
+          .catch((reason) => setError(getAppErrorMessage(reason)));
       });
     } catch (reason) {
       if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
       reportFrontendStage(event.sessionId, "xtermWriteFailed");
-      setError(String(reason));
+      setError(getAppErrorMessage(reason));
     }
   } else if (event.type === "exited") {
     onExited(event.sessionId);

@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -102,9 +100,21 @@ pub async fn list_sessions(
     let adapter = crate::services::cli_adapters::get(tool_key);
     let directory_path = directory_path.to_string();
     let cursor = cursor.map(str::to_string);
-    tokio::spawn(async move { adapter.list_sessions(directory_path, cursor, limit).await })
+    let context = crate::services::cli_adapters::context_for_tool(
+        tool_key,
+        std::time::Duration::from_secs(30),
+    )?;
+    let budget = context.budget;
+    tokio::spawn(async move {
+        tokio::time::timeout(
+            budget,
+            adapter.list_sessions(directory_path, cursor, limit, context),
+        )
         .await
-        .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
+        .map_err(|_| anyhow!("{} 会话读取超时", tool_key.as_str()))?
+    })
+    .await
+    .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
 }
 
 #[derive(Debug, Clone)]
@@ -125,11 +135,14 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
     for adapter in crate::services::cli_adapters::all() {
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
+        let context =
+            crate::services::cli_adapters::context_for_tool(tool_key, SEARCH_INDEX_ADAPTER_BUDGET)?;
+        let budget = context.budget;
         let task = tasks.spawn(async move {
             let source = bounded_search_index_source(
                 tool_key,
-                adapter.search_index_source(path),
-                SEARCH_INDEX_ADAPTER_BUDGET,
+                adapter.search_index_source(path, context),
+                budget,
             )
             .await;
             (tool_key, source)
@@ -271,93 +284,6 @@ fn normalize_search_query(query: &str) -> Result<String> {
         ));
     }
     Ok(query.to_lowercase())
-}
-
-#[cfg(test)]
-fn finalize_search_documents(
-    mut documents: Vec<SearchDocument>,
-    incomplete_tools: &mut Vec<ToolKey>,
-    max_results: usize,
-) -> Vec<SessionInfo> {
-    documents.sort_by(|left, right| {
-        right
-            .session
-            .last_active_ms
-            .cmp(&left.session.last_active_ms)
-            .then_with(|| {
-                left.session
-                    .tool_key
-                    .as_str()
-                    .cmp(right.session.tool_key.as_str())
-            })
-            .then_with(|| left.session.session_id.cmp(&right.session.session_id))
-    });
-    let mut seen = HashSet::new();
-    documents.retain(|document| {
-        seen.insert((
-            document.session.tool_key,
-            document.session.session_id.clone(),
-        ))
-    });
-
-    if documents.len() > max_results {
-        for document in documents.iter().skip(max_results) {
-            let tool_key = document.session.tool_key;
-            if !incomplete_tools.contains(&tool_key) {
-                incomplete_tools.push(tool_key);
-            }
-        }
-        documents.truncate(max_results);
-    }
-
-    documents
-        .into_iter()
-        .map(|document| document.session)
-        .collect()
-}
-
-#[cfg(test)]
-fn append_search_source(
-    tool_key: ToolKey,
-    source: Result<SearchSource>,
-    aliases: &HashMap<ToolKey, HashMap<String, String>>,
-    query: &str,
-    matches: &mut Vec<SearchDocument>,
-    incomplete_tools: &mut Vec<ToolKey>,
-) {
-    let source = match source {
-        Ok(source) => source,
-        Err(error) => {
-            log::warn!("{} 会话 metadata 搜索失败：{error}", tool_key.as_str());
-            incomplete_tools.push(tool_key);
-            return;
-        }
-    };
-    if source.incomplete {
-        incomplete_tools.push(tool_key);
-    }
-    let query_aliases = aliases.get(&tool_key);
-    for mut document in source.documents {
-        if document.session.tool_key != tool_key {
-            continue;
-        }
-        document.session.alias = query_aliases
-            .and_then(|tool_aliases| tool_aliases.get(&document.session.session_id))
-            .cloned();
-        let alias_matches = document
-            .session
-            .alias
-            .as_deref()
-            .is_some_and(|alias| alias.to_lowercase().contains(query));
-        if alias_matches
-            || document
-                .fields
-                .iter()
-                .any(|field| field.to_lowercase().contains(query))
-        {
-            matches.push(document);
-        }
-    }
 }
 
 pub fn apply_aliases(page: &mut SessionPage, aliases: &HashMap<String, String>) {
@@ -564,38 +490,6 @@ mod tests {
         );
         assert!(normalize_search_query(" \t ").is_err());
         assert!(normalize_search_query(&"字".repeat(MAX_SEARCH_QUERY_CHARS + 1)).is_err());
-    }
-
-    #[test]
-    fn search_result_snapshot_sorts_deduplicates_and_marks_truncated_tools() {
-        let document = |tool_key, session_id: &str, last_active_ms| SearchDocument {
-            session: SessionInfo {
-                tool_key,
-                session_id: session_id.to_string(),
-                title: session_id.to_string(),
-                alias: None,
-                last_active_ms,
-            },
-            fields: Vec::new(),
-        };
-        let mut incomplete_tools = Vec::new();
-
-        let items = finalize_search_documents(
-            vec![
-                document(ToolKey::Claude, "claude-old", Some(10)),
-                document(ToolKey::Codex, "codex-new", Some(30)),
-                document(ToolKey::Claude, "claude-old", Some(20)),
-                document(ToolKey::Grok, "grok-middle", Some(20)),
-            ],
-            &mut incomplete_tools,
-            2,
-        );
-
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].session_id, "codex-new");
-        assert_eq!(items[1].session_id, "claude-old");
-        assert_eq!(items[1].last_active_ms, Some(20));
-        assert_eq!(incomplete_tools, vec![ToolKey::Grok]);
     }
 
     #[test]
@@ -838,46 +732,6 @@ mod tests {
             vec!["visible title", "visible summary", "private preview"]
         );
         assert_eq!(source.documents[0].session.title, "visible title");
-    }
-
-    #[test]
-    fn aliases_are_searchable_but_orphan_aliases_are_not_returned() {
-        let source = SearchSource {
-            documents: vec![SearchDocument {
-                session: SessionInfo {
-                    tool_key: ToolKey::Grok,
-                    session_id: "present".to_string(),
-                    title: "original title".to_string(),
-                    alias: None,
-                    last_active_ms: Some(10),
-                },
-                fields: vec!["safe summary".to_string()],
-            }],
-            incomplete: false,
-        };
-        let aliases = HashMap::from([(
-            ToolKey::Grok,
-            HashMap::from([
-                ("present".to_string(), "My Custom Alias".to_string()),
-                ("orphan".to_string(), "orphan alias".to_string()),
-            ]),
-        )]);
-        let mut matches = Vec::new();
-        let mut incomplete_tools = Vec::new();
-
-        append_search_source(
-            ToolKey::Grok,
-            Ok(source),
-            &aliases,
-            "my custom alias",
-            &mut matches,
-            &mut incomplete_tools,
-        );
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].session.session_id, "present");
-        assert_eq!(matches[0].session.alias.as_deref(), Some("My Custom Alias"));
-        assert!(incomplete_tools.is_empty());
     }
 
     #[test]

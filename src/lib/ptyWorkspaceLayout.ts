@@ -1,6 +1,7 @@
 export type SplitDirection = "horizontal" | "vertical";
 
 import type { WorkspacePaneContentRef } from "./tauri";
+import { workspaceContentKey } from "./workspaceContentKey";
 
 export interface WorkspacePane {
   kind: "pane";
@@ -672,13 +673,8 @@ export function sameWorkspaceContent(
   left: WorkspacePaneContentRef | null | undefined,
   right: WorkspacePaneContentRef | null | undefined,
 ): boolean {
-  if (!left || !right || left.kind !== right.kind) return left === right;
-  return left.kind === "pty"
-    ? left.slotId ===
-        (right as Extract<WorkspacePaneContentRef, { kind: "pty" }>).slotId
-    : left.documentId ===
-        (right as Extract<WorkspacePaneContentRef, { kind: "file" }>)
-          .documentId;
+  if (!left || !right) return left === right;
+  return workspaceContentKey(left) === workspaceContentKey(right);
 }
 
 function updateWorkspacePane(

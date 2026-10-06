@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use uuid::Uuid;
 
 use super::tool::ToolKey;
 
-pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 4;
+pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 5;
 pub const MAX_WORKSPACE_LAYOUT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_WORKSPACE_LAYOUT_DEPTH: usize = 32;
 pub const MAX_WORKSPACE_LAYOUT_NODES: usize = 511;
@@ -59,7 +59,9 @@ impl WorkspaceLayoutDocument {
             .get("schemaVersion")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| WorkspaceLayoutError::InvalidJson("缺少 schemaVersion".into()))?;
-        if source_version == 1 || source_version == 2 {
+        if source_version == 4 {
+            value["schemaVersion"] = serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION);
+        } else if source_version == 1 || source_version == 2 {
             migrate_legacy_content_refs(&mut value, source_version);
             migrate_detached_slot_ids(&mut value);
         } else if source_version == 3 {
@@ -179,6 +181,9 @@ impl WorkspaceLayoutDocument {
                         return invalid("文件文档同时出现在 pane 和独立窗口");
                     }
                 }
+                WorkspacePaneContentRef::Unknown { original_kind, raw } => {
+                    validate_unknown_content_ref(original_kind, raw)?;
+                }
             }
         }
 
@@ -225,16 +230,100 @@ pub enum WorkspaceLayoutNode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspacePaneContentRef {
+    Pty {
+        slot_id: String,
+    },
+    File {
+        document_id: String,
+    },
+    Unknown {
+        original_kind: String,
+        raw: serde_json::Value,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum WorkspacePaneContentRef {
+enum KnownWorkspacePaneContentRef {
     Pty { slot_id: String },
     File { document_id: String },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UnknownWorkspacePaneContentEnvelope {
+    kind: String,
+    original_kind: String,
+    raw: serde_json::Value,
+}
+
+impl Serialize for WorkspacePaneContentRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Pty { slot_id } => KnownWorkspacePaneContentRef::Pty {
+                slot_id: slot_id.clone(),
+            }
+            .serialize(serializer),
+            Self::File { document_id } => KnownWorkspacePaneContentRef::File {
+                document_id: document_id.clone(),
+            }
+            .serialize(serializer),
+            Self::Unknown { original_kind, raw } => UnknownWorkspacePaneContentEnvelope {
+                kind: "unknown".to_string(),
+                original_kind: original_kind.clone(),
+                raw: raw.clone(),
+            }
+            .serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkspacePaneContentRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let Some(kind) = value.get("kind").and_then(serde_json::Value::as_str) else {
+            return Err(D::Error::custom("content reference kind must be a string"));
+        };
+        match kind {
+            "pty" => serde_json::from_value::<KnownWorkspacePaneContentRef>(value)
+                .map(|content| match content {
+                    KnownWorkspacePaneContentRef::Pty { slot_id } => Self::Pty { slot_id },
+                    KnownWorkspacePaneContentRef::File { .. } => unreachable!(),
+                })
+                .map_err(D::Error::custom),
+            "file" => serde_json::from_value::<KnownWorkspacePaneContentRef>(value)
+                .map(|content| match content {
+                    KnownWorkspacePaneContentRef::File { document_id } => {
+                        Self::File { document_id }
+                    }
+                    KnownWorkspacePaneContentRef::Pty { .. } => unreachable!(),
+                })
+                .map_err(D::Error::custom),
+            "unknown" => serde_json::from_value::<UnknownWorkspacePaneContentEnvelope>(value)
+                .map(|envelope| Self::Unknown {
+                    original_kind: envelope.original_kind,
+                    raw: envelope.raw,
+                })
+                .map_err(D::Error::custom),
+            other => Ok(Self::Unknown {
+                original_kind: other.to_string(),
+                raw: value,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -417,6 +506,9 @@ fn validate_node<'a>(
                         {
                             return invalid("文件文档在多个 pane 或内容项中重复出现");
                         }
+                    }
+                    WorkspacePaneContentRef::Unknown { original_kind, raw } => {
+                        validate_unknown_content_ref(original_kind, raw)?;
                     }
                 }
             }
@@ -622,6 +714,20 @@ fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), Worksp
     Ok(())
 }
 
+fn validate_unknown_content_ref(
+    original_kind: &str,
+    raw: &serde_json::Value,
+) -> Result<(), WorkspaceLayoutError> {
+    validate_text(original_kind, MAX_ID_CHARS, "未知内容类型")?;
+    if matches!(original_kind, "pty" | "file" | "unknown")
+        || !raw.is_object()
+        || raw.get("kind").and_then(serde_json::Value::as_str) != Some(original_kind)
+    {
+        return invalid("未知内容引用的原始数据无效");
+    }
+    Ok(())
+}
+
 fn validate_uuid(value: &str, label: &str) -> Result<(), WorkspaceLayoutError> {
     if value.len() > MAX_ID_CHARS || Uuid::parse_str(value).is_err() {
         return invalid_owned(format!("{label} 无效"));
@@ -764,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_layout_migrates_v3_detached_slots_to_v4_content_refs() {
+    fn workspace_layout_migrates_v3_detached_slots_to_v5_content_refs() {
         let mut document = valid_document();
         document.tree = WorkspaceLayoutNode::Pane {
             id: "workspace-root".to_string(),
@@ -781,11 +887,86 @@ mod tests {
 
         let migrated = WorkspaceLayoutDocument::from_json(&json).expect("migrate v3 layout");
 
-        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.schema_version, 5);
         assert_eq!(
             migrated.detached_contents,
             vec![WorkspacePaneContentRef::Pty { slot_id }]
         );
+    }
+
+    #[test]
+    fn workspace_layout_migrates_v4_and_preserves_unknown_content_payloads() {
+        let mut document = valid_document();
+        document.schema_version = 4;
+        let unknown_raw = serde_json::json!({
+            "kind": "markdownPreview",
+            "previewId": "preview-1",
+            "content": { "source": "README.md", "enabled": true }
+        });
+        let mut legacy = serde_json::to_value(&document).expect("serialize v4 layout");
+        legacy["schemaVersion"] = serde_json::json!(4);
+        legacy["tree"]["contents"]
+            .as_array_mut()
+            .expect("pane contents")
+            .push(unknown_raw.clone());
+        let json = serde_json::to_string(&legacy).expect("encode v4 layout");
+
+        let migrated = WorkspaceLayoutDocument::from_json(&json).expect("migrate v4 layout");
+        assert_eq!(migrated.schema_version, 5);
+        let WorkspaceLayoutNode::Pane { contents, .. } = &migrated.tree else {
+            panic!("expected migrated root pane");
+        };
+        assert!(contents.contains(&WorkspacePaneContentRef::Unknown {
+            original_kind: "markdownPreview".to_string(),
+            raw: unknown_raw.clone(),
+        }));
+
+        let saved = migrated.to_json().expect("serialize migrated layout");
+        let restored = WorkspaceLayoutDocument::from_json(&saved).expect("read saved layout");
+        let WorkspaceLayoutNode::Pane { contents, .. } = restored.tree else {
+            panic!("expected restored root pane");
+        };
+        assert!(contents.contains(&WorkspacePaneContentRef::Unknown {
+            original_kind: "markdownPreview".to_string(),
+            raw: unknown_raw,
+        }));
+    }
+
+    #[test]
+    fn workspace_layout_round_trips_a_future_content_kind_as_raw_json() {
+        let document = valid_document();
+        let future_content = serde_json::json!({
+            "kind": "markdownPreview",
+            "previewId": "preview-1",
+            "content": { "source": "README.md", "enabled": true }
+        });
+        let mut future_layout = serde_json::to_value(&document).expect("serialize layout");
+        future_layout["tree"]["contents"]
+            .as_array_mut()
+            .expect("pane contents")
+            .push(future_content.clone());
+        let future_json = serde_json::to_string(&future_layout).expect("encode future layout");
+
+        let restored =
+            WorkspaceLayoutDocument::from_json(&future_json).expect("read future content kind");
+        let WorkspaceLayoutNode::Pane { contents, .. } = &restored.tree else {
+            panic!("expected root pane");
+        };
+        assert!(contents.contains(&WorkspacePaneContentRef::Unknown {
+            original_kind: "markdownPreview".to_string(),
+            raw: future_content.clone(),
+        }));
+
+        let saved = restored.to_json().expect("save layout with future content");
+        let restored_again =
+            WorkspaceLayoutDocument::from_json(&saved).expect("read saved future content");
+        let WorkspaceLayoutNode::Pane { contents, .. } = restored_again.tree else {
+            panic!("expected restored root pane");
+        };
+        assert!(contents.contains(&WorkspacePaneContentRef::Unknown {
+            original_kind: "markdownPreview".to_string(),
+            raw: future_content,
+        }));
     }
 
     #[test]

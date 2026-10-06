@@ -1,1 +1,4 @@
-["pty", "file"]
+{
+  "adapterApiVersion": 2,
+  "kinds": ["pty", "file"]
+}

@@ -5,6 +5,35 @@ type LocaleShape<T> = {
 };
 
 export const de = {
+  errors: {
+    fileNotFound: "Die Datei wurde nicht gefunden.",
+    fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
+    fileConflict:
+      "Die Datei auf dem Datenträger wurde geändert. Lade sie vor dem Speichern neu.",
+    fileIdentityChanged:
+      "Die Identität des Projektordners hat sich geändert. Lade das Dokument neu oder speichere es an einem anderen Ort.",
+    ptyOwnerMismatch:
+      "Diese Terminal-Sitzung gehört nicht mehr zu diesem Fenster.",
+    ptyHandoffExpired:
+      "Die Übergabe des Terminals ist abgelaufen. Versuche es erneut.",
+    ptyInputBackpressure:
+      "Die Terminal-Eingabewarteschlange ist voll. Versuche es gleich erneut.",
+    ptyInputUnavailable:
+      "Der Terminal-Eingabekanal ist geschlossen. Verbinde die Sitzung erneut.",
+    ptySessionsActive:
+      "{{count}} Terminal-Sitzung(en) laufen noch. Schließe sie vor dem Wiederherstellen eines Backups.",
+    backupRestoreInProgress:
+      "Eine Backup-Wiederherstellung läuft. Versuche es danach erneut.",
+    ptySessionStarting:
+      "{{count}} Terminal-Sitzung(en) starten gerade. Versuche die Wiederherstellung später erneut.",
+    execPlanChanged:
+      "Der Ausführungsplan hat sich geändert. Prüfe und bestätige ihn erneut.",
+    execBusy: "Für dieses Tool läuft bereits eine Aufgabe.",
+    layoutNeedsReset:
+      "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
+    generic: "Der Vorgang ist fehlgeschlagen.",
+    directoryInUse: "Für dieses Projekt läuft noch eine Terminal-Sitzung.",
+  },
   common: {
     back: "Zurück",
     browse: "Durchsuchen",
@@ -28,6 +57,8 @@ export const de = {
     unpinProject: "Projekt lösen",
     openProjectFolder: "Projektordner öffnen",
     removeProject: "Projekt entfernen",
+    removeProjectBlocked:
+      "Schließe vor dem Entfernen {{files}} geöffnete Datei(en) und {{terminals}} laufende Terminal(s) dieses Projekts.",
     confirmRemoveProject:
       "Projekt „{{name}}“ entfernen? Dateien auf dem Datenträger werden nicht gelöscht.",
     pinProjectFailed: "Projekt konnte nicht angeheftet werden: {{error}}",
@@ -45,6 +76,14 @@ export const de = {
     activeTasks_other: "{{count}} aktive Aufgaben",
     managedCliSessions_one: "{{tool}}, {{count}} verwaltete Sitzung",
     managedCliSessions_other: "{{tool}}, {{count}} verwaltete Sitzungen",
+  },
+  tray: { show: "Hauptfenster anzeigen", quit: "Beenden" },
+  workspaceContent: {
+    unsupportedTitle: "Nicht unterstützter Inhaltstyp: {{kind}}",
+    unsupportedDescription:
+      "Dieser Inhalt stammt aus einer neueren Version und bleibt im Arbeitsbereich erhalten.",
+    unsupportedError: "Dieser Inhalt konnte nicht angezeigt werden: {{error}}",
+    closeUnsupported: "Nicht unterstützten Inhalt schließen",
   },
   theme: {
     current: "Design: {{mode}}",
@@ -322,6 +361,10 @@ export const de = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Aktualisiere zuerst die Versionsinformationen, um die Installationsquelle von Grok Build zu überprüfen.",
+    grokUpdateSourceDenied:
+      "Die Installationsquelle von Grok Build konnte für verwaltete Updates nicht bestätigt werden. Aktualisiere das Programm über den ursprünglichen Installationsweg.",
+    hermesUpdateSourceDenied:
+      "Die Hermes-Agent-Installation oder der Update-Status konnte nicht bestätigt werden. Verwaltete Updates sind deaktiviert.",
     installing: "Wird installiert…",
     updating: "Wird aktualisiert…",
     refreshingVersion: "Version wird aktualisiert…",
@@ -437,6 +480,21 @@ export const de = {
     importFailed: "Import fehlgeschlagen: {{error}}",
     diagnostics: "Diagnose",
     exportDiagnostics: "Diagnosebericht exportieren",
+    fileCasResidues: "Veraltete temporäre Dateien",
+    fileCasResiduesDescription:
+      "Durchsucht ein registriertes Projekt nach Launchpad-Temporärdateien, die älter als 24 Stunden sind. Prüfen Sie jeden Pfad und bestätigen Sie das Löschen einzeln.",
+    fileCasResiduesProject: "Projekt",
+    fileCasResiduesSelect: "Projekt auswählen",
+    fileCasResiduesScan: "Durchsuchen",
+    fileCasResiduesScanning: "Wird durchsucht…",
+    fileCasResiduesNone: "Keine veralteten temporären Dateien gefunden.",
+    fileCasResiduesTruncated:
+      "Das sichere Suchlimit wurde erreicht. Die Ergebnisse sind möglicherweise unvollständig.",
+    fileCasResiduesSkipped: "{{count}} Einträge konnten nicht geprüft werden.",
+    fileCasResiduesDelete: "Löschen prüfen",
+    fileCasResiduesConfirmDelete: "Diese Datei löschen",
+    fileCasResiduesScanFailed: "Suche fehlgeschlagen: {{error}}",
+    fileCasResiduesDeleteFailed: "Löschen fehlgeschlagen: {{error}}",
     recentLaunch: "Letzte Starts",
     launchHistoryRetention: "Verlauf aufbewahren",
     launchHistoryRetentionCount: "Letzte {{count}} Starts",
@@ -600,6 +658,8 @@ export const de = {
     reload: "Neu laden",
     saveConflict:
       "Die Datei auf dem Datenträger wurde geändert. Deine Änderungen bleiben erhalten. Lade die Datei vor dem erneuten Speichern neu.",
+    permissionsNotRestored:
+      "Die Datei wurde gespeichert, aber die ursprünglichen Berechtigungen konnten nicht wiederhergestellt werden. Prüfe die Zugriffsrechte.",
     directoryLimitReached:
       "Zu viele Einträge. Die ersten 5.000 werden angezeigt.",
     directoryEntriesSkipped:

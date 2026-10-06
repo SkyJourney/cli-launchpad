@@ -63,6 +63,48 @@ describe("executeWorkspaceCommand", () => {
     });
   });
 
+  it("keeps unknown content in place when move or detach is requested", () => {
+    const unknown = {
+      kind: "unknown",
+      originalKind: "markdownPreview",
+      raw: { kind: "markdownPreview", source: "README.md" },
+    } as const;
+    const tree: WorkspaceNode = {
+      kind: "pane",
+      id: "pane-1",
+      paneNumber: 1,
+      contents: [unknown],
+      activeContent: unknown,
+    };
+
+    expect(
+      executeWorkspaceCommand(tree, {
+        type: "move",
+        ref: unknown,
+        toPaneId: "pane-2",
+      }),
+    ).toBe(tree);
+    expect(
+      executeWorkspaceCommand(tree, { type: "detach", ref: unknown }),
+    ).toBe(tree);
+    expect(
+      executeWorkspaceCommand(tree, {
+        type: "split",
+        ref: unknown,
+        toPaneId: "pane-2",
+        direction: "horizontal",
+        splitId: "split-1",
+      }),
+    ).toBe(tree);
+    expect(
+      executeWorkspaceCommand(tree, {
+        type: "return",
+        ref: unknown,
+        toPaneId: "pane-1",
+      }),
+    ).toBe(tree);
+  });
+
   it("closes mixed content and returns detached content to one pane", () => {
     const tree = treeWithTwoPanes();
     const detached = executeWorkspaceCommand(tree, {

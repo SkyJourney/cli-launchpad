@@ -97,17 +97,21 @@ export function useExecutionTaskEvents() {
             void queryClient.invalidateQueries({
               queryKey: qk.executionTask(task.id),
             });
-            const refreshes: Promise<unknown>[] = [
-              refreshCliStatusForTool(queryClient, task.toolKey),
-            ];
+            const refreshStatus = refreshCliStatusForTool(
+              queryClient,
+              task.toolKey,
+            );
+            const refreshes: Promise<unknown>[] = [refreshStatus];
             if (
               getCliAdapter(task.toolKey).refreshLatestAfterExecution(task.kind)
             ) {
               refreshes.push(
-                queryClient.fetchQuery({
-                  queryKey: qk.latestVersion(task.toolKey),
-                  queryFn: () => fetchLatestVersion(task.toolKey, true),
-                }),
+                refreshStatus.then(() =>
+                  queryClient.fetchQuery({
+                    queryKey: qk.latestVersion(task.toolKey),
+                    queryFn: () => fetchLatestVersion(task.toolKey, true),
+                  }),
+                ),
               );
             }
             void Promise.all(refreshes)

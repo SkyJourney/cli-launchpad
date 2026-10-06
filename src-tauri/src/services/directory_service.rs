@@ -2,6 +2,21 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::{db::directory_repo, AppError};
+
+pub fn remove_directory(connection: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
+    let transaction = connection.unchecked_transaction()?;
+    if directory_repo::has_running_pty_session(&transaction, id)? {
+        return Err(AppError::coded(
+            "directory.in_use",
+            "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
+        ));
+    }
+    directory_repo::remove(&transaction, id)?;
+    transaction.commit()?;
+    Ok(())
+}
+
 pub fn validate_path(path: &str) -> Result<()> {
     normalized_existing_path(path).map(|_| ())
 }
@@ -40,6 +55,67 @@ fn path_for_storage(path: &Path) -> String {
 #[cfg(not(windows))]
 fn path_for_storage(path: &Path) -> String {
     path.display().to_string()
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+    use crate::db::{connection, directory_repo, pty_session_repo};
+    use crate::models::tool::ToolKey;
+    use tempfile::tempdir;
+
+    #[test]
+    fn removal_refuses_a_running_session_and_preserves_the_directory() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let directory = tempdir().unwrap();
+        let saved = directory_repo::add(
+            &connection,
+            "demo",
+            directory.path().to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "running-session",
+            saved.id,
+            ToolKey::Claude,
+            directory.path().to_str().unwrap(),
+            1,
+        )
+        .unwrap();
+
+        let error = remove_directory(&connection, saved.id).unwrap_err();
+
+        assert_eq!(
+            serde_json::to_value(error).unwrap()["code"],
+            "directory.in_use"
+        );
+        assert!(directory_repo::get(&connection, saved.id)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn removal_deletes_an_idle_directory() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let directory = tempdir().unwrap();
+        let saved = directory_repo::add(
+            &connection,
+            "demo",
+            directory.path().to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+
+        remove_directory(&connection, saved.id).unwrap();
+
+        assert!(directory_repo::get(&connection, saved.id)
+            .unwrap()
+            .is_none());
+    }
 }
 
 #[cfg(any(windows, test))]

@@ -5,6 +5,32 @@ type LocaleShape<T> = {
 };
 
 export const ru = {
+  errors: {
+    fileNotFound: "Файл не найден.",
+    fileTooLarge: "Размер файла превышает допустимый.",
+    fileConflict:
+      "Файл на диске изменился. Перезагрузите его перед сохранением.",
+    fileIdentityChanged:
+      "Идентификатор папки проекта изменился. Перезагрузите документ или сохраните его в другом месте.",
+    ptyOwnerMismatch: "Этот сеанс терминала больше не принадлежит этому окну.",
+    ptyHandoffExpired: "Время передачи терминала истекло. Повторите попытку.",
+    ptyInputBackpressure:
+      "Очередь ввода терминала заполнена. Повторите попытку чуть позже.",
+    ptyInputUnavailable:
+      "Канал ввода терминала закрыт. Подключите сеанс повторно.",
+    ptySessionsActive:
+      "Еще выполняется {{count}} сеанс(а) терминала. Закройте их перед восстановлением резервной копии.",
+    backupRestoreInProgress:
+      "Выполняется восстановление резервной копии. Повторите попытку после его завершения.",
+    ptySessionStarting:
+      "Запускается {{count}} сеанс(а) терминала. Повторите восстановление чуть позже.",
+    execPlanChanged:
+      "План выполнения изменился. Проверьте и подтвердите его снова.",
+    execBusy: "Для этого инструмента уже выполняется задача.",
+    layoutNeedsReset: "Макет рабочей области недействителен и требует сброса.",
+    generic: "Не удалось выполнить операцию.",
+    directoryInUse: "Для этого проекта все еще запущен сеанс терминала.",
+  },
   common: {
     back: "Назад",
     browse: "Обзор",
@@ -28,6 +54,8 @@ export const ru = {
     unpinProject: "Открепить проект",
     openProjectFolder: "Открыть папку проекта",
     removeProject: "Удалить проект",
+    removeProjectBlocked:
+      "Перед удалением проекта закройте открытые файлы ({{files}}) и работающие терминалы ({{terminals}}).",
     confirmRemoveProject:
       "Удалить проект «{{name}}»? Файлы на диске не будут удалены.",
     pinProjectFailed: "Не удалось закрепить проект: {{error}}",
@@ -43,6 +71,14 @@ export const ru = {
     activeTasks_other: "Активных задач: {{count}}",
     managedCliSessions_one: "{{tool}}, управляемая сессия: {{count}}",
     managedCliSessions_other: "{{tool}}, управляемых сессий: {{count}}",
+  },
+  tray: { show: "Показать главное окно", quit: "Выход" },
+  workspaceContent: {
+    unsupportedTitle: "Неподдерживаемый тип содержимого: {{kind}}",
+    unsupportedDescription:
+      "Это содержимое создано в более новой версии и сохранено в макете рабочей области.",
+    unsupportedError: "Не удалось отобразить содержимое: {{error}}",
+    closeUnsupported: "Закрыть неподдерживаемое содержимое",
   },
   theme: {
     current: "Тема: {{mode}}",
@@ -313,6 +349,10 @@ export const ru = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Сначала обновите сведения о версии, чтобы проверить источник установки Grok Build.",
+    grokUpdateSourceDenied:
+      "Не удалось подтвердить источник установки Grok Build для управляемого обновления. Обновите его через исходный канал установки.",
+    hermesUpdateSourceDenied:
+      "Не удалось подтвердить установку или состояние обновления Hermes Agent. Управляемые обновления отключены.",
     installing: "Установка…",
     updating: "Обновление…",
     refreshingVersion: "Обновление версии…",
@@ -429,6 +469,21 @@ export const ru = {
     importFailed: "Не удалось импортировать: {{error}}",
     diagnostics: "Диагностика",
     exportDiagnostics: "Экспортировать отчёт диагностики",
+    fileCasResidues: "Устаревшие временные файлы",
+    fileCasResiduesDescription:
+      "Проверьте один зарегистрированный проект на наличие временных файлов Launchpad старше 24 часов. Просмотрите каждый путь и отдельно подтвердите удаление.",
+    fileCasResiduesProject: "Проект",
+    fileCasResiduesSelect: "Выберите проект",
+    fileCasResiduesScan: "Проверить",
+    fileCasResiduesScanning: "Проверка…",
+    fileCasResiduesNone: "Устаревшие временные файлы не найдены.",
+    fileCasResiduesTruncated:
+      "Достигнут безопасный предел проверки. Результаты могут быть неполными.",
+    fileCasResiduesSkipped: "Не удалось проверить элементы: {{count}}.",
+    fileCasResiduesDelete: "Проверить удаление",
+    fileCasResiduesConfirmDelete: "Удалить этот файл",
+    fileCasResiduesScanFailed: "Ошибка проверки: {{error}}",
+    fileCasResiduesDeleteFailed: "Ошибка удаления: {{error}}",
     recentLaunch: "Недавние запуски",
     launchHistoryRetention: "Хранить историю",
     launchHistoryRetentionCount: "Последние запусков: {{count}}",
@@ -588,6 +643,8 @@ export const ru = {
     reload: "Перезагрузить",
     saveConflict:
       "Файл на диске изменился. Ваши правки сохранены в редакторе. Перезагрузите файл перед повторным сохранением.",
+    permissionsNotRestored:
+      "Файл сохранён, но исходные разрешения восстановить не удалось. Проверьте права доступа к файлу.",
     directoryLimitReached: "Слишком много элементов. Показаны первые 5 000.",
     directoryEntriesSkipped: "Не удалось показать элементов: {{count}}.",
     projectIdentityChanged:

@@ -36,6 +36,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         13,
         include_str!("../../migrations/0013_launch_history_details.sql"),
     ),
+    (
+        14,
+        include_str!("../../migrations/0014_tool_key_foreign_keys.sql"),
+    ),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -319,12 +323,6 @@ mod tests {
             .expect("seed 0.2.4 project");
         connection
             .execute(
-                "update tools set global_args = '--legacy-global' where key = 'claude'",
-                [],
-            )
-            .expect("seed legacy global arguments");
-        connection
-            .execute(
                 "update shell_profiles set name = 'Existing PowerShell', shell_exe = 'pwsh-custom.exe' where id = 1",
                 [],
             )
@@ -375,7 +373,7 @@ mod tests {
         assert_eq!(schema_version(&connection).unwrap(), 8);
         apply_migrations(&connection).expect("upgrade 0.2.4 database");
 
-        assert_eq!(schema_version(&connection).unwrap(), 13);
+        assert_eq!(schema_version(&connection).unwrap(), 14);
         let project: (String, String, i64, String) = connection
             .query_row(
                 "select name, path, pinned, note from directories where id = 41",
@@ -391,16 +389,6 @@ mod tests {
                 1,
                 "kept note".to_string()
             )
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "select global_args from tools where key = 'claude'",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "--legacy-global"
         );
         assert_eq!(
             connection
@@ -493,7 +481,7 @@ mod tests {
         );
 
         apply_migrations(&connection).expect("re-running migrations is safe");
-        assert_eq!(schema_version(&connection).unwrap(), 13);
+        assert_eq!(schema_version(&connection).unwrap(), 14);
         assert_eq!(
             connection
                 .query_row("select count(*) from directories", [], |row| row
@@ -504,9 +492,111 @@ mod tests {
     }
 
     #[test]
+    fn tool_key_foreign_key_migration_preserves_aliases_and_pty_sessions() {
+        let connection = Connection::open_in_memory().expect("open schema 13 database");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable foreign keys");
+        apply_migrations_through(&connection, 13).expect("create schema 13");
+        let directory = crate::db::directory_repo::add(
+            &connection,
+            "migration fixture",
+            "C:\\Projects\\migration-fixture",
+            None,
+        )
+        .expect("insert project");
+        crate::db::session_alias_repo::save(
+            &connection,
+            crate::models::tool::ToolKey::Hermes,
+            "legacy-session",
+            "legacy alias",
+        )
+        .expect("insert legacy alias");
+        crate::db::pty_session_repo::insert_running(
+            &connection,
+            "legacy-pty-session",
+            directory.id,
+            crate::models::tool::ToolKey::Hermes,
+            &directory.path,
+            123,
+        )
+        .expect("insert legacy PTY session");
+
+        apply_migrations(&connection).expect("upgrade to tool registry foreign keys");
+
+        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(
+            crate::db::session_alias_repo::list_for_tool(
+                &connection,
+                crate::models::tool::ToolKey::Hermes,
+            )
+            .unwrap()
+            .get("legacy-session")
+            .map(String::as_str),
+            Some("legacy alias")
+        );
+        assert!(
+            crate::db::pty_session_repo::get_by_id(&connection, "legacy-pty-session")
+                .unwrap()
+                .is_some()
+        );
+        let foreign_key_violations: i64 = connection
+            .query_row("select count(*) from pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("check migrated foreign keys");
+        assert_eq!(foreign_key_violations, 0);
+        let tool_key_references: i64 = connection
+            .query_row(
+                "select count(*) from pragma_foreign_key_list('session_aliases') where \"from\" = 'tool_key' and \"table\" = 'tools' and \"to\" = 'key'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check alias tool key foreign key");
+        assert_eq!(tool_key_references, 1);
+        let pty_tool_key_references: i64 = connection
+            .query_row(
+                "select count(*) from pragma_foreign_key_list('pty_sessions') where \"from\" = 'tool_key' and \"table\" = 'tools' and \"to\" = 'key'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check PTY tool key foreign key");
+        assert_eq!(pty_tool_key_references, 1);
+        for unused_column in ["global_args", "enabled"] {
+            let column_exists: i64 = connection
+                .query_row(
+                    "select count(*) from pragma_table_info('tools') where name = ?1",
+                    [unused_column],
+                    |row| row.get(0),
+                )
+                .expect("check cleaned tools schema");
+            assert_eq!(column_exists, 0, "unused column {unused_column} remains");
+        }
+        let pty_index_exists: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'index' and name = 'pty_sessions_directory_state_idx'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check PTY index");
+        assert_eq!(pty_index_exists, 1);
+        let pty_trigger_exists: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'trigger' and name = 'prevent_directory_delete_with_running_pty'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check PTY directory guard");
+        assert_eq!(pty_trigger_exists, 1);
+        assert!(connection
+            .execute("delete from directories where id = ?1", [directory.id])
+            .is_err());
+    }
+
+    #[test]
     fn workspace_layout_migration_adds_versioned_tables_without_project_foreign_keys() {
         let connection = memory_db();
-        assert_eq!(schema_version(&connection).unwrap(), 13);
+        assert_eq!(schema_version(&connection).unwrap(), 14);
 
         let current_columns: i64 = connection
             .query_row(
@@ -738,7 +828,7 @@ mod tests {
 
         apply_migrations(&connection).expect("apply Hermes migration");
 
-        assert_eq!(schema_version(&connection).unwrap(), 13);
+        assert_eq!(schema_version(&connection).unwrap(), 14);
         assert_eq!(
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))

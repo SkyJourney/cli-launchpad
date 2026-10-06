@@ -1,4 +1,5 @@
 import type { WorkspacePaneContentRef } from "./tauri";
+import { workspaceContentKey } from "./workspaceContentKey";
 import {
   createWorkspaceContentLifecycle,
   transitionWorkspaceContentLifecycle,
@@ -8,24 +9,52 @@ import {
   type WorkspacePaneOwner,
 } from "./workspaceContentLifecycle";
 
-function keyOf(content: WorkspacePaneContentRef): string {
-  return content.kind === "pty"
-    ? `pty:${content.slotId}`
-    : `file:${content.documentId}`;
-}
-
 /** Owns frontend view ownership state; domain services remain authoritative. */
 export class WorkspaceContentCoordinator {
   private readonly states = new Map<string, WorkspaceContentLifecycleState>();
   private readonly completedReturnIds = new Set<string>();
+  private readonly listeners = new Set<() => void>();
+  private revision = 0;
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  getRevision = () => this.revision;
+
+  private notifyChanged() {
+    this.revision += 1;
+    this.listeners.forEach((listener) => listener());
+  }
 
   reset() {
     this.states.clear();
     this.completedReturnIds.clear();
+    this.notifyChanged();
+  }
+
+  resetFromPanes(
+    panes: Array<{ id: string; contents: WorkspacePaneContentRef[] }>,
+    windowLabel: string,
+  ) {
+    this.states.clear();
+    this.completedReturnIds.clear();
+    for (const pane of panes) {
+      for (const content of pane.contents) {
+        if (content.kind === "unknown") continue;
+        const owner = { kind: "pane" as const, windowLabel, paneId: pane.id };
+        this.states.set(
+          workspaceContentKey(content),
+          createWorkspaceContentLifecycle(content, owner),
+        );
+      }
+    }
+    this.notifyChanged();
   }
 
   get(content: WorkspacePaneContentRef) {
-    return this.states.get(keyOf(content));
+    return this.states.get(workspaceContentKey(content));
   }
 
   listInPhases(
@@ -37,15 +66,37 @@ export class WorkspaceContentCoordinator {
       .map((state) => ({ ...state.content }));
   }
 
+  listByPhase(...phases: WorkspaceContentLifecycleState["phase"][]) {
+    return this.listInPhases(...phases);
+  }
+
+  listWindowOwned(): WorkspacePaneContentRef[] {
+    return [...this.states.values()]
+      .filter((state) => {
+        if (state.phase === "detaching" || state.phase === "returning") {
+          return true;
+        }
+        return (
+          (state.phase === "detached" || state.phase === "closing") &&
+          state.owner.kind === "window"
+        );
+      })
+      .map((state) => ({ ...state.content }));
+  }
+
   ensureAttached(
     content: WorkspacePaneContentRef,
     owner: WorkspacePaneOwner,
   ): WorkspaceContentLifecycleState {
-    const key = keyOf(content);
+    if (content.kind === "unknown") {
+      throw new Error("未知工作区内容没有可管理的生命周期");
+    }
+    const key = workspaceContentKey(content);
     const state = this.states.get(key);
     if (!state) {
       const attached = createWorkspaceContentLifecycle(content, owner);
       this.states.set(key, attached);
+      this.notifyChanged();
       return attached;
     }
     if (state.phase === "attached" && !this.sameOwner(state.owner, owner)) {
@@ -64,12 +115,13 @@ export class WorkspaceContentCoordinator {
     content: WorkspacePaneContentRef,
     event: WorkspaceContentLifecycleEvent,
   ) {
-    const key = keyOf(content);
+    const key = workspaceContentKey(content);
     const state = this.states.get(key);
     if (!state) return null;
     const transition = transitionWorkspaceContentLifecycle(state, event);
     if (transition.outcome === "changed") {
       this.states.set(key, transition.state);
+      this.notifyChanged();
     }
     return transition;
   }
@@ -152,7 +204,7 @@ export class WorkspaceContentCoordinator {
   }
 
   approveClose(content: WorkspacePaneContentRef, requestId: string) {
-    const state = this.states.get(keyOf(content));
+    const state = this.states.get(workspaceContentKey(content));
     if (!state || (state.phase !== "attached" && state.phase !== "detached")) {
       return null;
     }
@@ -167,11 +219,13 @@ export class WorkspaceContentCoordinator {
 
   approveCloseBatch(contents: WorkspacePaneContentRef[], requestId: string) {
     const uniqueContents = [
-      ...new Map(contents.map((content) => [keyOf(content), content])).values(),
+      ...new Map(
+        contents.map((content) => [workspaceContentKey(content), content]),
+      ).values(),
     ];
     const priorStates = new Map<string, WorkspaceContentLifecycleState>();
     for (const content of uniqueContents) {
-      const key = keyOf(content);
+      const key = workspaceContentKey(content);
       const state = this.states.get(key);
       if (
         !state ||
@@ -184,6 +238,7 @@ export class WorkspaceContentCoordinator {
     for (const content of uniqueContents) {
       if (this.approveClose(content, requestId)?.outcome !== "changed") {
         priorStates.forEach((state, key) => this.states.set(key, state));
+        this.notifyChanged();
         return false;
       }
     }
@@ -191,8 +246,14 @@ export class WorkspaceContentCoordinator {
   }
 
   cancelClose(content: WorkspacePaneContentRef, requestId: string) {
-    const state = this.states.get(keyOf(content));
-    if (!state || state.phase !== "closing") return null;
+    const state = this.states.get(workspaceContentKey(content));
+    if (
+      !state ||
+      state.phase !== "closing" ||
+      state.closeStatus !== "approved"
+    ) {
+      return null;
+    }
     return this.dispatch(content, {
       type: "closeCancelled",
       requestId,
@@ -202,8 +263,26 @@ export class WorkspaceContentCoordinator {
     });
   }
 
+  markClosePending(content: WorkspacePaneContentRef, requestId: string) {
+    const state = this.states.get(workspaceContentKey(content));
+    if (
+      !state ||
+      state.phase !== "closing" ||
+      state.closeStatus !== "approved"
+    ) {
+      return null;
+    }
+    return this.dispatch(content, {
+      type: "closePending",
+      requestId,
+      content: state.content,
+      owner: state.owner,
+      generation: state.generation,
+    });
+  }
+
   completeDispose(content: WorkspacePaneContentRef, requestId: string) {
-    const state = this.states.get(keyOf(content));
+    const state = this.states.get(workspaceContentKey(content));
     if (!state || state.phase !== "closing") return null;
     const transition = this.dispatch(content, {
       type: "disposeCompleted",
@@ -213,13 +292,14 @@ export class WorkspaceContentCoordinator {
       generation: state.generation,
     });
     if (transition?.state.phase === "disposed") {
-      this.states.delete(keyOf(content));
+      this.states.delete(workspaceContentKey(content));
+      this.notifyChanged();
     }
     return transition;
   }
 
   ownerEnded(content: WorkspacePaneContentRef) {
-    const key = keyOf(content);
+    const key = workspaceContentKey(content);
     const state = this.states.get(key);
     if (!state || state.phase === "disposed") return null;
     const owner =
@@ -232,7 +312,10 @@ export class WorkspaceContentCoordinator {
       owner,
       generation: state.generation,
     });
-    if (transition?.state.phase === "disposed") this.states.delete(key);
+    if (transition?.state.phase === "disposed") {
+      this.states.delete(key);
+      this.notifyChanged();
+    }
     return transition;
   }
 
@@ -247,7 +330,7 @@ export class WorkspaceContentCoordinator {
       | "returnCancelled",
     transferId: string,
   ) {
-    const state = this.states.get(keyOf(content));
+    const state = this.states.get(workspaceContentKey(content));
     if (
       !state ||
       (state.phase !== "detaching" && state.phase !== "returning")

@@ -7,24 +7,25 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdout, Command};
 
-use crate::models::tool::ToolKey;
-
 const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_RESPONSE_LINES: usize = 2_000;
 
 /// Send one stable request to a short-lived Codex App Server connection.
 /// A fresh process keeps lifecycle and failure isolation simple for infrequent
 /// history/model picker reads.
-pub(crate) async fn request(method: &str, params: Value) -> Result<Value> {
-    let executable = crate::services::cli_adapters::installed_path(
-        crate::services::cli_adapters::get(ToolKey::Codex),
-    )
-    .ok_or_else(|| anyhow!("未找到 Codex CLI，无法读取 App Server 数据"))?;
+pub(crate) async fn request(
+    executable: Option<&Path>,
+    method: &str,
+    params: Value,
+    budget: Duration,
+) -> Result<Value> {
+    let executable =
+        executable.ok_or_else(|| anyhow!("未找到 Codex CLI，无法读取 App Server 数据"))?;
     let executable = executable.display().to_string();
     let method = method.to_string();
 
     tokio::time::timeout(
-        APP_SERVER_TIMEOUT,
+        budget.min(APP_SERVER_TIMEOUT),
         request_inner(&executable, &method, params),
     )
     .await
@@ -123,6 +124,15 @@ async fn read_response(reader: &mut BufReader<ChildStdout>, id: i64) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_requires_a_resolved_path_from_the_adapter_context() {
+        let error = request(None, "thread/list", json!({}), Duration::from_secs(1))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("未找到 Codex CLI"));
+    }
 
     #[tokio::test]
     async fn response_reader_skips_notifications() {

@@ -5,6 +5,34 @@ type LocaleShape<T> = {
 };
 
 export const fr = {
+  errors: {
+    fileNotFound: "Fichier introuvable.",
+    fileTooLarge: "Le fichier dépasse la taille autorisée.",
+    fileConflict:
+      "Le fichier sur le disque a changé. Rechargez-le avant de l’enregistrer.",
+    fileIdentityChanged:
+      "L’identité du dossier du projet a changé. Rechargez le document ou enregistrez-le ailleurs.",
+    ptyOwnerMismatch:
+      "Cette session de terminal n’appartient plus à cette fenêtre.",
+    ptyHandoffExpired: "Le transfert du terminal a expiré. Réessayez.",
+    ptyInputBackpressure:
+      "La file d’entrée du terminal est pleine. Réessayez dans un instant.",
+    ptyInputUnavailable:
+      "Le canal d’entrée du terminal est fermé. Reconnectez la session.",
+    ptySessionsActive:
+      "{{count}} session(s) de terminal sont encore actives. Fermez-les avant de restaurer une sauvegarde.",
+    backupRestoreInProgress:
+      "Une restauration de sauvegarde est en cours. Réessayez lorsqu’elle sera terminée.",
+    ptySessionStarting:
+      "{{count}} session(s) de terminal démarrent. Réessayez la restauration dans un instant.",
+    execPlanChanged:
+      "Le plan d’exécution a changé. Vérifiez-le et confirmez-le à nouveau.",
+    execBusy: "Une tâche est déjà en cours pour cet outil.",
+    layoutNeedsReset:
+      "La disposition de l’espace de travail est invalide et doit être réinitialisée.",
+    generic: "L’opération a échoué.",
+    directoryInUse: "Une session de terminal est encore active pour ce projet.",
+  },
   common: {
     back: "Retour",
     browse: "Parcourir",
@@ -28,6 +56,8 @@ export const fr = {
     unpinProject: "Désépingler le projet",
     openProjectFolder: "Ouvrir le dossier du projet",
     removeProject: "Supprimer le projet",
+    removeProjectBlocked:
+      "Fermez les {{files}} fichier(s) ouvert(s) et les {{terminals}} terminal(aux) actif(s) de ce projet avant de le supprimer.",
     confirmRemoveProject:
       "Supprimer le projet « {{name}} » ? Les fichiers sur le disque ne seront pas supprimés.",
     pinProjectFailed: "Impossible d’épingler le projet : {{error}}",
@@ -44,6 +74,14 @@ export const fr = {
     activeTasks_other: "{{count}} tâches actives",
     managedCliSessions_one: "{{tool}}, {{count}} session gérée",
     managedCliSessions_other: "{{tool}}, {{count}} sessions gérées",
+  },
+  tray: { show: "Afficher la fenêtre principale", quit: "Quitter" },
+  workspaceContent: {
+    unsupportedTitle: "Type de contenu non pris en charge : {{kind}}",
+    unsupportedDescription:
+      "Ce contenu provient d’une version plus récente et a été conservé dans la disposition de l’espace de travail.",
+    unsupportedError: "Impossible d’afficher ce contenu : {{error}}",
+    closeUnsupported: "Fermer le contenu non pris en charge",
   },
   theme: {
     current: "Thème : {{mode}}",
@@ -319,6 +357,10 @@ export const fr = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "Actualisez d’abord les informations de version pour vérifier la source d’installation de Grok Build.",
+    grokUpdateSourceDenied:
+      "La source d’installation de Grok Build n’a pas pu être vérifiée pour les mises à jour gérées. Utilisez son canal d’installation d’origine.",
+    hermesUpdateSourceDenied:
+      "L’installation ou l’état de mise à jour de Hermes Agent n’a pas pu être vérifié. Les mises à jour gérées sont désactivées.",
     installing: "Installation…",
     updating: "Mise à jour…",
     refreshingVersion: "Actualisation de la version…",
@@ -437,6 +479,21 @@ export const fr = {
     importFailed: "Échec de l’importation : {{error}}",
     diagnostics: "Diagnostics",
     exportDiagnostics: "Exporter le rapport de diagnostic",
+    fileCasResidues: "Fichiers temporaires obsolètes",
+    fileCasResiduesDescription:
+      "Rechercher dans un projet enregistré les fichiers temporaires Launchpad datant de plus de 24 heures. Vérifiez chaque chemin et confirmez chaque suppression.",
+    fileCasResiduesProject: "Projet",
+    fileCasResiduesSelect: "Sélectionner un projet",
+    fileCasResiduesScan: "Analyser",
+    fileCasResiduesScanning: "Analyse en cours…",
+    fileCasResiduesNone: "Aucun fichier temporaire obsolète trouvé.",
+    fileCasResiduesTruncated:
+      "La limite de sécurité de l’analyse est atteinte. Les résultats peuvent être incomplets.",
+    fileCasResiduesSkipped: "{{count}} entrées n’ont pas pu être vérifiées.",
+    fileCasResiduesDelete: "Vérifier la suppression",
+    fileCasResiduesConfirmDelete: "Supprimer ce fichier",
+    fileCasResiduesScanFailed: "Échec de l’analyse : {{error}}",
+    fileCasResiduesDeleteFailed: "Échec de la suppression : {{error}}",
     recentLaunch: "Lancements récents",
     launchHistoryRetention: "Conserver l’historique",
     launchHistoryRetentionCount: "{{count}} derniers lancements",
@@ -601,6 +658,8 @@ export const fr = {
     reload: "Recharger",
     saveConflict:
       "Le fichier sur le disque a été modifié. Vos modifications sont conservées. Rechargez le fichier avant de l’enregistrer à nouveau.",
+    permissionsNotRestored:
+      "Le fichier a été enregistré, mais ses autorisations d’origine n’ont pas pu être restaurées. Vérifiez ses droits d’accès.",
     directoryLimitReached: "Trop d’éléments. Les 5 000 premiers sont affichés.",
     directoryEntriesSkipped: "{{count}} éléments n’ont pas pu être affichés.",
     projectIdentityChanged:

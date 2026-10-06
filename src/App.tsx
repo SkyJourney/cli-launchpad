@@ -11,12 +11,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
 import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
-import type { CSSProperties } from "react";
 import { AppLogo } from "./components/AppLogo";
 import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
 import { WorkspaceDataRestoreListener } from "./components/WorkspaceDataRestoreListener";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
+import { formatAppError } from "./lib/appErrors";
 import {
   PtyWorkspaceProvider,
   PtyWorkspaceRegion,
@@ -62,6 +62,7 @@ import { indexByTool, useCliStatus } from "./hooks/useCliStatus";
 import { useThemeSync } from "./hooks/useThemeSync";
 import { useWindowLevelBehaviors } from "./hooks/useWindowLevelBehaviors";
 import { type ViewName, useAppStore } from "./store/appStore";
+import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import { confirmAppExit } from "./lib/tauri";
 import {
   collectAppExitImpacts,
@@ -128,7 +129,7 @@ function AppContent() {
   const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
   exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
   const view = useAppStore((state) => state.view);
-  const themeMode = useAppStore((state) => state.themeMode);
+  const resolvedTheme = useResolvedTheme();
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
@@ -172,7 +173,7 @@ function AppContent() {
               uncertainDocumentIds: current.detachedFileIds,
             }),
           );
-          setExitError(String(error));
+          setExitError(formatAppError(error, t));
         });
     })
       .then((stop) => {
@@ -192,7 +193,7 @@ function AppContent() {
     try {
       await confirmAppExit();
     } catch (error) {
-      setExitError(String(error));
+      setExitError(formatAppError(error, t));
       setExitPending(false);
     }
   };
@@ -377,16 +378,11 @@ function AppContent() {
       <Toaster
         position="top-center"
         offset={{ top: "calc(var(--window-titlebar-height) + 6px)" }}
-        theme={themeMode}
+        theme={resolvedTheme.base}
         richColors
         closeButton
         visibleToasts={4}
         duration={5000}
-        style={
-          {
-            "--width": "min(560px, 50vw)",
-          } as CSSProperties
-        }
         toastOptions={{
           style: { fontFamily: "var(--font-ui)" },
         }}

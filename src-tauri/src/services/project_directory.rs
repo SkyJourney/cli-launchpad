@@ -27,7 +27,7 @@ impl ProjectDirectory {
         expected_path: &str,
     ) -> Result<Self, AppError> {
         let directory = directory_repo::get(connection, directory_id)?
-            .ok_or_else(|| AppError::msg("项目目录不存在"))?;
+            .ok_or_else(|| AppError::coded("file.not_found", "项目目录不存在"))?;
         if !path_identity::paths_equal(expected_path, &directory.path) {
             return Err(AppError::coded(
                 "project_identity_changed",

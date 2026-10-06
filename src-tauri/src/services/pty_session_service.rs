@@ -14,7 +14,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use portable_pty::{
     native_pty_system, Child as PtyChild, ChildKiller, CommandBuilder, MasterPty, PtySize,
 };
-use rusqlite::Connection;
 use tauri::{ipc::Channel, AppHandle, Manager};
 use uuid::Uuid;
 
@@ -81,9 +80,10 @@ fn start_pty_input_writer(
 
 fn ensure_no_active_sessions(active_count: usize) -> Result<(), AppError> {
     if active_count > 0 {
-        return Err(AppError::coded(
+        return Err(AppError::coded_with_params(
             "pty_sessions_active",
             format!("请先关闭所有运行中的终端会话（当前 {active_count} 个）再恢复备份"),
+            serde_json::json!({ "count": active_count }),
         ));
     }
     Ok(())
@@ -533,7 +533,7 @@ fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppEr
 impl PtySessionManager {
     pub fn create(
         &self,
-        connection: &Connection,
+        db: &Db,
         app: &AppHandle,
         directory_id: i64,
         tool_key: ToolKey,
@@ -544,8 +544,10 @@ impl PtySessionManager {
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         let _start_guard = self.begin_session_start()?;
-        let directory = directory_repo::get(connection, directory_id)?
-            .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))?;
+        let directory = crate::with_connection(db, |connection| {
+            directory_repo::get(connection, directory_id)?
+                .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))
+        })?;
         if !crate::platform::path_identity::paths_equal(&directory.path, &payload.directory) {
             return Err(AppError::coded(
                 "project_identity_changed",
@@ -554,7 +556,7 @@ impl PtySessionManager {
         }
         let directory_path = directory.path;
         let result = self.create_inner(
-            connection,
+            db,
             app,
             directory_id,
             tool_key,
@@ -573,16 +575,19 @@ impl PtySessionManager {
             .ok()
             .map(|session| session.session_id.as_str());
         let error_category = result.as_ref().err().map(|_| "launch_failed");
-        if let Err(error) = launch_history_repo::record(
-            connection,
-            directory_id,
-            Some(&directory_path),
-            tool_key,
-            action,
-            result.is_ok(),
-            error_category,
-            session_id,
-        ) {
+        if let Err(error) = crate::with_connection(db, |connection| {
+            launch_history_repo::record(
+                connection,
+                directory_id,
+                Some(&directory_path),
+                tool_key,
+                action,
+                result.is_ok(),
+                error_category,
+                session_id,
+            )?;
+            Ok(())
+        }) {
             log::warn!("unable to record embedded PTY launch history: {error}");
         }
         result
@@ -590,7 +595,7 @@ impl PtySessionManager {
 
     fn create_inner(
         &self,
-        connection: &Connection,
+        db: &Db,
         app: &AppHandle,
         directory_id: i64,
         tool_key: ToolKey,
@@ -650,16 +655,19 @@ impl PtySessionManager {
                 .map_err(Into::into);
         }
         let now = now_ms();
-        if let Err(error) = pty_session_repo::insert_running(
-            connection,
-            &session_id,
-            directory_id,
-            tool_key,
-            &payload.directory,
-            now,
-        ) {
+        if let Err(error) = crate::with_connection(db, |connection| {
+            pty_session_repo::insert_running(
+                connection,
+                &session_id,
+                directory_id,
+                tool_key,
+                &payload.directory,
+                now,
+            )?;
+            Ok(())
+        }) {
             stop_spawned_child(&process_tree, &mut child);
-            return Err(error.into());
+            return Err(error);
         }
         let killer = child.clone_killer();
         let session = Arc::new(ManagedSession {
@@ -695,13 +703,13 @@ impl PtySessionManager {
                 sessions.insert(session_id.clone(), Arc::clone(&session));
             }
             Err(_) => {
-                self.fail_session_start(connection, &session, "PTY 会话表锁中毒".to_string());
+                self.fail_session_start(db, &session, "PTY 会话表锁中毒".to_string());
                 return Err(AppError::msg("PTY 会话表锁中毒"));
             }
         }
 
         if let Err(error) = spawn_output_reader(Arc::clone(&session), reader) {
-            self.fail_session_start(connection, &session, error.to_string());
+            self.fail_session_start(db, &session, error.to_string());
             return Err(AppError::msg(format!("创建 PTY 输出线程失败：{error}")));
         }
         if let Err(error) = spawn_child_monitor(
@@ -710,7 +718,7 @@ impl PtySessionManager {
             app.clone(),
             self.session_map_handle(),
         ) {
-            self.fail_session_start(connection, &session, error.to_string());
+            self.fail_session_start(db, &session, error.to_string());
             return Err(AppError::msg(format!("创建 PTY 监控线程失败：{error}")));
         }
 
@@ -742,12 +750,7 @@ impl PtySessionManager {
         Arc::clone(&self.sessions)
     }
 
-    fn fail_session_start(
-        &self,
-        connection: &Connection,
-        session: &ManagedSession,
-        reason: String,
-    ) {
+    fn fail_session_start(&self, db: &Db, session: &ManagedSession, reason: String) {
         session.flow.close();
         if let Ok(tree) = session.process_tree.lock() {
             if let Some(tree) = tree.as_ref() {
@@ -761,9 +764,10 @@ impl PtySessionManager {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.remove(&session.session_id);
         }
-        if let Err(error) =
-            pty_session_repo::finish(connection, &session.session_id, "failed", now_ms(), None)
-        {
+        if let Err(error) = crate::with_connection(db, |connection| {
+            pty_session_repo::finish(connection, &session.session_id, "failed", now_ms(), None)?;
+            Ok(())
+        }) {
             log::error!("failed to persist PTY start failure: {error}");
         }
         log::error!("failed to start PTY reader or monitor: {reason}");
@@ -1291,12 +1295,13 @@ impl PtySessionManager {
             ));
         }
         if gate.session_starts > 0 {
-            return Err(AppError::coded(
+            return Err(AppError::coded_with_params(
                 "pty_session_starting",
                 format!(
                     "有 {} 个终端会话正在启动，请稍后重试恢复备份",
                     gate.session_starts
                 ),
+                serde_json::json!({ "count": gate.session_starts }),
             ));
         }
         let active_count = self

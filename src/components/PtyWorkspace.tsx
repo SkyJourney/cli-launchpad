@@ -23,6 +23,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type MutableRefObject,
   type ReactNode,
   type DragEvent as ReactDragEvent,
@@ -30,6 +31,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
+import { abortableDelay } from "../lib/abortableDelay";
 import { createWindowLabel, windowKindOf } from "../lib/windowKinds";
 import {
   emitWorkspaceContentWindowEvent,
@@ -76,10 +78,12 @@ import {
   resolveDetachedStartTimeoutAction,
 } from "../lib/ptySessionLifecycle";
 import { matchesWorkspaceFileWindow } from "../lib/workspaceFileWindow";
+import { setupWorkspaceContentListeners } from "../lib/workspaceContentListenerSetup";
 import {
   clearPendingWorkspaceContentWindows,
   promotePendingWorkspaceContentWindow,
   registerPendingWorkspaceContentWindow,
+  retainAsyncUnlisten,
   takePendingWorkspaceContentWindow,
 } from "../lib/workspaceContentWindowRegistry";
 import {
@@ -93,6 +97,8 @@ import {
   updateWorkspaceLayoutPreset,
   resetWorkspaceLayout,
   saveWorkspaceLayout,
+  grantContentWindowFile,
+  revokeContentWindowFile,
   openProjectFile as openProjectFileContent,
   saveProjectTextFile,
   type Directory,
@@ -124,12 +130,13 @@ import {
   markWorkspaceFileIdentityChanged,
   isWorkspaceFileBufferNewer,
   resolveWorkspaceFileSaveCommitDisposition,
+  workspaceFileDocumentIdentityMatches,
   markWorkspaceFileSaveConflict,
   WorkspaceFileOperationFlights,
 } from "../lib/workspaceFileBuffer";
 import { closeWorkspaceFileState } from "../lib/workspaceFileClose";
 import {
-  getAppErrorMessage,
+  formatAppError,
   isProjectIdentityChangedError,
 } from "../lib/appErrors";
 import {
@@ -137,16 +144,20 @@ import {
   type AppExitImpacts,
 } from "../lib/appExitImpacts";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
+import { workspaceContentKey } from "../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../lib/workspaceFileExitFlush";
 import type { WorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
 import { hasWorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
-import type { WorkspaceContentHandoffPayloadByKind } from "../lib/workspaceContentLifecycle";
+import {
+  canChangeWorkspaceContentPane,
+  type WorkspaceContentHandoffPayloadByKind,
+} from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
 import { AnchoredPopover } from "./AnchoredPopover";
 import {
   WorkspaceContentView,
-  getWorkspaceContentAdapter,
   presentWorkspaceContent,
+  tryGetWorkspaceContentAdapter,
   workspaceContentProjectContext,
   type WorkspaceContentPresentationContext,
 } from "./WorkspaceContentView";
@@ -191,15 +202,12 @@ interface DetachedWindowRecord {
   windowLabel: string;
 }
 
-interface ManagedDetachedWindow extends DetachedWindowRecord {
-  window: WebviewWindow;
-}
-
 interface PendingDetachedWindow extends DetachedWindowRecord {
   token: string;
   resolve: () => void;
   reject: (reason: Error) => void;
   timer: number;
+  cleanup?: () => void;
   window: WebviewWindow;
   handoffContext: WorkspaceContentHandoffHookContext<"pty">;
   handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
@@ -223,6 +231,7 @@ interface PendingWorkspaceFileWindow {
   sourcePaneId?: string;
   window: WebviewWindow;
   timer: number;
+  cleanup?: () => void;
   resolve: () => void;
   reject: (reason: Error) => void;
   attached: boolean;
@@ -238,6 +247,9 @@ type ResolvedPaneContent =
   | {
       content: Extract<WorkspacePaneContentRef, { kind: "file" }>;
       file: WorkspaceFileDocument;
+    }
+  | {
+      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>;
     };
 
 interface PtyWorkspaceContextValue {
@@ -268,6 +280,10 @@ interface PtyWorkspaceContextValue {
   ) => Promise<void>;
   loadFile: (documentId: string) => Promise<void>;
   activateFile: (paneId: string, documentId: string) => void;
+  activateUnsupportedContent: (
+    paneId: string,
+    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
+  ) => void;
   editFile: (documentId: string, content: string) => void;
   saveFile: (documentId: string) => Promise<void>;
   closeContents: (
@@ -300,6 +316,7 @@ interface PtyWorkspaceContextValue {
     documentId: string,
   ) => void;
   detachedInstanceIds: Set<string>;
+  closingContentKeys: Set<string>;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
   isManagedDetachedFileDrag: (
@@ -319,14 +336,17 @@ interface PtyWorkspaceContextValue {
   getCurrentPresetLayout: () => WorkspaceLayoutDocument;
   removeSlot: (
     instanceId: string,
-    reason?: "closed" | "ended",
-    options?: { lifecycleManaged?: boolean },
+    options?: { disposeOwnerEnded?: boolean },
   ) => void;
   recordSession: (instanceId: string, session: PtySession | null) => void;
   collectExitImpacts: (ptyCount: number) => Promise<AppExitImpacts>;
   getBackupRestoreBlockers: () => Promise<WorkspaceDataRestoreBlockers>;
   cancelBackupRestore: () => void;
   rehydrateWorkspace: () => Promise<void>;
+  getDirectoryRemovalBlockers: (directoryId: number) => {
+    openFileCount: number;
+    runningPtyCount: number;
+  };
 }
 
 const PtyWorkspaceContext = createContext<PtyWorkspaceContextValue | null>(
@@ -356,14 +376,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [fileBuffers, setFileBuffers] = useState<
     Record<string, WorkspaceFileBuffer>
   >({});
-  const [handoffFileIds, setHandoffFileIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const handoffFileIdsRef = useRef(handoffFileIds);
-  const [detachedFileIds, setDetachedFileIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const detachedFileIdsRef = useRef(detachedFileIds);
   const [tree, setTree] = useState<WorkspaceNode>(() =>
     createWorkspacePane(initialPaneId),
   );
@@ -372,10 +384,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [portalTargets, setPortalTargets] = useState<
     Record<string, HTMLDivElement>
   >({});
-  const [detachedInstanceIds, setDetachedInstanceIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const detachedInstanceIdsRef = useRef(detachedInstanceIds);
   const terminalRefs = useRef(new Map<string, PtyTerminalHandle>());
   const saveQueueRef = useRef<WorkspaceLayoutSaveQueue | null>(null);
   const backupRestoreInProgressRef = useRef(false);
@@ -392,14 +400,74 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
   const treeRef = useRef(tree);
   const focusedPaneIdRef = useRef(focusedPaneId);
-  const detachedByInstanceRef = useRef(
-    new Map<string, ManagedDetachedWindow>(),
-  );
+  const detachedByInstanceRef = useRef(new Map<string, WebviewWindow>());
   const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
-  const detachedFilesRef = useRef(
-    new Map<string, PendingWorkspaceFileWindow>(),
-  );
+  const detachedFilesRef = useRef(new Map<string, WebviewWindow>());
   const contentCoordinatorRef = useRef(new WorkspaceContentCoordinator());
+  const ptyReturnWaitAbortRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      ptyReturnWaitAbortRef.current?.abort();
+      ptyReturnWaitAbortRef.current = null;
+    },
+    [],
+  );
+  const subscribeContentCoordinator = useCallback(
+    (listener: () => void) => contentCoordinatorRef.current.subscribe(listener),
+    [],
+  );
+  const getContentCoordinatorRevision = useCallback(
+    () => contentCoordinatorRef.current.getRevision(),
+    [],
+  );
+  const contentCoordinatorRevision = useSyncExternalStore(
+    subscribeContentCoordinator,
+    getContentCoordinatorRevision,
+    getContentCoordinatorRevision,
+  );
+  const detachedWindowContents = useMemo(
+    () => contentCoordinatorRef.current.listWindowOwned(),
+    [contentCoordinatorRevision],
+  );
+  const detachedFileIds = useMemo(
+    () =>
+      new Set(
+        detachedWindowContents.flatMap((content) =>
+          content.kind === "file" ? [content.documentId] : [],
+        ),
+      ),
+    [detachedWindowContents],
+  );
+  const detachedInstanceIds = useMemo(
+    () =>
+      new Set(
+        detachedWindowContents.flatMap((content) =>
+          content.kind === "pty" ? [content.slotId] : [],
+        ),
+      ),
+    [detachedWindowContents],
+  );
+  const handoffFileIds = useMemo(
+    () =>
+      new Set(
+        contentCoordinatorRef.current
+          .listInPhases("detaching", "returning")
+          .flatMap((content) =>
+            content.kind === "file" ? [content.documentId] : [],
+          ),
+      ),
+    [contentCoordinatorRevision],
+  );
+  const closingContentKeys = useMemo(
+    () =>
+      new Set(
+        contentCoordinatorRef.current
+          .listInPhases("closing")
+          .filter((content) => content.kind === "pty")
+          .map(workspaceContentReactKey),
+      ),
+    [contentCoordinatorRevision],
+  );
   const pendingDetachedFilesRef = useRef(
     new Map<string, PendingWorkspaceFileWindow>(),
   );
@@ -412,9 +480,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   fileBuffersRef.current = fileBuffers;
   if (!splitResizeInProgressRef.current) treeRef.current = tree;
   focusedPaneIdRef.current = focusedPaneId;
-  detachedInstanceIdsRef.current = detachedInstanceIds;
-  detachedFileIdsRef.current = detachedFileIds;
-  handoffFileIdsRef.current = handoffFileIds;
   hydrationStatusRef.current = hydrationStatus;
 
   const getFileOperationGeneration = (documentId: string) =>
@@ -431,7 +496,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       new WorkspaceLayoutSaveQueue(
         revision,
         saveWorkspaceLayout,
-        (reason) => setLayoutSaveError(String(reason)),
+        (reason) => setLayoutSaveError(formatAppError(reason, t)),
         () => setLayoutSaveError(null),
       ),
     [],
@@ -498,6 +563,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           ...restored,
           slots: markWorkspaceSlotsRestored(restored.slots, read.slotStates),
         });
+        contentCoordinatorRef.current.resetFromPanes(
+          listWorkspacePanes(restoredSnapshot.tree),
+          "main",
+        );
         const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
 
         new Set([
@@ -511,8 +580,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         setSlots(restoredSlots);
         setFileDocuments(restoredSnapshot.documents ?? []);
         setFileBuffers({});
-        setDetachedFileIds(new Set());
-        detachedFileIdsRef.current = new Set();
+        detachedByInstanceRef.current.clear();
         detachedFilesRef.current.clear();
         clearPendingWorkspaceContentWindows(
           pendingDetachedRef.current,
@@ -540,8 +608,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         );
         setTree(restoredSnapshot.tree);
         setFocusedPaneId(restoredSnapshot.focusedPaneId);
-        setDetachedInstanceIds(new Set());
-        detachedInstanceIdsRef.current = new Set();
       }
 
       saveQueueRef.current = createSaveQueue(revision);
@@ -549,7 +615,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       setHydrationStatus("ready");
     } catch (reason) {
       if (requestId !== hydrationRequestRef.current) return;
-      setHydrationError(String(reason));
+      setHydrationError(formatAppError(reason, t));
       setHydrationStatus("loadFailed");
     }
   }, [createSaveQueue, t]);
@@ -638,7 +704,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       setLayoutSaveError(null);
       setHydrationStatus("ready");
     } catch (reason) {
-      setLayoutResetError(String(reason));
+      setLayoutResetError(formatAppError(reason, t));
       throw reason;
     } finally {
       setLayoutResetPending(false);
@@ -743,7 +809,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         detachingContents: detachingNow,
       });
       restoredTree = restoredFiles.tree;
-      const nextDetachedContents = restoredFiles.detachedContents;
       const nextDocuments = restoredFiles.documents;
 
       slotsRef.current = restoredSlots;
@@ -754,13 +819,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       fileDocumentsRef.current = nextDocuments;
       setTree(restoredTree);
       setFocusedPaneId(restored.focusedPaneId);
-      const nextDetachedIds = new Set(
-        nextDetachedContents.flatMap((content) =>
-          content.kind === "pty" ? [content.slotId] : [],
-        ),
-      );
-      detachedInstanceIdsRef.current = nextDetachedIds;
-      setDetachedInstanceIds(nextDetachedIds);
     },
     [directories, t],
   );
@@ -879,10 +937,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         }
 
         const detachedWindow =
-          detachedFilesRef.current.get(document.id) ??
-          pendingDetachedFilesRef.current.get(document.id);
+          detachedFilesRef.current.get(workspaceFileKey(document.id)) ??
+          pendingDetachedFilesRef.current.get(workspaceFileKey(document.id))
+            ?.window;
         if (detachedWindow) {
-          await detachedWindow.window.setFocus().catch((error: unknown) => {
+          await detachedWindow.setFocus().catch((error: unknown) => {
             console.warn(
               "[window.set_focus_failed] 无法聚焦独立工作区窗口",
               error,
@@ -940,6 +999,23 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [commitTree, setFocusedPane, syncProjectContext],
   );
 
+  const activateUnsupportedContent = useCallback(
+    (
+      paneId: string,
+      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
+    ) => {
+      commitTree(
+        executeWorkspaceCommand(treeRef.current, {
+          type: "activate",
+          ref: content,
+          paneId,
+        }),
+      );
+      setFocusedPane(paneId);
+    },
+    [commitTree, setFocusedPane],
+  );
+
   const loadFile = useCallback(
     (documentId: string) =>
       fileOperationFlightsRef.current.load(documentId, async () => {
@@ -978,7 +1054,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const editFile = useCallback((documentId: string, content: string) => {
     if (
       backupRestoreInProgressRef.current ||
-      handoffFileIdsRef.current.has(documentId)
+      isWorkspaceContentHandoffActive(contentCoordinatorRef.current, {
+        kind: "file",
+        documentId,
+      })
     ) {
       return;
     }
@@ -1043,7 +1122,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             toast.error(t("workspaceFiles.projectIdentityChanged"));
             return;
           }
-          toast.error(getAppErrorMessage(reason));
+          toast.error(formatAppError(reason, t));
         }
       }),
     [t],
@@ -1054,7 +1133,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       fileOperationFlightsRef.current.save(documentId, async () => {
         if (
           backupRestoreInProgressRef.current ||
-          handoffFileIdsRef.current.has(documentId)
+          isWorkspaceContentHandoffActive(contentCoordinatorRef.current, {
+            kind: "file",
+            documentId,
+          })
         ) {
           return;
         }
@@ -1139,6 +1221,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           };
           fileBuffersRef.current = next;
           setFileBuffers(next);
+          if (result.warning === "permissionsNotRestored") {
+            toast.warning(t("workspaceFiles.permissionsNotRestored"));
+          }
         } catch (reason) {
           if (saveCommitDisposition() === "discard-result") return;
           const current = fileBuffersRef.current[documentId];
@@ -1159,7 +1244,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           };
           fileBuffersRef.current = next;
           setFileBuffers(next);
-          toast.error(getAppErrorMessage(reason));
+          toast.error(formatAppError(reason, t));
         }
       }),
     [reloadFile, t],
@@ -1167,18 +1252,33 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const detachFile = useCallback(
     async (documentId: string) => {
+      const content = { kind: "file", documentId } as const;
       if (
-        detachedFilesRef.current.has(documentId) ||
-        handoffFileIdsRef.current.has(documentId)
+        detachedFilesRef.current.has(workspaceFileKey(documentId)) ||
+        isWorkspaceContentWindowOwned(contentCoordinatorRef.current, content)
       ) {
         return;
       }
-      const nextHandoffIds = new Set(handoffFileIdsRef.current).add(documentId);
-      handoffFileIdsRef.current = nextHandoffIds;
-      setHandoffFileIds(nextHandoffIds);
-      let token: string | undefined;
+      const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
+        hasWorkspaceContent(pane, content),
+      );
+      if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
+      const token = crypto.randomUUID();
+      const windowLabel = createWindowLabel("workspaceContent");
+      let grantedWindowLabel: string | undefined;
       let lifecycleStarted = false;
       try {
+        const lifecycle = contentCoordinatorRef.current.beginDetach(
+          content,
+          { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
+          { kind: "window", windowLabel },
+          token,
+        );
+        if (lifecycle?.outcome !== "changed") {
+          throw new Error(t("pty.detachedMoveUnavailable"));
+        }
+        lifecycleStarted = true;
+        grantedWindowLabel = windowLabel;
         if (!fileBuffersRef.current[documentId]) await loadFile(documentId);
         await fileOperationFlightsRef.current.waitForSave(documentId);
         const fileBuffer = fileBuffersRef.current[documentId];
@@ -1188,28 +1288,17 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         if (!fileDocument || !fileBuffer || fileBuffer.saving) {
           throw new Error(t("workspaceFiles.loadingFile"));
         }
-        const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
-          hasWorkspaceContent(pane, { kind: "file", documentId }),
+        await grantContentWindowFile(
+          windowLabel,
+          fileDocument.directoryId,
+          fileDocument.directoryPath,
+          fileDocument.relativePath,
         );
-        if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
-        token = crypto.randomUUID();
-        const windowLabel = createWindowLabel("workspaceContent");
-        const handoffToken = token;
-        const lifecycle = contentCoordinatorRef.current.beginDetach(
-          { kind: "file", documentId },
-          { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
-          { kind: "window", windowLabel },
-          handoffToken,
-        );
-        if (lifecycle?.outcome !== "changed") {
-          throw new Error(t("pty.detachedMoveUnavailable"));
-        }
-        lifecycleStarted = true;
         const childUrl = new URL(window.location.href);
         childUrl.search = "";
         childUrl.hash = "";
         childUrl.searchParams.set("detachedFileId", documentId);
-        childUrl.searchParams.set("fileHandoffToken", handoffToken);
+        childUrl.searchParams.set("fileHandoffToken", token);
         childUrl.searchParams.set("sourcePaneId", sourcePane.id);
         await new Promise<void>((resolve, reject) => {
           const child = createWorkspaceContentWindow({
@@ -1219,9 +1308,29 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               fileDocument.relativePath.split("/").pop() ??
               fileDocument.relativePath,
           });
+          const failCreation = (reason: unknown) => {
+            const pending = takePendingWorkspaceContentWindow(
+              pendingDetachedFilesRef.current,
+              workspaceFileKey(documentId),
+              windowLabel,
+            );
+            if (!pending) return;
+            reject(new Error(formatAppError(reason, t)));
+          };
+          const cleanupCreationErrorListener = retainAsyncUnlisten(
+            () =>
+              child.once("tauri://error", (event) => {
+                failCreation(
+                  event.payload == null
+                    ? t("pty.detachedCreateFailed")
+                    : event.payload,
+                );
+              }),
+            failCreation,
+          );
           registerPendingWorkspaceContentWindow({
             pending: pendingDetachedFilesRef.current,
-            key: documentId,
+            key: workspaceFileKey(documentId),
             timeoutMs: WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
             onTimeout: () => {
               void child.destroy().catch(() => undefined);
@@ -1229,45 +1338,35 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             },
             record: {
               documentId,
-              token: handoffToken,
+              token,
               windowLabel,
               sourcePaneId: sourcePane.id,
               window: child,
+              cleanup: cleanupCreationErrorListener,
               resolve,
               reject,
               attached: false,
             },
           });
-          void child.once("tauri://error", (event) => {
-            const pending = takePendingWorkspaceContentWindow(
-              pendingDetachedFilesRef.current,
-              documentId,
-              windowLabel,
-            );
-            if (!pending) return;
-            reject(
-              new Error(
-                event.payload == null
-                  ? t("pty.detachedCreateFailed")
-                  : String(event.payload),
-              ),
-            );
-          });
         });
       } catch (reason) {
+        if (grantedWindowLabel) {
+          await revokeContentWindowFile(grantedWindowLabel).catch(
+            (revokeError) =>
+              console.warn(
+                "Unable to revoke failed file window grant",
+                revokeError,
+              ),
+          );
+        }
         if (lifecycleStarted && token) {
           contentCoordinatorRef.current.failHandoff(
-            { kind: "file", documentId },
+            content,
             "detachFailed",
             token,
           );
         }
         throw reason;
-      } finally {
-        const restoredHandoffIds = new Set(handoffFileIdsRef.current);
-        restoredHandoffIds.delete(documentId);
-        handoffFileIdsRef.current = restoredHandoffIds;
-        setHandoffFileIds(restoredHandoffIds);
       }
     },
     [loadFile, t],
@@ -1300,62 +1399,20 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const removeSlot = useCallback(
-    (
-      instanceId: string,
-      reason: "closed" | "ended" = "ended",
-      options: { lifecycleManaged?: boolean } = {},
-    ) => {
+    (instanceId: string, options: { disposeOwnerEnded?: boolean } = {}) => {
       const content = { kind: "pty", slotId: instanceId } as const;
-      const lifecycleManaged = options.lifecycleManaged !== false;
-      if (lifecycleManaged && reason === "closed") {
-        const pane = listWorkspacePanes(treeRef.current).find((candidate) =>
-          hasWorkspaceContent(candidate, content),
-        );
-        if (pane) {
-          contentCoordinatorRef.current.ensureAttached(content, {
-            kind: "pane",
-            windowLabel: "main",
-            paneId: pane.id,
-          });
-        }
-        const requestId = crypto.randomUUID();
-        if (
-          contentCoordinatorRef.current.approveClose(content, requestId)
-            ?.outcome === "changed"
-        ) {
-          void disposeWorkspaceContent({
-            coordinator: contentCoordinatorRef.current,
-            content,
-            requestId,
-            reason: "closed",
-            dispose: getWorkspaceContentAdapter("pty").lifecycle?.dispose,
-          });
-        } else {
-          void disposeWorkspaceContent({
-            coordinator: contentCoordinatorRef.current,
-            content,
-            reason: "ownerEnded",
-            dispose: getWorkspaceContentAdapter("pty").lifecycle?.dispose,
-          });
-        }
-      } else if (lifecycleManaged) {
+      if (options.disposeOwnerEnded !== false) {
         void disposeWorkspaceContent({
           coordinator: contentCoordinatorRef.current,
           content,
           reason: "ownerEnded",
-          dispose: getWorkspaceContentAdapter("pty").lifecycle?.dispose,
+          dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
         });
       }
       const removedSlot = slotsRef.current.find(
         (slot) => slot.instanceId === instanceId,
       );
-      detachedByInstanceRef.current.delete(instanceId);
-      setDetachedInstanceIds((current) => {
-        if (!current.has(instanceId)) return current;
-        const next = new Set(current);
-        next.delete(instanceId);
-        return next;
-      });
+      detachedByInstanceRef.current.delete(workspacePtyKey(instanceId));
       const nextSlots = slotsRef.current.filter(
         (slot) => slot.instanceId !== instanceId,
       );
@@ -1404,9 +1461,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const uniqueContents: WorkspacePaneContentRef[] = [
         ...new Map(
           requestedContents.map((content) => [
-            content.kind === "pty"
-              ? `pty:${content.slotId}`
-              : `file:${content.documentId}`,
+            workspaceContentReactKey(content),
             content,
           ]),
         ).values(),
@@ -1429,7 +1484,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           const slot = slotsRef.current.find(
             (candidate) => candidate.instanceId === content.slotId,
           );
-          if (!slot || detachedInstanceIdsRef.current.has(content.slotId)) {
+          if (
+            !slot ||
+            isWorkspaceContentWindowOwned(
+              contentCoordinatorRef.current,
+              content,
+            )
+          ) {
             continue;
           }
           const session = slot.sessionId
@@ -1439,7 +1500,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             content,
             getWorkspacePresentationContext(),
           ).title;
-          const adapter = getWorkspaceContentAdapter("pty");
+          const adapter = tryGetWorkspaceContentAdapter("pty");
           contentCoordinatorRef.current.ensureAttached(content, {
             kind: "pane",
             windowLabel: "main",
@@ -1449,16 +1510,28 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             content,
             slot,
             beforeClose: () =>
-              shouldCloseWorkspaceContent(adapter.lifecycle?.beforeClose, {
+              shouldCloseWorkspaceContent(adapter?.lifecycle?.beforeClose, {
                 isDirty: false,
                 confirmDiscard: () => false,
               }),
             describeDisposalImpact: () =>
-              adapter.lifecycle?.describeDisposalImpact?.({
+              adapter?.lifecycle?.describeDisposalImpact?.({
                 isDirty: false,
                 isRunning: session?.state === "running",
                 title,
-              }) ?? [],
+              }) ??
+              (session?.state === "running"
+                ? [{ kind: "runningPty", title }]
+                : []),
+          });
+          continue;
+        }
+
+        if (content.kind === "unknown") {
+          closeTargets.push({
+            content,
+            beforeClose: () => true,
+            describeDisposalImpact: () => [],
           });
           continue;
         }
@@ -1468,8 +1541,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         );
         if (
           !document ||
-          detachedFileIdsRef.current.has(content.documentId) ||
-          handoffFileIdsRef.current.has(content.documentId)
+          isWorkspaceContentWindowOwned(
+            contentCoordinatorRef.current,
+            content,
+          ) ||
+          isWorkspaceContentHandoffActive(
+            contentCoordinatorRef.current,
+            content,
+          )
         ) {
           continue;
         }
@@ -1481,7 +1560,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             buffer.conflict === true ||
             buffer.identityChanged === true),
         );
-        const adapter = getWorkspaceContentAdapter("file");
+        const adapter = tryGetWorkspaceContentAdapter("file");
         contentCoordinatorRef.current.ensureAttached(content, {
           kind: "pane",
           windowLabel: "main",
@@ -1490,16 +1569,19 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         closeTargets.push({
           content,
           beforeClose: () =>
-            shouldCloseWorkspaceContent(adapter.lifecycle?.beforeClose, {
+            shouldCloseWorkspaceContent(adapter?.lifecycle?.beforeClose, {
               isDirty,
               confirmDiscard: () => false,
             }),
           describeDisposalImpact: () =>
-            adapter.lifecycle?.describeDisposalImpact?.({
+            adapter?.lifecycle?.describeDisposalImpact?.({
               isDirty,
               isRunning: false,
               title: document.relativePath,
-            }) ?? [],
+            }) ??
+            (isDirty
+              ? [{ kind: "dirtyFile", title: document.relativePath }]
+              : []),
         });
       }
       if (closeTargets.length === 0) return;
@@ -1517,16 +1599,34 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           onApproved,
           dispose: (context) => {
             if (context.content.kind === "pty") {
-              return getWorkspaceContentAdapter("pty").lifecycle?.dispose?.(
+              return tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose?.(
                 context as WorkspaceContentDisposeContext<"pty">,
               );
             }
-            return getWorkspaceContentAdapter("file").lifecycle?.dispose?.(
+            if (context.content.kind === "unknown") return;
+            return tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose?.(
               context as WorkspaceContentDisposeContext<"file">,
             );
           },
           execute: async () => {
             const closedContents: WorkspacePaneContentRef[] = [];
+            const unsupportedContents = closeTargets.flatMap((target) =>
+              target.content.kind === "unknown" ? [target.content] : [],
+            );
+            if (unsupportedContents.length > 0) {
+              commitTree(
+                unsupportedContents.reduce(
+                  (next, content) =>
+                    executeWorkspaceCommand(next, {
+                      type: "close",
+                      refs: [content],
+                      origin,
+                    }),
+                  treeRef.current,
+                ),
+              );
+              closedContents.push(...unsupportedContents);
+            }
             const fileIds = closeTargets.flatMap((target) =>
               target.content.kind === "file" ? [target.content.documentId] : [],
             );
@@ -1583,13 +1683,20 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             );
             for (const result of results) {
               if (result.result === "closed") {
-                removeSlot(result.slot.instanceId, "closed", {
-                  lifecycleManaged: false,
+                removeSlot(result.slot.instanceId, {
+                  disposeOwnerEnded: false,
                 });
                 closedContents.push(result.content);
               }
             }
-            return closedContents;
+            return {
+              closed: closedContents,
+              pending: results.flatMap(({ content, result }) =>
+                result === "pending" || result === "terminating"
+                  ? [content]
+                  : [],
+              ),
+            };
           },
         });
       } catch (reason) {
@@ -1600,7 +1707,8 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       const pendingCount = outcomes.filter(
-        (outcome) => outcome.result === "pending",
+        (outcome) =>
+          outcome.result === "pending" || outcome.result === "terminating",
       ).length;
       const failedCount = outcomes.filter(
         (outcome) => outcome.result === "cancelled",
@@ -1705,8 +1813,15 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       content: WorkspacePaneContentRef,
       direction: SplitDirection,
     ) => {
+      if (content.kind === "unknown") return;
       const sourcePane = findWorkspacePane(treeRef.current, paneId);
       if (!sourcePane || !hasWorkspaceContent(sourcePane, content)) return;
+      const ownerState = contentCoordinatorRef.current.ensureAttached(content, {
+        kind: "pane",
+        windowLabel: "main",
+        paneId: sourcePane.id,
+      });
+      if (!canChangeWorkspaceContentPane(ownerState)) return;
       const newPaneId = crypto.randomUUID();
       const next = executeWorkspaceCommand(treeRef.current, {
         type: "split",
@@ -1750,6 +1865,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       destinationPaneId: string,
       content: WorkspacePaneContentRef,
     ) => {
+      if (content.kind === "unknown") return;
       const sourcePane = findWorkspacePane(treeRef.current, sourcePaneId);
       const destinationPane = findWorkspacePane(
         treeRef.current,
@@ -1763,6 +1879,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       ) {
         return;
       }
+      const ownerState = contentCoordinatorRef.current.ensureAttached(content, {
+        kind: "pane",
+        windowLabel: "main",
+        paneId: sourcePane.id,
+      });
+      if (!canChangeWorkspaceContentPane(ownerState)) return;
       const next = executeWorkspaceCommand(treeRef.current, {
         type: "move",
         ref: content,
@@ -1800,38 +1922,59 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const isManagedDetachedDrag = useCallback(
-    (instanceId: string, windowLabel: string) =>
-      detachedByInstanceRef.current.get(instanceId)?.windowLabel ===
-      windowLabel,
+    (instanceId: string, windowLabel: string) => {
+      const key = workspacePtyKey(instanceId);
+      const ownership = contentCoordinatorRef.current.get({
+        kind: "pty",
+        slotId: instanceId,
+      });
+      return (
+        detachedByInstanceRef.current.has(key) &&
+        ownership?.phase === "detached" &&
+        ownership.owner.kind === "window" &&
+        ownership.owner.windowLabel === windowLabel
+      );
+    },
     [],
   );
   const isManagedDetachedFileDrag = useCallback(
-    (documentId: string, windowLabel: string) =>
-      detachedFilesRef.current.get(documentId)?.windowLabel === windowLabel,
+    (documentId: string, windowLabel: string) => {
+      const key = workspaceFileKey(documentId);
+      const ownership = contentCoordinatorRef.current.get({
+        kind: "file",
+        documentId,
+      });
+      return (
+        detachedFilesRef.current.has(key) &&
+        ownership?.phase === "detached" &&
+        ownership.owner.kind === "window" &&
+        ownership.owner.windowLabel === windowLabel
+      );
+    },
     [],
   );
 
   const reconcileTimedOutDetach = useCallback(
     async (pending: PendingDetachedWindow) => {
-      const current = pendingDetachedRef.current.get(pending.instanceId);
+      const key = workspacePtyKey(pending.instanceId);
+      const current = pendingDetachedRef.current.get(key);
       if (current && current.windowLabel !== pending.windowLabel) return;
       if (current) window.clearTimeout(current.timer);
       let tracked: PendingDetachedWindow;
       const timer = window.setTimeout(() => {
-        if (pendingDetachedRef.current.get(pending.instanceId) === tracked) {
-          pendingDetachedRef.current.delete(pending.instanceId);
+        if (pendingDetachedRef.current.get(key) === tracked) {
+          pendingDetachedRef.current.delete(key);
           void reconcileTimedOutDetach(tracked);
         }
       }, 1_000);
       tracked = { ...(current ?? pending), timer };
-      pendingDetachedRef.current.set(pending.instanceId, tracked);
+      pendingDetachedRef.current.set(key, tracked);
 
       const [status, child] = await Promise.all([
         getPtySessionWindowStatus(pending.sessionId).catch(() => null),
         WebviewWindow.getByLabel(pending.windowLabel).catch(() => null),
       ]);
-      if (pendingDetachedRef.current.get(pending.instanceId) !== tracked)
-        return;
+      if (pendingDetachedRef.current.get(key) !== tracked) return;
       const action = resolveDetachedStartTimeoutAction(status, Boolean(child));
 
       if (action === "retry-owner-query") {
@@ -1855,7 +1998,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           ).catch(() => undefined);
           takePendingWorkspaceContentWindow(
             pendingDetachedRef.current,
-            pending.instanceId,
+            workspacePtyKey(pending.instanceId),
             pending.windowLabel,
           );
           pending.reject(new Error(t("pty.detachedStateChanged")));
@@ -1863,18 +2006,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         }
         const promoted = takePendingWorkspaceContentWindow(
           pendingDetachedRef.current,
-          pending.instanceId,
+          workspacePtyKey(pending.instanceId),
           pending.windowLabel,
         );
         if (!promoted) return;
-        detachedByInstanceRef.current.set(pending.instanceId, {
-          instanceId: pending.instanceId,
-          sessionId: pending.sessionId,
-          windowLabel: pending.windowLabel,
-          window: pending.window,
-        });
-        setDetachedInstanceIds((currentIds) =>
-          new Set(currentIds).add(pending.instanceId),
+        detachedByInstanceRef.current.set(
+          workspacePtyKey(pending.instanceId),
+          pending.window,
         );
         const content = {
           kind: "pty",
@@ -1894,7 +2032,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
       takePendingWorkspaceContentWindow(
         pendingDetachedRef.current,
-        pending.instanceId,
+        workspacePtyKey(pending.instanceId),
         pending.windowLabel,
       );
       if (action === "remove-ended-session") {
@@ -1905,7 +2043,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           pending.token,
         );
         pending.reject(new Error(t("pty.detachedStartFailed")));
-        removeSlot(pending.instanceId, "ended");
+        removeSlot(pending.instanceId);
         return;
       }
 
@@ -1934,7 +2072,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (
         !slot ||
         !sessionId ||
-        detachedByInstanceRef.current.has(instanceId)
+        detachedByInstanceRef.current.has(workspacePtyKey(instanceId))
       ) {
         throw new Error(t("pty.detachedMoveUnavailable"));
       }
@@ -1961,12 +2099,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         content,
         source,
       );
+      if (ownerState.phase !== "attached") {
+        throw new Error(t("pty.terminating"));
+      }
       let driverContext: WorkspaceContentHandoffHookContext<"pty"> = {
         content,
         source,
         target,
         transferId: crypto.randomUUID(),
-        generation: ownerState.generation,
         capabilities: {
           prepare: async () => ({ handoff: await terminal.captureHandoff() }),
           attach: async (payload) => {
@@ -2016,9 +2156,29 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             url: `${childUrl.pathname}${childUrl.search}${childUrl.hash}`,
             title,
           });
+          const failCreation = (reason: unknown) => {
+            const pending = takePendingWorkspaceContentWindow(
+              pendingDetachedRef.current,
+              workspacePtyKey(instanceId),
+              windowLabel,
+            );
+            if (!pending) return;
+            reject(new Error(formatAppError(reason, t)));
+          };
+          const cleanupCreationErrorListener = retainAsyncUnlisten(
+            () =>
+              child.once("tauri://error", (event) => {
+                failCreation(
+                  event.payload == null
+                    ? t("pty.detachedCreateFailed")
+                    : event.payload,
+                );
+              }),
+            failCreation,
+          );
           registerPendingWorkspaceContentWindow({
             pending: pendingDetachedRef.current,
-            key: instanceId,
+            key: workspacePtyKey(instanceId),
             timeoutMs: WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
             onTimeout: (pending) => {
               void reconcileTimedOutDetach(pending);
@@ -2029,24 +2189,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               resolve,
               reject,
               window: child,
+              cleanup: cleanupCreationErrorListener,
               handoffContext: driverContext,
               handoffPayload: prepared.payload,
             },
-          });
-          void child.once("tauri://error", (event) => {
-            const pending = takePendingWorkspaceContentWindow(
-              pendingDetachedRef.current,
-              instanceId,
-              windowLabel,
-            );
-            if (!pending) return;
-            reject(
-              new Error(
-                event.payload == null
-                  ? t("pty.detachedCreateFailed")
-                  : String(event.payload),
-              ),
-            );
           });
         });
       } catch (reason) {
@@ -2068,7 +2214,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const handleDetachedReady = useCallback(
     (payload: DetachedWindowReadyEvent) => {
-      const pending = pendingDetachedRef.current.get(payload.instanceId);
+      const pending = pendingDetachedRef.current.get(
+        workspacePtyKey(payload.instanceId),
+      );
       if (!pending || !matchesDetachedWindow(pending, payload)) {
         return;
       }
@@ -2085,7 +2233,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         ).catch(() => undefined);
         takePendingWorkspaceContentWindow(
           pendingDetachedRef.current,
-          payload.instanceId,
+          workspacePtyKey(payload.instanceId),
           pending.windowLabel,
         );
         pending.reject(new Error(t("pty.detachedStateChanged")));
@@ -2095,13 +2243,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       promotePendingWorkspaceContentWindow({
         pending: pendingDetachedRef.current,
         detached: detachedByInstanceRef.current,
-        key: payload.instanceId,
+        key: workspacePtyKey(payload.instanceId),
         expectedWindowLabel: pending.windowLabel,
-        toDetached: () => ({ ...payload, window: pending.window }),
+        toDetached: (record) => record.window,
       });
-      setDetachedInstanceIds((current) =>
-        new Set(current).add(payload.instanceId),
-      );
       const content = { kind: "pty", slotId: payload.instanceId } as const;
       const nextTree = executeWorkspaceCommand(treeRef.current, {
         type: "detach",
@@ -2118,7 +2263,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const handleDetachedFailed = useCallback(
     (payload: DetachedWindowReadyEvent & { message?: string }) => {
-      const pending = pendingDetachedRef.current.get(payload.instanceId);
+      const pending = pendingDetachedRef.current.get(
+        workspacePtyKey(payload.instanceId),
+      );
       if (!pending || !matchesDetachedWindow(pending, payload)) return;
       void rollbackWorkspaceContentHandoff(
         pending.handoffContext,
@@ -2132,7 +2279,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       );
       takePendingWorkspaceContentWindow(
         pendingDetachedRef.current,
-        payload.instanceId,
+        workspacePtyKey(payload.instanceId),
         pending.windowLabel,
       );
       pending.reject(
@@ -2164,10 +2311,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           if (status === "ended") {
             const pending = takePendingWorkspaceContentWindow(
               pendingDetachedRef.current,
-              slot.instanceId,
+              workspacePtyKey(slot.instanceId),
             );
             pending?.reject(new Error(t("pty.detachedStartFailed")));
-            removeSlot(slot.instanceId, "ended");
+            removeSlot(slot.instanceId);
             return;
           }
           console.warn(
@@ -2190,16 +2337,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         if (!targetPane) return;
         const pending = takePendingWorkspaceContentWindow(
           pendingDetachedRef.current,
-          slot.instanceId,
+          workspacePtyKey(slot.instanceId),
         );
         pending?.reject(new Error(t("pty.detachedStartTimedOut")));
-        const detached = detachedByInstanceRef.current.get(slot.instanceId);
-        detachedByInstanceRef.current.delete(slot.instanceId);
-        if (detached) void detached.window.destroy().catch(() => undefined);
-        const nextDetachedIds = new Set(detachedInstanceIdsRef.current);
-        nextDetachedIds.delete(slot.instanceId);
-        detachedInstanceIdsRef.current = nextDetachedIds;
-        setDetachedInstanceIds(nextDetachedIds);
+        const detached = detachedByInstanceRef.current.get(
+          workspacePtyKey(slot.instanceId),
+        );
+        detachedByInstanceRef.current.delete(workspacePtyKey(slot.instanceId));
+        if (detached) void detached.destroy().catch(() => undefined);
         contentCoordinatorRef.current.ownerEnded(content);
         contentCoordinatorRef.current.ensureAttached(content, {
           kind: "pane",
@@ -2234,19 +2379,37 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             message,
           },
         ).catch(() => undefined);
-      const knownDetached = detachedByInstanceRef.current.get(
-        payload.instanceId,
-      );
-      if (knownDetached && !matchesDetachedWindow(knownDetached, payload)) {
+      const returningContent = {
+        kind: "pty",
+        slotId: payload.instanceId,
+      } as const;
+      const key = workspacePtyKey(payload.instanceId);
+      const currentOwnership =
+        contentCoordinatorRef.current.get(returningContent);
+      const knownWindowLabel =
+        currentOwnership?.phase === "detached"
+          ? currentOwnership.owner.kind === "window"
+            ? currentOwnership.owner.windowLabel
+            : null
+          : currentOwnership?.phase === "returning"
+            ? currentOwnership.source.windowLabel
+            : currentOwnership?.phase === "closing" &&
+                currentOwnership.owner.kind === "window"
+              ? currentOwnership.owner.windowLabel
+              : null;
+      if (knownWindowLabel && knownWindowLabel !== payload.windowLabel) {
         fail(t("pty.detachedSessionMissing"));
         return;
       }
-      if (!knownDetached && windowKindOf(payload.windowLabel) !== "terminal") {
+      if (
+        !knownWindowLabel &&
+        windowKindOf(payload.windowLabel) !== "terminal"
+      ) {
         fail(t("pty.detachedSessionMissing"));
         return;
       }
-      let detached = knownDetached;
-      if (!detached) {
+      let detachedWindow = detachedByInstanceRef.current.get(key);
+      if (!detachedWindow || !knownWindowLabel) {
         try {
           const [windowStatus, detachedWindow] = await Promise.all([
             getPtySessionWindowStatus(payload.sessionId),
@@ -2256,27 +2419,17 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             fail(t("pty.detachedStateChanged"));
             return;
           }
-          detached = {
-            instanceId: payload.instanceId,
-            sessionId: payload.sessionId,
-            windowLabel: payload.windowLabel,
-            window: detachedWindow,
-          };
-          detachedByInstanceRef.current.set(payload.instanceId, detached);
-          setDetachedInstanceIds((current) =>
-            new Set(current).add(payload.instanceId),
-          );
+          detachedByInstanceRef.current.set(key, detachedWindow);
         } catch (reason) {
-          fail(t("pty.returnFailed", { error: String(reason) }));
+          fail(t("pty.returnFailed", { error: formatAppError(reason, t) }));
           return;
         }
       }
-      const returningContent = {
-        kind: "pty",
-        slotId: payload.instanceId,
-      } as const;
-      const currentOwnership =
-        contentCoordinatorRef.current.get(returningContent);
+      detachedWindow ??= detachedByInstanceRef.current.get(key);
+      if (!detachedWindow) {
+        fail(t("pty.detachedStateChanged"));
+        return;
+      }
       if (
         currentOwnership?.phase === "returning" &&
         currentOwnership.transferId === payload.token
@@ -2299,7 +2452,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               paneId: sourcePane.id,
             },
             { kind: "window", windowLabel: payload.windowLabel },
-            `recovered:${payload.instanceId}:${payload.windowLabel}`,
+            payload.token,
           );
         }
       }
@@ -2327,6 +2480,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         | WorkspaceContentHandoffPayloadByKind["pty"]
         | undefined;
       try {
+        ptyReturnWaitAbortRef.current?.abort();
+        const waitAbortController = new AbortController();
+        ptyReturnWaitAbortRef.current = waitAbortController;
         const deadline = Date.now() + 10_000;
         let slot = slotsRef.current.find(
           (candidate) => candidate.instanceId === payload.instanceId,
@@ -2334,14 +2490,20 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         let terminal = terminalRefs.current.get(payload.instanceId);
         while (
           (!slot || !terminal || hydrationStatusRef.current !== "ready") &&
-          Date.now() < deadline
+          Date.now() < deadline &&
+          !waitAbortController.signal.aborted
         ) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+          await abortableDelay(50, waitAbortController.signal);
+          if (waitAbortController.signal.aborted) return;
           slot = slotsRef.current.find(
             (candidate) => candidate.instanceId === payload.instanceId,
           );
           terminal = terminalRefs.current.get(payload.instanceId);
         }
+        if (ptyReturnWaitAbortRef.current === waitAbortController) {
+          ptyReturnWaitAbortRef.current = null;
+        }
+        if (waitAbortController.signal.aborted) return;
         if (!slot || !terminal || hydrationStatusRef.current !== "ready") {
           failPendingReturn(t("pty.workspaceRestoring"));
           return;
@@ -2360,14 +2522,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           failPendingReturn(t("pty.workspaceRestoring"));
           return;
         }
-        const lifecycleState =
-          contentCoordinatorRef.current.get(returningContent);
         returnDriverContext = {
           content: returningContent,
           source: { kind: "window", windowLabel: payload.windowLabel },
           target: { kind: "pane", windowLabel: "main", paneId: targetPane.id },
           transferId: payload.token,
-          generation: lifecycleState?.generation ?? 0,
           capabilities: {
             prepare: async () => ({ handoff: { token: payload.token } }),
             attach: async (handoffPayload) => {
@@ -2411,12 +2570,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         );
         commitTree(nextTree);
         setFocusedPane(existingPane?.id ?? targetPane.id);
-        detachedByInstanceRef.current.delete(payload.instanceId);
-        setDetachedInstanceIds((current) => {
-          const next = new Set(current);
-          next.delete(payload.instanceId);
-          return next;
-        });
+        detachedByInstanceRef.current.delete(
+          workspacePtyKey(payload.instanceId),
+        );
         useAppStore.getState().openDirectory(slot.directoryId);
         const ownership = contentCoordinatorRef.current.completeHandoff(
           returningContent,
@@ -2427,7 +2583,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           throw new Error(t("pty.detachedStateChanged"));
         }
         try {
-          await detached.window.destroy();
+          await detachedWindow.destroy();
         } catch (reason) {
           console.warn("Failed to destroy returned PTY window", reason);
           await emitWorkspaceContentWindowEvent(
@@ -2447,7 +2603,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             reason,
           ).catch(() => undefined);
         }
-        failPendingReturn(String(reason));
+        failPendingReturn(formatAppError(reason, t));
       }
     },
     [commitTree, setFocusedPane, t, terminalRefs],
@@ -2455,59 +2611,79 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void)[] = [];
-    void Promise.all([
-      listenWorkspaceContentWindowEvent("pty-detached-ready", (event) =>
-        handleDetachedReady(event.payload),
-      ),
-      listenWorkspaceContentWindowEvent("pty-detached-failed", (event) =>
-        handleDetachedFailed(event.payload),
-      ),
-      listen<PtySessionOwnerLostEvent>("pty-session-owner-lost", (event) => {
-        void handlePtySessionOwnerLost(event.payload);
-      }),
-      listenWorkspaceContentWindowEvent("pty-return-requested", (event) => {
-        void handlePtyReturnRequest(event.payload);
-      }),
-      listenWorkspaceContentWindowEvent("pty-detached-exited", (event) => {
-        const pending = pendingDetachedRef.current.get(
-          event.payload.instanceId,
-        );
-        if (pending && matchesDetachedWindow(pending, event.payload)) {
-          void rollbackWorkspaceContentHandoff(
-            pending.handoffContext,
-            pending.handoffPayload,
-            new Error(t("pty.detachedExitedBeforeReady")),
-          ).catch(() => undefined);
-          contentCoordinatorRef.current.failHandoff(
-            { kind: "pty", slotId: event.payload.instanceId },
-            "detachCancelled",
-            pending.token,
+    let unlisten: () => void = () => undefined;
+    void setupWorkspaceContentListeners({
+      registrations: [
+        listenWorkspaceContentWindowEvent("pty-detached-ready", (event) =>
+          handleDetachedReady(event.payload),
+        ),
+        listenWorkspaceContentWindowEvent("pty-detached-failed", (event) =>
+          handleDetachedFailed(event.payload),
+        ),
+        listen<PtySessionOwnerLostEvent>("pty-session-owner-lost", (event) => {
+          void handlePtySessionOwnerLost(event.payload);
+        }),
+        listenWorkspaceContentWindowEvent("pty-return-requested", (event) => {
+          void handlePtyReturnRequest(event.payload);
+        }),
+        listenWorkspaceContentWindowEvent("pty-detached-exited", (event) => {
+          const pending = pendingDetachedRef.current.get(
+            workspacePtyKey(event.payload.instanceId),
           );
-          takePendingWorkspaceContentWindow(
-            pendingDetachedRef.current,
-            event.payload.instanceId,
-            pending.windowLabel,
+          if (pending && matchesDetachedWindow(pending, event.payload)) {
+            void rollbackWorkspaceContentHandoff(
+              pending.handoffContext,
+              pending.handoffPayload,
+              new Error(t("pty.detachedExitedBeforeReady")),
+            ).catch(() => undefined);
+            contentCoordinatorRef.current.failHandoff(
+              { kind: "pty", slotId: event.payload.instanceId },
+              "detachCancelled",
+              pending.token,
+            );
+            takePendingWorkspaceContentWindow(
+              pendingDetachedRef.current,
+              workspacePtyKey(event.payload.instanceId),
+              pending.windowLabel,
+            );
+            pending.reject(new Error(t("pty.detachedExitedBeforeReady")));
+            void pending.window.destroy().catch(() => undefined);
+            removeSlot(event.payload.instanceId);
+            return;
+          }
+          const content = {
+            kind: "pty",
+            slotId: event.payload.instanceId,
+          } as const;
+          const owner = contentCoordinatorRef.current.get(content);
+          const slot = slotsRef.current.find(
+            (candidate) => candidate.instanceId === event.payload.instanceId,
           );
-          pending.reject(new Error(t("pty.detachedExitedBeforeReady")));
-          void pending.window.destroy().catch(() => undefined);
-          removeSlot(event.payload.instanceId);
-          return;
-        }
-        const detached = detachedByInstanceRef.current.get(
-          event.payload.instanceId,
-        );
-        if (matchesDetachedWindow(detached, event.payload)) {
-          removeSlot(event.payload.instanceId);
-        }
-      }),
-    ]).then((stops) => {
-      if (disposed) stops.forEach((stop) => stop());
-      else unlisten = stops;
+          if (
+            detachedByInstanceRef.current.has(
+              workspacePtyKey(event.payload.instanceId),
+            ) &&
+            slot?.sessionId === event.payload.sessionId &&
+            (((owner?.phase === "detached" || owner?.phase === "closing") &&
+              owner.owner.kind === "window" &&
+              owner.owner.windowLabel === event.payload.windowLabel) ||
+              (owner?.phase === "returning" &&
+                owner.source.windowLabel === event.payload.windowLabel))
+          ) {
+            removeSlot(event.payload.instanceId);
+          }
+        }),
+      ],
+      isDisposed: () => disposed,
+      onError: (failures) =>
+        console.error("PTY window listener setup failed", failures),
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     });
     return () => {
       disposed = true;
-      unlisten.forEach((stop) => stop());
+      unlisten();
     };
   }, [
     handleDetachedFailed,
@@ -2520,449 +2696,352 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let disposed = false;
-    const stops: (() => void)[] = [];
+    let unlisten: () => void = () => undefined;
     const setup = async () => {
-      const listeners = await Promise.all([
-        listenWorkspaceContentWindowEvent(
-          "workspace-file-window-ready",
-          async (event) => {
-            const pending = pendingDetachedFilesRef.current.get(
-              event.payload.documentId,
-            );
-            if (
-              !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
-            ) {
-              return;
-            }
-            const content = {
-              kind: "file",
-              documentId: pending.documentId,
-            } as const;
-            const currentState = contentCoordinatorRef.current.get(content);
-            const driverContext: WorkspaceContentHandoffHookContext<"file"> = {
-              content,
-              source: {
-                kind: "pane",
-                windowLabel: "main",
-                paneId:
-                  pending.sourcePaneId ??
-                  listWorkspacePanes(treeRef.current)[0]?.id ??
-                  "unknown-pane",
-              },
-              target: { kind: "window", windowLabel: pending.windowLabel },
-              transferId: pending.token,
-              generation: currentState?.generation ?? 0,
-              capabilities: {
-                prepare: async () => {
-                  const document = fileDocumentsRef.current.find(
-                    (candidate) => candidate.id === pending.documentId,
-                  );
-                  const buffer = fileBuffersRef.current[pending.documentId];
-                  if (!document || !buffer) {
-                    throw new Error(t("workspaceFiles.loadingFile"));
-                  }
-                  return { document, buffer };
+      const cleanup = await setupWorkspaceContentListeners({
+        registrations: [
+          listenWorkspaceContentWindowEvent(
+            "workspace-file-window-ready",
+            async (event) => {
+              const pending = pendingDetachedFilesRef.current.get(
+                workspaceFileKey(event.payload.documentId),
+              );
+              if (
+                !pending ||
+                !matchesWorkspaceFileWindow(pending, event.payload)
+              ) {
+                return;
+              }
+              const content = {
+                kind: "file",
+                documentId: pending.documentId,
+              } as const;
+              const driverContext: WorkspaceContentHandoffHookContext<"file"> =
+                {
+                  content,
+                  source: {
+                    kind: "pane",
+                    windowLabel: "main",
+                    paneId:
+                      pending.sourcePaneId ??
+                      listWorkspacePanes(treeRef.current)[0]?.id ??
+                      "unknown-pane",
+                  },
+                  target: { kind: "window", windowLabel: pending.windowLabel },
+                  transferId: pending.token,
+                  capabilities: {
+                    prepare: async () => {
+                      const document = fileDocumentsRef.current.find(
+                        (candidate) => candidate.id === pending.documentId,
+                      );
+                      const buffer = fileBuffersRef.current[pending.documentId];
+                      if (!document || !buffer) {
+                        throw new Error(t("workspaceFiles.loadingFile"));
+                      }
+                      return { document, buffer };
+                    },
+                    attach: async () => undefined,
+                    rollback: async () => undefined,
+                  },
+                };
+              let prepared: Awaited<
+                ReturnType<typeof prepareWorkspaceContentHandoff<"file">>
+              >;
+              try {
+                prepared = await prepareWorkspaceContentHandoff(driverContext);
+                pending.handoffContext = driverContext;
+                pending.handoffPayload = prepared.payload;
+              } catch (reason) {
+                void rollbackWorkspaceContentHandoff(
+                  driverContext,
+                  undefined,
+                  reason,
+                ).catch(() => undefined);
+                contentCoordinatorRef.current.failHandoff(
+                  content,
+                  "detachFailed",
+                  pending.token,
+                );
+                takePendingWorkspaceContentWindow(
+                  pendingDetachedFilesRef.current,
+                  workspaceFileKey(pending.documentId),
+                  pending.windowLabel,
+                );
+                pending.reject(new Error(formatAppError(reason, t)));
+                void pending.window.destroy().catch(() => undefined);
+                return;
+              }
+              await emitWorkspaceContentWindowEvent(
+                pending.windowLabel,
+                "workspace-file-window-init",
+                {
+                  documentId: pending.documentId,
+                  token: pending.token,
+                  windowLabel: pending.windowLabel,
+                  fileDocument: prepared.payload.document,
+                  fileBuffer: prepared.payload.buffer,
                 },
-                attach: async () => undefined,
-                rollback: async () => undefined,
-              },
-            };
-            let prepared: Awaited<
-              ReturnType<typeof prepareWorkspaceContentHandoff<"file">>
-            >;
-            try {
-              prepared = await prepareWorkspaceContentHandoff(driverContext);
-              pending.handoffContext = driverContext;
-              pending.handoffPayload = prepared.payload;
-            } catch (reason) {
-              void rollbackWorkspaceContentHandoff(
-                driverContext,
-                undefined,
-                reason,
-              ).catch(() => undefined);
-              contentCoordinatorRef.current.failHandoff(
+              );
+            },
+          ),
+          listenWorkspaceContentWindowEvent(
+            "workspace-file-window-attached",
+            (event) => {
+              const pending = pendingDetachedFilesRef.current.get(
+                workspaceFileKey(event.payload.documentId),
+              );
+              if (
+                !pending ||
+                !matchesWorkspaceFileWindow(pending, event.payload)
+              ) {
+                return;
+              }
+              const content = {
+                kind: "file",
+                documentId: pending.documentId,
+              } as const;
+              const ownership = contentCoordinatorRef.current.completeHandoff(
                 content,
+                "detachReady",
+                pending.token,
+              );
+              if (ownership?.outcome !== "changed") {
+                if (pending.handoffContext) {
+                  void rollbackWorkspaceContentHandoff(
+                    pending.handoffContext,
+                    pending.handoffPayload,
+                    new Error(t("pty.detachedStateChanged")),
+                  ).catch(() => undefined);
+                }
+                takePendingWorkspaceContentWindow(
+                  pendingDetachedFilesRef.current,
+                  workspaceFileKey(pending.documentId),
+                  pending.windowLabel,
+                );
+                pending.reject(new Error(t("pty.detachedStateChanged")));
+                void pending.window.destroy().catch(() => undefined);
+                return;
+              }
+              pending.attached = true;
+              promotePendingWorkspaceContentWindow({
+                pending: pendingDetachedFilesRef.current,
+                detached: detachedFilesRef.current,
+                key: workspaceFileKey(pending.documentId),
+                expectedWindowLabel: pending.windowLabel,
+                toDetached: (record) => record.window,
+              });
+              commitTree(
+                executeWorkspaceCommand(treeRef.current, {
+                  type: "detach",
+                  ref: content,
+                }),
+              );
+              pending.resolve();
+            },
+          ),
+          listenWorkspaceContentWindowEvent(
+            "workspace-file-window-attach-failed",
+            (event) => {
+              const pending = pendingDetachedFilesRef.current.get(
+                workspaceFileKey(event.payload.documentId),
+              );
+              if (
+                !pending ||
+                !matchesWorkspaceFileWindow(pending, event.payload)
+              ) {
+                return;
+              }
+              if (pending.handoffContext) {
+                void rollbackWorkspaceContentHandoff(
+                  pending.handoffContext,
+                  pending.handoffPayload,
+                  new Error(
+                    event.payload.message ?? t("pty.detachedStartFailed"),
+                  ),
+                ).catch(() => undefined);
+              }
+              contentCoordinatorRef.current.failHandoff(
+                { kind: "file", documentId: pending.documentId },
                 "detachFailed",
                 pending.token,
               );
               takePendingWorkspaceContentWindow(
                 pendingDetachedFilesRef.current,
-                pending.documentId,
+                workspaceFileKey(pending.documentId),
                 pending.windowLabel,
               );
-              pending.reject(new Error(String(reason)));
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            await emitWorkspaceContentWindowEvent(
-              pending.windowLabel,
-              "workspace-file-window-init",
-              {
-                documentId: pending.documentId,
-                token: pending.token,
-                windowLabel: pending.windowLabel,
-                fileDocument: prepared.payload.document,
-                fileBuffer: prepared.payload.buffer,
-              },
-            );
-          },
-        ),
-        listenWorkspaceContentWindowEvent(
-          "workspace-file-window-attached",
-          (event) => {
-            const pending = pendingDetachedFilesRef.current.get(
-              event.payload.documentId,
-            );
-            if (
-              !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
-            ) {
-              return;
-            }
-            const content = {
-              kind: "file",
-              documentId: pending.documentId,
-            } as const;
-            const ownership = contentCoordinatorRef.current.completeHandoff(
-              content,
-              "detachReady",
-              pending.token,
-            );
-            if (ownership?.outcome !== "changed") {
-              if (pending.handoffContext) {
-                void rollbackWorkspaceContentHandoff(
-                  pending.handoffContext,
-                  pending.handoffPayload,
-                  new Error(t("pty.detachedStateChanged")),
-                ).catch(() => undefined);
-              }
-              takePendingWorkspaceContentWindow(
-                pendingDetachedFilesRef.current,
-                pending.documentId,
-                pending.windowLabel,
-              );
-              pending.reject(new Error(t("pty.detachedStateChanged")));
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            pending.attached = true;
-            promotePendingWorkspaceContentWindow({
-              pending: pendingDetachedFilesRef.current,
-              detached: detachedFilesRef.current,
-              key: pending.documentId,
-              expectedWindowLabel: pending.windowLabel,
-              toDetached: (record) => record,
-            });
-            setDetachedFileIds((current) => {
-              const next = new Set(current).add(pending.documentId);
-              detachedFileIdsRef.current = next;
-              return next;
-            });
-            commitTree(
-              executeWorkspaceCommand(treeRef.current, {
-                type: "detach",
-                ref: content,
-              }),
-            );
-            pending.resolve();
-          },
-        ),
-        listenWorkspaceContentWindowEvent(
-          "workspace-file-window-attach-failed",
-          (event) => {
-            const pending = pendingDetachedFilesRef.current.get(
-              event.payload.documentId,
-            );
-            if (
-              !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
-            ) {
-              return;
-            }
-            if (pending.handoffContext) {
-              void rollbackWorkspaceContentHandoff(
-                pending.handoffContext,
-                pending.handoffPayload,
+              pending.reject(
                 new Error(
                   event.payload.message ?? t("pty.detachedStartFailed"),
                 ),
-              ).catch(() => undefined);
-            }
-            contentCoordinatorRef.current.failHandoff(
-              { kind: "file", documentId: pending.documentId },
-              "detachFailed",
-              pending.token,
-            );
-            takePendingWorkspaceContentWindow(
-              pendingDetachedFilesRef.current,
-              pending.documentId,
-              pending.windowLabel,
-            );
-            pending.reject(
-              new Error(event.payload.message ?? t("pty.detachedStartFailed")),
-            );
-            void pending.window.destroy().catch(() => undefined);
-          },
-        ),
-        listenWorkspaceContentWindowEvent(
-          "workspace-file-window-buffer-changed",
-          (event) => {
-            const managed = detachedFilesRef.current.get(
-              event.payload.documentId,
-            );
-            if (
-              !managed ||
-              !matchesWorkspaceFileWindow(managed, event.payload) ||
-              !event.payload.fileBuffer
-            ) {
-              return;
-            }
-            const owner = contentCoordinatorRef.current.get({
-              kind: "file",
-              documentId: managed.documentId,
-            });
-            const currentBuffer = fileBuffersRef.current[managed.documentId];
-            if (
-              owner?.phase !== "detached" ||
-              owner.owner.kind !== "window" ||
-              owner.owner.windowLabel !== managed.windowLabel ||
-              !isWorkspaceFileBufferNewer(
-                event.payload.fileBuffer,
-                currentBuffer,
-              )
-            ) {
-              return;
-            }
-            const next = {
-              ...fileBuffersRef.current,
-              [managed.documentId]: event.payload.fileBuffer,
-            };
-            fileBuffersRef.current = next;
-            setFileBuffers(next);
-          },
-        ),
-        listenWorkspaceContentWindowEvent(
-          "workspace-file-window-return-requested",
-          async (event) => {
-            let managed = detachedFilesRef.current.get(
-              event.payload.documentId,
-            );
-            if (
-              !managed &&
-              event.payload.fileDocument &&
-              event.payload.fileBuffer &&
-              matchesWorkspaceFileWindow(
-                {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  windowLabel: event.payload.windowLabel,
-                },
-                event.payload,
-              )
-            ) {
+              );
+              void pending.window.destroy().catch(() => undefined);
+            },
+          ),
+          listenWorkspaceContentWindowEvent(
+            "workspace-file-window-buffer-changed",
+            (event) => {
+              const content = {
+                kind: "file",
+                documentId: event.payload.documentId,
+              } as const;
+              const key = workspaceFileKey(content.documentId);
+              const owner = contentCoordinatorRef.current.get(content);
+              if (
+                !detachedFilesRef.current.has(key) ||
+                !event.payload.fileBuffer ||
+                owner?.phase !== "detached" ||
+                owner.owner.kind !== "window" ||
+                owner.owner.windowLabel !== event.payload.windowLabel ||
+                owner.windowToken !== event.payload.token
+              ) {
+                return;
+              }
+              const currentBuffer = fileBuffersRef.current[content.documentId];
+              if (
+                !isWorkspaceFileBufferNewer(
+                  event.payload.fileBuffer,
+                  currentBuffer,
+                )
+              ) {
+                return;
+              }
+              const next = {
+                ...fileBuffersRef.current,
+                [content.documentId]: event.payload.fileBuffer,
+              };
+              fileBuffersRef.current = next;
+              setFileBuffers(next);
+            },
+          ),
+          listenWorkspaceContentWindowEvent(
+            "workspace-file-window-return-requested",
+            async (event) => {
               const knownDocument = fileDocumentsRef.current.find(
                 (document) => document.id === event.payload.documentId,
               );
               const incomingDocument = event.payload.fileDocument;
-              if (
-                knownDocument &&
-                incomingDocument.id === knownDocument.id &&
-                knownDocument.directoryId === incomingDocument.directoryId &&
-                knownDocument.directoryPath ===
-                  incomingDocument.directoryPath &&
-                knownDocument.relativePath === incomingDocument.relativePath
-              ) {
-                const window = await WebviewWindow.getByLabel(
-                  event.payload.windowLabel,
-                );
-                if (window) {
-                  managed = {
-                    documentId: knownDocument.id,
-                    token: event.payload.token,
-                    windowLabel: event.payload.windowLabel,
-                    window,
-                    timer: 0,
-                    resolve: () => undefined,
-                    reject: () => undefined,
-                    attached: true,
-                  };
-                  detachedFilesRef.current.set(knownDocument.id, managed);
-                  setDetachedFileIds((current) => {
-                    const next = new Set(current).add(knownDocument.id);
-                    detachedFileIdsRef.current = next;
-                    return next;
-                  });
-                }
-              }
-            }
-            if (
-              !managed ||
-              !matchesWorkspaceFileWindow(managed, event.payload) ||
-              !event.payload.fileDocument ||
-              !event.payload.fileBuffer
-            ) {
-              await emitWorkspaceContentWindowEvent(
-                event.payload.windowLabel,
-                "workspace-file-window-return-failed",
-                {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: t("pty.returnFailed", {
-                    error: t("pty.workspaceRestoring"),
-                  }),
-                },
-              ).catch(() => undefined);
-              return;
-            }
-            const content = {
-              kind: "file",
-              documentId: event.payload.documentId,
-            } as const;
-            const currentOwnership = contentCoordinatorRef.current.get(content);
-            if (
-              currentOwnership?.phase === "returning" &&
-              currentOwnership.transferId === event.payload.token
-            ) {
-              return;
-            }
-            if (currentOwnership?.phase !== "detached") {
-              const sourcePane =
-                listWorkspacePanes(treeRef.current).find((pane) =>
-                  hasWorkspaceContent(pane, content),
-                ) ??
-                findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
-                listWorkspacePanes(treeRef.current)[0];
-              if (sourcePane) {
-                contentCoordinatorRef.current.reconcileDetached(
-                  content,
-                  {
-                    kind: "pane",
-                    windowLabel: "main",
-                    paneId: sourcePane.id,
-                  },
-                  { kind: "window", windowLabel: managed.windowLabel },
-                  `recovered:${content.documentId}:${managed.windowLabel}`,
-                );
-              }
-            }
-            const returning = contentCoordinatorRef.current.beginReturn(
-              { kind: "file", documentId: event.payload.documentId },
-              event.payload.token,
-              "main",
-              event.payload.targetPaneId,
-            );
-            if (returning?.outcome !== "changed") {
-              await emitWorkspaceContentWindowEvent(
-                event.payload.windowLabel,
-                "workspace-file-window-return-failed",
-                {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: t("pty.returnFailed", {
-                    error: t("pty.detachedStateChanged"),
-                  }),
-                },
-              ).catch(() => undefined);
-              return;
-            }
-            let fileReturnDriverContext: WorkspaceContentHandoffHookContext<"file"> | null =
-              null;
-            let fileReturnDriverPayload:
-              | WorkspaceContentHandoffPayloadByKind["file"]
-              | undefined;
-            try {
-              const document = event.payload.fileDocument;
               const incomingBuffer = event.payload.fileBuffer;
-              const currentBuffer = fileBuffersRef.current[document.id];
-              const returnedBuffer =
-                currentBuffer &&
-                isWorkspaceFileBufferNewer(currentBuffer, incomingBuffer)
-                  ? currentBuffer
-                  : incomingBuffer;
-              let targetPane = event.payload.targetPaneId
-                ? findWorkspacePane(treeRef.current, event.payload.targetPaneId)
-                : null;
-              targetPane ??=
-                listWorkspacePanes(treeRef.current).find((candidate) =>
-                  hasWorkspaceContent(candidate, {
-                    kind: "file",
-                    documentId: document.id,
-                  }),
-                ) ?? null;
-              targetPane ??= findWorkspacePane(
-                treeRef.current,
-                focusedPaneIdRef.current,
-              );
-              if (!targetPane) throw new Error(t("pty.workspaceRestoring"));
-              const currentState = contentCoordinatorRef.current.get(content);
-              fileReturnDriverContext = {
-                content,
-                source: {
-                  kind: "window",
-                  windowLabel: event.payload.windowLabel,
-                },
-                target: {
-                  kind: "pane",
-                  windowLabel: "main",
-                  paneId: targetPane.id,
-                },
-                transferId: event.payload.token,
-                generation: currentState?.generation ?? 0,
-                capabilities: {
-                  prepare: async () => ({
-                    document,
-                    buffer: returnedBuffer,
-                  }),
-                  attach: async (handoffPayload) => {
-                    const nextBuffers = {
-                      ...fileBuffersRef.current,
-                      [document.id]: handoffPayload.buffer,
-                    };
-                    fileBuffersRef.current = nextBuffers;
-                    setFileBuffers(nextBuffers);
-                  },
-                  rollback: async () => undefined,
-                },
-              };
-              fileReturnDriverPayload = {
-                document,
-                buffer: returnedBuffer,
-              };
-              await attachWorkspaceContentHandoff(
-                fileReturnDriverContext,
-                fileReturnDriverPayload,
-              );
-              const activeReturn = contentCoordinatorRef.current.get(content);
               if (
-                activeReturn?.phase !== "returning" ||
-                activeReturn.transferId !== event.payload.token
+                !knownDocument ||
+                !incomingBuffer ||
+                !workspaceFileDocumentIdentityMatches(
+                  knownDocument,
+                  incomingDocument,
+                )
               ) {
-                throw new Error(t("pty.detachedStateChanged"));
-              }
-              const nextTree = executeWorkspaceCommand(treeRef.current, {
-                type: "return",
-                ref: content,
-                toPaneId: targetPane.id,
-              });
-              commitTree(nextTree);
-              setFocusedPane(targetPane.id);
-              const ownership = contentCoordinatorRef.current.completeHandoff(
-                { kind: "file", documentId: document.id },
-                "returnReady",
-                event.payload.token,
-              );
-              if (ownership?.outcome !== "changed") {
-                contentCoordinatorRef.current.failHandoff(
-                  { kind: "file", documentId: document.id },
-                  "returnFailed",
-                  event.payload.token,
-                );
                 await emitWorkspaceContentWindowEvent(
                   event.payload.windowLabel,
                   "workspace-file-window-return-failed",
                   {
-                    documentId: document.id,
+                    documentId: event.payload.documentId,
+                    token: event.payload.token,
+                    message: t("pty.returnFailed", {
+                      error: t("pty.workspaceRestoring"),
+                    }),
+                  },
+                ).catch(() => undefined);
+                return;
+              }
+              const content = {
+                kind: "file",
+                documentId: event.payload.documentId,
+              } as const;
+              const key = workspaceFileKey(content.documentId);
+              let managedWindow = detachedFilesRef.current.get(key);
+              if (!managedWindow) {
+                try {
+                  managedWindow =
+                    (await WebviewWindow.getByLabel(
+                      event.payload.windowLabel,
+                    )) ?? undefined;
+                } catch {
+                  managedWindow = undefined;
+                }
+              }
+              if (
+                !managedWindow ||
+                windowKindOf(event.payload.windowLabel) !== "workspaceContent"
+              ) {
+                await emitWorkspaceContentWindowEvent(
+                  event.payload.windowLabel,
+                  "workspace-file-window-return-failed",
+                  {
+                    documentId: event.payload.documentId,
+                    token: event.payload.token,
+                    message: t("pty.returnFailed", {
+                      error: t("pty.workspaceRestoring"),
+                    }),
+                  },
+                ).catch(() => undefined);
+                return;
+              }
+              let currentOwnership = contentCoordinatorRef.current.get(content);
+              if (
+                currentOwnership?.phase === "returning" &&
+                currentOwnership.transferId === event.payload.token
+              ) {
+                return;
+              }
+              if (currentOwnership?.phase === "detached") {
+                if (
+                  currentOwnership.owner.kind !== "window" ||
+                  currentOwnership.owner.windowLabel !==
+                    event.payload.windowLabel ||
+                  currentOwnership.windowToken !== event.payload.token
+                ) {
+                  await emitWorkspaceContentWindowEvent(
+                    event.payload.windowLabel,
+                    "workspace-file-window-return-failed",
+                    {
+                      documentId: event.payload.documentId,
+                      token: event.payload.token,
+                      message: t("pty.returnFailed", {
+                        error: t("pty.detachedStateChanged"),
+                      }),
+                    },
+                  ).catch(() => undefined);
+                  return;
+                }
+              } else if (
+                !currentOwnership ||
+                currentOwnership.phase === "attached"
+              ) {
+                const sourcePane =
+                  listWorkspacePanes(treeRef.current).find((pane) =>
+                    hasWorkspaceContent(pane, content),
+                  ) ??
+                  findWorkspacePane(
+                    treeRef.current,
+                    focusedPaneIdRef.current,
+                  ) ??
+                  listWorkspacePanes(treeRef.current)[0];
+                if (sourcePane) {
+                  contentCoordinatorRef.current.reconcileDetached(
+                    content,
+                    {
+                      kind: "pane",
+                      windowLabel: "main",
+                      paneId: sourcePane.id,
+                    },
+                    { kind: "window", windowLabel: event.payload.windowLabel },
+                    event.payload.token,
+                  );
+                  currentOwnership = contentCoordinatorRef.current.get(content);
+                }
+              }
+              if (
+                currentOwnership?.phase !== "detached" ||
+                currentOwnership.owner.kind !== "window" ||
+                currentOwnership.owner.windowLabel !==
+                  event.payload.windowLabel ||
+                currentOwnership.windowToken !== event.payload.token
+              ) {
+                await emitWorkspaceContentWindowEvent(
+                  event.payload.windowLabel,
+                  "workspace-file-window-return-failed",
+                  {
+                    documentId: event.payload.documentId,
                     token: event.payload.token,
                     message: t("pty.returnFailed", {
                       error: t("pty.detachedStateChanged"),
@@ -2971,56 +3050,189 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
                 ).catch(() => undefined);
                 return;
               }
-              detachedFilesRef.current.delete(document.id);
-              setDetachedFileIds((current) => {
-                const next = new Set(current);
-                next.delete(document.id);
-                detachedFileIdsRef.current = next;
-                return next;
-              });
-              await emitWorkspaceContentWindowEvent(
-                event.payload.windowLabel,
-                "workspace-file-window-return-complete",
-                {
-                  documentId: document.id,
-                  token: event.payload.token,
-                },
-              ).catch(() => managed.window.destroy().catch(() => undefined));
-            } catch (reason) {
-              if (fileReturnDriverContext) {
-                await rollbackWorkspaceContentHandoff(
+              detachedFilesRef.current.set(key, managedWindow);
+              const returning = contentCoordinatorRef.current.beginReturn(
+                content,
+                event.payload.token,
+                "main",
+                event.payload.targetPaneId,
+              );
+              if (returning?.outcome !== "changed") {
+                await emitWorkspaceContentWindowEvent(
+                  event.payload.windowLabel,
+                  "workspace-file-window-return-failed",
+                  {
+                    documentId: event.payload.documentId,
+                    token: event.payload.token,
+                    message: t("pty.returnFailed", {
+                      error: t("pty.detachedStateChanged"),
+                    }),
+                  },
+                ).catch(() => undefined);
+                return;
+              }
+              let fileReturnDriverContext: WorkspaceContentHandoffHookContext<"file"> | null =
+                null;
+              let fileReturnDriverPayload:
+                | WorkspaceContentHandoffPayloadByKind["file"]
+                | undefined;
+              try {
+                const document = knownDocument;
+                const currentBuffer = fileBuffersRef.current[document.id];
+                const returnedBuffer =
+                  currentBuffer &&
+                  isWorkspaceFileBufferNewer(currentBuffer, incomingBuffer)
+                    ? currentBuffer
+                    : incomingBuffer;
+                let targetPane = event.payload.targetPaneId
+                  ? findWorkspacePane(
+                      treeRef.current,
+                      event.payload.targetPaneId,
+                    )
+                  : null;
+                targetPane ??=
+                  listWorkspacePanes(treeRef.current).find((candidate) =>
+                    hasWorkspaceContent(candidate, {
+                      kind: "file",
+                      documentId: document.id,
+                    }),
+                  ) ?? null;
+                targetPane ??= findWorkspacePane(
+                  treeRef.current,
+                  focusedPaneIdRef.current,
+                );
+                if (!targetPane) throw new Error(t("pty.workspaceRestoring"));
+                fileReturnDriverContext = {
+                  content,
+                  source: {
+                    kind: "window",
+                    windowLabel: event.payload.windowLabel,
+                  },
+                  target: {
+                    kind: "pane",
+                    windowLabel: "main",
+                    paneId: targetPane.id,
+                  },
+                  transferId: event.payload.token,
+                  capabilities: {
+                    prepare: async () => ({
+                      document,
+                      buffer: returnedBuffer,
+                    }),
+                    attach: async (handoffPayload) => {
+                      const nextBuffers = {
+                        ...fileBuffersRef.current,
+                        [document.id]: handoffPayload.buffer,
+                      };
+                      fileBuffersRef.current = nextBuffers;
+                      setFileBuffers(nextBuffers);
+                    },
+                    rollback: async () => undefined,
+                  },
+                };
+                fileReturnDriverPayload = {
+                  document,
+                  buffer: returnedBuffer,
+                };
+                await attachWorkspaceContentHandoff(
                   fileReturnDriverContext,
                   fileReturnDriverPayload,
-                  reason,
+                );
+                const activeReturn = contentCoordinatorRef.current.get(content);
+                if (
+                  activeReturn?.phase !== "returning" ||
+                  activeReturn.transferId !== event.payload.token
+                ) {
+                  throw new Error(t("pty.detachedStateChanged"));
+                }
+                const nextTree = executeWorkspaceCommand(treeRef.current, {
+                  type: "return",
+                  ref: content,
+                  toPaneId: targetPane.id,
+                });
+                commitTree(nextTree);
+                setFocusedPane(targetPane.id);
+                const ownership = contentCoordinatorRef.current.completeHandoff(
+                  { kind: "file", documentId: document.id },
+                  "returnReady",
+                  event.payload.token,
+                );
+                if (ownership?.outcome !== "changed") {
+                  contentCoordinatorRef.current.failHandoff(
+                    { kind: "file", documentId: document.id },
+                    "returnFailed",
+                    event.payload.token,
+                  );
+                  await emitWorkspaceContentWindowEvent(
+                    event.payload.windowLabel,
+                    "workspace-file-window-return-failed",
+                    {
+                      documentId: document.id,
+                      token: event.payload.token,
+                      message: t("pty.returnFailed", {
+                        error: t("pty.detachedStateChanged"),
+                      }),
+                    },
+                  ).catch(() => undefined);
+                  return;
+                }
+                detachedFilesRef.current.delete(workspaceFileKey(document.id));
+                await revokeContentWindowFile(event.payload.windowLabel).catch(
+                  (reason) =>
+                    console.warn(
+                      "Unable to revoke returned file window grant",
+                      reason,
+                    ),
+                );
+                await emitWorkspaceContentWindowEvent(
+                  event.payload.windowLabel,
+                  "workspace-file-window-return-complete",
+                  {
+                    documentId: document.id,
+                    token: event.payload.token,
+                  },
+                ).catch(() => managedWindow.destroy().catch(() => undefined));
+              } catch (reason) {
+                if (fileReturnDriverContext) {
+                  await rollbackWorkspaceContentHandoff(
+                    fileReturnDriverContext,
+                    fileReturnDriverPayload,
+                    reason,
+                  ).catch(() => undefined);
+                }
+                contentCoordinatorRef.current.failHandoff(
+                  { kind: "file", documentId: event.payload.documentId },
+                  "returnFailed",
+                  event.payload.token,
+                );
+                await emitWorkspaceContentWindowEvent(
+                  event.payload.windowLabel,
+                  "workspace-file-window-return-failed",
+                  {
+                    documentId: event.payload.documentId,
+                    token: event.payload.token,
+                    message: t("pty.returnFailed", {
+                      error: formatAppError(reason, t),
+                    }),
+                  },
                 ).catch(() => undefined);
               }
-              contentCoordinatorRef.current.failHandoff(
-                { kind: "file", documentId: event.payload.documentId },
-                "returnFailed",
-                event.payload.token,
-              );
-              await emitWorkspaceContentWindowEvent(
-                event.payload.windowLabel,
-                "workspace-file-window-return-failed",
-                {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: t("pty.returnFailed", { error: String(reason) }),
-                },
-              ).catch(() => undefined);
-            }
-          },
-        ),
-      ]);
-      if (disposed) listeners.forEach((stop) => stop());
-      else stops.push(...listeners);
+            },
+          ),
+        ],
+        isDisposed: () => disposed,
+        onError: (failures) =>
+          console.error("File window listener setup failed", failures),
+      });
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     };
     void setup().catch((reason) =>
       console.error("File window listener setup failed", reason),
     );
     return () => {
       disposed = true;
-      stops.forEach((stop) => stop());
+      unlisten();
     };
   }, [commitTree, setFocusedPane, t]);
 
@@ -3147,12 +3359,45 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   }, [directories]);
 
   const collectExitImpacts = useCallback(async (ptyCount: number) => {
-    const managedWindows = new Map<string, PendingWorkspaceFileWindow>();
-    for (const managed of detachedFilesRef.current.values()) {
-      managedWindows.set(managed.documentId, managed);
+    const managedWindows = new Map<
+      string,
+      { documentId: string; token: string; windowLabel: string }
+    >();
+    for (const content of contentCoordinatorRef.current.listWindowOwned()) {
+      if (content.kind !== "file") continue;
+      const state = contentCoordinatorRef.current.get(content);
+      const key = workspaceFileKey(content.documentId);
+      if (!detachedFilesRef.current.has(key) || !state) continue;
+      const windowLabel =
+        state.phase === "detached"
+          ? state.owner.kind === "window"
+            ? state.owner.windowLabel
+            : undefined
+          : state.phase === "returning"
+            ? state.source.windowLabel
+            : state.phase === "closing" && state.owner.kind === "window"
+              ? state.owner.windowLabel
+              : undefined;
+      const windowToken =
+        state.phase === "detached" || state.phase === "returning"
+          ? state.windowToken
+          : state.phase === "closing"
+            ? state.windowToken
+            : undefined;
+      if (windowLabel && windowToken) {
+        managedWindows.set(content.documentId, {
+          documentId: content.documentId,
+          token: windowToken,
+          windowLabel,
+        });
+      }
     }
     for (const pending of pendingDetachedFilesRef.current.values()) {
-      managedWindows.set(pending.documentId, pending);
+      managedWindows.set(pending.documentId, {
+        documentId: pending.documentId,
+        token: pending.token,
+        windowLabel: pending.windowLabel,
+      });
     }
 
     const flushResults = await Promise.all(
@@ -3235,24 +3480,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         (session) => session.state === "running",
       ).length;
       const impacts = await collectExitImpacts(runningPtyCount);
-      const detachedWindowIdentities = new Set<string>();
-      for (const managed of detachedByInstanceRef.current.values()) {
-        detachedWindowIdentities.add(`pty:${managed.instanceId}`);
-      }
-      for (const pending of pendingDetachedRef.current.values()) {
-        detachedWindowIdentities.add(`pty:${pending.instanceId}`);
-      }
-      for (const managed of detachedFilesRef.current.values()) {
-        detachedWindowIdentities.add(`file:${managed.documentId}`);
-      }
-      for (const pending of pendingDetachedFilesRef.current.values()) {
-        detachedWindowIdentities.add(`file:${pending.documentId}`);
-      }
-      detachedInstanceIdsRef.current.forEach((instanceId) =>
-        detachedWindowIdentities.add(`pty:${instanceId}`),
-      );
-      detachedFileIdsRef.current.forEach((documentId) =>
-        detachedWindowIdentities.add(`file:${documentId}`),
+      const detachedWindowIdentities = new Set(
+        contentCoordinatorRef.current
+          .listWindowOwned()
+          .map(workspaceContentKey),
       );
 
       const blockers = {
@@ -3270,6 +3501,20 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [collectExitImpacts]);
 
+  const getDirectoryRemovalBlockers = useCallback((directoryId: number) => {
+    return {
+      openFileCount: fileDocumentsRef.current.filter(
+        (document) => document.directoryId === directoryId,
+      ).length,
+      runningPtyCount: Object.values(
+        useAppStore.getState().ptySessionsById,
+      ).filter(
+        (session) =>
+          session.directoryId === directoryId && session.state === "running",
+      ).length,
+    };
+  }, []);
+
   const cancelBackupRestore = useCallback(() => {
     backupRestoreInProgressRef.current = false;
   }, []);
@@ -3285,9 +3530,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     fileBuffersRef.current = {};
     treeRef.current = createWorkspacePane(initialPaneId);
     focusedPaneIdRef.current = initialPaneId;
-    detachedInstanceIdsRef.current = new Set();
-    detachedFileIdsRef.current = new Set();
-    handoffFileIdsRef.current = new Set();
     detachedByInstanceRef.current.clear();
     detachedFilesRef.current.clear();
     pendingDetachedRef.current.clear();
@@ -3298,9 +3540,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     setSlots([]);
     setFileDocuments([]);
     setFileBuffers({});
-    setDetachedInstanceIds(new Set());
-    setDetachedFileIds(new Set());
-    setHandoffFileIds(new Set());
     setTree(treeRef.current);
     setFocusedPaneId(initialPaneId);
     setWorkspaceTreeRevision((revision) => revision + 1);
@@ -3327,6 +3566,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       openProjectFile,
       loadFile,
       activateFile,
+      activateUnsupportedContent,
       editFile,
       saveFile,
       closeContents,
@@ -3340,6 +3580,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       moveSession,
       moveFile,
       detachedInstanceIds,
+      closingContentKeys,
       hasDetachedSessions: detachedInstanceIds.size > 0,
       isManagedDetachedDrag,
       isManagedDetachedFileDrag,
@@ -3356,6 +3597,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       getBackupRestoreBlockers,
       cancelBackupRestore,
       rehydrateWorkspace,
+      getDirectoryRemovalBlockers,
     }),
     [
       slots,
@@ -3376,6 +3618,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       openProjectFile,
       loadFile,
       activateFile,
+      activateUnsupportedContent,
       editFile,
       saveFile,
       closeContents,
@@ -3389,6 +3632,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       moveSession,
       moveFile,
       detachedInstanceIds,
+      closingContentKeys,
       isManagedDetachedDrag,
       isManagedDetachedFileDrag,
       detachSession,
@@ -3404,6 +3648,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       getBackupRestoreBlockers,
       cancelBackupRestore,
       rehydrateWorkspace,
+      getDirectoryRemovalBlockers,
     ],
   );
 
@@ -3539,6 +3784,7 @@ export function PtyWorkspaceRegion() {
     hasDetachedSessions,
     isManagedDetachedDrag,
     isManagedDetachedFileDrag,
+    closingContentKeys,
     detachSession,
     detachFile,
     closeEmptyPane,
@@ -3546,6 +3792,7 @@ export function PtyWorkspaceRegion() {
     retryHydration,
     resetWorkspace,
     activateFile,
+    activateUnsupportedContent,
     closeContents,
     editFile,
     loadFile,
@@ -3605,7 +3852,7 @@ export function PtyWorkspaceRegion() {
             onClick={() => {
               if (!window.confirm(t("pty.confirmLayoutReset"))) return;
               void resetWorkspace().catch((reason) =>
-                toast.error(String(reason)),
+                toast.error(formatAppError(reason, t)),
               );
             }}
           >
@@ -3629,6 +3876,7 @@ export function PtyWorkspaceRegion() {
           fileBuffers={fileBuffers}
           handoffFileIds={handoffFileIds}
           detachedFileIds={detachedFileIds}
+          closingContentKeys={closingContentKeys}
           focusedPaneId={focusedPaneId}
           portalTargets={portalTargets}
           canCloseEmptyPane={listWorkspacePanes(tree).length > 1}
@@ -3639,10 +3887,11 @@ export function PtyWorkspaceRegion() {
           onFocusPane={focusPane}
           onActivateSession={activateSession}
           onActivateFile={activateFile}
+          onActivateUnsupportedContent={activateUnsupportedContent}
           onCloseContents={closeContents}
           onDetachFile={(documentId) => {
             void detachFile(documentId).catch((reason) =>
-              toast.error(String(reason)),
+              toast.error(formatAppError(reason, t)),
             );
           }}
           onMoveFile={moveFile}
@@ -3658,7 +3907,7 @@ export function PtyWorkspaceRegion() {
           isManagedDetachedFileDrag={isManagedDetachedFileDrag}
           onDetachSession={(instanceId) => {
             void detachSession(instanceId).catch((reason) =>
-              toast.error(String(reason)),
+              toast.error(formatAppError(reason, t)),
             );
           }}
           onCloseEmptyPane={closeEmptyPane}
@@ -3695,7 +3944,9 @@ function WorkspaceLayoutManager({
     try {
       setPresets(await listWorkspaceLayoutPresets());
     } catch (reason) {
-      toast.error(t("pty.layoutActionFailed", { error: String(reason) }));
+      toast.error(
+        t("pty.layoutActionFailed", { error: formatAppError(reason, t) }),
+      );
     } finally {
       setLoading(false);
     }
@@ -3712,7 +3963,9 @@ function WorkspaceLayoutManager({
         await action();
         if (successMessage) toast.success(successMessage);
       } catch (reason) {
-        toast.error(t("pty.layoutActionFailed", { error: String(reason) }));
+        toast.error(
+          t("pty.layoutActionFailed", { error: formatAppError(reason, t) }),
+        );
       } finally {
         setBusy(false);
       }
@@ -3976,6 +4229,7 @@ interface WorkspaceTreeViewProps {
   fileBuffers: Record<string, WorkspaceFileBuffer>;
   handoffFileIds: Set<string>;
   detachedFileIds: Set<string>;
+  closingContentKeys: Set<string>;
   focusedPaneId: string;
   portalTargets: Record<string, HTMLDivElement>;
   canCloseEmptyPane: boolean;
@@ -3986,6 +4240,10 @@ interface WorkspaceTreeViewProps {
   onFocusPane: (paneId: string) => void;
   onActivateSession: (paneId: string, instanceId: string) => void;
   onActivateFile: (paneId: string, documentId: string) => void;
+  onActivateUnsupportedContent: (
+    paneId: string,
+    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
+  ) => void;
   onCloseContents: (
     contents: WorkspacePaneContentRef[],
     origin: "tab" | "menu" | "stack" | "window",
@@ -4194,6 +4452,7 @@ function WorkspacePaneView({
   fileBuffers,
   handoffFileIds,
   detachedFileIds,
+  closingContentKeys,
   focusedPaneId,
   portalTargets,
   canCloseEmptyPane,
@@ -4204,6 +4463,7 @@ function WorkspacePaneView({
   onFocusPane,
   onActivateSession,
   onActivateFile,
+  onActivateUnsupportedContent,
   onCloseContents,
   onDetachFile,
   onMoveFile,
@@ -4252,6 +4512,7 @@ function WorkspacePaneView({
         );
         return slot ? [{ content, slot }] : [];
       }
+      if (content.kind === "unknown") return [{ content }];
       const file = fileDocuments.find(
         (candidate) => candidate.id === content.documentId,
       );
@@ -4356,7 +4617,7 @@ function WorkspacePaneView({
   useEffect(() => {
     if (activeFileId && !activeFileBuffer) {
       void onLoadFile(activeFileId).catch((reason) =>
-        toast.error(String(reason)),
+        toast.error(formatAppError(reason, t)),
       );
     }
   }, [activeFileBuffer, activeFileId, onLoadFile]);
@@ -4415,8 +4676,12 @@ function WorkspacePaneView({
   ) => {
     const { content } = entry;
     const key = workspaceContentReactKey(content);
+    const isClosing = closingContentKeys.has(key);
     const presentation = presentWorkspaceContent(content, presentationContext);
-    const adapter = getWorkspaceContentAdapter(content.kind);
+    const adapter =
+      content.kind === "unknown"
+        ? undefined
+        : tryGetWorkspaceContentAdapter(content.kind);
     const title = presentation.title;
     const isActive =
       pane.activeContent !== null &&
@@ -4436,13 +4701,19 @@ function WorkspacePaneView({
         active={isActive}
         related={projectId !== null && projectId === selectedDirectoryId}
         closeLabel={t(presentation.closeLabelKey)}
-        closeAccessibleName={t(adapter.labels.closeCurrent, { name: title })}
-        draggable
+        closeAccessibleName={
+          adapter
+            ? t(adapter.labels.closeCurrent, { name: title })
+            : t("workspaceContent.closeUnsupported")
+        }
+        draggable={content.kind !== "unknown" && !isClosing && !!adapter}
         onDragStart={(event) => {
+          if (isClosing) return;
           if (content.kind === "pty") {
             beginWorkspaceSessionDrag(event, pane.id, content.slotId);
             return;
           }
+          if (content.kind === "unknown" || isClosing || !adapter) return;
           const payload = encodeWorkspaceContentDrag({
             kind: content.kind,
             contentId: content.documentId,
@@ -4456,12 +4727,15 @@ function WorkspacePaneView({
         onActivate={() => {
           if (content.kind === "pty")
             onActivateSession(pane.id, content.slotId);
-          else onActivateFile(pane.id, content.documentId);
+          else if (content.kind === "file")
+            onActivateFile(pane.id, content.documentId);
+          else onActivateUnsupportedContent(pane.id, content);
         }}
         onRequestClose={() => void onCloseContents([content], "tab")}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (content.kind === "unknown" || isClosing) return;
           onFocusPane(pane.id);
           setContextMenu({
             target:
@@ -4474,7 +4748,13 @@ function WorkspacePaneView({
         }}
       >
         {presentation.icon}
-        {presentation.status && presentation.status !== "dirty" && (
+        {isClosing ? (
+          <span
+            className="pty-pane-tab-status terminating"
+            title={t("pty.terminating")}
+            aria-label={t("pty.terminating")}
+          />
+        ) : presentation.status && presentation.status !== "dirty" ? (
           <span
             className={clsx("pty-pane-tab-status", {
               running: presentation.status === "running",
@@ -4482,7 +4762,7 @@ function WorkspacePaneView({
             })}
             aria-hidden="true"
           />
-        )}
+        ) : null}
         <span
           className="pty-pane-tab-title"
           title={presentation.tooltip ?? title}
@@ -4572,7 +4852,9 @@ function WorkspacePaneView({
               targetPaneId: pane.id,
             },
           ).catch((reason) =>
-            toast.error(t("pty.returnFailed", { error: String(reason) })),
+            toast.error(
+              t("pty.returnFailed", { error: formatAppError(reason, t) }),
+            ),
           );
           return;
         }
@@ -4591,7 +4873,7 @@ function WorkspacePaneView({
               documentId: contentPayload.contentId,
               targetPaneId: pane.id,
             },
-          ).catch((reason) => toast.error(String(reason)));
+          ).catch((reason) => toast.error(formatAppError(reason, t)));
           return;
         }
         const payloadText =
@@ -4612,7 +4894,9 @@ function WorkspacePaneView({
               targetPaneId: pane.id,
             },
           ).catch((reason) =>
-            toast.error(t("pty.returnFailed", { error: String(reason) })),
+            toast.error(
+              t("pty.returnFailed", { error: formatAppError(reason, t) }),
+            ),
           );
         }
       }}
@@ -4648,15 +4932,19 @@ function WorkspacePaneView({
               fileDocuments={fileDocuments}
               fileBuffers={fileBuffers}
               selectedDirectoryId={selectedDirectoryId}
+              closingContentKeys={closingContentKeys}
               onActivate={(entry) => {
                 if (entry.content.kind === "pty")
                   onActivateSession(pane.id, entry.content.slotId);
-                else onActivateFile(pane.id, entry.content.documentId);
+                else if (entry.content.kind === "file")
+                  onActivateFile(pane.id, entry.content.documentId);
+                else onActivateUnsupportedContent(pane.id, entry.content);
               }}
               onCloseContent={(entry) =>
                 void onCloseContents([entry.content], "stack")
               }
               onContextMenu={(entry, x, y) => {
+                if (entry.content.kind === "unknown") return;
                 onFocusPane(pane.id);
                 setContextMenu({
                   target:
@@ -4727,8 +5015,13 @@ function WorkspacePaneView({
           }
           onEditFile={onEditFile}
           onSaveFile={onSaveFile}
+          onCloseUnsupported={() => {
+            if (pane.activeContent?.kind === "unknown") {
+              void onCloseContents([pane.activeContent], "tab");
+            }
+          }}
         />
-        {paneSlots.length === 0 && !activeFile && (
+        {!activeContentEntry && (
           <div className="pty-workspace-empty">{t("pty.empty")}</div>
         )}
       </div>
@@ -4758,7 +5051,8 @@ function WorkspacePaneView({
             targetContent,
             presentationContext,
           ).title;
-          const adapter = getWorkspaceContentAdapter(target.kind);
+          const adapter = tryGetWorkspaceContentAdapter(target.kind);
+          if (!adapter) return null;
           const labels = {
             menu: t(adapter.labels.menu),
             closeCurrent: (name: string) =>
@@ -4879,6 +5173,7 @@ function PaneSessionStack({
   fileDocuments,
   fileBuffers,
   selectedDirectoryId,
+  closingContentKeys,
   onActivate,
   onCloseContent,
   onContextMenu,
@@ -4892,6 +5187,7 @@ function PaneSessionStack({
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer | undefined>;
   selectedDirectoryId: number | null;
+  closingContentKeys: Set<string>;
   onActivate: (entry: ResolvedPaneContent) => void;
   onCloseContent: (entry: ResolvedPaneContent) => void;
   onContextMenu: (entry: ResolvedPaneContent, x: number, y: number) => void;
@@ -4996,16 +5292,16 @@ function PaneSessionStack({
                 presentationContext,
               );
               const title = presentation.title;
-              const contentKey =
-                entry.content.kind === "pty"
-                  ? `pty:${entry.content.slotId}`
-                  : `file:${entry.content.documentId}`;
+              const contentKey = workspaceContentReactKey(entry.content);
+              const isClosing = closingContentKeys.has(contentKey);
               const closeLabel = t(presentation.closeLabelKey);
-              const closeAccessibleName = t(
-                getWorkspaceContentAdapter(entry.content.kind).labels
-                  .closeCurrent,
-                { name: title },
-              );
+              const adapter =
+                entry.content.kind === "unknown"
+                  ? undefined
+                  : tryGetWorkspaceContentAdapter(entry.content.kind);
+              const closeAccessibleName = adapter
+                ? t(adapter.labels.closeCurrent, { name: title })
+                : t("workspaceContent.closeUnsupported");
 
               return (
                 <div
@@ -5015,6 +5311,12 @@ function PaneSessionStack({
                     event.preventDefault();
                     event.stopPropagation();
                     setOpen(false);
+                    if (
+                      entry.content.kind === "unknown" ||
+                      isClosing ||
+                      !adapter
+                    )
+                      return;
                     onContextMenu(entry, event.clientX, event.clientY);
                   }}
                 >
@@ -5025,9 +5327,14 @@ function PaneSessionStack({
                     aria-label={title}
                     data-stack-index={index}
                     tabIndex={index === focusedIndex ? 0 : -1}
-                    draggable
+                    draggable={
+                      entry.content.kind !== "unknown" &&
+                      !isClosing &&
+                      !!adapter
+                    }
                     onFocus={() => setFocusedIndex(index)}
                     onDragStart={(event) => {
+                      if (isClosing) return;
                       if (slot) {
                         beginWorkspaceSessionDrag(
                           event,
@@ -5056,7 +5363,13 @@ function PaneSessionStack({
                     }}
                   >
                     {presentation.icon}
-                    {presentation.status && (
+                    {isClosing ? (
+                      <span
+                        className="pty-pane-tab-status terminating"
+                        title={t("pty.terminating")}
+                        aria-label={t("pty.terminating")}
+                      />
+                    ) : presentation.status ? (
                       <span
                         className={clsx("pty-pane-tab-status", {
                           running: presentation.status === "running",
@@ -5065,7 +5378,7 @@ function PaneSessionStack({
                         })}
                         aria-hidden="true"
                       />
-                    )}
+                    ) : null}
                     <span>{title}</span>
                   </button>
                   <button
@@ -5109,10 +5422,40 @@ function beginWorkspaceSessionDrag(
   event.dataTransfer.setData("text/plain", payload);
 }
 
+function isWorkspaceContentHandoffActive(
+  coordinator: WorkspaceContentCoordinator,
+  content: WorkspacePaneContentRef,
+): boolean {
+  const phase = coordinator.get(content)?.phase;
+  return phase === "detaching" || phase === "returning";
+}
+
+function isWorkspaceContentWindowOwned(
+  coordinator: WorkspaceContentCoordinator,
+  content: WorkspacePaneContentRef,
+): boolean {
+  const state = coordinator.get(content);
+  if (!state) return false;
+  if (
+    state.phase === "detaching" ||
+    state.phase === "detached" ||
+    state.phase === "returning"
+  ) {
+    return true;
+  }
+  return state.phase === "closing" && state.owner.kind === "window";
+}
+
+function workspacePtyKey(slotId: string): string {
+  return workspaceContentKey({ kind: "pty", slotId });
+}
+
+function workspaceFileKey(documentId: string): string {
+  return workspaceContentKey({ kind: "file", documentId });
+}
+
 function workspaceContentReactKey(content: WorkspacePaneContentRef): string {
-  return content.kind === "pty"
-    ? `pty:${content.slotId}`
-    : `file:${content.documentId}`;
+  return workspaceContentKey(content);
 }
 
 function workspacePaneTitle(

@@ -18,7 +18,10 @@ import { useAppStore } from "../store/appStore";
 import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { moveProjectWithinPinGroup } from "../lib/projectOrdering";
-import { listWorkspacePaneContents, listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
+import {
+  listWorkspacePaneContents,
+  listWorkspacePanes,
+} from "../lib/ptyWorkspaceLayout";
 import {
   openProjectDirectory,
   removeDirectory,
@@ -31,6 +34,7 @@ import { AnchoredPopover } from "./AnchoredPopover";
 import { usePtyWorkspace } from "./PtyWorkspace";
 import { SearchInput } from "./SearchInput";
 import { ThemedScrollArea } from "./ThemedScrollArea";
+import { formatAppError } from "../lib/appErrors";
 
 export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const { t } = useTranslation();
@@ -41,8 +45,13 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
   const ptySessionsById = useAppStore((state) => state.ptySessionsById);
-  const { slots, tree, detachedInstanceIds, hydrationStatus } =
-    usePtyWorkspace();
+  const {
+    slots,
+    tree,
+    detachedInstanceIds,
+    hydrationStatus,
+    getDirectoryRemovalBlockers,
+  } = usePtyWorkspace();
   const queryClient = useQueryClient();
   const { data: directories } = useDirectories();
   const [projectMenuDirectoryId, setProjectMenuDirectoryId] = useState<
@@ -85,7 +94,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       if (context?.previousDirectories) {
         queryClient.setQueryData(qk.directories(), context.previousDirectories);
       }
-      toast.error(t("sidebar.reorderProjectsFailed", { error: String(error) }));
+      toast.error(
+        t("sidebar.reorderProjectsFailed", { error: formatAppError(error, t) }),
+      );
     },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: qk.directories() }),
@@ -161,12 +172,24 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       await openProjectDirectory(directory.id);
     } catch (error) {
       toast.error(
-        t("sidebar.openProjectFolderFailed", { error: String(error) }),
+        t("sidebar.openProjectFolderFailed", {
+          error: formatAppError(error, t),
+        }),
       );
     }
   };
 
   const removeProject = (directory: Directory) => {
+    const blockers = getDirectoryRemovalBlockers(directory.id);
+    if (blockers.openFileCount > 0 || blockers.runningPtyCount > 0) {
+      toast.error(
+        t("sidebar.removeProjectBlocked", {
+          files: blockers.openFileCount,
+          terminals: blockers.runningPtyCount,
+        }),
+      );
+      return;
+    }
     if (
       !window.confirm(
         t("sidebar.confirmRemoveProject", { name: directory.name }),
@@ -176,7 +199,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
     }
     removeMutation.mutate(directory.id, {
       onError: (error) =>
-        toast.error(t("sidebar.removeProjectFailed", { error: String(error) })),
+        toast.error(
+          t("sidebar.removeProjectFailed", { error: formatAppError(error, t) }),
+        ),
     });
   };
 
@@ -420,7 +445,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
                     onError: (error) =>
                       toast.error(
                         t("sidebar.pinProjectFailed", {
-                          error: String(error),
+                          error: formatAppError(error, t),
                         }),
                       ),
                   },

@@ -7,6 +7,7 @@ import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { addDirectory, updateDirectory } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
+import { formatAppError } from "../lib/appErrors";
 import { FormField, TextArea, TextInput } from "./FormControls";
 
 export function ProjectMaintenanceDialog() {
@@ -81,7 +82,9 @@ export function ProjectMaintenanceDialog() {
         setName(selected.split(/[\\/]/).filter(Boolean).pop() ?? "");
       }
     } catch (error) {
-      setFolderError(t("projectDialog.chooseFailed", { error: String(error) }));
+      setFolderError(
+        t("projectDialog.chooseFailed", { error: formatAppError(error, t) }),
+      );
     }
   };
 

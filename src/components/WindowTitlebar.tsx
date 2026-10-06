@@ -1,10 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getWindowChromeOptions } from "../lib/windowChrome";
+import { getWindowChromePolicy } from "../lib/windowChrome";
+import { formatAppError } from "../lib/appErrors";
 
 interface WindowTitlebarProps {
   variant: "main" | "standalone";
@@ -13,7 +14,10 @@ interface WindowTitlebarProps {
   actions?: ReactNode;
 }
 
-const isMacOS = getWindowChromeOptions(navigator.userAgent).decorations;
+const windowChrome = getWindowChromePolicy(navigator.userAgent);
+const titlebarStyle = {
+  "--window-chrome-traffic-light-inset": `${windowChrome.trafficLightInset}px`,
+} as CSSProperties;
 
 export function WindowTitlebar({
   variant,
@@ -51,7 +55,7 @@ export function WindowTitlebar({
   }, []);
 
   const runWindowAction = (action: () => Promise<unknown>) => {
-    void action().catch((error) => toast.error(String(error)));
+    void action().catch((error) => toast.error(formatAppError(error, t)));
   };
 
   const toggleMaximized = () => {
@@ -84,7 +88,8 @@ export function WindowTitlebar({
 
   return (
     <header
-      className={`window-titlebar window-titlebar-${variant}${isMacOS ? " window-titlebar-macos" : ""}`}
+      className={`window-titlebar window-titlebar-${variant}${windowChrome.hasNativeWindowControls ? " window-titlebar-macos" : ""}`}
+      style={titlebarStyle}
       aria-label={t("windowChrome.titlebar")}
     >
       <div
@@ -102,7 +107,7 @@ export function WindowTitlebar({
         onDoubleClick={onDragSurfaceDoubleClick}
       />
       {actions && <div className="window-titlebar-actions">{actions}</div>}
-      {!isMacOS && (
+      {!windowChrome.hasNativeWindowControls && (
         <div className="window-titlebar-controls">
           <button
             type="button"
@@ -153,7 +158,7 @@ const RESIZE_EDGES = [
 ] as const;
 
 export function WindowResizeHandles() {
-  if (isMacOS) return null;
+  if (windowChrome.hasNativeWindowControls) return null;
 
   return (
     <div className="window-resize-handles" aria-hidden="true">

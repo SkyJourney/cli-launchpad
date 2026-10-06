@@ -1,4 +1,23 @@
 export const zh = {
+  errors: {
+    fileNotFound: "找不到该文件。",
+    fileTooLarge: "文件超过允许的大小。",
+    fileConflict: "磁盘上的文件已更改，请重新载入后再保存。",
+    fileIdentityChanged: "项目目录身份已变化，请重新载入文件或另存到其他位置。",
+    ptyOwnerMismatch: "此终端会话已不属于当前窗口。",
+    ptyHandoffExpired: "终端窗口交接已超时，请重试。",
+    ptyInputBackpressure: "终端输入队列已满，请稍后重试。",
+    ptyInputUnavailable: "终端输入通道已关闭，请重新连接会话。",
+    ptySessionsActive:
+      "还有 {{count}} 个终端会话正在运行，请先关闭后再恢复备份。",
+    backupRestoreInProgress: "备份恢复正在进行，请等待完成后重试。",
+    ptySessionStarting: "还有 {{count}} 个终端会话正在启动，请稍后再恢复备份。",
+    execPlanChanged: "执行计划已变化，请重新检查并确认。",
+    execBusy: "此工具已有正在运行的任务。",
+    layoutNeedsReset: "工作区布局无效，需要重置。",
+    generic: "操作失败。",
+    directoryInUse: "此项目仍有运行中的终端会话。",
+  },
   common: {
     back: "返回",
     browse: "浏览",
@@ -22,6 +41,8 @@ export const zh = {
     unpinProject: "取消置顶",
     openProjectFolder: "打开项目目录",
     removeProject: "移除项目",
+    removeProjectBlocked:
+      "移除项目前，请先关闭此项目的 {{files}} 个打开文件和 {{terminals}} 个运行中终端。",
     confirmRemoveProject: "移除项目“{{name}}”？磁盘上的文件不会被删除。",
     pinProjectFailed: "置顶项目失败：{{error}}",
     reorderProjectsFailed: "项目排序失败：{{error}}",
@@ -36,6 +57,13 @@ export const zh = {
     activeTasks_other: "{{count}} 个执行中任务",
     managedCliSessions_one: "{{tool}}，{{count}} 个受管理会话",
     managedCliSessions_other: "{{tool}}，{{count}} 个受管理会话",
+  },
+  tray: { show: "显示主界面", quit: "退出" },
+  workspaceContent: {
+    unsupportedTitle: "不支持的内容类型：{{kind}}",
+    unsupportedDescription: "此内容来自较新版本，已保留在工作区布局中。",
+    unsupportedError: "内容显示失败：{{error}}",
+    closeUnsupported: "关闭不支持的内容",
   },
   theme: {
     current: "主题：{{mode}}",
@@ -275,6 +303,10 @@ export const zh = {
     grokPosixInstallEffectNetwork:
       "从 x.ai 获取版本和程序文件，网络不可达时回退到 Google Cloud Storage。仅当环境中存在 GROK_DEPLOYMENT_KEY 时，才会请求并写入部署配置；Launchpad 固定使用 stable 通道。",
     grokUpdateSourceUnknown: "请先刷新版本信息，以确认 Grok Build 的安装来源。",
+    grokUpdateSourceDenied:
+      "当前 Grok Build 的安装来源未通过校验；请使用原安装渠道更新。",
+    hermesUpdateSourceDenied:
+      "当前 Hermes Agent 的安装位置或更新状态未通过校验，Launchpad 已禁用托管更新。",
     installing: "安装中…",
     updating: "更新中…",
     refreshingVersion: "刷新版本中…",
@@ -383,6 +415,20 @@ export const zh = {
     importFailed: "导入失败：{{error}}",
     diagnostics: "诊断",
     exportDiagnostics: "导出诊断报告",
+    fileCasResidues: "过期的文件保存临时文件",
+    fileCasResiduesDescription:
+      "扫描一个已登记项目中超过 24 小时的 Launchpad 临时文件。请逐项检查路径并确认后删除。",
+    fileCasResiduesProject: "项目",
+    fileCasResiduesSelect: "选择项目",
+    fileCasResiduesScan: "扫描",
+    fileCasResiduesScanning: "正在扫描…",
+    fileCasResiduesNone: "未发现过期临时文件。",
+    fileCasResiduesTruncated: "扫描达到安全上限，结果可能不完整。",
+    fileCasResiduesSkipped: "有 {{count}} 个条目无法检查。",
+    fileCasResiduesDelete: "检查并删除",
+    fileCasResiduesConfirmDelete: "删除此文件",
+    fileCasResiduesScanFailed: "扫描失败：{{error}}",
+    fileCasResiduesDeleteFailed: "删除失败：{{error}}",
     recentLaunch: "最近启动",
     launchHistoryRetention: "保留记录",
     launchHistoryRetentionCount: "最近 {{count}} 次",
@@ -531,6 +577,8 @@ export const zh = {
     reload: "重新载入",
     saveConflict:
       "文件已在磁盘中修改，你的编辑内容已保留。重新载入文件后再继续保存。",
+    permissionsNotRestored:
+      "文件已保存，但未能恢复原有权限。请检查该文件的访问权限。",
     projectIdentityChanged:
       "项目目录身份已变化。此文档已失效；关闭前请先复制其中的内容。",
     directoryLimitReached: "目录条目过多，仅显示前 5,000 项。",

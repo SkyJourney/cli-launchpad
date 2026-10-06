@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   beginPtyHandoff,
   cancelPtyHandoff,
@@ -45,7 +46,10 @@ import {
   isClipboardTextUnavailable,
 } from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
-import { getAppErrorCode, getAppErrorMessage } from "../lib/appErrors";
+import { formatAppError, getAppErrorCode } from "../lib/appErrors";
+import { getTerminalKeyIntent } from "../lib/windowChrome";
+import { getThemeDefinition, type ThemeId } from "../lib/themes";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import "@xterm/xterm/css/xterm.css";
 
 export interface PtyTerminalHandle {
@@ -68,10 +72,14 @@ export type PtySessionCloseResult =
   | "cancelled"
   | "pending";
 
-function ptyInputErrorMessage(reason: unknown, backpressureMessage: string) {
+function ptyInputErrorMessage(
+  reason: unknown,
+  backpressureMessage: string,
+  t: TFunction,
+) {
   return getAppErrorCode(reason) === "pty_input_backpressure"
     ? backpressureMessage
-    : getAppErrorMessage(reason);
+    : formatAppError(reason, t);
 }
 
 interface PtyTerminalProps {
@@ -94,6 +102,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     ref,
   ) {
     const { t } = useTranslation();
+    const resolvedTheme = useResolvedTheme();
     const hostRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitRef = useRef<FitAddon | null>(null);
@@ -186,7 +195,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         fontFamily: '"Maple Mono NF CN", monospace',
         fontSize: 13,
         scrollback: 5000,
-        theme: getTerminalTheme(),
+        theme: getTerminalTheme(resolvedTheme.id),
       });
       const fit = new FitAddon();
       const serialize = new SerializeAddon();
@@ -221,12 +230,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
                 rows: nextSize.rows,
               });
               void resizePtySession(active.sessionId, nextSize).catch(
-                (reason) => setError(String(reason)),
+                (reason) => setError(formatAppError(reason, t)),
               );
             }
           }
         } catch (reason) {
-          setError(String(reason));
+          setError(formatAppError(reason, t));
         }
       };
       let resizeFrame = 0;
@@ -245,7 +254,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         const active = sessionRef.current;
         if (interactiveRef.current && active?.state === "running") {
           void writePtySession(active.sessionId, data).catch((reason) =>
-            setError(ptyInputErrorMessage(reason, t("pty.inputBackpressure"))),
+            setError(
+              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
+            ),
           );
         } else if (startingRef.current) {
           // ConPTY can ask xterm for its cursor position before create_pty_session
@@ -254,29 +265,19 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         }
       });
 
-      const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
-      const isWindows = /Windows/i.test(navigator.userAgent);
       terminal.attachCustomKeyEventHandler((event) => {
         if (!interactiveRef.current) return false;
         if (event.type !== "keydown" || event.isComposing) return true;
 
-        const key = event.key.toLowerCase();
-        const control = event.ctrlKey && !event.altKey && !event.metaKey;
-        const command = event.metaKey && !event.ctrlKey && !event.altKey;
-        const copyText = isMac
-          ? command && !event.shiftKey && key === "c"
-          : control && event.shiftKey && key === "c";
-        const pasteText = isMac
-          ? command && !event.shiftKey && key === "v"
-          : control && event.shiftKey && key === "v";
+        const keyIntent = getTerminalKeyIntent(event, navigator.userAgent);
         const active = sessionRef.current;
 
-        if (copyText) {
+        if (keyIntent.copyText) {
           event.preventDefault();
           const selectedText = terminal.getSelection();
           if (selectedText) {
             void writeClipboardText(selectedText).catch((reason) =>
-              setError(String(reason)),
+              setError(formatAppError(reason, t)),
             );
           }
           return false;
@@ -291,39 +292,39 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               })
               .catch((reason) => {
                 if (!isClipboardTextUnavailable(reason)) {
-                  setError(String(reason));
+                  setError(formatAppError(reason, t));
                 }
               });
           }
           return false;
         };
 
-        if (pasteText) return pasteTextFromClipboard();
+        if (keyIntent.pasteText) return pasteTextFromClipboard();
 
-        const controlV = control && !event.shiftKey && key === "v";
-        const altV =
-          event.altKey && !event.ctrlKey && !event.metaKey && key === "v";
         if (active?.state === "running") {
           const pasteBehavior = getCliAdapter(active.toolKey).terminalPaste;
-          if (pasteBehavior.windowsAltV === "escape-v" && isWindows && altV) {
+          if (
+            pasteBehavior.windowsAltV === "escape-v" &&
+            keyIntent.windowsAltV
+          ) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u001bv").catch((reason) =>
               setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure")),
+                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
               ),
             );
             return false;
           }
-          if (pasteBehavior.controlV === "control-v" && controlV) {
+          if (pasteBehavior.controlV === "control-v" && keyIntent.controlV) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u0016").catch((reason) =>
               setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure")),
+                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
               ),
             );
             return false;
           }
-          if (pasteBehavior.controlV === "clipboard" && controlV) {
+          if (pasteBehavior.controlV === "clipboard" && keyIntent.controlV) {
             return pasteTextFromClipboard();
           }
         }
@@ -352,17 +353,8 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       const terminal = terminalRef.current;
       if (!terminal) return;
 
-      const updateTerminalTheme = () => {
-        terminal.options.theme = getTerminalTheme();
-      };
-      const observer = new MutationObserver(updateTerminalTheme);
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["data-theme"],
-      });
-
-      return () => observer.disconnect();
-    }, []);
+      terminal.options.theme = getTerminalTheme(resolvedTheme.id);
+    }, [resolvedTheme.id]);
 
     useEffect(() => {
       if (!visible) return;
@@ -465,7 +457,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           return "terminating";
         } catch (reason) {
           closingSessionRef.current = null;
-          setError(String(reason));
+          setError(formatAppError(reason, t));
           return "cancelled";
         }
       },
@@ -522,7 +514,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           } catch (reason) {
             pendingInputRef.current = [];
             lastSentSizeRef.current = null;
-            setError(ptyInputErrorMessage(reason, t("pty.inputBackpressure")));
+            setError(
+              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
+            );
           } finally {
             startingRef.current = false;
             setStarting(false);
@@ -570,7 +564,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               ).catch(() => undefined);
             }
             setHandoffBusy(false);
-            setError(String(reason));
+            setError(formatAppError(reason, t));
             throw reason;
           }
         },
@@ -635,9 +629,11 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             setHandoffBusy(false);
             return resolvedSession;
           } catch (reason) {
-            snapshotWaiterRef.current?.reject(new Error(String(reason)));
+            snapshotWaiterRef.current?.reject(
+              new Error(formatAppError(reason, t)),
+            );
             setHandoffBusy(false);
-            setError(String(reason));
+            setError(formatAppError(reason, t));
             throw reason;
           }
         },
@@ -697,9 +693,11 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             setHandoffBusy(false);
             return resolvedSession;
           } catch (reason) {
-            snapshotWaiterRef.current?.reject(new Error(String(reason)));
+            snapshotWaiterRef.current?.reject(
+              new Error(formatAppError(reason, t)),
+            );
             setHandoffBusy(false);
-            setError(String(reason));
+            setError(formatAppError(reason, t));
             throw reason;
           }
         },
@@ -735,7 +733,9 @@ function sizeOf(terminal: Terminal): PtySizeUpdate {
   };
 }
 
-function getTerminalTheme(): NonNullable<Terminal["options"]["theme"]> {
+function getTerminalTheme(
+  themeId: ThemeId,
+): NonNullable<Terminal["options"]["theme"]> {
   const styles = getComputedStyle(document.documentElement);
   const color = (token: string) =>
     styles.getPropertyValue(token).trim() || undefined;
@@ -746,5 +746,6 @@ function getTerminalTheme(): NonNullable<Terminal["options"]["theme"]> {
     foreground,
     cursor: foreground,
     selectionBackground: color("--color-terminal-selection"),
+    ...getThemeDefinition(themeId).terminal.ansi,
   };
 }

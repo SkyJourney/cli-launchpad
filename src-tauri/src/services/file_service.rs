@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,10 @@ use super::project_directory::ProjectDirectory;
 pub const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_PROJECT_DIRECTORY_ENTRIES: usize = 5_000;
+const MAX_FILE_CAS_RESIDUE_SCAN_ENTRIES: usize = 50_000;
+const MAX_FILE_CAS_RESIDUE_SCAN_DEPTH: usize = 32;
+const MAX_FILE_CAS_RESIDUE_RESULTS: usize = 500;
+const FILE_CAS_RESIDUE_MIN_AGE_MS: u64 = 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,8 +46,18 @@ pub struct ProjectTextFile {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProjectTextFileSaveResult {
-    Saved { content: String, revision: String },
+    Saved {
+        content: String,
+        revision: String,
+        warning: Option<ProjectTextFileSaveWarning>,
+    },
     Conflict,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectTextFileSaveWarning {
+    PermissionsNotRestored,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -83,6 +98,208 @@ pub struct ProjectDirectoryListing {
     pub entries: Vec<ProjectFileEntry>,
     pub truncated: bool,
     pub skipped_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileCasResidue {
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub modified_at_ms: u64,
+    pub file_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileCasResidueListing {
+    pub entries: Vec<ProjectFileCasResidue>,
+    pub truncated: bool,
+    pub skipped_count: usize,
+}
+
+pub(crate) fn list_file_cas_residues_in(
+    root: &ProjectDirectory,
+) -> Result<ProjectFileCasResidueListing> {
+    let now_ms = system_time_to_ms(SystemTime::now()).context("无法读取当前时间")?;
+    let mut listing = ProjectFileCasResidueListing {
+        entries: Vec::new(),
+        truncated: false,
+        skipped_count: 0,
+    };
+    let mut scanned = 0;
+    scan_file_cas_residues(root.dir(), "", 0, now_ms, &mut scanned, &mut listing, true)?;
+    Ok(listing)
+}
+
+pub(crate) fn remove_file_cas_residue_in(
+    root: &ProjectDirectory,
+    residue: &ProjectFileCasResidue,
+) -> Result<()> {
+    let now_ms = system_time_to_ms(SystemTime::now()).context("无法读取当前时间")?;
+    remove_file_cas_residue_with_time(root, residue, now_ms)
+}
+
+fn scan_file_cas_residues(
+    directory: &cap_std::fs::Dir,
+    relative_directory: &str,
+    depth: usize,
+    now_ms: u64,
+    scanned: &mut usize,
+    listing: &mut ProjectFileCasResidueListing,
+    is_root: bool,
+) -> Result<()> {
+    let entries = match directory.entries() {
+        Ok(entries) => entries,
+        Err(error) if is_root => return Err(error.into()),
+        Err(_) => {
+            listing.skipped_count += 1;
+            return Ok(());
+        }
+    };
+    for entry in entries {
+        if *scanned >= MAX_FILE_CAS_RESIDUE_SCAN_ENTRIES
+            || listing.entries.len() >= MAX_FILE_CAS_RESIDUE_RESULTS
+        {
+            listing.truncated = true;
+            break;
+        }
+        *scanned += 1;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                listing.skipped_count += 1;
+                continue;
+            }
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            listing.skipped_count += 1;
+            continue;
+        };
+        if ProjectDirectory::validate_entry_name(&name).is_err() {
+            listing.skipped_count += 1;
+            continue;
+        }
+        let relative_path = if relative_directory.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative_directory}/{name}")
+        };
+        let metadata = match directory.symlink_metadata(&name) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                listing.skipped_count += 1;
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            if depth >= MAX_FILE_CAS_RESIDUE_SCAN_DEPTH {
+                listing.truncated = true;
+                continue;
+            }
+            match directory.open_dir(&name) {
+                Ok(child) => scan_file_cas_residues(
+                    &child,
+                    &relative_path,
+                    depth + 1,
+                    now_ms,
+                    scanned,
+                    listing,
+                    false,
+                )?,
+                Err(_) => listing.skipped_count += 1,
+            }
+            continue;
+        }
+        if !metadata.is_file() || !is_file_cas_temporary_name(&name) {
+            continue;
+        }
+        let Some(modified_at_ms) = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| system_time_to_ms(modified.into_std()).ok())
+        else {
+            listing.skipped_count += 1;
+            continue;
+        };
+        if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS {
+            continue;
+        }
+        let identity = match crate::platform::file_cas::file_identity(directory, &name, &metadata) {
+            Ok(identity) => identity,
+            Err(_) => {
+                listing.skipped_count += 1;
+                continue;
+            }
+        };
+        listing.entries.push(ProjectFileCasResidue {
+            relative_path,
+            size_bytes: metadata.len(),
+            modified_at_ms,
+            file_identity: identity,
+        });
+    }
+    Ok(())
+}
+
+fn remove_file_cas_residue_with_time(
+    root: &ProjectDirectory,
+    residue: &ProjectFileCasResidue,
+    now_ms: u64,
+) -> Result<()> {
+    let relative_path = ProjectDirectory::path(&residue.relative_path)?;
+    let Some(name) = relative_path.file_name().and_then(|name| name.to_str()) else {
+        bail!("临时文件路径无效");
+    };
+    if !is_file_cas_temporary_name(name) {
+        bail!("只允许清理 Launchpad 文件保存临时文件");
+    }
+    let parent_path = relative_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty());
+    let parent = match parent_path {
+        Some(path) => root.dir().open_dir(path).context("临时文件目录已变化")?,
+        None => root.dir().try_clone()?,
+    };
+    let metadata = parent
+        .symlink_metadata(name)
+        .context("临时文件已不存在或无法访问")?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        bail!("目标不再是普通临时文件");
+    }
+    let modified_at_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| system_time_to_ms(modified.into_std()).ok())
+        .context("无法读取临时文件修改时间")?;
+    if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS
+        || metadata.len() != residue.size_bytes
+        || modified_at_ms != residue.modified_at_ms
+        || crate::platform::file_cas::file_identity(&parent, name, &metadata)?
+            != residue.file_identity
+    {
+        bail!("临时文件在预览后发生变化；请重新扫描确认");
+    }
+    parent.remove_file(name).context("无法删除已确认的临时文件")
+}
+
+fn is_file_cas_temporary_name(name: &str) -> bool {
+    let Some(identifier) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(".writing"))
+    else {
+        return false;
+    };
+    identifier.len() == 32
+        && identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn system_time_to_ms(time: SystemTime) -> Result<u64> {
+    Ok(u64::try_from(time.duration_since(UNIX_EPOCH)?.as_millis())?)
 }
 
 #[cfg(test)]
@@ -137,6 +354,9 @@ fn list_directory_with_limit(
         };
         if ProjectDirectory::validate_entry_name(&name).is_err() {
             skipped_count += 1;
+            continue;
+        }
+        if is_file_cas_temporary_name(&name) {
             continue;
         }
         let child_relative = if relative_path.is_empty() {
@@ -220,7 +440,25 @@ pub(crate) fn open_file_in(
     relative_path: &str,
 ) -> Result<ProjectFileOpenResult> {
     let path = ProjectDirectory::path(relative_path)?;
-    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
+    let path_metadata = root
+        .dir()
+        .symlink_metadata(&path)
+        .context("项目文件不存在或无法访问")?;
+    if !path_metadata.is_file() {
+        bail!("只能打开普通文件");
+    }
+
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = root
+        .dir()
+        .open_with(&path, &options)
+        .context("项目文件不存在或无法访问")?;
     let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
         bail!("只能打开普通文件");
@@ -346,15 +584,22 @@ pub(crate) fn save_text_file_in(
     if content_revision(&current) != expected_revision {
         return Ok(ProjectTextFileSaveResult::Conflict);
     }
-    let saved =
+    let outcome =
         replace_file_if_revision(root, relative_path, content.as_bytes(), expected_revision)
             .context("无法安全保存文件")?;
-    if !saved {
-        return Ok(ProjectTextFileSaveResult::Conflict);
-    }
+    let warning = match outcome {
+        crate::platform::file_cas::CompareAndSwapOutcome::Written => None,
+        crate::platform::file_cas::CompareAndSwapOutcome::WrittenWithPermissionWarning => {
+            Some(ProjectTextFileSaveWarning::PermissionsNotRestored)
+        }
+        crate::platform::file_cas::CompareAndSwapOutcome::Conflict => {
+            return Ok(ProjectTextFileSaveResult::Conflict)
+        }
+    };
     Ok(ProjectTextFileSaveResult::Saved {
         content: content.to_string(),
         revision: content_revision(content.as_bytes()),
+        warning,
     })
 }
 
@@ -388,21 +633,17 @@ fn replace_file_if_revision(
     relative_path: &str,
     bytes: &[u8],
     expected_revision: &str,
-) -> Result<bool> {
+) -> Result<crate::platform::file_cas::CompareAndSwapOutcome> {
     use crate::platform::file_cas::compare_and_swap_in_directory;
-    use crate::platform::file_cas::CompareAndSwapOutcome;
 
-    match compare_and_swap_in_directory(
+    compare_and_swap_in_directory(
         root.dir(),
         Path::new(relative_path),
         bytes,
         &expected_revision.to_owned(),
         MAX_TEXT_FILE_BYTES,
         content_revision,
-    )? {
-        CompareAndSwapOutcome::Written => Ok(true),
-        CompareAndSwapOutcome::Conflict => Ok(false),
-    }
+    )
 }
 
 #[cfg(test)]
@@ -451,6 +692,13 @@ mod tests {
         fs::create_dir(directory.path().join("src")).unwrap();
         fs::create_dir(directory.path().join("node_modules")).unwrap();
         fs::write(directory.path().join(".env"), "secret").unwrap();
+        fs::write(
+            directory
+                .path()
+                .join(format!(".{}.writing", "a".repeat(32))),
+            "temporary",
+        )
+        .unwrap();
         fs::write(directory.path().join("readme.md"), "hello").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(
@@ -464,6 +712,9 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.name == ".env" && entry.hidden));
+        assert!(!entries
+            .iter()
+            .any(|entry| is_file_cas_temporary_name(&entry.name)));
         assert!(entries
             .iter()
             .any(|entry| entry.name == "node_modules" && entry.ignored));
@@ -471,6 +722,118 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.name == "link" && entry.symbolic_link));
+    }
+
+    #[test]
+    fn file_cas_residue_cleanup_requires_strict_stale_file_identity() {
+        let directory = tempdir().unwrap();
+        let residue_name = format!(".{}.writing", "a".repeat(32));
+        let residue_path = directory.path().join(&residue_name);
+        fs::write(&residue_path, "stale temporary content").unwrap();
+        fs::write(directory.path().join(".short.writing"), "keep").unwrap();
+        fs::write(
+            directory
+                .path()
+                .join(format!(".{}.writing", "g".repeat(32))),
+            "keep",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        let (linked_directory, linked_residue_name, linked_residue_path) = {
+            use std::os::unix::fs::symlink;
+
+            let linked_directory = tempdir().unwrap();
+            let linked_residue_name = format!(".{}.writing", "b".repeat(32));
+            let linked_residue_path = directory.path().join(&linked_residue_name);
+            fs::write(
+                linked_directory.path().join("outside-project.txt"),
+                "keep outside project",
+            )
+            .unwrap();
+            symlink(linked_directory.path(), &linked_residue_path).unwrap();
+            (linked_directory, linked_residue_name, linked_residue_path)
+        };
+
+        let root = ProjectDirectory::open(directory.path()).unwrap();
+        let now_ms = system_time_to_ms(SystemTime::now()).unwrap();
+        let recent = scan_file_cas_residues_at(&root, now_ms).unwrap();
+        assert!(recent.entries.is_empty());
+
+        let stale_now_ms = now_ms + FILE_CAS_RESIDUE_MIN_AGE_MS + 1;
+        let stale = scan_file_cas_residues_at(&root, stale_now_ms).unwrap();
+        assert_eq!(stale.entries.len(), 1);
+        let preview = &stale.entries[0];
+        assert_eq!(preview.relative_path, residue_name);
+
+        let mut replaced_preview = preview.clone();
+        replaced_preview.file_identity.push_str(":replaced");
+        assert!(remove_file_cas_residue_with_time(&root, &replaced_preview, stale_now_ms).is_err());
+        assert!(residue_path.exists());
+
+        remove_file_cas_residue_with_time(&root, preview, stale_now_ms).unwrap();
+        assert!(!residue_path.exists());
+        assert!(directory.path().join(".short.writing").exists());
+        assert!(directory
+            .path()
+            .join(format!(".{}.writing", "g".repeat(32)))
+            .exists());
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                scan_file_cas_residues_at(&root, stale_now_ms)
+                    .unwrap()
+                    .entries
+                    .len(),
+                0,
+                "a matching-name symlink must not be listed as a residue"
+            );
+            assert!(remove_file_cas_residue_with_time(
+                &root,
+                &ProjectFileCasResidue {
+                    relative_path: linked_residue_name,
+                    size_bytes: 0,
+                    modified_at_ms: 0,
+                    file_identity: String::new(),
+                },
+                stale_now_ms,
+            )
+            .is_err());
+            assert!(linked_residue_path.is_symlink());
+            assert!(linked_directory.path().join("outside-project.txt").exists());
+        }
+    }
+
+    #[test]
+    fn saved_file_permission_warning_is_serialized_for_the_frontend() {
+        let result = ProjectTextFileSaveResult::Saved {
+            content: "saved".to_string(),
+            revision: "revision".to_string(),
+            warning: Some(ProjectTextFileSaveWarning::PermissionsNotRestored),
+        };
+
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({
+                "kind": "saved",
+                "content": "saved",
+                "revision": "revision",
+                "warning": "permissionsNotRestored"
+            })
+        );
+    }
+
+    fn scan_file_cas_residues_at(
+        root: &ProjectDirectory,
+        now_ms: u64,
+    ) -> Result<ProjectFileCasResidueListing> {
+        let mut listing = ProjectFileCasResidueListing {
+            entries: Vec::new(),
+            truncated: false,
+            skipped_count: 0,
+        };
+        let mut scanned = 0;
+        scan_file_cas_residues(root.dir(), "", 0, now_ms, &mut scanned, &mut listing, true)?;
+        Ok(listing)
     }
 
     #[cfg(unix)]
@@ -557,10 +920,16 @@ mod tests {
         let opened = read_text_file(directory.path(), "note.txt").unwrap();
         let saved = save_text_file(directory.path(), "note.txt", "second", &opened.revision)
             .unwrap_or_else(|error| panic!("{error:#}"));
-        let ProjectTextFileSaveResult::Saved { content, revision } = saved else {
+        let ProjectTextFileSaveResult::Saved {
+            content,
+            revision,
+            warning,
+        } = saved
+        else {
             panic!("first write must save");
         };
         assert_eq!(content, "second");
+        assert_eq!(warning, None);
 
         fs::write(&file, "external").unwrap();
         assert_eq!(
@@ -702,6 +1071,51 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("UTF-8 文本")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_a_fifo_returns_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let directory = tempdir().unwrap();
+        let fifo_path = directory.path().join("stream.pipe");
+        let fifo_name = CString::new(fifo_path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+
+        let project_path = directory.path().to_path_buf();
+        let (sender, receiver) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            sender
+                .send(open_file(&project_path, "stream.pipe").map(|_| ()))
+                .unwrap();
+        });
+
+        let returned_without_writer = match receiver.recv_timeout(Duration::from_millis(250)) {
+            Ok(result) => {
+                assert!(result.is_err());
+                true
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Release a regression that opens the FIFO in blocking mode so
+                // the test can fail without leaving a blocked worker thread.
+                let writer = fs::OpenOptions::new().write(true).open(&fifo_path).unwrap();
+                let result = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+                assert!(result.is_err());
+                drop(writer);
+                false
+            }
+            Err(error) => panic!("FIFO reader thread exited unexpectedly: {error}"),
+        };
+
+        reader.join().unwrap();
+        assert!(
+            returned_without_writer,
+            "opening a FIFO blocked for a writer"
         );
     }
 

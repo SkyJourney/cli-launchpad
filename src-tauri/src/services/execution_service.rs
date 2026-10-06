@@ -19,6 +19,7 @@ use crate::{AppError, Db};
 
 pub const TASK_UPDATED_EVENT: &str = "execution-task-updated";
 pub const TASK_LOG_EVENT: &str = "execution-task-log";
+const EXECUTION_EVENT_TARGET: &str = "main";
 const TASK_TIMEOUT: Duration = Duration::from_secs(600);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
@@ -236,9 +237,8 @@ async fn run_task_inner(
     append_system_log(&app, &id, "任务已启动。\n");
 
     let preflight_plan = plan.clone();
-    let preflight = tokio::task::spawn_blocking(move || {
-        cli_adapters::execution_preflight_message(&preflight_plan)
-    });
+    let preflight =
+        tokio::task::spawn_blocking(move || cli_adapters::execution_preflight(&preflight_plan));
     let preflight = match tokio::select! {
         biased;
         _ = &mut cancel => {
@@ -257,12 +257,12 @@ async fn run_task_inner(
             return;
         }
     };
-    if let Some(message) = preflight {
+    if let Some(message) = preflight.message {
         append_system_log(&app, &id, &format!("{message}\n"));
     }
 
-    let version_before_update = match cli_adapters::should_verify_update_result(&plan) {
-        Ok(true) => match cli_adapters::probe_plan_version(&plan).await {
+    let version_before_update = if preflight.verify_update_result {
+        match cli_adapters::probe_plan_version(&plan).await {
             Ok(version) => {
                 append_system_log(&app, &id, &format!("更新前目标版本：{version}\n"));
                 Some(version)
@@ -275,12 +275,9 @@ async fn run_task_inner(
                 );
                 return;
             }
-        },
-        Ok(false) => None,
-        Err(error) => {
-            finish_failed(&app, &id, error);
-            return;
         }
+    } else {
+        None
     };
 
     let process_tree = match ProcessTree::new() {
@@ -570,7 +567,7 @@ fn with_db<T>(
 }
 
 fn emit_task(app: &AppHandle, task: &ExecutionTask) {
-    if let Err(error) = app.emit(TASK_UPDATED_EVENT, task) {
+    if let Err(error) = app.emit_to(EXECUTION_EVENT_TARGET, TASK_UPDATED_EVENT, task) {
         log::warn!(
             "unable to emit execution task update task_id={} error={error}",
             task.id
@@ -579,7 +576,7 @@ fn emit_task(app: &AppHandle, task: &ExecutionTask) {
 }
 
 fn emit_log(app: &AppHandle, chunk: &ExecutionLogChunk) {
-    if let Err(error) = app.emit(TASK_LOG_EVENT, chunk) {
+    if let Err(error) = app.emit_to(EXECUTION_EVENT_TARGET, TASK_LOG_EVENT, chunk) {
         log::warn!(
             "unable to emit execution log task_id={} error={error}",
             chunk.task_id
@@ -605,6 +602,11 @@ mod tests {
             id: id.to_string(),
             cancel: Some(cancel),
         }
+    }
+
+    #[test]
+    fn execution_events_are_scoped_to_the_main_window() {
+        assert_eq!(EXECUTION_EVENT_TARGET, "main");
     }
 
     #[test]

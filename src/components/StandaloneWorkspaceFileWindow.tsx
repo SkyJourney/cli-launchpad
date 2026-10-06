@@ -3,7 +3,7 @@ import { ArrowLeft, FileText } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceFileDocument } from "../lib/tauri";
-import { openProjectFile, saveProjectTextFile } from "../lib/tauri";
+import { openGrantedFile, saveGrantedTextFile } from "../lib/tauri";
 import {
   beginWorkspaceFileSave,
   completeWorkspaceFileSave,
@@ -16,16 +16,18 @@ import {
   type WorkspaceFileBuffer,
 } from "../lib/workspaceFileBuffer";
 import {
-  getAppErrorMessage,
+  formatAppError,
   isProjectIdentityChangedError,
 } from "../lib/appErrors";
 import {
   encodeWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../lib/workspaceContentDrag";
-import { WorkspaceContentView } from "./WorkspaceContentView";
+import {
+  WorkspaceContentView,
+  tryGetWorkspaceContentAdapter,
+} from "./WorkspaceContentView";
 import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
-import { getWorkspaceContentAdapter } from "./WorkspaceContentView";
 import {
   emitWorkspaceContentWindowEvent,
   listenWorkspaceContentWindowEvent,
@@ -52,6 +54,7 @@ export function StandaloneWorkspaceFileWindow({
   const [fileBuffer, setFileBuffer] = useState<WorkspaceFileBuffer>();
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const fileDocumentRef = useRef<WorkspaceFileDocument | undefined>(undefined);
   const currentBufferRef = useRef<WorkspaceFileBuffer | undefined>(undefined);
   const bufferPublisherRef = useRef<ReturnType<
@@ -117,7 +120,7 @@ export function StandaloneWorkspaceFileWindow({
       } catch (reason) {
         returningRef.current = false;
         setReturning(false);
-        setError(String(reason));
+        setError(formatAppError(reason, t));
         return;
       }
       const buffer = currentBufferRef.current;
@@ -154,7 +157,7 @@ export function StandaloneWorkspaceFileWindow({
         }
         returningRef.current = false;
         setReturning(false);
-        setError(String(reason));
+        setError(formatAppError(reason, t));
       });
     },
     [documentId, fileDocument, t, token],
@@ -177,12 +180,11 @@ export function StandaloneWorkspaceFileWindow({
           return;
         }
         const submitted = beginWorkspaceFileSave(buffer);
+        setError(null);
+        setSaveWarning(null);
         updateFileBuffer(() => submitted);
         try {
-          const saved = await saveProjectTextFile(
-            fileDocument.directoryId,
-            fileDocument.directoryPath,
-            fileDocument.relativePath,
+          const saved = await saveGrantedTextFile(
             submitted.content,
             submitted.revision,
           );
@@ -197,6 +199,9 @@ export function StandaloneWorkspaceFileWindow({
           updateFileBuffer((current) =>
             completeWorkspaceFileSave(current, submitted, saved),
           );
+          if (saved.warning === "permissionsNotRestored") {
+            setSaveWarning(t("workspaceFiles.permissionsNotRestored"));
+          }
         } catch (reason) {
           if (currentBufferRef.current?.epoch !== submitted.epoch) return;
           if (isProjectIdentityChangedError(reason)) {
@@ -209,7 +214,7 @@ export function StandaloneWorkspaceFileWindow({
           updateFileBuffer((current) =>
             failWorkspaceFileSave(current, submitted),
           );
-          setError(getAppErrorMessage(reason));
+          setError(formatAppError(reason, t));
         }
       }),
     [documentId, fileDocument, t, updateFileBuffer],
@@ -223,11 +228,7 @@ export function StandaloneWorkspaceFileWindow({
         if (!fileDocument || !startingBuffer || returningRef.current) return;
         try {
           const loaded = createWorkspaceFileBuffer(
-            await openProjectFile(
-              fileDocument.directoryId,
-              fileDocument.directoryPath,
-              fileDocument.relativePath,
-            ),
+            await openGrantedFile(),
             startingBuffer.epoch + 1,
           );
           const current = currentBufferRef.current;
@@ -249,7 +250,7 @@ export function StandaloneWorkspaceFileWindow({
             setError(t("workspaceFiles.projectIdentityChanged"));
             return;
           }
-          setError(getAppErrorMessage(reason));
+          setError(formatAppError(reason, t));
         }
       }),
     [documentId, fileDocument, t, updateFileBuffer],
@@ -289,7 +290,6 @@ export function StandaloneWorkspaceFileWindow({
                       windowLabel: currentWindow.label,
                     },
                     transferId: token,
-                    generation: 1,
                     capabilities: {
                       prepare: async () => ({
                         document: message.fileDocument,
@@ -309,7 +309,7 @@ export function StandaloneWorkspaceFileWindow({
                     buffer: message.fileBuffer,
                   });
                 } catch (reason) {
-                  setError(String(reason));
+                  setError(formatAppError(reason, t));
                   await emitWorkspaceContentWindowEvent(
                     "main",
                     "workspace-file-window-attach-failed",
@@ -317,7 +317,7 @@ export function StandaloneWorkspaceFileWindow({
                       documentId,
                       token,
                       windowLabel: currentWindow.label,
-                      message: String(reason),
+                      message: formatAppError(reason, t),
                     },
                   );
                   return;
@@ -425,7 +425,7 @@ export function StandaloneWorkspaceFileWindow({
       });
     };
     void setup().catch((reason) => {
-      if (!disposed) setError(String(reason));
+      if (!disposed) setError(formatAppError(reason, t));
     });
     return () => {
       disposed = true;
@@ -441,7 +441,7 @@ export function StandaloneWorkspaceFileWindow({
   return (
     <WorkspaceContentWindowShell
       beforeClose={
-        getWorkspaceContentAdapter("file").lifecycle?.beforeWindowClose
+        tryGetWorkspaceContentAdapter("file")?.lifecycle?.beforeWindowClose
       }
       isReady={Boolean(fileDocument && fileBuffer)}
       onCloseBeforeReady={() => {
@@ -531,6 +531,9 @@ export function StandaloneWorkspaceFileWindow({
               </button>
             )}
           </div>
+        )}
+        {saveWarning && (
+          <p className="muted standalone-pty-error">{saveWarning}</p>
         )}
       </div>
     </WorkspaceContentWindowShell>

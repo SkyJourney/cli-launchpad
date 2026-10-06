@@ -5,6 +5,28 @@ type LocaleShape<T> = {
 };
 
 export const ar = {
+  errors: {
+    fileNotFound: "تعذر العثور على الملف.",
+    fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
+    fileConflict: "تغير الملف على القرص. أعد تحميله قبل الحفظ.",
+    fileIdentityChanged:
+      "تغيرت هوية مجلد المشروع. أعد تحميل المستند أو احفظه في موقع آخر.",
+    ptyOwnerMismatch: "لم تعد جلسة الطرفية هذه مملوكة لهذه النافذة.",
+    ptyHandoffExpired: "انتهت مهلة نقل الطرفية. حاول مرة أخرى.",
+    ptyInputBackpressure: "قائمة إدخال الطرفية ممتلئة. حاول مرة أخرى بعد قليل.",
+    ptyInputUnavailable: "قناة إدخال الطرفية مغلقة. أعد اتصال الجلسة.",
+    ptySessionsActive:
+      "لا تزال هناك {{count}} جلسة طرفية قيد التشغيل. أغلقها قبل استعادة النسخة الاحتياطية.",
+    backupRestoreInProgress:
+      "تجري استعادة نسخة احتياطية. حاول مرة أخرى بعد اكتمالها.",
+    ptySessionStarting:
+      "يجري بدء {{count}} جلسة طرفية. حاول الاستعادة بعد قليل.",
+    execPlanChanged: "تغيرت خطة التنفيذ. راجعها وأكدها مرة أخرى.",
+    execBusy: "توجد مهمة قيد التشغيل لهذه الأداة بالفعل.",
+    layoutNeedsReset: "تخطيط مساحة العمل غير صالح ويجب إعادة تعيينه.",
+    generic: "تعذر إكمال العملية.",
+    directoryInUse: "لا تزال هناك جلسة طرفية قيد التشغيل لهذا المشروع.",
+  },
   common: {
     back: "رجوع",
     browse: "استعراض",
@@ -28,6 +50,8 @@ export const ar = {
     unpinProject: "إلغاء تثبيت المشروع",
     openProjectFolder: "فتح مجلد المشروع",
     removeProject: "إزالة المشروع",
+    removeProjectBlocked:
+      "أغلق {{files}} من الملفات المفتوحة و{{terminals}} من جلسات الطرفية قيد التشغيل في هذا المشروع قبل إزالته.",
     confirmRemoveProject:
       "هل تريد إزالة المشروع «{{name}}»؟ لن تُحذف الملفات من القرص.",
     pinProjectFailed: "تعذر تثبيت المشروع: {{error}}",
@@ -43,6 +67,14 @@ export const ar = {
     activeTasks_other: "{{count}} مهام نشطة",
     managedCliSessions_one: "{{tool}}، جلسة مُدارة واحدة ({{count}})",
     managedCliSessions_other: "{{tool}}، {{count}} جلسات مُدارة",
+  },
+  tray: { show: "إظهار النافذة الرئيسية", quit: "إنهاء" },
+  workspaceContent: {
+    unsupportedTitle: "نوع محتوى غير مدعوم: {{kind}}",
+    unsupportedDescription:
+      "أُنشئ هذا المحتوى في إصدار أحدث وتم الاحتفاظ به في تخطيط مساحة العمل.",
+    unsupportedError: "تعذر عرض هذا المحتوى: {{error}}",
+    closeUnsupported: "إغلاق المحتوى غير المدعوم",
   },
   theme: {
     current: "المظهر: {{mode}}",
@@ -301,6 +333,10 @@ export const ar = {
       "Fetch version data and binaries from x.ai, falling back to Google Cloud Storage if needed. Deployment settings are fetched and written only when GROK_DEPLOYMENT_KEY is present. Launchpad pins the stable channel.",
     grokUpdateSourceUnknown:
       "حدّث معلومات الإصدار أولًا للتحقق من مصدر تثبيت Grok Build.",
+    grokUpdateSourceDenied:
+      "تعذر التحقق من مصدر تثبيت Grok Build للتحديثات المُدارة. حدّثه عبر قناة التثبيت الأصلية.",
+    hermesUpdateSourceDenied:
+      "تعذر التحقق من تثبيت Hermes Agent أو حالة تحديثه. تم تعطيل التحديثات المُدارة.",
     installing: "جارٍ التثبيت…",
     updating: "جارٍ التحديث…",
     refreshingVersion: "جارٍ تحديث الإصدار…",
@@ -414,6 +450,21 @@ export const ar = {
     importFailed: "فشل الاستيراد: {{error}}",
     diagnostics: "التشخيص",
     exportDiagnostics: "تصدير تقرير التشخيص",
+    fileCasResidues: "ملفات الحفظ المؤقتة القديمة",
+    fileCasResiduesDescription:
+      "افحص مشروعًا مسجّلًا واحدًا للعثور على ملفات Launchpad المؤقتة التي مضى عليها أكثر من 24 ساعة. راجع كل مسار وأكّد حذف كل ملف على حدة.",
+    fileCasResiduesProject: "المشروع",
+    fileCasResiduesSelect: "اختر مشروعًا",
+    fileCasResiduesScan: "فحص",
+    fileCasResiduesScanning: "جارٍ الفحص…",
+    fileCasResiduesNone: "لم يتم العثور على ملفات مؤقتة قديمة.",
+    fileCasResiduesTruncated:
+      "تم بلوغ حد الفحص الآمن؛ قد تكون النتائج غير مكتملة.",
+    fileCasResiduesSkipped: "تعذّر فحص {{count}} من العناصر.",
+    fileCasResiduesDelete: "مراجعة الحذف",
+    fileCasResiduesConfirmDelete: "حذف هذا الملف",
+    fileCasResiduesScanFailed: "فشل الفحص: {{error}}",
+    fileCasResiduesDeleteFailed: "فشل الحذف: {{error}}",
     recentLaunch: "عمليات التشغيل الأخيرة",
     launchHistoryRetention: "الاحتفاظ بالسجل",
     launchHistoryRetentionCount: "آخر {{count}} عمليات تشغيل",
@@ -567,6 +618,8 @@ export const ar = {
     reload: "إعادة التحميل",
     saveConflict:
       "تم تعديل الملف على القرص. تم الاحتفاظ بتعديلاتك. أعد تحميل الملف قبل الحفظ مرة أخرى.",
+    permissionsNotRestored:
+      "تم حفظ الملف، لكن تعذّر استعادة أذوناته الأصلية. تحقّق من أذونات الوصول إليه.",
     directoryLimitReached: "عدد العناصر كبير جدًا. يتم عرض أول 5000 عنصر.",
     directoryEntriesSkipped: "تعذر عرض {{count}} من العناصر.",
     projectIdentityChanged:

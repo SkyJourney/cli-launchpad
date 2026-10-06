@@ -14,7 +14,8 @@ import {
   publishAppPreferences,
   respondToAppPreferencesRequests,
 } from "../lib/appPreferencesMain";
-import { resolveThemeMode } from "../lib/themeMode";
+import { resolveThemeMode } from "../lib/themes";
+import { setTrayMenuLabels } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
 
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
@@ -25,7 +26,7 @@ function reportWindowSyncFailure(code: string, error: unknown) {
 
 export function useThemeSync() {
   const themeMode = useAppStore((state) => state.themeMode);
-  const { i18n: translation } = useTranslation();
+  const { i18n: translation, t } = useTranslation();
   const currentWindowLabel = getCurrentWindow().label;
   const language = getAppLanguage();
 
@@ -34,8 +35,9 @@ export function useThemeSync() {
 
     const applyTheme = () => {
       const resolvedTheme = resolveThemeMode(themeMode, systemTheme.matches);
-      document.documentElement.dataset.theme = resolvedTheme;
-      document.documentElement.style.colorScheme = resolvedTheme;
+      useAppStore.getState().setResolvedTheme(resolvedTheme);
+      document.documentElement.dataset.theme = resolvedTheme.id;
+      document.documentElement.style.colorScheme = resolvedTheme.base;
     };
 
     applyTheme();
@@ -105,9 +107,15 @@ export function useThemeSync() {
 
   useEffect(() => {
     if (currentWindowLabel !== "main") return;
+    void setTrayMenuLabels({
+      show: t("tray.show"),
+      quit: t("tray.quit"),
+    }).catch((error: unknown) =>
+      reportWindowSyncFailure("window.tray_menu_sync_failed", error),
+    );
     void publishAppPreferences(currentAppPreferences(themeMode)).catch(
       (error: unknown) =>
         reportWindowSyncFailure("window.preferences_publish_failed", error),
     );
-  }, [currentWindowLabel, themeMode, language, translation.language]);
+  }, [currentWindowLabel, themeMode, language, t, translation.language]);
 }

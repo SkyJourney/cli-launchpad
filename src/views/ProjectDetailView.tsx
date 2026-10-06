@@ -37,6 +37,7 @@ import {
   shouldSearchSessions,
 } from "../lib/sessionSearch";
 import { TOOLS } from "../lib/tools";
+import { formatAppError } from "../lib/appErrors";
 import {
   deleteSessionAlias,
   listProjectFiles,
@@ -247,7 +248,7 @@ export function ProjectDetailView({
 
   const openPathMutation = useMutation({
     mutationFn: () => openProjectDirectory(directoryId as number),
-    onError: (error) => setOpenPathError(String(error)),
+    onError: (error) => setOpenPathError(formatAppError(error, t)),
   });
 
   const aliasMutation = useMutation({
@@ -297,7 +298,7 @@ export function ProjectDetailView({
         exact: false,
       });
     },
-    onError: (error) => setAliasError(String(error)),
+    onError: (error) => setAliasError(formatAppError(error, t)),
   });
 
   if (!directory) {
@@ -482,7 +483,7 @@ export function ProjectDetailView({
                 directory.id,
                 directory.path,
                 entry.relativePath,
-              ).catch((reason) => toast.error(String(reason)))
+              ).catch((reason) => toast.error(formatAppError(reason, t)))
             }
           />
         ) : panelTab === "git" ? (
