@@ -2,12 +2,12 @@
 name: 记忆健康检查报告
 description: 项目记忆结构、引用、矛盾和过期状态检查结果
 type: lint
-last_updated: 2026-10-02
-commit: 8d4a751
+last_updated: 2026-10-06
+commit: a674462
 ---
 
 # Memory Lint Report
-> _Last checked: 2026-10-02 | Base commit: `8d4a751`_
+> _Last checked: 2026-10-06 | Base commit: `a674462`_
 
 ## 健康概览
 
@@ -20,8 +20,9 @@ commit: 8d4a751
 - 章节级反向链接缺失：0
 - 合并残留：0
 - NEED-HUMAN：0
-- 阶段状态一致：G4 已完成，M4 前置条件已满足，macOS/Linux 对齐与验收归入 M5。
+- 阶段状态一致：G4/M5 已完成；M6 第三波代码和 CI 通过，第四波 WP7/最终门禁进行中，三平台实机与 CSP 生产包检查待执行，扩展成本目标未达标。
 - 发布矩阵已依据当前工作流更新为六个构建目标；早期 0.2.1 的四目标记录保留为历史验收事实。
+- 2026-10-06 增量复核：索引与磁盘记忆文件一致；章节链接目标未因本次进度更新改变；重新统计后 `synthesis_release-tag-cross-platform.md` 引用为 6，已修正索引数字。其余文件引用数保持一致。
 
 ## AUTO-FIX 已执行
 
