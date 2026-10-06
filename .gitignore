@@ -24,3 +24,6 @@ dist-installers/
 # Deprecated and intermediate design assets
 assets/icon/v2/
 assets/icon/v3/*-source-chroma.png
+
+# Local working notes (Codex goal prompts, evidence logs), never committed
+tmp/
