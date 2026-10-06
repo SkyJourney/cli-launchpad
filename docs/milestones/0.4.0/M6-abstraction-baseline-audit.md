@@ -1168,20 +1168,20 @@ flowchart TD
 
 ## 8. M6 抽象审查门禁 1–10 核实结论
 
-| #   | 门禁                | 当前复核结论                                                        | 证据或剩余关闭条件                                                                                                                                                                      |
-| --- | ------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 边界清单复核        | 代码边界已复核；M6 矩阵中的历史描述已在本波修订                     | `workspaceContentAdapterRegistry.ts`、`WorkspaceContentView.tsx`、`PtyWorkspace.tsx`；本机全量门禁通过，第四波 CI 待补                                                                  |
-| 2   | 宿主与 adapter 职责 | 自动化证据通过，实机待验                                            | `workspaceContentClose.test.ts`、`workspaceContentCommand.test.ts`；三平台 M6 实机矩阵待执行                                                                                            |
-| 3   | 完整生命周期一致    | 自动化证据通过，退出/恢复实机矩阵待验                               | `appExitImpacts.test.ts`、`workspaceContentClose.test.ts`、`workspaceContentCoordinator.test.ts`；M6-F07/F08/F09 待执行                                                                 |
-| 4   | 独立窗口协议        | 自动化协议与关闭回滚证据通过，实机待验                              | `workspaceContentWindowProtocol.test.ts`、`WorkspaceContentWindowShell.test.tsx`；M6-F05/F08 待执行                                                                                     |
-| 5   | 权限闭环            | 静态契约和自动检查通过，桌面权限验收待补                            | `windowApiPermissions.test.ts`、Rust `window_kind_contract_matches_capabilities`；M6-F05、F07 实机待执行                                                                                |
-| 6   | 注册表与消费端一致  | 自动化证据通过                                                      | `registerBuiltinContributions.test.ts`、`workspaceContentAdapterRegistry.test.ts`、`WorkspaceEditorSurface.test.tsx`                                                                    |
-| 7   | 文档与实现一致      | WP7 已修订；本机格式与差异审查通过，第四波 CI 待补                  | 本节“WP7 复核追溯”及 `docs/architecture.md`；变更文件 Prettier 与 `git diff --check` 通过                                                                                               |
-| 8   | 回归门禁            | 第四波 Windows 本机自动门禁通过；本波三平台 CI 和 M6 实机验收待完成 | 本机 `pnpm test`（53 文件/282 项）、build、Rust fmt/check/test（297 项）；第三波 run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 仅供第三波追溯 |
-| 9   | G3/G4 行为继承      | 自动化基线已补齐可核验位置；平台行为实机待验                        | `windowChrome.test.ts`、`useThemeSync.test.tsx`、`WorkspaceContentWindowShell.test.tsx`；M6-F05/F07/F10 待执行                                                                          |
-| 10  | 标题自适应          | 自动化布局证据通过；DPI/窗口尺寸实机待验                            | `workspaceTabLayout.test.ts`、`src/styles.css`、`PtyWorkspace.tsx`；M6-F10 三平台待执行                                                                                                 |
+| #   | 门禁                | 当前复核结论                                                   | 证据或剩余关闭条件                                                                                                                                                                                               |
+| --- | ------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 边界清单复核        | 代码边界已复核；M6 矩阵中的历史描述已在本波修订                | `workspaceContentAdapterRegistry.ts`、`WorkspaceContentView.tsx`、`PtyWorkspace.tsx`；本机全量门禁及第四波 CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 三平台通过 |
+| 2   | 宿主与 adapter 职责 | 自动化证据通过，实机待验                                       | `workspaceContentClose.test.ts`、`workspaceContentCommand.test.ts`；三平台 M6 实机矩阵待执行                                                                                                                     |
+| 3   | 完整生命周期一致    | 自动化证据通过，退出/恢复实机矩阵待验                          | `appExitImpacts.test.ts`、`workspaceContentClose.test.ts`、`workspaceContentCoordinator.test.ts`；M6-F07/F08/F09 待执行                                                                                          |
+| 4   | 独立窗口协议        | 自动化协议与关闭回滚证据通过，实机待验                         | `workspaceContentWindowProtocol.test.ts`、`WorkspaceContentWindowShell.test.tsx`；M6-F05/F08 待执行                                                                                                              |
+| 5   | 权限闭环            | 静态契约和自动检查通过，桌面权限验收待补                       | `windowApiPermissions.test.ts`、Rust `window_kind_contract_matches_capabilities`；M6-F05、F07 实机待执行                                                                                                         |
+| 6   | 注册表与消费端一致  | 自动化证据通过                                                 | `registerBuiltinContributions.test.ts`、`workspaceContentAdapterRegistry.test.ts`、`WorkspaceEditorSurface.test.tsx`                                                                                             |
+| 7   | 文档与实现一致      | WP7 已修订；本机格式、差异审查及第四波三平台 CI 通过           | 本节“WP7 复核追溯”及 `docs/architecture.md`；变更文件 Prettier、`git diff --check` 和 CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 通过                            |
+| 8   | 回归门禁            | 第四波 Windows 本机自动门禁及三平台 CI 通过；M6 实机验收待完成 | 本机 `pnpm test`（53 文件/282 项）、build、Rust fmt/check/test（297 项）；第四波 run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu jobs 全部通过 |
+| 9   | G3/G4 行为继承      | 自动化基线已补齐可核验位置；平台行为实机待验                   | `windowChrome.test.ts`、`useThemeSync.test.tsx`、`WorkspaceContentWindowShell.test.tsx`；M6-F05/F07/F10 待执行                                                                                                   |
+| 10  | 标题自适应          | 自动化布局证据通过；DPI/窗口尺寸实机待验                       | `workspaceTabLayout.test.ts`、`src/styles.css`、`PtyWorkspace.tsx`；M6-F10 三平台待执行                                                                                                                          |
 
-此表记录 2026-10-06 第四波本机复核结果；最终三平台 CI 和修复复审闭环后还需更新本表。任何实机项在记录表填入结果前均保持待执行。
+此表记录 2026-10-06 第四波本机复核及三平台 CI 结果；阶段复审未遗留需阻断问题。任何实机项在记录表填入结果前均保持待执行。
 
 ## 9. 两层收口门禁
 
@@ -1315,7 +1315,7 @@ flowchart TD
 | commands 与权限             | `architecture.md` 不再复制命令名列表，改以 `contracts/app-commands.json` 和 Rust 测试 `app_command_contract_matches_the_registered_handler`、`window_kind_contract_matches_capabilities` 为契约证据。窗口权限的自动化证据另见 `src/lib/windowApiPermissions.test.ts`。                                                                                                                                                       |
 | 内容 adapter 与跨窗 payload | adapter 的 `presentation(content, context)` 使用已解析的宿主展示上下文（`src/components/workspaceContentAdapterRegistry.ts`）；文件 DTO 通过带版本和身份字段的 Tauri 窗口事件在运行期传递，不写布局/业务数据库（`src/lib/workspaceContentWindowProtocol.ts`）。关闭批处理、协议解码和壳层回滚分别由 `workspaceContentClose.test.ts`、`workspaceContentWindowProtocol.test.ts`、`WorkspaceContentWindowShell.test.tsx` 覆盖。 |
 | 文件索引、主题与标题        | 工作区索引已删除且无生产入口，partial-scan 建议保留为未来重引入要求；B3R-F07 已明确放弃旧缓存格式。B2-F05 保留相同的深色 ANSI palette。标题 200 CSS px、ResizeObserver 与堆叠列表有 `workspaceTabLayout.test.ts` 和 `PtyWorkspace.tsx` 的自动证据，DPI/原生窗口仍待实机。                                                                                                                                                    |
-| G3/G4 证据与实机边界        | G3 已移除不存在的 `WindowTitlebar` 专属测试声明，并列明现有 `windowChrome.test.ts`、`useThemeSync.test.tsx`、`WorkspaceContentWindowShell.test.tsx`。G4 记录澄清同一 ANSI 配色策略。第三波 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 只作为第三波证据；第四波最终 CI 与 M6 三平台实机记录仍待完成。                                                                         |
+| G3/G4 证据与实机边界        | G3 已移除不存在的 `WindowTitlebar` 专属测试声明，并列明现有 `windowChrome.test.ts`、`useThemeSync.test.tsx`、`WorkspaceContentWindowShell.test.tsx`。G4 记录澄清同一 ANSI 配色策略。第四波 CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu jobs 全部通过；M6 三平台实机记录仍待完成。                                                                   |
 
 架构、测试名和状态如与未来代码不一致，应以代码复核结果更新本表；不能仅因本表列出自动化测试就推断实机门禁已完成。
 
@@ -1327,7 +1327,8 @@ flowchart TD
 - `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
 - `cargo test --manifest-path src-tauri/Cargo.toml`：297 项通过。
 - 变更文件 Prettier 检查、`git diff --check`：通过。
-- 本节命令为本机结果，不能代替第四波提交的三平台 CI；Windows/macOS/Linux M6 实机验收和 X-F05 三平台生产包 CSP 运行检查仍待执行。
+- GitHub Actions CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 对提交 `9550e08` 的 Windows、Ubuntu、macOS jobs 全部通过，包含前端测试/构建、Rust 格式、编译及测试。
+- 自动门禁通过不代替 Windows/macOS/Linux M6 实机验收；三平台 M6 实机矩阵和 X-F05 三平台生产包 CSP 运行检查仍待执行。
 
 ## 附录 C：编号对照
 

@@ -20,9 +20,10 @@ commit: a674462
 - 章节级反向链接缺失：0
 - 合并残留：0
 - NEED-HUMAN：0
-- 阶段状态一致：G4/M5 已完成；M6 第三波代码和 CI 通过，第四波 WP7/最终门禁进行中，三平台实机与 CSP 生产包检查待执行，扩展成本目标未达标。
+- 阶段状态一致：G4/M5 已完成；M6 第四波 WP7、本机自动门禁及 CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的三平台门禁通过；三平台实机与 CSP 生产包检查待执行，扩展成本目标未达标。
 - 发布矩阵已依据当前工作流更新为六个构建目标；早期 0.2.1 的四目标记录保留为历史验收事实。
 - 2026-10-06 增量复核：索引与磁盘记忆文件一致；章节链接目标未因本次进度更新改变；重新统计后 `synthesis_release-tag-cross-platform.md` 引用为 6，已修正索引数字。其余文件引用数保持一致。
+- 2026-10-06 M6 第四波复核：CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu jobs 全部通过。实机验收、三平台生产包 CSP 检查与扩展成本目标仍未关闭。
 
 ## AUTO-FIX 已执行
 

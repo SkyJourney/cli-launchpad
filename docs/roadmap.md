@@ -134,4 +134,4 @@ CLI Launchpad 从小窗口 CLI 启动器，演进为轻量级、本地优先的 
 | [M9：远程与系统认证](milestones/0.4.0/M9-git-remotes-auth.md)      | remote 管理、认证交互、fetch/push/快进拉取                                                              | M8    |
 | [M10：Rebase 与冲突恢复](milestones/0.4.0/M10-rebase-conflicts.md) | rebase/冲突状态、三方编辑、继续/跳过/中止及恢复                                                         | M9    |
 
-0.4.0 的发布门禁是 M6–M10 完成后进行全量审查和跨平台验收。每一阶段都要求维护现有 PTY、布局保存/恢复和独立终端窗口行为；变更、认证和冲突状态必须以文件系统与系统 Git 的真实状态为准。M6 第三波实现及三平台 CI 已通过，第四波 WP7、扩展成本演练与最终门禁进行中；三平台实机矩阵尚未执行，A 层未关闭。M7 还需等待 B 层全部门禁通过，包括 CSP 三平台生产包运行检查。详见 [0.4.0 里程碑索引](milestones/0.4.0/README.md)和 [M6 验收文档](milestones/0.4.0/M6-workspace-files.md)。
+0.4.0 的发布门禁是 M6–M10 完成后进行全量审查和跨平台验收。每一阶段都要求维护现有 PTY、布局保存/恢复和独立终端窗口行为；变更、认证和冲突状态必须以文件系统与系统 Git 的真实状态为准。M6 第四波 WP7、扩展成本演练及自动门禁已完成，CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu 全部通过；三平台实机矩阵尚未执行，A 层未关闭。扩展成本目标尚未达成，且 CSP 三平台生产包运行检查未完成，B 层未关闭，M7 暂不得开始。详见 [0.4.0 里程碑索引](milestones/0.4.0/README.md)和 [M6 验收文档](milestones/0.4.0/M6-workspace-files.md)。
