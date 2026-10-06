@@ -46,9 +46,16 @@ pub fn put<T: Serialize>(connection: &Connection, key: &str, value: &T) -> Resul
 
 pub fn clear(connection: &Connection) -> Result<()> {
     connection.execute("delete from cache_entries", [])?;
-    connection.execute("delete from session_search_documents", [])?;
-    connection.execute("delete from session_search_sources", [])?;
+    clear_session_search(connection)?;
     connection.execute_batch("vacuum")?;
+    Ok(())
+}
+
+pub fn clear_session_search(connection: &Connection) -> Result<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("delete from session_search_documents", [])?;
+    transaction.execute("delete from session_search_sources", [])?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -140,5 +147,34 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(stats(&connection, &path).unwrap().entry_count, 0);
+    }
+
+    #[test]
+    fn restore_invalidation_removes_session_and_workspace_index_caches() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("cache.db");
+        let connection = cache_connection::init_cache(&path).unwrap();
+        put(&connection, "sessions:project-1", &vec!["stale"]).unwrap();
+        put(&connection, "workspace-file-index:1", &vec!["stale"]).unwrap();
+        put(&connection, "cli-status", &vec!["keep"]).unwrap();
+
+        remove_prefix(&connection, "sessions:").unwrap();
+        remove_prefix(&connection, "workspace-file-index:").unwrap();
+        clear_session_search(&connection).unwrap();
+
+        assert!(get_any::<Vec<String>>(&connection, "sessions:project-1")
+            .unwrap()
+            .is_none());
+        assert!(
+            get_any::<Vec<String>>(&connection, "workspace-file-index:1")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            get_any::<Vec<String>>(&connection, "cli-status")
+                .unwrap()
+                .unwrap(),
+            vec!["keep"]
+        );
     }
 }

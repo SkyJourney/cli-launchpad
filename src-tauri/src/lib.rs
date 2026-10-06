@@ -191,6 +191,7 @@ pub fn run() {
             app.manage(Db(Mutex::new(connection)));
             app.manage(services::execution_service::ExecutionTaskManager::default());
             app.manage(services::pty_session_service::PtySessionManager::default());
+            app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(commands::terminal::TerminalEnvironmentCache::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
@@ -235,13 +236,14 @@ pub fn run() {
             commands::pty_session::finalize_pty_handoff,
             commands::pty_session::cancel_pty_handoff,
             commands::pty_session::get_pty_session_window_status,
+            commands::pty_session::reattach_pty_session,
             commands::pty_session::write_pty_session,
             commands::pty_session::resize_pty_session,
             commands::pty_session::acknowledge_pty_output,
             commands::pty_session::report_pty_frontend_stage,
             commands::pty_session::terminate_pty_session,
             commands::pty_session::list_pty_sessions,
-            commands::pty_session::confirm_pty_exit,
+            commands::pty_session::confirm_app_exit,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
@@ -282,6 +284,20 @@ pub fn run() {
             commands::workspace_layout::plan_apply_workspace_layout_preset,
         ])
         .on_window_event(|window, event| {
+            if let WindowEvent::Destroyed = event {
+                let label = window.label();
+                if label.starts_with("terminal-") {
+                    let sessions =
+                        window.state::<services::pty_session_service::PtySessionManager>();
+                    for session_id in sessions.reclaim_window(label) {
+                        let _ = window.app_handle().emit_to(
+                            "main",
+                            "pty-session-owner-lost",
+                            serde_json::json!({ "sessionId": session_id }),
+                        );
+                    }
+                }
+            }
             if window.label() != "main" {
                 return;
             }
@@ -309,17 +325,24 @@ pub fn run() {
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
-            let sessions = app.state::<services::pty_session_service::PtySessionManager>();
-            if sessions.consume_exit_authorization() {
+            let exit_gate = app.state::<services::app_lifecycle::AppExitGate>();
+            if exit_gate.consume_authorization() {
                 return;
             }
+            let sessions = app.state::<services::pty_session_service::PtySessionManager>();
             let active_count = sessions.active_count();
-            if active_count > 0 {
+            if let Some(window) = app.get_webview_window("main") {
                 api.prevent_exit();
-                if let Some(window) = app.get_webview_window("main") {
-                    show_main_window(&window);
-                }
-                let _ = app.emit("pty-exit-requested", active_count);
+                show_main_window(&window);
+                let _ = app.emit_to(
+                    "main",
+                    "app-exit-requested",
+                    serde_json::json!({
+                        "ptyCount": active_count,
+                    }),
+                );
+            } else if active_count > 0 {
+                api.prevent_exit();
             }
         }
         #[cfg(target_os = "macos")]

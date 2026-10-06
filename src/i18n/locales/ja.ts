@@ -62,7 +62,9 @@ export const ja = {
     description:
       "{{count}} 個の埋め込みターミナルセッションが実行中です。終了すると、これらのセッションと子プロセスも終了します。",
     confirm: "セッションを終了してアプリを閉じる",
-    terminating: "セッションを終了しています…",
+    unsavedDescription: "未保存の変更があるファイル：{{count}} 件",
+    confirmDiscard: "変更を破棄して終了",
+    terminating: "終了しています…",
   },
   windowChrome: {
     titlebar: "アプリケーションのタイトルバー",
@@ -447,6 +449,10 @@ export const ja = {
       "{{time}} 時点のデータに復元します。実行前に現在の状態を自動保存します。",
     confirmRestoreAction: "復元を実行",
     restoreFailed: "復元に失敗しました: {{error}}",
+    restoreBlockedPtys: "実行中のターミナルセッション {{count}} 件",
+    restoreBlockedDirtyFiles: "未保存の変更があるドキュメント {{count}} 件",
+    restoreBlockedDetachedWindows:
+      "分離されたコンテンツウィンドウ {{count}} 個",
     backupReason: {
       manual: "手動復元ポイント",
       pre_import: "インポート前の自動バックアップ",
@@ -573,6 +579,9 @@ export const ja = {
       "ファイルがディスク上で変更されました。編集内容は保持されています。再読み込みしてから保存してください。",
     directoryLimitReached:
       "項目数が多いため、最初の5,000件のみ表示しています。",
+    directoryEntriesSkipped: "{{count}} 件の項目を表示できませんでした。",
+    projectIdentityChanged:
+      "プロジェクトディレクトリの識別情報が変わりました。このドキュメントは古いため、閉じる前に内容をコピーしてください。",
     loadingFile: "ファイルを読み込み中…",
     fileCannotOpen: "このファイルはここでは開けません",
     imagePreview: "画像プレビュー",

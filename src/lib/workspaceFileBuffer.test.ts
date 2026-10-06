@@ -7,6 +7,8 @@ import {
   failWorkspaceFileSave,
   isWorkspaceFileBufferNewer,
   markWorkspaceFileSaveConflict,
+  markWorkspaceFileIdentityChanged,
+  resolveWorkspaceFileSaveCommitDisposition,
   WorkspaceFileOperationFlights,
 } from "./workspaceFileBuffer";
 
@@ -14,6 +16,54 @@ const textBuffer = (content = "original", revision = "revision") =>
   createWorkspaceFileBuffer({ kind: "text", content, revision });
 
 describe("workspace file save transitions", () => {
+  it("preserves the draft and marks a stale project identity", () => {
+    const current = editWorkspaceFileBuffer(textBuffer(), "draft");
+    const stale = markWorkspaceFileIdentityChanged(current);
+    expect(stale).toMatchObject({
+      content: "draft",
+      saving: false,
+      conflict: true,
+      identityChanged: true,
+    });
+    expect(stale.savedContent).toBe("original");
+  });
+
+  it("keeps a save completion after layout invalidates only load generations", () => {
+    const submitted = beginWorkspaceFileSave(
+      editWorkspaceFileBuffer(textBuffer(), "draft"),
+    );
+
+    expect(
+      resolveWorkspaceFileSaveCommitDisposition(submitted, submitted, true),
+    ).toBe("apply-result");
+    expect(submitted.saving).toBe(true);
+  });
+
+  it("clears an orphaned saving state when the document identity changed", () => {
+    const submitted = beginWorkspaceFileSave(
+      editWorkspaceFileBuffer(textBuffer(), "draft"),
+    );
+
+    expect(
+      resolveWorkspaceFileSaveCommitDisposition(submitted, submitted, false),
+    ).toBe("restore-saving-state");
+    expect(failWorkspaceFileSave(submitted, submitted).saving).toBe(false);
+  });
+
+  it("discards a completion after a reload changed the document epoch", () => {
+    const submitted = beginWorkspaceFileSave(
+      editWorkspaceFileBuffer(textBuffer(), "draft"),
+    );
+    const reloaded = createWorkspaceFileBuffer(
+      { kind: "text", content: "disk", revision: "new" },
+      submitted.epoch + 1,
+    );
+
+    expect(
+      resolveWorkspaceFileSaveCommitDisposition(reloaded, submitted, true),
+    ).toBe("discard-result");
+  });
+
   it("keeps edits typed while an earlier snapshot is being saved", () => {
     const edited = editWorkspaceFileBuffer(textBuffer(), "first draft");
     const submitted = beginWorkspaceFileSave(edited);

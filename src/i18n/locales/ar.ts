@@ -61,7 +61,9 @@ export const ar = {
     description:
       "لا تزال {{count}} جلسة طرفية مضمّنة قيد التشغيل. سيؤدي الإنهاء إلى إنهاء هذه الجلسات والعمليات التابعة لها.",
     confirm: "إنهاء الجلسات والخروج",
-    terminating: "جارٍ إنهاء الجلسات…",
+    unsavedDescription: "تحتوي {{count}} من الملفات على تغييرات غير محفوظة:",
+    confirmDiscard: "تجاهل التغييرات والخروج",
+    terminating: "جارٍ الخروج…",
   },
   windowChrome: {
     titlebar: "شريط عنوان نافذة التطبيق",
@@ -436,6 +438,9 @@ export const ar = {
       "استعادة البيانات إلى حالتها في {{time}}. سيتم حفظ الحالة الحالية تلقائيًا أولًا.",
     confirmRestoreAction: "تأكيد الاستعادة",
     restoreFailed: "فشلت استعادة البيانات: {{error}}",
+    restoreBlockedPtys: "{{count}} جلسة طرفية قيد التشغيل",
+    restoreBlockedDirtyFiles: "{{count}} مستندات بها تغييرات غير محفوظة",
+    restoreBlockedDetachedWindows: "{{count}} نوافذ محتوى مستقلة",
     backupReason: {
       manual: "نقطة استعادة يدوية",
       pre_import: "نسخة احتياطية تلقائية قبل الاستيراد",
@@ -559,6 +564,9 @@ export const ar = {
     saveConflict:
       "تم تعديل الملف على القرص. تم الاحتفاظ بتعديلاتك. أعد تحميل الملف قبل الحفظ مرة أخرى.",
     directoryLimitReached: "عدد العناصر كبير جدًا. يتم عرض أول 5000 عنصر.",
+    directoryEntriesSkipped: "تعذر عرض {{count}} من العناصر.",
+    projectIdentityChanged:
+      "تغيّرت هوية مجلد المشروع. هذا المستند قديم؛ انسخ محتواه قبل إغلاقه.",
     loadingFile: "جارٍ تحميل الملف…",
     fileCannotOpen: "لا يمكن فتح هذا الملف هنا",
     imagePreview: "معاينة الصورة",

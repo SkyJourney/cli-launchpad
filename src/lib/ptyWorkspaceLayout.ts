@@ -416,21 +416,7 @@ export function moveWorkspaceFileToPane(
   ) {
     return node;
   }
-  if (
-    destination.contents.some(
-      (content) => content.kind === "file" && content.documentId === documentId,
-    )
-  )
-    return node;
-  const removed = removeWorkspaceContentFromPane(node, sourcePaneId, {
-    kind: "file",
-    documentId,
-  });
-  const inserted = addWorkspaceContentToPane(removed, destinationPaneId, {
-    kind: "file",
-    documentId,
-  });
-  return activateWorkspaceContent(inserted, destinationPaneId, {
+  return placeContentExclusively(node, destinationPaneId, {
     kind: "file",
     documentId,
   });
@@ -548,6 +534,50 @@ export function addWorkspaceContentToPane(
   });
 }
 
+export function removeWorkspaceContentFromTree(
+  node: WorkspaceNode,
+  content: WorkspacePaneContentRef,
+): WorkspaceNode {
+  if (node.kind === "pane") {
+    const activeIndex = node.contents.findIndex((candidate) =>
+      sameWorkspaceContent(candidate, node.activeContent),
+    );
+    const activeWasRemoved = sameWorkspaceContent(node.activeContent, content);
+    const replacementIndex =
+      activeIndex < 0
+        ? 0
+        : node.contents
+            .slice(0, activeIndex)
+            .filter((candidate) => !sameWorkspaceContent(candidate, content))
+            .length;
+    const contents = node.contents.filter(
+      (candidate) => !sameWorkspaceContent(candidate, content),
+    );
+    if (contents.length === node.contents.length) return node;
+    const activeContent = activeWasRemoved
+      ? (contents[replacementIndex] ?? contents[replacementIndex - 1] ?? null)
+      : node.activeContent;
+    return { ...node, contents, activeContent };
+  }
+  const first = removeWorkspaceContentFromTree(node.first, content);
+  const second = removeWorkspaceContentFromTree(node.second, content);
+  return first === node.first && second === node.second
+    ? node
+    : { ...node, first, second };
+}
+
+export function placeContentExclusively(
+  node: WorkspaceNode,
+  paneId: string,
+  content: WorkspacePaneContentRef,
+): WorkspaceNode {
+  if (!findWorkspacePane(node, paneId)) {
+    throw new Error(`Workspace pane not found: ${paneId}`);
+  }
+  const withoutContent = removeWorkspaceContentFromTree(node, content);
+  return addWorkspaceContentToPane(withoutContent, paneId, content);
+}
+
 export function activateWorkspaceContent(
   node: WorkspaceNode,
   paneId: string,
@@ -603,18 +633,7 @@ export function moveWorkspaceContent(
   }
   if (sourcePaneId === destinationPaneId)
     return activateWorkspaceContent(node, sourcePaneId, content);
-  if (
-    destination.contents.some((candidate) =>
-      sameWorkspaceContent(candidate, content),
-    )
-  ) {
-    return node;
-  }
-  return addWorkspaceContentToPane(
-    removeWorkspaceContentFromPane(node, sourcePaneId, content),
-    destinationPaneId,
-    content,
-  );
+  return placeContentExclusively(node, destinationPaneId, content);
 }
 
 export function splitAndMoveWorkspaceContent(

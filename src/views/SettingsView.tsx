@@ -11,6 +11,7 @@ import { createRef, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { AnchoredPopover } from "../components/AnchoredPopover";
+import { usePtyWorkspace } from "../components/PtyWorkspace";
 import {
   CLI_STATUS_META,
   indexByTool,
@@ -24,7 +25,13 @@ import {
 } from "../hooks/useExecutionTasks";
 import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
+import { refreshInstallPlanConfirmation } from "../lib/installPlanConfirmation";
 import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
+import { getAppErrorMessage } from "../lib/appErrors";
+import {
+  hasWorkspaceDataRestoreBlockers,
+  type WorkspaceDataRestoreBlockers,
+} from "../lib/workspaceRestorePolicy";
 import {
   getLatestUpdateAvailability,
   isManagedUpdateAllowed,
@@ -74,6 +81,7 @@ interface PendingAction {
 
 export function SettingsView() {
   const { t, i18n } = useTranslation();
+  const { getBackupRestoreBlockers, cancelBackupRestore } = usePtyWorkspace();
   const queryClient = useQueryClient();
   const userAgent = navigator.userAgent;
   const platform = /Windows/i.test(userAgent)
@@ -145,6 +153,12 @@ export function SettingsView() {
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
+  const [restoreChecking, setRestoreChecking] = useState(false);
+  const [restoreBlockers, setRestoreBlockers] =
+    useState<WorkspaceDataRestoreBlockers | null>(null);
+  const [restoreCheckError, setRestoreCheckError] = useState<string | null>(
+    null,
+  );
 
   const backups = useQuery({
     queryKey: qk.backups(),
@@ -157,11 +171,33 @@ export function SettingsView() {
   const restoreBackupMutation = useMutation({
     mutationFn: (backupId: string) => restoreBackup(backupId),
     onSuccess: async () => {
+      cancelBackupRestore();
       setPendingRestore(null);
       queryClient.removeQueries({ queryKey: ["sessions"] });
       await queryClient.invalidateQueries();
     },
+    onError: () => cancelBackupRestore(),
   });
+  const confirmBackupRestore = async () => {
+    if (!pendingRestore || restoreChecking || restoreBackupMutation.isPending) {
+      return;
+    }
+    setRestoreChecking(true);
+    setRestoreCheckError(null);
+    try {
+      const blockers = await getBackupRestoreBlockers();
+      setRestoreBlockers(blockers);
+      if (hasWorkspaceDataRestoreBlockers(blockers)) {
+        return;
+      }
+      restoreBackupMutation.mutate(pendingRestore.id);
+    } catch (reason) {
+      cancelBackupRestore();
+      setRestoreCheckError(getAppErrorMessage(reason));
+    } finally {
+      setRestoreChecking(false);
+    }
+  };
   const launchHistory = useQuery({
     queryKey: qk.launchHistory(),
     queryFn: listLaunchHistory,
@@ -313,13 +349,31 @@ export function SettingsView() {
     setCreatingToolKeys(new Set(creatingToolKeysRef.current));
     clearActionError(action.toolKey);
     try {
-      const task = await startExecutionTask(action.toolKey, action.kind);
+      const task = await startExecutionTask(action.plan);
       queryClient.setQueryData<ExecutionTask[]>(
         qk.executionTasks(),
         (entries) => upsertExecutionTask(entries, task),
       );
       clearPendingAction(action.toolKey);
     } catch (error) {
+      try {
+        if (
+          await refreshInstallPlanConfirmation({
+            error,
+            action,
+            getPlan: getInstallPlan,
+            setPending: (updated) =>
+              setPendingByTool((current) => ({
+                ...current,
+                [updated.toolKey]: updated,
+              })),
+          })
+        ) {
+          return;
+        }
+      } catch (refreshError) {
+        error = refreshError;
+      }
       setActionErrors((current) => ({
         ...current,
         [action.toolKey]: String(error),
@@ -884,8 +938,12 @@ export function SettingsView() {
               </div>
               <button
                 className="ghost-button"
-                disabled={restoreBackupMutation.isPending}
-                onClick={() => setPendingRestore(backup)}
+                disabled={restoreBackupMutation.isPending || restoreChecking}
+                onClick={() => {
+                  setRestoreBlockers(null);
+                  setRestoreCheckError(null);
+                  setPendingRestore(backup);
+                }}
               >
                 {t("settings.restore")}
               </button>
@@ -904,20 +962,49 @@ export function SettingsView() {
                 ),
               })}
             </p>
+            {restoreBlockers &&
+              hasWorkspaceDataRestoreBlockers(restoreBlockers) && (
+                <ul className="error" role="alert">
+                  {restoreBlockers.runningPtyCount > 0 && (
+                    <li>
+                      {t("settings.restoreBlockedPtys", {
+                        count: restoreBlockers.runningPtyCount,
+                      })}
+                    </li>
+                  )}
+                  {restoreBlockers.dirtyFileCount > 0 && (
+                    <li>
+                      {t("settings.restoreBlockedDirtyFiles", {
+                        count: restoreBlockers.dirtyFileCount,
+                      })}
+                    </li>
+                  )}
+                  {restoreBlockers.detachedWindowCount > 0 && (
+                    <li>
+                      {t("settings.restoreBlockedDetachedWindows", {
+                        count: restoreBlockers.detachedWindowCount,
+                      })}
+                    </li>
+                  )}
+                </ul>
+              )}
+            {restoreCheckError && <p className="error">{restoreCheckError}</p>}
             <div className="edit-actions">
               <button
                 className="ghost-button"
                 onClick={() => setPendingRestore(null)}
-                disabled={restoreBackupMutation.isPending}
+                disabled={restoreBackupMutation.isPending || restoreChecking}
               >
                 {t("common.cancel")}
               </button>
               <button
                 className="primary-button"
-                onClick={() => restoreBackupMutation.mutate(pendingRestore.id)}
-                disabled={restoreBackupMutation.isPending}
+                onClick={() => void confirmBackupRestore()}
+                disabled={restoreBackupMutation.isPending || restoreChecking}
               >
-                {t("settings.confirmRestoreAction")}
+                {restoreChecking
+                  ? t("common.loading")
+                  : t("settings.confirmRestoreAction")}
               </button>
             </div>
           </div>
@@ -925,7 +1012,7 @@ export function SettingsView() {
         {restoreBackupMutation.isError && (
           <p className="error">
             {t("settings.restoreFailed", {
-              error: String(restoreBackupMutation.error),
+              error: getAppErrorMessage(restoreBackupMutation.error),
             })}
           </p>
         )}

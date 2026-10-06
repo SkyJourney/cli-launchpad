@@ -54,7 +54,9 @@ export const zh = {
     description:
       "还有 {{count}} 个内置终端会话正在运行。退出将结束这些会话及其子进程。",
     confirm: "结束会话并退出",
-    terminating: "正在结束会话…",
+    unsavedDescription: "还有 {{count}} 个文件包含未保存的更改：",
+    confirmDiscard: "放弃更改并退出",
+    terminating: "正在退出…",
   },
   windowChrome: {
     titlebar: "应用窗口标题栏",
@@ -405,6 +407,9 @@ export const zh = {
       "将恢复到 {{time}} 的数据状态；执行前会自动保存当前状态。",
     confirmRestoreAction: "确认恢复",
     restoreFailed: "恢复失败：{{error}}",
+    restoreBlockedPtys: "{{count}} 个正在运行的终端会话",
+    restoreBlockedDirtyFiles: "{{count}} 个有未保存修改的文档",
+    restoreBlockedDetachedWindows: "{{count}} 个独立内容窗口",
     backupReason: {
       manual: "手动恢复点",
       pre_import: "导入前自动备份",
@@ -522,7 +527,10 @@ export const zh = {
     reload: "重新载入",
     saveConflict:
       "文件已在磁盘中修改，你的编辑内容已保留。重新载入文件后再继续保存。",
+    projectIdentityChanged:
+      "项目目录身份已变化。此文档已失效；关闭前请先复制其中的内容。",
     directoryLimitReached: "目录条目过多，仅显示前 5,000 项。",
+    directoryEntriesSkipped: "有 {{count}} 个条目无法显示。",
     loadingFile: "正在读取文件…",
     fileCannotOpen: "此文件无法在此处打开",
     imagePreview: "图片预览",

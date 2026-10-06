@@ -61,7 +61,9 @@ export const ko = {
     description:
       "내장 터미널 세션 {{count}}개가 아직 실행 중입니다. 종료하면 해당 세션과 하위 프로세스가 종료됩니다.",
     confirm: "세션 종료 후 앱 닫기",
-    terminating: "세션 종료 중…",
+    unsavedDescription: "저장되지 않은 변경 사항이 있는 파일 {{count}}개:",
+    confirmDiscard: "변경 사항을 버리고 종료",
+    terminating: "종료 중…",
   },
   windowChrome: {
     titlebar: "애플리케이션 창 제목 표시줄",
@@ -439,6 +441,9 @@ export const ko = {
       "{{time}} 시점의 데이터로 복원합니다. 먼저 현재 상태를 자동 저장합니다.",
     confirmRestoreAction: "복원 확인",
     restoreFailed: "복원 실패: {{error}}",
+    restoreBlockedPtys: "실행 중인 터미널 세션 {{count}}개",
+    restoreBlockedDirtyFiles: "저장하지 않은 변경 사항이 있는 문서 {{count}}개",
+    restoreBlockedDetachedWindows: "분리된 콘텐츠 창 {{count}}개",
     backupReason: {
       manual: "수동 복원 지점",
       pre_import: "가져오기 전 자동 백업",
@@ -562,6 +567,9 @@ export const ko = {
     saveConflict:
       "디스크의 파일이 변경되었습니다. 편집 내용은 보존되었습니다. 파일을 다시 불러온 후 저장하세요.",
     directoryLimitReached: "항목이 너무 많아 처음 5,000개만 표시합니다.",
+    directoryEntriesSkipped: "{{count}}개 항목을 표시할 수 없습니다.",
+    projectIdentityChanged:
+      "프로젝트 디렉터리의 신원이 변경되었습니다. 이 문서는 오래된 상태입니다. 닫기 전에 내용을 복사하세요.",
     loadingFile: "파일을 읽는 중…",
     fileCannotOpen: "이 파일은 여기서 열 수 없습니다",
     imagePreview: "이미지 미리보기",

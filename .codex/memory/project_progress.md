@@ -2,8 +2,8 @@
 name: 项目进度
 description: 当前完成状态和近期待办
 type: project
-last_updated: 2026-10-03
-commit: 8d4a751
+last_updated: 2026-10-06
+commit: 8da6a76
 ---
 
 # 项目进度
@@ -132,6 +132,15 @@ commit: 8d4a751
 - 2026-10-03 将代码优化、打包调整和 Windows ARM64 加入 Release workflow 后，以 `ab34efc` 推送 `main`，手动运行 Release 预检 [#37129066965](https://github.com/SkyJourney/cli-launchpad/actions/runs/37129066965)。版本校验及八个目标全部成功，八组 Actions artifacts 均已上传；Linux x64/ARM64 无 Rust 编译告警，Windows ARM64 原生 Runner 在线/离线 NSIS 均通过。该 workflow_dispatch 只生成限时构建产物，不创建 Release。
 - 用户已确认 M5 整体验收通过，后续平台问题使用 bug+fix 流程。随后推送文档提交 `b98a96c` 并创建 `v0.3.0` tag；正式发布 run [#37130320908](https://github.com/SkyJourney/cli-launchpad/actions/runs/37130320908) 的八个目标及发布 job 全部成功。正式 [GitHub Release](https://github.com/SkyJourney/cli-launchpad/releases/tag/v0.3.0) 为非草稿、非预发布，含 12 个安装包和 SHA-256 清单。
 - 文档入口：[M5 发布验收](../../docs/milestones/0.3.0/M5-release-readiness.md)、[0.3.0 路线图](../../docs/roadmap.md)、[[synthesis_release-tag-cross-platform.md#结论]]。
+
+## 0.4.0 M6 基础抽象收口
+
+- 2026-10-06 M6 收口原则已与用户对齐：软件层维护可验证的统一抽象，不抹平操作系统差异；Windows、macOS、Linux 分别按其原生能力落地适配。
+- 第 1 波实现处理中，包含应用退出前检查脏文件、独立文件窗生命周期、PTY handoff 所有权与回收、文件路径身份、备份恢复协调、安装计划确认和任务槽位释放。布局 schema 升到 v4，以 `detachedContents` 统一记录独立 PTY/文件所有权，并迁移 v3 detached slot ID。
+- 2026-10-06 本机 Windows 全量门禁通过：前端 210 项、Rust 289 项、`pnpm run build`、`cargo fmt --check`、`cargo check`、变更文件 Prettier 与 `git diff --check` 均通过；构建提示 Monaco chunk 超 500 KB。本波三平台 CI 尚待推送后验证。
+- 实施位置、测试名及未完成验收见 [M6 基础抽象体检与收口审查报告第 5 节](../../docs/milestones/0.4.0/M6-abstraction-baseline-audit.md)；B2-F01 退出矩阵、B3R-F05 强制销毁子窗口、J1 备份恢复和 M6 三平台实机记录仍待对应环境验收。
+
+**See Also：** [[decisions.md#M6-统一软件抽象并使用平台原生适配]] [[project_overview.md#CLI-适配器与公共生命周期]]
 
 ## See Also
 

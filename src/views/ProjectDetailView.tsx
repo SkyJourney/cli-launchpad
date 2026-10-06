@@ -104,8 +104,9 @@ export function ProjectDetailView({
 
   const directoryId = directory?.id ?? null;
   const projectFilesQuery = useQuery({
-    queryKey: ["project-files", directoryId, filePath],
-    queryFn: () => listProjectFiles(directoryId as number, filePath),
+    queryKey: ["project-files", directoryId, directory?.path, filePath],
+    queryFn: () =>
+      listProjectFiles(directoryId as number, directory?.path ?? "", filePath),
     enabled:
       active && contextPanelOpen && panelTab === "files" && directoryId != null,
     staleTime: 10_000,
@@ -467,6 +468,7 @@ export function ProjectDetailView({
             currentPath={filePath}
             entries={projectFilesQuery.data?.entries ?? []}
             truncated={projectFilesQuery.data?.truncated ?? false}
+            skippedCount={projectFilesQuery.data?.skippedCount ?? 0}
             loading={projectFilesQuery.isLoading}
             error={
               projectFilesQuery.error ? String(projectFilesQuery.error) : null
@@ -782,6 +784,7 @@ function ProjectFileBrowser({
   currentPath,
   entries,
   truncated,
+  skippedCount,
   loading,
   error,
   showHidden,
@@ -793,6 +796,7 @@ function ProjectFileBrowser({
   currentPath: string;
   entries: ProjectFileEntry[];
   truncated: boolean;
+  skippedCount: number;
   loading: boolean;
   error: string | null;
   showHidden: boolean;
@@ -884,6 +888,13 @@ function ProjectFileBrowser({
       {truncated && (
         <p className="muted project-files-status">
           {t("workspaceFiles.directoryLimitReached")}
+        </p>
+      )}
+      {skippedCount > 0 && (
+        <p className="muted project-files-status">
+          {t("workspaceFiles.directoryEntriesSkipped", {
+            count: skippedCount,
+          })}
         </p>
       )}
     </section>

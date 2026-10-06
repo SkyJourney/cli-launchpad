@@ -54,9 +54,26 @@ impl ActiveTasks {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ExecutionTaskManager {
-    active: Mutex<ActiveTasks>,
+    active: std::sync::Arc<Mutex<ActiveTasks>>,
+}
+
+struct ActiveTaskGuard {
+    active: std::sync::Arc<Mutex<ActiveTasks>>,
+    id: String,
+}
+
+impl Drop for ActiveTaskGuard {
+    fn drop(&mut self) {
+        match self.active.lock() {
+            Ok(mut active) => active.remove_by_id(&self.id),
+            Err(_) => log::error!(
+                "execution task state lock poisoned while releasing task_id={}",
+                self.id
+            ),
+        }
+    }
 }
 
 impl ExecutionTaskManager {
@@ -139,17 +156,52 @@ impl ExecutionTaskManager {
         error_message: Option<&str>,
     ) -> Result<ExecutionTask, AppError> {
         debug_assert!(status.is_terminal());
+        let task = self.release_before(id, || {
+            update_status(app, id, status, Some(now_ms()), exit_code, error_message)
+        })
+        .map_err(|error| {
+            log::error!("unable to persist terminal execution task state task_id={id} error={error}");
+            if let Err(emit_error) = app.emit_to(
+                "main",
+                "execution-task-persistence-failed",
+                serde_json::json!({
+                    "taskId": id,
+                    "status": status.as_str(),
+                    "message": error.to_string(),
+                }),
+            ) {
+                log::warn!("unable to emit execution task persistence failure task_id={id} error={emit_error}");
+            }
+            error
+        })?;
+        if let Err(error) = with_db(app, |connection| {
+            execution_task_repo::prune_old_finished(connection)?;
+            Ok(())
+        }) {
+            log::warn!("unable to prune execution task history task_id={id} error={error}");
+        }
+        Ok(task)
+    }
+
+    fn release_before<T>(
+        &self,
+        id: &str,
+        persist: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
         let mut active = self
             .active
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
-        let task = update_status(app, id, status, Some(now_ms()), exit_code, error_message)?;
         active.remove_by_id(id);
-        with_db(app, |connection| {
-            execution_task_repo::prune_old_finished(connection)?;
-            Ok(())
-        })?;
-        Ok(task)
+        drop(active);
+        persist()
+    }
+
+    fn guard(&self, id: &str) -> ActiveTaskGuard {
+        ActiveTaskGuard {
+            active: self.active.clone(),
+            id: id.to_string(),
+        }
     }
 }
 
@@ -159,15 +211,26 @@ enum Completion {
     TimedOut,
 }
 
-async fn run_task(
+async fn run_task(app: AppHandle, id: String, plan: InstallPlan, cancel: oneshot::Receiver<()>) {
+    let task_app = app.clone();
+    let task_id = id.clone();
+    let task = tokio::spawn(run_task_inner(app, id, plan, cancel));
+    if let Err(error) = task.await {
+        finish_failed(&task_app, &task_id, format!("执行任务异常退出：{error}"));
+    }
+}
+
+async fn run_task_inner(
     app: AppHandle,
     id: String,
     plan: InstallPlan,
     mut cancel: oneshot::Receiver<()>,
 ) {
     let manager = app.state::<ExecutionTaskManager>();
+    let _active_task_guard = manager.guard(&id);
     if let Err(error) = manager.transition_running(&app, &id) {
         log::error!("unable to mark execution task running task_id={id} error={error}");
+        finish_failed(&app, &id, format!("无法更新执行任务状态：{error}"));
         return;
     }
     append_system_log(&app, &id, "任务已启动。\n");
@@ -594,6 +657,62 @@ mod tests {
 
         assert!(active.get_by_id("codex-task").unwrap().cancel.is_none());
         assert!(active.get_by_id("claude-task").unwrap().cancel.is_some());
+    }
+
+    #[test]
+    fn completion_persistence_failure_still_releases_the_tool_slot() {
+        let manager = ExecutionTaskManager::default();
+        manager
+            .active
+            .lock()
+            .unwrap()
+            .insert(ToolKey::Codex, active_task("codex-task"));
+
+        let result: Result<(), AppError> = manager.release_before("codex-task", || {
+            Err(AppError::msg("injected database write failure"))
+        });
+
+        assert!(result.is_err());
+        let mut active = manager.active.lock().unwrap();
+        assert!(!active.contains_tool(ToolKey::Codex));
+        active.insert(ToolKey::Codex, active_task("codex-task-2"));
+        assert!(active.contains_tool(ToolKey::Codex));
+    }
+
+    #[test]
+    fn active_task_guard_releases_slots_after_early_return_and_panic() {
+        let manager = ExecutionTaskManager::default();
+        manager
+            .active
+            .lock()
+            .unwrap()
+            .insert(ToolKey::Claude, active_task("claude-task"));
+
+        {
+            let _guard = manager.guard("claude-task");
+            // The task body may return early after a state transition failure.
+        }
+        assert!(!manager
+            .active
+            .lock()
+            .unwrap()
+            .contains_tool(ToolKey::Claude));
+
+        manager
+            .active
+            .lock()
+            .unwrap()
+            .insert(ToolKey::Claude, active_task("claude-task-panic"));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = manager.guard("claude-task-panic");
+            panic!("injected execution task panic");
+        }));
+        assert!(panic.is_err());
+
+        let mut active = manager.active.lock().unwrap();
+        assert!(!active.contains_tool(ToolKey::Claude));
+        active.insert(ToolKey::Claude, active_task("claude-task-retry"));
+        assert!(active.contains_tool(ToolKey::Claude));
     }
 
     #[test]

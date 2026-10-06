@@ -62,7 +62,10 @@ export const fr = {
     description:
       "{{count}} session(s) de terminal intégrées sont toujours en cours. Quitter mettra fin à ces sessions et à leurs processus enfants.",
     confirm: "Terminer les sessions et quitter",
-    terminating: "Fin des sessions…",
+    unsavedDescription:
+      "{{count}} fichier(s) contiennent des modifications non enregistrées :",
+    confirmDiscard: "Abandonner les modifications et quitter",
+    terminating: "Fermeture en cours…",
   },
   windowChrome: {
     titlebar: "Barre de titre de la fenêtre de l’application",
@@ -458,6 +461,11 @@ export const fr = {
       "Restaurer les données à leur état du {{time}}. L’état actuel sera d’abord sauvegardé automatiquement.",
     confirmRestoreAction: "Confirmer la restauration",
     restoreFailed: "Échec de la restauration : {{error}}",
+    restoreBlockedPtys: "{{count}} session(s) de terminal en cours",
+    restoreBlockedDirtyFiles:
+      "{{count}} document(s) avec des modifications non enregistrées",
+    restoreBlockedDetachedWindows:
+      "{{count}} fenêtre(s) de contenu détachée(s)",
     backupReason: {
       manual: "Point de restauration manuel",
       pre_import: "Sauvegarde automatique avant importation",
@@ -589,6 +597,9 @@ export const fr = {
     saveConflict:
       "Le fichier sur le disque a été modifié. Vos modifications sont conservées. Rechargez le fichier avant de l’enregistrer à nouveau.",
     directoryLimitReached: "Trop d’éléments. Les 5 000 premiers sont affichés.",
+    directoryEntriesSkipped: "{{count}} éléments n’ont pas pu être affichés.",
+    projectIdentityChanged:
+      "Le dossier du projet a changé. Ce document est obsolète ; copiez son contenu avant de le fermer.",
     loadingFile: "Chargement du fichier…",
     fileCannotOpen: "Ce fichier ne peut pas être ouvert ici",
     imagePreview: "Aperçu de l’image",

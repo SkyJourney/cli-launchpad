@@ -2,8 +2,8 @@
 name: 项目概览
 description: 项目技术栈、架构边界、工具链和核心 CLI 范围
 type: project
-last_updated: 2026-10-02
-commit: 2e345ea
+last_updated: 2026-10-06
+commit: 8da6a76
 ---
 
 # 项目概览
@@ -84,9 +84,10 @@ Rust 和 VS Build Tools 已在本机安装。Rust 可执行文件存在于用户
 - 前端 `src/lib/cliAdapters/<cli>.ts` 封装展示名称、短标题、图标、粘贴行为、更新状态映射和 CLI 特有提示，由 `src/lib/tools.ts` 使用穷尽 `Record<ToolKey, ...>` 统一注册。
 - G4 中前端展示顺序从穷尽注册表派生；Rust 未实现的历史读取/归属校验缺省能力显式失败，防止误报空结果。
 - 公共服务统一拥有检测并发、每 CLI 状态与版本缓存、持久化更新任务、PTY/窗格/独立窗口生命周期和会话检索/索引；适配器只提供命令与数据映射，不接管应用生命周期。
+- M6 工作区内容抽象统一 PTY 与文件在 pane 树、独立窗口及生命周期协调器中的归属；当前布局 schema v4 通过 `detachedContents` 持久化独立窗口内容，Rust 校验与前端协调器共同维护唯一归属。平台差异按 Windows、macOS、Linux 的原生能力在 `src-tauri/src/platform/` 适配。
 - 缺失能力安全关闭；单适配器 panic、任务异常、查询超时或历史源损坏降级为单 CLI unknown/error/不完整结果，不应中止其他 CLI 工作或影响主窗口与应用启动。
 
-**See Also：** [[decisions.md#CLI-差异由固定适配器提供，软件层拥有生命周期]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]]
+**See Also：** [[decisions.md#CLI-差异由固定适配器提供，软件层拥有生命周期]] [[decisions.md#M6-统一软件抽象并使用平台原生适配]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]] [[project_progress.md#0.4.0-M6-基础抽象收口]]
 
 ## 会话与配置数据
 

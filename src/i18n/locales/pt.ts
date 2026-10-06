@@ -62,7 +62,9 @@ export const pt = {
     description:
       "Ao sair, as sessões de terminal incorporado que estiverem em execução ({{count}}) serão encerradas junto com seus processos filhos.",
     confirm: "Encerrar sessões e sair",
-    terminating: "Encerrando sessões…",
+    unsavedDescription: "{{count}} arquivo(s) têm alterações não salvas:",
+    confirmDiscard: "Descartar alterações e sair",
+    terminating: "Saindo…",
   },
   windowChrome: {
     titlebar: "Barra de título da janela do aplicativo",
@@ -456,6 +458,11 @@ export const pt = {
       "Restaurar os dados para o estado de {{time}}. O estado atual será salvo automaticamente antes.",
     confirmRestoreAction: "Confirmar restauração",
     restoreFailed: "Falha na restauração: {{error}}",
+    restoreBlockedPtys: "{{count}} sessão(ões) de terminal em execução",
+    restoreBlockedDirtyFiles:
+      "{{count}} documento(s) com alterações não salvas",
+    restoreBlockedDetachedWindows:
+      "{{count}} janela(s) de conteúdo destacada(s)",
     backupReason: {
       manual: "Ponto de restauração manual",
       pre_import: "Backup automático antes da importação",
@@ -586,6 +593,9 @@ export const pt = {
     saveConflict:
       "O arquivo no disco foi alterado. Suas edições foram preservadas. Recarregue o arquivo antes de salvá-lo novamente.",
     directoryLimitReached: "Há muitos itens. Exibindo os primeiros 5.000.",
+    directoryEntriesSkipped: "{{count}} itens não puderam ser exibidos.",
+    projectIdentityChanged:
+      "A identidade do diretório do projeto mudou. Este documento está desatualizado; copie o conteúdo antes de fechá-lo.",
     loadingFile: "Carregando arquivo…",
     fileCannotOpen: "Este arquivo não pode ser aberto aqui",
     imagePreview: "Pré-visualização da imagem",

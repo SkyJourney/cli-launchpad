@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -37,17 +37,61 @@ const OUTPUT_HIGH_WATERMARK: usize = 192 * 1024;
 const OUTPUT_LOW_WATERMARK: usize = 64 * 1024;
 const HANDOFF_PAUSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_HANDOFF_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OWNER_LOST_BUFFER_BYTES: usize = 256 * 1024;
 
+fn ensure_no_active_sessions(active_count: usize) -> Result<(), AppError> {
+    if active_count > 0 {
+        return Err(AppError::coded(
+            "pty_sessions_active",
+            format!("请先关闭所有运行中的终端会话（当前 {active_count} 个）再恢复备份"),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
 pub struct PtySessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
-    exit_authorized: std::sync::atomic::AtomicBool,
+    lifecycle_gate: Arc<Mutex<PtyLifecycleGate>>,
+}
+
+#[derive(Default)]
+struct PtyLifecycleGate {
+    restore_in_progress: bool,
+    session_starts: usize,
+}
+
+pub struct PtySessionStartGuard {
+    gate: Arc<Mutex<PtyLifecycleGate>>,
+}
+
+impl Drop for PtySessionStartGuard {
+    fn drop(&mut self) {
+        match self.gate.lock() {
+            Ok(mut gate) => gate.session_starts = gate.session_starts.saturating_sub(1),
+            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing session start"),
+        }
+    }
+}
+
+pub struct PtyBackupRestoreGuard {
+    gate: Arc<Mutex<PtyLifecycleGate>>,
+}
+
+impl Drop for PtyBackupRestoreGuard {
+    fn drop(&mut self) {
+        match self.gate.lock() {
+            Ok(mut gate) => gate.restore_in_progress = false,
+            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing backup restore"),
+        }
+    }
 }
 
 impl Default for PtySessionManager {
     fn default() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            exit_authorized: std::sync::atomic::AtomicBool::new(false),
+            lifecycle_gate: Arc::new(Mutex::new(PtyLifecycleGate::default())),
         }
     }
 }
@@ -76,7 +120,11 @@ struct ManagedSession {
 
 struct EventRoute {
     window_label: String,
-    channel: Channel<PtyEvent>,
+    channel: Option<Channel<PtyEvent>>,
+    mirror: Option<(String, Channel<PtyEvent>)>,
+    owner_lost: bool,
+    buffered_events: VecDeque<PtyEvent>,
+    buffered_bytes: usize,
 }
 
 struct PendingHandoff {
@@ -170,6 +218,17 @@ impl OutputFlow {
         Ok(state.next_sequence)
     }
 
+    fn pause_indefinitely(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                return;
+            }
+            state.paused = true;
+            state.pause_deadline = None;
+            self.changed.notify_all();
+        }
+    }
+
     fn is_paused_at(&self, sequence: u64) -> bool {
         self.state
             .lock()
@@ -261,14 +320,75 @@ impl OutputFlow {
 
 impl ManagedSession {
     fn send_event(&self, event: PtyEvent) -> Result<(), String> {
+        let buffer_size = pty_event_buffer_size(&event);
+        let mut mirror_after_owner_loss = false;
+        let mirror_to_main;
+        {
+            let mut route = self
+                .event_route
+                .lock()
+                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
+            if let Some(channel) = route.channel.as_ref() {
+                if let Err(error) = channel.send(event.clone()) {
+                    if route.window_label.starts_with("terminal-") {
+                        route.channel = None;
+                        route.owner_lost = true;
+                        if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
+                            return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
+                        }
+                        mirror_after_owner_loss = true;
+                        self.flow.pause_indefinitely();
+                    } else {
+                        return Err(format!("PTY 输出通道不可用：{error}"));
+                    }
+                }
+            } else if route.owner_lost {
+                if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
+                    return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
+                }
+                mirror_after_owner_loss = true;
+            } else {
+                return Err("PTY 输出通道不可用：当前没有所有者通道".to_string());
+            }
+            mirror_to_main = mirror_after_owner_loss
+                || route
+                    .mirror
+                    .as_ref()
+                    .is_some_and(|(label, _)| label == "main");
+        }
+
+        if mirror_to_main {
+            let mut route = self
+                .event_route
+                .lock()
+                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
+            let mirror_allowed = mirror_after_owner_loss
+                || route
+                    .mirror
+                    .as_ref()
+                    .is_some_and(|(label, _)| label == "main");
+            if mirror_allowed {
+                if let Some((_, mirror)) = route.mirror.as_ref() {
+                    if mirror.send(event).is_err() {
+                        route.mirror = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn is_output_observer(&self, window_label: &str) -> Result<bool, AppError> {
         let route = self
             .event_route
             .lock()
-            .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
-        route
-            .channel
-            .send(event)
-            .map_err(|error| format!("PTY 输出通道不可用：{error}"))
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        Ok(route.window_label == window_label
+            || route
+                .mirror
+                .as_ref()
+                .is_some_and(|(label, _)| label == window_label)
+            || (route.owner_lost && window_label == "main"))
     }
 
     fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
@@ -276,10 +396,7 @@ impl ManagedSession {
             .event_route
             .lock()
             .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if route.window_label != window_label {
-            return Err(AppError::msg("该终端当前由另一个窗口控制"));
-        }
-        Ok(())
+        ensure_route_owner(&route, window_label)
     }
 
     fn metadata(&self) -> PtySession {
@@ -294,6 +411,60 @@ impl ManagedSession {
             exit_code: None,
         }
     }
+}
+
+fn pty_event_buffer_size(event: &PtyEvent) -> usize {
+    match event {
+        PtyEvent::Output { data_base64, .. } => data_base64.len(),
+        PtyEvent::Snapshot { data, .. } => data.len(),
+        PtyEvent::Failed { message, .. } => message.len(),
+        PtyEvent::Exited { .. } => std::mem::size_of::<PtyEvent>(),
+    }
+}
+
+fn pty_event_sequence(event: &PtyEvent) -> Option<u64> {
+    match event {
+        PtyEvent::Output { sequence, .. } | PtyEvent::Snapshot { sequence, .. } => Some(*sequence),
+        PtyEvent::Exited { .. } | PtyEvent::Failed { .. } => None,
+    }
+}
+
+fn ensure_route_owner(route: &EventRoute, window_label: &str) -> Result<(), AppError> {
+    if route.window_label != window_label {
+        return Err(AppError::msg("该终端当前由另一个窗口控制"));
+    }
+    Ok(())
+}
+
+fn buffer_owner_lost_event(route: &mut EventRoute, event: PtyEvent, size: usize) -> bool {
+    if route.buffered_bytes.saturating_add(size) > MAX_OWNER_LOST_BUFFER_BYTES
+        && matches!(event, PtyEvent::Output { .. })
+    {
+        return false;
+    }
+    route.buffered_bytes = route.buffered_bytes.saturating_add(size);
+    route.buffered_events.push_back(event);
+    true
+}
+
+fn reclaim_event_route(route: &mut EventRoute, window_label: &str) -> bool {
+    route.mirror = route
+        .mirror
+        .take()
+        .filter(|(label, _)| label != window_label);
+    if route.window_label == window_label {
+        route.window_label = "main".to_string();
+        route.channel = None;
+        route.owner_lost = true;
+        true
+    } else {
+        false
+    }
+}
+
+fn handoff_references_window(transfer: &PendingHandoff, window_label: &str) -> bool {
+    transfer.source_window_label == window_label
+        || transfer.target_window_label.as_deref() == Some(window_label)
 }
 
 fn is_supported_workspace_window(window_label: &str) -> bool {
@@ -328,6 +499,7 @@ impl PtySessionManager {
         window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
+        let _start_guard = self.begin_session_start()?;
         let directory_path = directory_repo::get(connection, directory_id)
             .ok()
             .flatten()
@@ -452,7 +624,11 @@ impl PtySessionManager {
             flow: Arc::new(OutputFlow::new()),
             event_route: Mutex::new(EventRoute {
                 window_label: window_label.to_string(),
-                channel: on_event,
+                channel: Some(on_event),
+                mirror: None,
+                owner_lost: false,
+                buffered_events: VecDeque::new(),
+                buffered_bytes: 0,
             }),
             pending_handoff: Mutex::new(None),
             first_output_logged: AtomicBool::new(false),
@@ -638,7 +814,9 @@ impl PtySessionManager {
             // left to release and is safe to ignore.
             return Ok(());
         };
-        session.ensure_owner(window_label)?;
+        if !session.is_output_observer(window_label)? {
+            return Err(AppError::msg("该窗口当前不允许确认终端输出"));
+        }
         if let Err(error) = session.flow.acknowledge(sequence) {
             log::warn!(
                 "PTY output acknowledgement failed session_id={} sequence={} error={error}",
@@ -723,6 +901,109 @@ impl PtySessionManager {
             }
         }
         Ok(())
+    }
+
+    pub fn reclaim_window(&self, window_label: &str) -> Vec<String> {
+        if window_label == "main" {
+            return Vec::new();
+        }
+        let Ok(sessions) = self.sessions.lock() else {
+            log::error!("PTY session table lock poisoned while reclaiming window={window_label}");
+            return Vec::new();
+        };
+        let mut reclaimed = Vec::new();
+        for session in sessions.values() {
+            let mut pending_cleared = false;
+            if let Ok(mut pending) = session.pending_handoff.lock() {
+                if pending
+                    .as_ref()
+                    .is_some_and(|transfer| handoff_references_window(transfer, window_label))
+                {
+                    *pending = None;
+                    pending_cleared = true;
+                }
+            }
+
+            let Ok(mut route) = session.event_route.lock() else {
+                log::error!(
+                    "PTY event route lock poisoned while reclaiming session_id={}",
+                    session.session_id
+                );
+                continue;
+            };
+            if reclaim_event_route(&mut route, window_label) {
+                if !session.flow.is_closed() {
+                    session.flow.pause_indefinitely();
+                }
+                reclaimed.push(session.session_id.clone());
+            } else if pending_cleared {
+                session.flow.resume();
+            }
+        }
+        reclaimed
+    }
+
+    pub fn reattach(
+        &self,
+        session_id: &str,
+        window_label: &str,
+        channel: Channel<PtyEvent>,
+        snapshot: PtyTerminalSnapshot,
+        sequence: u64,
+        size: PtySizeUpdate,
+    ) -> Result<PtySession, AppError> {
+        if window_label != "main" {
+            return Err(AppError::msg("只有主窗口可以重新接管终端"));
+        }
+        validate_handoff_snapshot(&snapshot)?;
+        validate_size(size)?;
+        let session = self.get(session_id)?;
+        let mut route = session
+            .event_route
+            .lock()
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        if !route.owner_lost || route.window_label != "main" || route.channel.is_some() {
+            return Err(AppError::msg("终端当前不处于可重新接管状态"));
+        }
+        let mut last_size = session
+            .last_size
+            .lock()
+            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
+        if *last_size != (size.cols, size.rows) {
+            session
+                .master
+                .lock()
+                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
+                .resize(to_pty_size(size))
+                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
+            *last_size = (size.cols, size.rows);
+        }
+        drop(last_size);
+        session.flow.acknowledge(sequence)?;
+        channel
+            .send(PtyEvent::Snapshot {
+                session_id: session_id.to_string(),
+                sequence,
+                data: snapshot.data,
+                cols: snapshot.cols,
+                rows: snapshot.rows,
+            })
+            .map_err(|error| AppError::msg(format!("发送终端画面快照失败：{error}")))?;
+        for event in route.buffered_events.iter().filter(|event| {
+            pty_event_sequence(event).map_or(true, |event_sequence| event_sequence > sequence)
+        }) {
+            channel
+                .send(event.clone())
+                .map_err(|error| AppError::msg(format!("恢复终端输出失败：{error}")))?;
+        }
+        route.buffered_events.clear();
+        route.buffered_bytes = 0;
+        route.channel = Some(channel);
+        route.mirror = None;
+        route.owner_lost = false;
+        drop(route);
+        session.flow.resume();
+        Ok(session.metadata())
     }
 
     pub fn begin_handoff(
@@ -886,7 +1167,18 @@ impl PtySessionManager {
             return Err(AppError::msg("终端控制权已经转移"));
         }
         route.window_label = target_window_label.to_string();
-        route.channel = channel;
+        route.mirror = if target_window_label == "main" {
+            None
+        } else if transfer.source_window_label == "main" {
+            route
+                .channel
+                .take()
+                .map(|source_channel| ("main".to_string(), source_channel))
+        } else {
+            route.mirror.take().filter(|(label, _)| label == "main")
+        };
+        route.channel = Some(channel);
+        route.owner_lost = false;
         drop(route);
         *pending = None;
         session.flow.resume();
@@ -923,14 +1215,55 @@ impl PtySessionManager {
             .unwrap_or(0)
     }
 
-    pub fn authorize_exit(&self) {
-        self.exit_authorized
-            .store(true, std::sync::atomic::Ordering::Release);
+    pub fn begin_session_start(&self) -> Result<PtySessionStartGuard, AppError> {
+        let mut gate = self
+            .lifecycle_gate
+            .lock()
+            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
+        if gate.restore_in_progress {
+            return Err(AppError::coded(
+                "backup_restore_in_progress",
+                "备份恢复正在进行，暂时不能启动终端会话",
+            ));
+        }
+        gate.session_starts = gate.session_starts.saturating_add(1);
+        drop(gate);
+        Ok(PtySessionStartGuard {
+            gate: Arc::clone(&self.lifecycle_gate),
+        })
     }
 
-    pub fn consume_exit_authorization(&self) -> bool {
-        self.exit_authorized
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    pub fn begin_backup_restore(&self) -> Result<PtyBackupRestoreGuard, AppError> {
+        let mut gate = self
+            .lifecycle_gate
+            .lock()
+            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
+        if gate.restore_in_progress {
+            return Err(AppError::coded(
+                "backup_restore_in_progress",
+                "另一个备份恢复操作正在进行",
+            ));
+        }
+        if gate.session_starts > 0 {
+            return Err(AppError::coded(
+                "pty_session_starting",
+                format!(
+                    "有 {} 个终端会话正在启动，请稍后重试恢复备份",
+                    gate.session_starts
+                ),
+            ));
+        }
+        let active_count = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
+            .len();
+        ensure_no_active_sessions(active_count)?;
+        gate.restore_in_progress = true;
+        drop(gate);
+        Ok(PtyBackupRestoreGuard {
+            gate: Arc::clone(&self.lifecycle_gate),
+        })
     }
 
     pub fn terminate_all(&self) -> Result<(), AppError> {
@@ -1252,6 +1585,45 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_restore_is_blocked_while_pty_sessions_are_registered() {
+        assert!(ensure_no_active_sessions(0).is_ok());
+        let error = ensure_no_active_sessions(1).unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "pty_sessions_active"
+        );
+        assert!(error.to_string().contains("1 个"));
+    }
+
+    #[test]
+    fn backup_restore_serializes_against_session_startup() {
+        let manager = PtySessionManager::default();
+        let starting = manager.begin_session_start().unwrap();
+        let starting_error = match manager.begin_backup_restore() {
+            Ok(_) => panic!("restore must wait for a session startup"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            serde_json::to_value(&starting_error).unwrap()["code"],
+            "pty_session_starting"
+        );
+
+        drop(starting);
+        let restoring = manager.begin_backup_restore().unwrap();
+        let start_error = match manager.begin_session_start() {
+            Ok(_) => panic!("session startup must be blocked during restore"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            serde_json::to_value(&start_error).unwrap()["code"],
+            "backup_restore_in_progress"
+        );
+
+        drop(restoring);
+        assert!(manager.begin_session_start().is_ok());
+    }
     use std::sync::mpsc;
 
     #[test]
@@ -1272,6 +1644,98 @@ mod tests {
             session_window_status(Some("terminal-a"), "terminal-a", true),
             PtySessionWindowStatus::Ended
         );
+    }
+
+    #[test]
+    fn finalized_handoff_rejects_source_cancel_and_reports_child_owner() {
+        let route = EventRoute {
+            window_label: "terminal-child".to_string(),
+            channel: None,
+            mirror: None,
+            owner_lost: false,
+            buffered_events: VecDeque::new(),
+            buffered_bytes: 0,
+        };
+
+        assert!(ensure_route_owner(&route, "main").is_err());
+        assert_eq!(
+            session_window_status(Some(&route.window_label), "main", false),
+            PtySessionWindowStatus::OwnedByAnotherWindow
+        );
+    }
+
+    #[test]
+    fn destroying_the_current_owner_reclaims_an_open_session_for_main() {
+        let mut route = EventRoute {
+            window_label: "terminal-child".to_string(),
+            channel: None,
+            mirror: None,
+            owner_lost: false,
+            buffered_events: VecDeque::new(),
+            buffered_bytes: 0,
+        };
+
+        assert!(reclaim_event_route(&mut route, "terminal-child"));
+        assert_eq!(route.window_label, "main");
+        assert!(route.owner_lost);
+        assert!(route.channel.is_none());
+    }
+
+    #[test]
+    fn destroying_a_non_owner_does_not_reclaim_the_session() {
+        let mut route = EventRoute {
+            window_label: "terminal-owner".to_string(),
+            channel: None,
+            mirror: None,
+            owner_lost: false,
+            buffered_events: VecDeque::new(),
+            buffered_bytes: 0,
+        };
+
+        assert!(!reclaim_event_route(&mut route, "terminal-mirror"));
+        assert_eq!(route.window_label, "terminal-owner");
+        assert!(!route.owner_lost);
+    }
+
+    #[test]
+    fn owner_lost_output_buffer_rejects_data_over_the_limit() {
+        let mut route = EventRoute {
+            window_label: "main".to_string(),
+            channel: None,
+            mirror: None,
+            owner_lost: true,
+            buffered_events: VecDeque::new(),
+            buffered_bytes: 0,
+        };
+        let event = PtyEvent::Output {
+            session_id: "session-1".to_string(),
+            sequence: 1,
+            data_base64: "x".repeat(MAX_OWNER_LOST_BUFFER_BYTES + 1),
+        };
+
+        assert!(!buffer_owner_lost_event(
+            &mut route,
+            event,
+            MAX_OWNER_LOST_BUFFER_BYTES + 1
+        ));
+        assert!(route.buffered_events.is_empty());
+        assert_eq!(route.buffered_bytes, 0);
+    }
+
+    #[test]
+    fn destroying_a_window_clears_handoffs_that_use_it_as_source_or_target() {
+        let transfer = PendingHandoff {
+            token: "token".to_string(),
+            source_window_label: "main".to_string(),
+            sequence: 1,
+            snapshot: None,
+            target_window_label: Some("terminal-child".to_string()),
+            target_channel: None,
+        };
+
+        assert!(handoff_references_window(&transfer, "main"));
+        assert!(handoff_references_window(&transfer, "terminal-child"));
+        assert!(!handoff_references_window(&transfer, "terminal-other"));
     }
 
     #[test]

@@ -3,14 +3,17 @@ import {
   createWorkspaceLayoutDocument,
   isWorkspaceApplyStateCurrent,
   markWorkspaceSlotsRestored,
+  migrateWorkspaceLayoutDocument,
   removeEndedWorkspaceSlots,
-  rehomeDetachedWorkspaceSlots,
+  rehomeDetachedWorkspaceContents,
+  restoreCurrentWorkspaceFilesAfterPreset,
   restoreWorkspaceLayoutApplyPlan,
   restoreWorkspaceRuntimeSnapshot,
   WorkspaceLayoutSaveQueue,
 } from "./workspaceLayoutPersistence";
 import {
   addSessionToWorkspacePane,
+  addWorkspaceFileToPane,
   listWorkspacePanes,
   setWorkspaceSplitRatio,
 } from "./ptyWorkspaceLayout";
@@ -55,7 +58,7 @@ function createDocument(projectName = "Project"): WorkspaceLayoutDocument {
         title: { kind: "custom", value: "Review" },
       },
     ],
-    detachedSlotIds: [],
+    detachedContents: [],
   });
 }
 
@@ -63,12 +66,12 @@ describe("workspace layout persistence mapping", () => {
   it("rejects applying a layout plan after the active workspace changes", () => {
     const tree = createDocument().tree;
     const slots = [{ instanceId: "slot-1" }];
-    const detachedSlotIds = new Set<string>();
+    const detachedContents = [{ kind: "pty", slotId: "detached" }] as const;
     const expected = {
       tree,
       slots,
       focusedPaneId: "pane-2",
-      detachedSlotIds,
+      detachedContents,
     };
 
     expect(isWorkspaceApplyStateCurrent(expected, { ...expected })).toBe(true);
@@ -99,7 +102,7 @@ describe("workspace layout persistence mapping", () => {
     expect(
       isWorkspaceApplyStateCurrent(expected, {
         ...expected,
-        detachedSlotIds: new Set(detachedSlotIds),
+        detachedContents: [{ kind: "pty", slotId: "changed" }],
       }),
     ).toBe(false);
   });
@@ -113,8 +116,68 @@ describe("workspace layout persistence mapping", () => {
       focusedPaneId: "pane-2",
       slots: document.slots,
       documents: [],
-      detachedSlotIds: [],
+      detachedContents: [],
     });
+  });
+
+  it("migrates v3 detached slot IDs into v4 PTY content references", () => {
+    const v3 = JSON.parse(JSON.stringify(createDocument())) as Record<
+      string,
+      unknown
+    >;
+    v3.schemaVersion = 3;
+    v3.detachedSlotIds = ["slot-1"];
+    if (
+      typeof v3.tree === "object" &&
+      v3.tree !== null &&
+      "first" in v3.tree &&
+      typeof v3.tree.first === "object" &&
+      v3.tree.first !== null &&
+      "contents" in v3.tree.first &&
+      "activeContent" in v3.tree.first
+    ) {
+      v3.tree.first.contents = [];
+      v3.tree.first.activeContent = null;
+    }
+
+    const migrated = migrateWorkspaceLayoutDocument(v3);
+
+    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.detachedContents).toEqual([
+      { kind: "pty", slotId: "slot-1" },
+    ]);
+    expect(migrated).not.toHaveProperty("detachedSlotIds");
+  });
+
+  it("rejects detached references that are also owned by a pane", () => {
+    const current = createDocument();
+
+    expect(() =>
+      createWorkspaceLayoutDocument({
+        tree: current.tree,
+        focusedPaneId: current.focusedPaneId,
+        slots: current.slots,
+        documents: [],
+        detachedContents: [{ kind: "pty", slotId: "slot-1" }],
+      }),
+    ).toThrow(/duplicate ownership/i);
+
+    const file = {
+      id: "file-1",
+      directoryId: 42,
+      directoryPath: "C:\\Projects\\sample",
+      relativePath: "README.md",
+    };
+    const fileTree = addWorkspaceFileToPane(current.tree, "pane-1", file.id);
+    expect(() =>
+      createWorkspaceLayoutDocument({
+        tree: fileTree,
+        focusedPaneId: current.focusedPaneId,
+        slots: current.slots,
+        documents: [file],
+        detachedContents: [{ kind: "file", documentId: file.id }],
+      }),
+    ).toThrow(/duplicate ownership/i);
   });
 
   it("persists file references beside PTY slots without storing editor content", () => {
@@ -212,11 +275,14 @@ describe("workspace layout persistence mapping", () => {
             title: { kind: "automatic" },
           }),
         ),
-        detachedSlotIds: ["slot-detached-a", "slot-detached-b"],
+        detachedContents: [
+          { kind: "pty", slotId: "slot-detached-a" },
+          { kind: "pty", slotId: "slot-detached-b" },
+        ],
       }),
     );
 
-    const restored = rehomeDetachedWorkspaceSlots(snapshot);
+    const restored = rehomeDetachedWorkspaceContents(snapshot);
 
     expect(restored.tree.kind).toBe("split");
     if (
@@ -236,7 +302,139 @@ describe("workspace layout persistence mapping", () => {
       activeContent: { kind: "pty", slotId: "slot-detached-b" },
     });
     expect(restored.focusedPaneId).toBe("pane-2");
-    expect(restored.detachedSlotIds).toEqual([]);
+    expect(restored.detachedContents).toEqual([]);
+  });
+
+  it("rehomes detached files into the focused pane for restart hydration", () => {
+    const document = createWorkspaceLayoutDocument({
+      tree: {
+        kind: "split",
+        id: "split-root",
+        direction: "horizontal",
+        ratio: 0.5,
+        first: {
+          kind: "pane",
+          id: "pane-1",
+          paneNumber: 1,
+          contents: [{ kind: "pty", slotId: "slot-1" }],
+          activeContent: { kind: "pty", slotId: "slot-1" },
+        },
+        second: {
+          kind: "pane",
+          id: "pane-2",
+          paneNumber: 2,
+          contents: [],
+          activeContent: null,
+        },
+      },
+      focusedPaneId: "pane-2",
+      slots: createDocument().slots,
+      documents: [
+        {
+          id: "file-detached",
+          directoryId: 42,
+          directoryPath: "C:\\Projects\\sample",
+          relativePath: "src/main.rs",
+        },
+      ],
+      detachedContents: [{ kind: "file", documentId: "file-detached" }],
+    });
+
+    const restored = rehomeDetachedWorkspaceContents(
+      restoreWorkspaceRuntimeSnapshot(document),
+    );
+
+    expect(restored.tree.kind).toBe("split");
+    if (
+      restored.tree.kind !== "split" ||
+      restored.tree.second.kind !== "pane"
+    ) {
+      return;
+    }
+    expect(restored.tree.second.contents).toContainEqual({
+      kind: "file",
+      documentId: "file-detached",
+    });
+    expect(restored.documents).toEqual(document.documents);
+    expect(restored.detachedContents).toEqual([]);
+  });
+
+  it("keeps a detached file out of a newly applied named layout", () => {
+    const current = createDocument();
+    const file = {
+      id: "file-detached",
+      directoryId: 42,
+      directoryPath: "C:\\Projects\\sample",
+      relativePath: "src/main.rs",
+    };
+    const presetTree = addWorkspaceFileToPane(current.tree, "pane-1", file.id);
+
+    const restored = restoreCurrentWorkspaceFilesAfterPreset({
+      tree: presetTree,
+      focusedPaneId: "pane-2",
+      restoredDocuments: [file],
+      currentDocuments: [file],
+      detachedContents: [],
+      currentlyDetachedContents: [{ kind: "file", documentId: file.id }],
+      detachingContents: [],
+    });
+
+    expect(listWorkspacePanes(restored.tree)[0].contents).not.toContainEqual({
+      kind: "file",
+      documentId: file.id,
+    });
+    expect(restored.documents).toEqual([file]);
+    expect(restored.detachedContents).toEqual([
+      { kind: "file", documentId: file.id },
+    ]);
+    expect(() =>
+      createWorkspaceLayoutDocument({
+        tree: restored.tree,
+        focusedPaneId: "pane-2",
+        slots: current.slots,
+        documents: restored.documents,
+        detachedContents: restored.detachedContents,
+      }),
+    ).not.toThrow();
+  });
+
+  it("keeps a detaching file uniquely owned while a named layout applies", () => {
+    const current = createDocument();
+    const file = {
+      id: "file-detaching",
+      directoryId: 42,
+      directoryPath: "C:\\Projects\\sample",
+      relativePath: "src/main.rs",
+    };
+    const presetTree = addWorkspaceFileToPane(current.tree, "pane-1", file.id);
+
+    const restored = restoreCurrentWorkspaceFilesAfterPreset({
+      tree: presetTree,
+      focusedPaneId: "pane-2",
+      restoredDocuments: [file],
+      currentDocuments: [file],
+      detachedContents: [],
+      currentlyDetachedContents: [],
+      detachingContents: [{ kind: "file", documentId: file.id }],
+    });
+
+    expect(
+      listWorkspacePanes(restored.tree).flatMap((pane) => pane.contents),
+    ).toEqual(
+      expect.arrayContaining([
+        { kind: "pty", slotId: "slot-1" },
+        { kind: "file", documentId: file.id },
+      ]),
+    );
+    expect(
+      listWorkspacePanes(restored.tree)
+        .flatMap((pane) => pane.contents)
+        .filter(
+          (content) =>
+            content.kind === "file" && content.documentId === file.id,
+        ),
+    ).toHaveLength(1);
+    expect(restored.detachedContents).toEqual([]);
   });
 
   it("restores an apply plan while keeping detached sessions outside pane trees", () => {
@@ -272,18 +470,18 @@ describe("workspace layout persistence mapping", () => {
             kind: "pane",
             id: "pane-2",
             paneNumber: 2,
-            contents: ["detached", "invalid"].map((slotId) => ({
+            contents: ["invalid"].map((slotId) => ({
               kind: "pty" as const,
               slotId,
             })),
-            activeContent: { kind: "pty", slotId: "detached" },
+            activeContent: { kind: "pty", slotId: "invalid" },
           },
         },
         focusedPaneId: "pane-2",
         slots: ["saved", "live-outside", "detached", "ended", "invalid"].map(
           slot,
         ),
-        detachedSlotIds: ["detached"],
+        detachedContents: [{ kind: "pty", slotId: "detached" }],
       }),
       slotStates: ["saved", "live-outside", "detached", "ended", "invalid"].map(
         (instanceId) => ({
@@ -328,7 +526,9 @@ describe("workspace layout persistence mapping", () => {
     expect(
       restored.slots.find(({ instanceId }) => instanceId === "invalid"),
     ).toMatchObject({ restoredState: "missingProject" });
-    expect(restored.detachedSlotIds).toEqual(["detached"]);
+    expect(restored.detachedContents).toEqual([
+      { kind: "pty", slotId: "detached" },
+    ]);
     expect(
       restored.slots.find(({ instanceId }) => instanceId === "detached"),
     ).toMatchObject({ sequence: 1, toolKey: "codex" });
@@ -403,7 +603,7 @@ describe("workspace layout persistence mapping", () => {
       },
       focusedPaneId: "pane-2",
       slots: [endedSlot, invalidSlot],
-      detachedSlotIds: [],
+      detachedContents: [],
     });
     const snapshot = {
       ...restoreWorkspaceRuntimeSnapshot(document),

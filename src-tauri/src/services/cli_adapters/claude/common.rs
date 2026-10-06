@@ -134,6 +134,7 @@ mod tests {
             kind: InstallKind::Update,
             program: command_link.display().to_string(),
             args: vec!["update".to_string()],
+            fingerprint: String::new(),
             source: "test".to_string(),
             preview: "claude update".to_string(),
             effects: None,

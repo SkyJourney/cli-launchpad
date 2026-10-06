@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::tool::ToolKey;
 
@@ -35,6 +36,8 @@ pub struct InstallPlan {
     pub kind: InstallKind,
     pub program: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub fingerprint: String,
     /// Human-readable source/origin shown in the UI.
     pub source: String,
     /// Human-readable command preview shown before execution.
@@ -42,6 +45,24 @@ pub struct InstallPlan {
     /// Optional read-only details that explain the effect of an operation.
     #[serde(default)]
     pub effects: Option<String>,
+}
+
+impl InstallPlan {
+    pub fn calculated_fingerprint(&self) -> String {
+        let normalized = serde_json::to_vec(&(
+            self.tool_key,
+            self.kind,
+            &self.program,
+            &self.args,
+            &self.source,
+        ))
+        .expect("install plan fingerprint fields are serializable");
+        format!("{:x}", Sha256::digest(normalized))
+    }
+
+    pub fn refresh_fingerprint(&mut self) {
+        self.fingerprint = self.calculated_fingerprint();
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -70,7 +91,36 @@ pub struct LatestVersion {
 
 #[cfg(test)]
 mod tests {
-    use super::LatestVersion;
+    use super::{InstallKind, InstallPlan, LatestVersion};
+    use crate::models::tool::ToolKey;
+
+    fn plan() -> InstallPlan {
+        InstallPlan {
+            tool_key: ToolKey::Codex,
+            kind: InstallKind::Update,
+            program: "codex".to_string(),
+            args: vec!["update".to_string()],
+            fingerprint: String::new(),
+            source: "native updater".to_string(),
+            preview: "codex update".to_string(),
+            effects: None,
+        }
+    }
+
+    #[test]
+    fn install_plan_fingerprint_is_stable_for_the_confirmed_command() {
+        let first = plan().calculated_fingerprint();
+        let second = plan().calculated_fingerprint();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn install_plan_fingerprint_changes_when_the_executable_changes() {
+        let first = plan().calculated_fingerprint();
+        let mut changed = plan();
+        changed.program = "C:/different/codex.exe".to_string();
+        assert_ne!(first, changed.calculated_fingerprint());
+    }
 
     #[test]
     fn older_latest_version_cache_defaults_grok_update_gate_to_closed() {

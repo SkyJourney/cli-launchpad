@@ -9,7 +9,9 @@ use crate::{
         },
         tool::ToolKey,
     },
-    services::{pty_session_service::PtySessionManager, session_service},
+    services::{
+        app_lifecycle::AppExitGate, pty_session_service::PtySessionManager, session_service,
+    },
     with_conn, AppError, Db,
 };
 
@@ -25,6 +27,7 @@ pub async fn create_pty_session(
     on_event: Channel<PtyEvent>,
     window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
+    let _start_guard = state.begin_session_start()?;
     if let Some(session_id) = resume_session_id.as_deref() {
         let path = with_conn(&db, |connection| {
             Ok(session_service::directory_path(connection, directory_id)?)
@@ -155,10 +158,30 @@ pub fn get_pty_session_window_status(
     window: WebviewWindow,
     session_id: String,
 ) -> Result<PtySessionWindowStatus, AppError> {
-    if !window.label().starts_with("terminal-") {
-        return Err(AppError::msg("只有独立终端窗口可以查询此状态"));
+    if window.label() != "main" && !window.label().starts_with("terminal-") {
+        return Err(AppError::msg("当前窗口不允许查询终端所有权状态"));
     }
     state.window_status(&session_id, window.label())
+}
+
+#[tauri::command]
+pub fn reattach_pty_session(
+    state: State<'_, PtySessionManager>,
+    window: WebviewWindow,
+    session_id: String,
+    on_event: Channel<PtyEvent>,
+    snapshot: PtyTerminalSnapshot,
+    sequence: u64,
+    size: PtySizeUpdate,
+) -> Result<PtySession, AppError> {
+    state.reattach(
+        &session_id,
+        window.label(),
+        on_event,
+        snapshot,
+        sequence,
+        size,
+    )
 }
 
 #[tauri::command]
@@ -175,12 +198,16 @@ pub fn list_pty_sessions(
 }
 
 #[tauri::command]
-pub fn confirm_pty_exit(
+pub async fn confirm_app_exit(
     state: State<'_, PtySessionManager>,
+    exit_gate: State<'_, AppExitGate>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
-    state.terminate_all()?;
-    state.authorize_exit();
+    let sessions = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sessions.terminate_all())
+        .await
+        .map_err(|error| AppError::msg(format!("结束 PTY 会话任务异常：{error}")))??;
+    exit_gate.authorize();
     app.exit(0);
     Ok(())
 }

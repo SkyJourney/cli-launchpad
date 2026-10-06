@@ -4,6 +4,7 @@ type MockEvent = {
   id: number;
   event: string;
   payload: unknown;
+  preventDefault: () => void;
 };
 
 type MockListener = {
@@ -61,6 +62,7 @@ function dispatchEvent(
     id: mockState.nextEventId++,
     event: eventName,
     payload,
+    preventDefault: vi.fn(),
   };
   const listeners = [...mockState.eventListeners].filter(
     (listener) =>

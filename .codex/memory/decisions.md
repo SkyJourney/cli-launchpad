@@ -2,8 +2,8 @@
 name: 项目决策
 description: 当前关键架构、产品范围和安装策略决策
 type: project
-last_updated: 2026-10-02
-commit: 2e345ea
+last_updated: 2026-10-06
+commit: 8da6a76
 ---
 
 # 项目决策
@@ -65,6 +65,13 @@ commit: 2e345ea
 **Why：** 每个 CLI 的官方命令、安装渠道、版本语义和会话格式不同；若把差异分散在 React 与公共服务分支中，新接入会使单 CLI 故障容易影响全局并发和数据处理。
 **How to apply：** Rust 适配器位于 `src-tauri/src/services/cli_adapters/<cli>/`，按 common/platform/version/history 拆分，只实现该 CLI 能力；前端元数据位于 `src/lib/cliAdapters/<cli>.ts` 并由穷尽 `Record<ToolKey, ...>` 注册。默认能力安全关闭；单项 panic、JoinError、查询错误或数据源损坏转为该工具 unknown/error 或不完整来源，保留其他 CLI 的缓存/索引并继续生命周期。平台执行仍进入共享任务管理器，同 CLI 互斥、跨 CLI 并行。新增 CLI 不扩展为用户自定义插件。
 **See Also：** [[project_overview.md#CLI-适配器与公共生命周期]] [[project_progress.md#G2-Hermes-Agent-CLI-接入]]
+
+## M6 统一软件抽象并使用平台原生适配
+
+**结论：** 工作区内容、资源归属和生命周期在软件层定义统一契约；操作系统差异按各平台原生能力在 platform 层适配，不能因统一抽象而失去任一平台的有效落点。
+**Why：** M6 收口的目标是让每种抽象能力都能在 Windows、macOS 和 Linux 正确实现，同时让 pane、独立窗口、文件和 PTY 的公共生命周期可验证。
+**How to apply：** Rust services 与前端协调器拥有通用状态和交接规则；平台行为放在 `src-tauri/src/platform/`，按各系统可用能力选择实现；使用跨平台 CI 与对应平台实机记录验证每个能力。
+**See Also：** [[project_overview.md#CLI-适配器与公共生命周期]] [[project_progress.md#0.4.0-M6-基础抽象收口]]
 
 ## 会话本地别名使用稀疏关联
 

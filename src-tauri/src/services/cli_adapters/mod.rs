@@ -134,9 +134,11 @@ pub fn installed_path(adapter: &dyn CliAdapter) -> Option<PathBuf> {
 }
 
 pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
-    catch_adapter(tool_key, "构造安装或更新计划", || {
+    let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {
         get(tool_key).build_plan(kind)
-    })
+    })?;
+    plan.refresh_fingerprint();
+    Ok(plan)
 }
 
 pub fn validate_execution(plan: &InstallPlan) -> std::result::Result<(), String> {

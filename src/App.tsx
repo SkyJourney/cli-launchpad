@@ -13,6 +13,7 @@ import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
 import type { CSSProperties } from "react";
 import { AppLogo } from "./components/AppLogo";
 import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
+import { WorkspaceDataRestoreListener } from "./components/WorkspaceDataRestoreListener";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
 import {
@@ -59,7 +60,12 @@ import { useExecutionTaskEvents } from "./hooks/useExecutionTasks";
 import { indexByTool, useCliStatus } from "./hooks/useCliStatus";
 import { useThemeSync } from "./hooks/useThemeSync";
 import { type ViewName, useAppStore } from "./store/appStore";
-import { confirmPtyExit } from "./lib/tauri";
+import { confirmAppExit } from "./lib/tauri";
+import {
+  collectAppExitImpacts,
+  shouldExitWithoutPrompt,
+  type AppExitImpacts,
+} from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
 
@@ -111,6 +117,10 @@ export function App() {
 
 function AppContent() {
   const { t } = useTranslation();
+  const { collectExitImpacts, fileDocuments, fileBuffers, detachedFileIds } =
+    usePtyWorkspace();
+  const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
+  exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
   const view = useAppStore((state) => state.view);
   const themeMode = useAppStore((state) => state.themeMode);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
@@ -126,7 +136,7 @@ function AppContent() {
   const scrollPositions = useRef<Partial<Record<ViewName, number>>>({});
   const validatedDirectoryState = useRef(false);
   const { data: directories } = useDirectories();
-  const [exitRequest, setExitRequest] = useState<number | null>(null);
+  const [exitRequest, setExitRequest] = useState<AppExitImpacts | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   useExecutionTaskEvents();
@@ -146,9 +156,30 @@ function AppContent() {
   useLayoutEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<number>("pty-exit-requested", (event) => {
-      setExitRequest(event.payload);
+    void listen<{ ptyCount: number }>("app-exit-requested", (event) => {
       setExitError(null);
+      void collectExitImpacts(event.payload.ptyCount)
+        .then(async (impacts) => {
+          if (shouldExitWithoutPrompt(impacts)) {
+            setExitPending(true);
+            await confirmAppExit();
+            return;
+          }
+          setExitRequest(impacts);
+        })
+        .catch((error) => {
+          console.error("Unable to collect application exit impacts", error);
+          const current = exitStateRef.current;
+          setExitRequest(
+            collectAppExitImpacts({
+              ptyCount: event.payload.ptyCount,
+              documents: current.fileDocuments,
+              buffers: current.fileBuffers,
+              uncertainDocumentIds: current.detachedFileIds,
+            }),
+          );
+          setExitError(String(error));
+        });
     })
       .then((stop) => {
         if (disposed) stop();
@@ -159,13 +190,13 @@ function AppContent() {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [collectExitImpacts]);
 
   const quitWithActiveSessions = async () => {
     setExitPending(true);
     setExitError(null);
     try {
-      await confirmPtyExit();
+      await confirmAppExit();
     } catch (error) {
       setExitError(String(error));
       setExitPending(false);
@@ -193,6 +224,7 @@ function AppContent() {
 
   return (
     <>
+      <WorkspaceDataRestoreListener />
       <div className="app-window-shell">
         <WindowTitlebar
           variant="main"
@@ -309,7 +341,23 @@ function AppContent() {
         <div className="app-exit-overlay">
           <section className="app-exit-dialog" role="dialog" aria-modal="true">
             <h2>{t("appExit.title")}</h2>
-            <p>{t("appExit.description", { count: exitRequest })}</p>
+            {exitRequest.ptyCount > 0 && (
+              <p>{t("appExit.description", { count: exitRequest.ptyCount })}</p>
+            )}
+            {exitRequest.dirtyFiles.length > 0 && (
+              <>
+                <p>
+                  {t("appExit.unsavedDescription", {
+                    count: exitRequest.dirtyFiles.length,
+                  })}
+                </p>
+                <ul className="app-exit-unsaved-files">
+                  {exitRequest.dirtyFiles.map((file) => (
+                    <li key={file.documentId}>{file.relativePath}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             {exitError && <p className="error">{exitError}</p>}
             <div className="app-exit-actions">
               <button
@@ -324,7 +372,9 @@ function AppContent() {
                 disabled={exitPending}
                 onClick={() => void quitWithActiveSessions()}
               >
-                {exitPending ? t("appExit.terminating") : t("appExit.confirm")}
+                {exitPending
+                  ? t("appExit.terminating")
+                  : t("appExit.confirmDiscard")}
               </button>
             </div>
           </section>

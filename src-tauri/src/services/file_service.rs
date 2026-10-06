@@ -82,11 +82,20 @@ pub enum ProjectFileUnsupportedReason {
 pub struct ProjectDirectoryListing {
     pub entries: Vec<ProjectFileEntry>,
     pub truncated: bool,
+    pub skipped_count: usize,
 }
 
+#[cfg(test)]
 pub fn list_directory(root: &Path, relative_path: &str) -> Result<ProjectDirectoryListing> {
     let root = ProjectDirectory::open(root)?;
-    list_directory_with_limit(&root, relative_path, MAX_PROJECT_DIRECTORY_ENTRIES)
+    list_directory_in(&root, relative_path)
+}
+
+pub(crate) fn list_directory_in(
+    root: &ProjectDirectory,
+    relative_path: &str,
+) -> Result<ProjectDirectoryListing> {
+    list_directory_with_limit(root, relative_path, MAX_PROJECT_DIRECTORY_ENTRIES)
 }
 
 fn list_directory_with_limit(
@@ -101,31 +110,56 @@ fn list_directory_with_limit(
 
     let mut entries = Vec::new();
     let mut truncated = false;
+    let mut skipped_count = 0;
+    let mut scanned_count = 0;
     let read_dir = if relative_path.is_empty() {
         root.dir().entries()
     } else {
         root.dir().read_dir(&directory_path)
     }
     .context("无法读取项目目录")?;
-    for item in read_dir.take(max_entries.saturating_add(1)) {
-        if entries.len() == max_entries {
+    for item in read_dir {
+        if scanned_count >= max_entries || entries.len() >= max_entries {
             truncated = true;
             break;
         }
-        let item = item.context("无法读取项目条目")?;
+        scanned_count += 1;
+        let item = match item {
+            Ok(item) => item,
+            Err(_) => {
+                skipped_count += 1;
+                continue;
+            }
+        };
         let Some(name) = item.file_name().to_str().map(str::to_owned) else {
+            skipped_count += 1;
             continue;
         };
+        if ProjectDirectory::validate_entry_name(&name).is_err() {
+            skipped_count += 1;
+            continue;
+        }
         let child_relative = if relative_path.is_empty() {
             name.clone()
         } else {
             format!("{relative_path}/{name}")
         };
-        let metadata = root
-            .dir()
-            .symlink_metadata(ProjectDirectory::path(&child_relative)?)
-            .context("无法读取文件属性")?;
-        let symbolic_link = item.file_type().context("无法读取文件属性")?.is_symlink();
+        let metadata = match ProjectDirectory::path(&child_relative)
+            .and_then(|path| root.dir().symlink_metadata(&path).map_err(Into::into))
+        {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                skipped_count += 1;
+                continue;
+            }
+        };
+        let symbolic_link = match item.file_type() {
+            Ok(file_type) => file_type.is_symlink(),
+            Err(_) => {
+                skipped_count += 1;
+                continue;
+            }
+        };
         let kind = if symbolic_link {
             ProjectFileKind::Other
         } else if metadata.is_dir() {
@@ -152,15 +186,23 @@ fn list_directory_with_limit(
             .cmp(&left_dir)
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
-    Ok(ProjectDirectoryListing { entries, truncated })
+    Ok(ProjectDirectoryListing {
+        entries,
+        truncated,
+        skipped_count,
+    })
 }
 
+#[cfg(test)]
 pub fn read_text_file(root: &Path, relative_path: &str) -> Result<ProjectTextFile> {
     let root = ProjectDirectory::open(root)?;
     read_text_file_in(&root, relative_path)
 }
 
-fn read_text_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<ProjectTextFile> {
+pub(crate) fn read_text_file_in(
+    root: &ProjectDirectory,
+    relative_path: &str,
+) -> Result<ProjectTextFile> {
     let path = ProjectDirectory::path(relative_path)?;
     let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
     let metadata = file.metadata().context("无法读取文件属性")?;
@@ -181,12 +223,16 @@ fn read_text_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<Pro
     })
 }
 
+#[cfg(test)]
 pub fn open_file(root: &Path, relative_path: &str) -> Result<ProjectFileOpenResult> {
     let root = ProjectDirectory::open(root)?;
     open_file_in(&root, relative_path)
 }
 
-fn open_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<ProjectFileOpenResult> {
+pub(crate) fn open_file_in(
+    root: &ProjectDirectory,
+    relative_path: &str,
+) -> Result<ProjectFileOpenResult> {
     let path = ProjectDirectory::path(relative_path)?;
     let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
     let metadata = file.metadata().context("无法读取文件属性")?;
@@ -278,6 +324,7 @@ fn image_preview_from_bytes(extension: &str, bytes: &[u8]) -> Option<ProjectImag
     })
 }
 
+#[cfg(test)]
 pub fn save_text_file(
     root: &Path,
     relative_path: &str,
@@ -288,7 +335,7 @@ pub fn save_text_file(
     save_text_file_in(&root, relative_path, content, expected_revision)
 }
 
-fn save_text_file_in(
+pub(crate) fn save_text_file_in(
     root: &ProjectDirectory,
     relative_path: &str,
     content: &str,
@@ -438,6 +485,65 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.name == "link" && entry.symbolic_link));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_lists_and_opens_colon_backslash_and_unicode_file_names() {
+        let directory = tempdir().unwrap();
+        for name in ["report:final.txt", r"folder\name.txt", "项目说明.txt"] {
+            fs::write(directory.path().join(name), format!("contents: {name}")).unwrap();
+        }
+
+        let listing = list_directory(directory.path(), "").unwrap();
+        for name in ["report:final.txt", r"folder\name.txt", "项目说明.txt"] {
+            assert!(listing.entries.iter().any(|entry| entry.name == name));
+            assert!(matches!(
+                open_file(directory.path(), name).unwrap(),
+                ProjectFileOpenResult::Text { content, .. } if content == format!("contents: {name}")
+            ));
+        }
+        assert_eq!(listing.skipped_count, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_skips_non_utf8_names_and_reports_the_count() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory
+                .path()
+                .join(std::ffi::OsString::from_vec(vec![b'b', b'a', b'd', 0xff])),
+            "hidden from the UI",
+        )
+        .unwrap();
+        fs::write(directory.path().join("visible.txt"), "visible").unwrap();
+
+        let listing = list_directory(directory.path(), "").unwrap();
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "visible.txt");
+        assert_eq!(listing.skipped_count, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_scan_budget_covers_entries_skipped_for_unreadable_names() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let directory = tempdir().unwrap();
+        for index in 0..8_u8 {
+            let name = std::ffi::OsString::from_vec(vec![b'x', index + 1, 0xff]);
+            fs::write(directory.path().join(name), "hidden from the UI").unwrap();
+        }
+        fs::write(directory.path().join("visible.txt"), "visible").unwrap();
+
+        let root = ProjectDirectory::open(directory.path()).unwrap();
+        let listing = list_directory_with_limit(&root, "", 2).unwrap();
+
+        assert!(listing.truncated);
+        assert!(listing.entries.len() + listing.skipped_count <= 2);
     }
 
     #[test]

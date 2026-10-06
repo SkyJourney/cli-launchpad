@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type WorkspaceNode,
   activateWorkspaceSession,
   activateWorkspaceFile,
   addWorkspaceFileToPane,
@@ -13,12 +14,13 @@ import {
   listVisibleWorkspaceSessionIds,
   moveWorkspaceSession,
   moveWorkspaceFileToPane,
+  placeContentExclusively,
   splitAndMoveWorkspaceFile,
-  deactivateWorkspaceFile,
   nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   removeWorkspaceSession,
   removeWorkspaceFileFromPane,
+  removeWorkspaceContentFromTree,
   remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
   splitAndMoveWorkspaceSession,
@@ -794,17 +796,75 @@ describe("PTY workspace split tree", () => {
     });
   });
 
-  it("deactivates a detached file without removing its pane reference", () => {
+  it("removes a file from its pane after the detached window is ready", () => {
     const withFile = addWorkspaceFileToPane(
       createWorkspacePane("root"),
       "root",
       "file-a",
     );
-    const detached = deactivateWorkspaceFile(withFile, "root", "file-a");
+    const detached = removeWorkspaceContentFromTree(withFile, {
+      kind: "file",
+      documentId: "file-a",
+    });
     expect(findWorkspacePane(detached, "root")).toMatchObject({
-      contents: [{ kind: "file", documentId: "file-a" }],
+      contents: [],
       activeContent: null,
     });
+  });
+
+  it("places a returned file only in its requested pane", () => {
+    const first = addWorkspaceFileToPane(
+      createWorkspacePane("first"),
+      "first",
+      "file-a",
+    );
+    const split = splitWorkspacePane(
+      first,
+      "first",
+      "horizontal",
+      "split",
+      "second",
+    );
+    const staleDuplicate = addWorkspaceFileToPane(split, "first", "file-a");
+
+    const returned = placeContentExclusively(staleDuplicate, "second", {
+      kind: "file",
+      documentId: "file-a",
+    });
+
+    expect(findWorkspacePane(returned, "first")?.contents).toEqual([]);
+    expect(findWorkspacePane(returned, "second")?.contents).toEqual([
+      { kind: "file", documentId: "file-a" },
+    ]);
+  });
+
+  it("removes every stale file reference before exclusive placement", () => {
+    const file = { kind: "file", documentId: "file-a" } as const;
+    const tree: WorkspaceNode = {
+      kind: "split",
+      id: "root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "pane",
+        id: "first",
+        paneNumber: 1,
+        contents: [file, file],
+        activeContent: file,
+      },
+      second: {
+        kind: "pane",
+        id: "second",
+        paneNumber: 2,
+        contents: [file],
+        activeContent: file,
+      },
+    };
+
+    const placed = placeContentExclusively(tree, "second", file);
+
+    expect(findWorkspacePane(placed, "first")?.contents).toEqual([]);
+    expect(findWorkspacePane(placed, "second")?.contents).toEqual([file]);
   });
 
   it("falls back to an open file when the active PTY exits", () => {

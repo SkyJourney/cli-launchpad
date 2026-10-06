@@ -1,3 +1,4 @@
+pub mod app_lifecycle;
 pub mod backup_service;
 pub mod cache_service;
 pub mod cli_adapters;

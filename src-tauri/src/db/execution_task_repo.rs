@@ -242,6 +242,7 @@ mod tests {
             kind: InstallKind::Update,
             program: "C:\\codex.exe".to_string(),
             args: vec!["update".to_string()],
+            fingerprint: "test-fingerprint".to_string(),
             source: "test".to_string(),
             preview: "C:\\codex.exe update".to_string(),
             effects: None,

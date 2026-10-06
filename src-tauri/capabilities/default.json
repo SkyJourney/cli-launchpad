@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "主窗口默认能力：核心 API 与应用命令。",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",
@@ -52,13 +50,14 @@
     "allow-finalize-pty-handoff",
     "allow-cancel-pty-handoff",
     "allow-get-pty-session-window-status",
+    "allow-reattach-pty-session",
     "allow-write-pty-session",
     "allow-resize-pty-session",
     "allow-acknowledge-pty-output",
     "allow-report-pty-frontend-stage",
     "allow-terminate-pty-session",
     "allow-list-pty-sessions",
-    "allow-confirm-pty-exit",
+    "allow-confirm-app-exit",
     "allow-list-directories",
     "allow-add-directory",
     "allow-update-directory",

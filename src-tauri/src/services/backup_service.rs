@@ -296,6 +296,13 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
+        assert_eq!(
+            crate::db::workspace_layout_repo::get_current(&connection)
+                .unwrap()
+                .unwrap()
+                .revision,
+            4
+        );
         let (preset_name, preset_payload): (String, String) = connection
             .query_row(
                 "select name, payload_json from workspace_layout_presets where id = 'preset-1'",

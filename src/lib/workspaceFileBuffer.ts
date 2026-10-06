@@ -11,6 +11,7 @@ export interface WorkspaceFileBuffer {
   revision: string;
   saving: boolean;
   conflict?: boolean;
+  identityChanged?: boolean;
   previewDataUrl?: string;
   unsupportedReason?: Extract<
     ProjectFileOpenResult,
@@ -93,6 +94,24 @@ export interface WorkspaceFileSaveResult {
   revision: string;
 }
 
+export type WorkspaceFileSaveCommitDisposition =
+  | "apply-result"
+  | "restore-saving-state"
+  | "discard-result";
+
+export function resolveWorkspaceFileSaveCommitDisposition(
+  current: WorkspaceFileBuffer | undefined,
+  submitted: WorkspaceFileBuffer,
+  documentIdentityMatches: boolean,
+): WorkspaceFileSaveCommitDisposition {
+  if (!current || current.epoch !== submitted.epoch) return "discard-result";
+  if (documentIdentityMatches) return "apply-result";
+  if (current.saving && current.version === submitted.version) {
+    return "restore-saving-state";
+  }
+  return "discard-result";
+}
+
 export function completeWorkspaceFileSave(
   current: WorkspaceFileBuffer | undefined,
   submitted: WorkspaceFileBuffer,
@@ -133,6 +152,18 @@ export function failWorkspaceFileSave(
   if (!current || current.epoch !== submitted.epoch)
     return current ?? submitted;
   return { ...current, saving: false, version: current.version + 1 };
+}
+
+export function markWorkspaceFileIdentityChanged(
+  current: WorkspaceFileBuffer,
+): WorkspaceFileBuffer {
+  return {
+    ...current,
+    saving: false,
+    conflict: true,
+    identityChanged: true,
+    version: current.version + 1,
+  };
 }
 
 /** Coalesces concurrent operations for one document without sharing state. */

@@ -55,7 +55,9 @@ export const en = {
     description:
       "{{count}} embedded terminal session(s) are still running. Quitting will end these sessions and their child processes.",
     confirm: "End sessions and quit",
-    terminating: "Ending sessions…",
+    unsavedDescription: "{{count}} file(s) have unsaved changes:",
+    confirmDiscard: "Discard changes and quit",
+    terminating: "Quitting…",
   },
   windowChrome: {
     titlebar: "Application window title bar",
@@ -439,6 +441,9 @@ export const en = {
       "Restore data to its state at {{time}}. The current state will be saved automatically first.",
     confirmRestoreAction: "Restore",
     restoreFailed: "Restore failed: {{error}}",
+    restoreBlockedPtys: "{{count}} running terminal session(s)",
+    restoreBlockedDirtyFiles: "{{count}} document(s) with unsaved changes",
+    restoreBlockedDetachedWindows: "{{count}} detached content window(s)",
     backupReason: {
       manual: "Manual restore point",
       pre_import: "Automatic pre-import backup",
@@ -564,8 +569,11 @@ export const en = {
     reload: "Reload",
     saveConflict:
       "The file changed on disk. Your edits are preserved; reload the file before saving again.",
+    projectIdentityChanged:
+      "The project directory changed. This document is stale; copy its contents before closing it.",
     directoryLimitReached:
       "This directory has too many entries. Showing the first 5,000.",
+    directoryEntriesSkipped: "{{count}} entries could not be displayed.",
     loadingFile: "Loading file…",
     fileCannotOpen: "This file cannot be opened here",
     imagePreview: "Image preview",

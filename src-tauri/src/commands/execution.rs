@@ -13,12 +13,14 @@ pub async fn start_execution_task(
     manager: State<'_, ExecutionTaskManager>,
     tool_key: ToolKey,
     kind: InstallKind,
+    expected_fingerprint: String,
 ) -> Result<ExecutionTask, AppError> {
-    let plan: InstallPlan = tauri::async_runtime::spawn_blocking(move || {
-        install_service::execution_plan(tool_key, kind)
-    })
-    .await
-    .map_err(|error| AppError::msg(error.to_string()))??;
+    let plan: InstallPlan =
+        tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
+            .await
+            .map_err(|error| AppError::msg(error.to_string()))??;
+    install_service::verify_expected_fingerprint(&plan, &expected_fingerprint)
+        .map_err(|error| AppError::msg(error.to_string()))?;
     manager.start(&app, plan)
 }
 

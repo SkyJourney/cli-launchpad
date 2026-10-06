@@ -56,6 +56,24 @@ export function resolveDetachedWindowFailureAction(
   return "keep-open";
 }
 
+export type DetachedStartTimeoutAction =
+  | "accept-detached-owner"
+  | "cancel-source-handoff"
+  | "remove-ended-session"
+  | "retry-owner-query";
+
+export function resolveDetachedStartTimeoutAction(
+  windowStatus: PtySessionWindowStatus | null | undefined,
+  detachedWindowExists: boolean,
+): DetachedStartTimeoutAction {
+  if (windowStatus === "ended") return "remove-ended-session";
+  if (windowStatus === "ownedByAnotherWindow" && detachedWindowExists) {
+    return "accept-detached-owner";
+  }
+  if (windowStatus == null) return "retry-owner-query";
+  return "cancel-source-handoff";
+}
+
 export function canTerminatePtySession(
   state: PtySession["state"] | null | undefined,
   handoffInProgress: boolean,

@@ -53,7 +53,9 @@
     "title": "¿Salir de CLI Launchpad?",
     "description": "Al salir, se cerrarán las sesiones de terminal integradas que estén en ejecución ({{count}}), junto con sus procesos secundarios.",
     "confirm": "Finalizar sesiones y salir",
-    "terminating": "Finalización de las sesiones..."
+    "unsavedDescription": "{{count}} archivo(s) tienen cambios sin guardar:",
+    "confirmDiscard": "Descartar cambios y salir",
+    "terminating": "Saliendo..."
   },
   "windowChrome": {
     "titlebar": "Barra de título de la ventana de la aplicación",
@@ -368,6 +370,9 @@
     "restoreDescription": "Los datos volverán al estado de {{time}}. Antes se guardará automáticamente el estado actual.",
     "confirmRestoreAction": "Restaurar",
     "restoreFailed": "Restauración fallida: {{error}}",
+    "restoreBlockedPtys": "{{count}} sesión(es) de terminal en ejecución",
+    "restoreBlockedDirtyFiles": "{{count}} documento(s) con cambios sin guardar",
+    "restoreBlockedDetachedWindows": "{{count}} ventana(s) de contenido separada(s)",
     "backupReason": {
       "manual": "Punto de restauración manual",
       "pre_import": "Copia de seguridad automática previa a la importación",
@@ -484,6 +489,8 @@
     "reload": "Volver a cargar",
     "saveConflict": "El archivo del disco ha cambiado. Se conservaron tus ediciones. Vuelve a cargarlo antes de guardarlo de nuevo.",
     "directoryLimitReached": "Hay demasiados elementos. Se muestran los primeros 5.000.",
+    "directoryEntriesSkipped": "No se pudieron mostrar {{count}} elementos.",
+    "projectIdentityChanged": "La identidad del directorio del proyecto cambió. Este documento está desactualizado; copia su contenido antes de cerrarlo.",
     "loadingFile": "Cargando archivo…",
     "fileCannotOpen": "No se puede abrir este archivo aquí",
     "imagePreview": "Vista previa de imagen",

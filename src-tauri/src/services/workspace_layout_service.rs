@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -202,13 +205,21 @@ pub fn plan_apply_preset(
     let mut layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
 
     let mut additions = Vec::new();
-    let mut detached_slot_ids = Vec::new();
+    let mut detached_contents = Vec::new();
+    let active_detached_slot_ids: HashSet<&str> = active_layout
+        .detached_contents
+        .iter()
+        .filter_map(|content| match content {
+            WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.as_str()),
+            WorkspacePaneContentRef::File { .. } => None,
+        })
+        .collect();
     let mut detached_tree_slot_ids = Vec::new();
     for active_slot in &active_layout.slots {
         let mut slot = active_slot.clone();
         let state = resolve_slot(connection, &mut slot)?;
 
-        if active_layout.detached_slot_ids.contains(&slot.instance_id) {
+        if active_detached_slot_ids.contains(slot.instance_id.as_str()) {
             if matches!(
                 state.state,
                 WorkspaceSlotStateKind::Ended | WorkspaceSlotStateKind::MissingSession
@@ -228,7 +239,9 @@ pub fn plan_apply_preset(
             }
 
             detached_tree_slot_ids.push(slot.instance_id.clone());
-            detached_slot_ids.push(slot.instance_id.clone());
+            detached_contents.push(WorkspacePaneContentRef::Pty {
+                slot_id: slot.instance_id.clone(),
+            });
             layout.slots.push(slot);
             continue;
         }
@@ -275,7 +288,8 @@ pub fn plan_apply_preset(
     }
 
     remove_slot_references(&mut layout.tree, &detached_tree_slot_ids);
-    layout.detached_slot_ids = detached_slot_ids;
+    layout.detached_contents = detached_contents;
+    preserve_detached_file_contents(&mut layout, active_layout);
 
     let mut slot_states = resolve_layout_slots(connection, &mut layout)?;
     let ended_slot_ids: Vec<String> = slot_states
@@ -288,9 +302,9 @@ pub fn plan_apply_preset(
         layout
             .slots
             .retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
-        layout
-            .detached_slot_ids
-            .retain(|instance_id| !ended_slot_ids.contains(instance_id));
+        layout.detached_contents.retain(|content| {
+            !matches!(content, WorkspacePaneContentRef::Pty { slot_id } if ended_slot_ids.contains(slot_id))
+        });
         slot_states.retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
     }
     layout.validate().map_err(layout_error)?;
@@ -312,7 +326,7 @@ pub fn empty_layout() -> WorkspaceLayoutDocument {
         focused_pane_id: "workspace-root".to_string(),
         slots: Vec::new(),
         documents: Vec::new(),
-        detached_slot_ids: Vec::new(),
+        detached_contents: Vec::new(),
     }
 }
 
@@ -555,6 +569,87 @@ fn remove_slot_references(node: &mut WorkspaceLayoutNode, removed_slot_ids: &[St
     }
 }
 
+fn remove_file_references(node: &mut WorkspaceLayoutNode, removed_document_ids: &[String]) {
+    match node {
+        WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } => {
+            let active_index = active_content
+                .as_ref()
+                .and_then(|active| contents.iter().position(|content| content == active));
+            let active_was_removed = active_content.as_ref().is_some_and(|active| {
+                matches!(active, WorkspacePaneContentRef::File { document_id } if removed_document_ids.contains(document_id))
+            });
+            let replacement_index = active_index
+                .map(|index| {
+                    contents[..index]
+                        .iter()
+                        .filter(|content| {
+                            !matches!(content, WorkspacePaneContentRef::File { document_id } if removed_document_ids.contains(document_id))
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            contents.retain(|content| {
+                !matches!(content, WorkspacePaneContentRef::File { document_id } if removed_document_ids.contains(document_id))
+            });
+            if active_was_removed {
+                *active_content = contents
+                    .get(replacement_index)
+                    .or_else(|| {
+                        replacement_index
+                            .checked_sub(1)
+                            .and_then(|index| contents.get(index))
+                    })
+                    .cloned();
+            }
+        }
+        WorkspaceLayoutNode::Split { first, second, .. } => {
+            remove_file_references(first, removed_document_ids);
+            remove_file_references(second, removed_document_ids);
+        }
+    }
+}
+
+fn preserve_detached_file_contents(
+    layout: &mut WorkspaceLayoutDocument,
+    active_layout: &WorkspaceLayoutDocument,
+) {
+    for detached in &active_layout.detached_contents {
+        let WorkspacePaneContentRef::File { document_id } = detached else {
+            continue;
+        };
+        let Some(document) = active_layout
+            .documents
+            .iter()
+            .find(|document| document.id == *document_id)
+            .cloned()
+        else {
+            continue;
+        };
+        let replaced_ids: Vec<String> = layout
+            .documents
+            .iter()
+            .filter(|candidate| {
+                candidate.id == document.id
+                    || (candidate.directory_id == document.directory_id
+                        && candidate.relative_path == document.relative_path)
+            })
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        if !replaced_ids.is_empty() {
+            remove_file_references(&mut layout.tree, &replaced_ids);
+            layout
+                .documents
+                .retain(|candidate| !replaced_ids.contains(&candidate.id));
+        }
+        layout.documents.push(document);
+        layout.detached_contents.push(detached.clone());
+    }
+}
+
 fn layout_error(error: WorkspaceLayoutError) -> AppError {
     AppError::msg(error.to_string())
 }
@@ -629,7 +724,7 @@ mod tests {
                 title: WorkspaceSlotTitle::Automatic,
             }],
             documents: Vec::new(),
-            detached_slot_ids: Vec::new(),
+            detached_contents: Vec::new(),
         }
     }
 
@@ -679,7 +774,7 @@ mod tests {
             focused_pane_id: focused_pane_id.to_string(),
             slots,
             documents: Vec::new(),
-            detached_slot_ids: Vec::new(),
+            detached_contents: Vec::new(),
         }
     }
 
@@ -878,7 +973,9 @@ mod tests {
         let mut b_slot = active_b.slots[0].clone();
         b_slot.tool_key = ToolKey::Codex;
         active.slots.push(b_slot.clone());
-        active.detached_slot_ids.push(b_slot.instance_id.clone());
+        active.detached_contents.push(WorkspacePaneContentRef::Pty {
+            slot_id: b_slot.instance_id.clone(),
+        });
 
         let preset_layout = layout_with_slot(
             directory.id,
@@ -907,7 +1004,12 @@ mod tests {
                 .tool_key,
             ToolKey::Codex
         );
-        assert_eq!(plan.layout.detached_slot_ids, vec![b_slot.instance_id]);
+        assert_eq!(
+            plan.layout.detached_contents,
+            vec![WorkspacePaneContentRef::Pty {
+                slot_id: b_slot.instance_id
+            }]
+        );
         let WorkspaceLayoutNode::Pane { contents, .. } = &plan.layout.tree else {
             panic!("preset fixture keeps its root pane");
         };
@@ -959,19 +1061,134 @@ mod tests {
         };
         contents.clear();
         *active_content = None;
-        active
-            .detached_slot_ids
-            .push(active.slots[0].instance_id.clone());
+        active.detached_contents.push(WorkspacePaneContentRef::Pty {
+            slot_id: active.slots[0].instance_id.clone(),
+        });
         let preset = create_preset(&mut connection, "空布局", &empty_layout()).unwrap();
 
         let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
 
-        assert_eq!(plan.layout.detached_slot_ids, active.detached_slot_ids);
+        assert_eq!(plan.layout.detached_contents, active.detached_contents);
         assert_eq!(plan.layout.slots.len(), 1);
         let WorkspaceLayoutNode::Pane { contents, .. } = &plan.layout.tree else {
             panic!("empty preset keeps its focused root pane");
         };
         assert!(contents.is_empty());
+    }
+
+    #[test]
+    fn removing_replaced_files_keeps_the_next_active_content() {
+        let mut tree = WorkspaceLayoutNode::Pane {
+            id: "workspace-root".to_string(),
+            pane_number: 1,
+            contents: vec![
+                WorkspacePaneContentRef::File {
+                    document_id: "removed-before".to_string(),
+                },
+                WorkspacePaneContentRef::Pty {
+                    slot_id: "slot-before-active".to_string(),
+                },
+                WorkspacePaneContentRef::File {
+                    document_id: "removed-active".to_string(),
+                },
+                WorkspacePaneContentRef::Pty {
+                    slot_id: "slot-after-active".to_string(),
+                },
+            ],
+            active_content: Some(WorkspacePaneContentRef::File {
+                document_id: "removed-active".to_string(),
+            }),
+        };
+
+        remove_file_references(
+            &mut tree,
+            &["removed-before".to_string(), "removed-active".to_string()],
+        );
+
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = tree
+        else {
+            panic!("expected root pane");
+        };
+        assert_eq!(
+            contents,
+            vec![
+                WorkspacePaneContentRef::Pty {
+                    slot_id: "slot-before-active".to_string(),
+                },
+                WorkspacePaneContentRef::Pty {
+                    slot_id: "slot-after-active".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            active_content,
+            Some(WorkspacePaneContentRef::Pty {
+                slot_id: "slot-after-active".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn applying_preset_keeps_active_detached_file_outside_the_pane_tree() {
+        let mut connection = database();
+        let file_path = "src/main.rs";
+        let preset_document = crate::models::workspace_layout::WorkspaceFileDocument {
+            id: Uuid::new_v4().to_string(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\work".to_string(),
+            relative_path: file_path.to_string(),
+        };
+        let mut preset_layout = empty_layout();
+        preset_layout.documents.push(preset_document.clone());
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = &mut preset_layout.tree
+        else {
+            panic!("empty preset keeps its root pane");
+        };
+        let preset_ref = WorkspacePaneContentRef::File {
+            document_id: preset_document.id.clone(),
+        };
+        contents.push(preset_ref.clone());
+        *active_content = Some(preset_ref);
+        let preset = create_preset(&mut connection, "文件窗口布局", &preset_layout).unwrap();
+
+        let active_document = crate::models::workspace_layout::WorkspaceFileDocument {
+            id: Uuid::new_v4().to_string(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\work".to_string(),
+            relative_path: file_path.to_string(),
+        };
+        let mut active_layout = empty_layout();
+        active_layout.documents.push(active_document.clone());
+        active_layout
+            .detached_contents
+            .push(WorkspacePaneContentRef::File {
+                document_id: active_document.id.clone(),
+            });
+
+        let plan = plan_apply_preset(&connection, &preset.id, &active_layout).unwrap();
+
+        assert_eq!(plan.layout.documents, vec![active_document.clone()]);
+        assert_eq!(
+            plan.layout.detached_contents,
+            vec![WorkspacePaneContentRef::File {
+                document_id: active_document.id
+            }]
+        );
+        let WorkspaceLayoutNode::Pane { ref contents, .. } = plan.layout.tree else {
+            panic!("preset keeps its root pane");
+        };
+        assert!(contents.is_empty());
+        plan.layout
+            .validate()
+            .expect("detached file layout is valid");
     }
 
     #[test]

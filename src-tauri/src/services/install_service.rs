@@ -14,10 +14,6 @@ pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
     crate::services::cli_adapters::build_plan(tool_key, kind)
 }
 
-pub fn execution_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
-    crate::services::cli_adapters::build_plan(tool_key, kind)
-}
-
 pub(crate) fn simple_plan(
     tool_key: ToolKey,
     kind: InstallKind,
@@ -44,15 +40,25 @@ pub(crate) fn resolved_plan(
     source: &str,
     preview: String,
 ) -> InstallPlan {
-    InstallPlan {
+    let mut plan = InstallPlan {
         tool_key,
         kind,
         program,
         args,
+        fingerprint: String::new(),
         source: source.to_string(),
         preview,
         effects: None,
+    };
+    plan.refresh_fingerprint();
+    plan
+}
+
+pub fn verify_expected_fingerprint(plan: &InstallPlan, expected_fingerprint: &str) -> Result<()> {
+    if plan.calculated_fingerprint() != expected_fingerprint {
+        anyhow::bail!("plan_changed");
     }
+    Ok(())
 }
 
 pub(crate) fn resolve_program(program: &str) -> Result<String> {
@@ -97,6 +103,23 @@ fn configure_command(command: Command) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_install_plan_is_rejected_before_execution() {
+        let mut plan = super::resolved_plan(
+            ToolKey::Codex,
+            InstallKind::Update,
+            "codex".to_string(),
+            vec!["update".to_string()],
+            "test",
+            "codex update".to_string(),
+        );
+        let expected = plan.fingerprint.clone();
+        plan.program = "C:/changed/codex.exe".to_string();
+
+        let error = verify_expected_fingerprint(&plan, &expected).unwrap_err();
+        assert_eq!(error.to_string(), "plan_changed");
+    }
 
     #[cfg(windows)]
     #[test]

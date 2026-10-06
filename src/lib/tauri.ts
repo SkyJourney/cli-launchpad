@@ -41,7 +41,7 @@ export interface WorkspaceLayoutDocument {
   focusedPaneId: string;
   slots: WorkspaceLayoutSlot[];
   documents: WorkspaceFileDocument[];
-  detachedSlotIds: string[];
+  detachedContents: WorkspacePaneContentRef[];
 }
 
 export type WorkspacePaneContentRef =
@@ -131,6 +131,7 @@ export interface ProjectFileEntry {
 export interface ProjectDirectoryListing {
   entries: ProjectFileEntry[];
   truncated: boolean;
+  skippedCount: number;
 }
 
 export interface WorkspaceFileMetadata {
@@ -340,6 +341,7 @@ export interface InstallPlan {
   kind: InstallKind;
   program: string;
   args: string[];
+  fingerprint: string;
   source: string;
   preview: string;
   effects: string | null;
@@ -474,9 +476,14 @@ export function openProjectDirectory(id: number) {
   return invoke<void>("open_project_directory", { id });
 }
 
-export function listProjectFiles(directoryId: number, relativePath = "") {
+export function listProjectFiles(
+  directoryId: number,
+  directoryPath: string,
+  relativePath = "",
+) {
   return invoke<ProjectDirectoryListing>("list_project_files", {
     directoryId,
+    directoryPath,
     relativePath,
   });
 }
@@ -491,28 +498,40 @@ export function getWorkspaceFileIndex(
   });
 }
 
-export function readProjectTextFile(directoryId: number, relativePath: string) {
+export function readProjectTextFile(
+  directoryId: number,
+  directoryPath: string,
+  relativePath: string,
+) {
   return invoke<ProjectTextFile>("read_project_text_file", {
     directoryId,
+    directoryPath,
     relativePath,
   });
 }
 
-export function openProjectFile(directoryId: number, relativePath: string) {
+export function openProjectFile(
+  directoryId: number,
+  directoryPath: string,
+  relativePath: string,
+) {
   return invoke<ProjectFileOpenResult>("open_project_file", {
     directoryId,
+    directoryPath,
     relativePath,
   });
 }
 
 export function saveProjectTextFile(
   directoryId: number,
+  directoryPath: string,
   relativePath: string,
   content: string,
   expectedRevision: string,
 ) {
   return invoke<ProjectTextFileSaveResult>("save_project_text_file", {
     directoryId,
+    directoryPath,
     relativePath,
     content,
     expectedRevision,
@@ -577,8 +596,12 @@ export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
   return invoke<InstallPlan>("get_install_plan", { toolKey, kind });
 }
 
-export function startExecutionTask(toolKey: ToolKey, kind: InstallKind) {
-  return invoke<ExecutionTask>("start_execution_task", { toolKey, kind });
+export function startExecutionTask(plan: InstallPlan) {
+  return invoke<ExecutionTask>("start_execution_task", {
+    toolKey: plan.toolKey,
+    kind: plan.kind,
+    expectedFingerprint: plan.fingerprint,
+  });
 }
 
 export function listExecutionTasks() {
@@ -729,6 +752,22 @@ export function getPtySessionWindowStatus(sessionId: string) {
   });
 }
 
+export function reattachPtySession(
+  sessionId: string,
+  onEvent: Channel<PtyEvent>,
+  snapshot: PtyTerminalSnapshot,
+  sequence: number,
+  size: PtySizeUpdate,
+) {
+  return invoke<PtySession>("reattach_pty_session", {
+    sessionId,
+    onEvent,
+    snapshot,
+    sequence,
+    size,
+  });
+}
+
 export function writePtySession(sessionId: string, data: string) {
   return invoke<void>("write_pty_session", { sessionId, data });
 }
@@ -752,8 +791,8 @@ export function terminatePtySession(sessionId: string) {
   return invoke<void>("terminate_pty_session", { sessionId });
 }
 
-export function confirmPtyExit() {
-  return invoke<void>("confirm_pty_exit");
+export function confirmAppExit() {
+  return invoke<void>("confirm_app_exit");
 }
 
 // Terminal environment and launch target

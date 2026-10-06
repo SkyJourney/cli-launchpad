@@ -54,6 +54,7 @@ export interface WorkspaceContentWindowEventPayloads {
     token: string;
     windowLabel: string;
     message?: string;
+    reason?: "closed-before-ready";
   };
   "workspace-file-window-buffer-changed": {
     documentId: string;
@@ -61,6 +62,20 @@ export interface WorkspaceContentWindowEventPayloads {
     windowLabel: string;
     fileDocument?: WorkspaceFileDocument;
     fileBuffer?: WorkspaceFileBuffer;
+  };
+  "workspace-file-window-flush-requested": {
+    documentId: string;
+    token: string;
+    windowLabel: string;
+    requestId: string;
+  };
+  "workspace-file-window-flush-complete": {
+    documentId: string;
+    token: string;
+    windowLabel: string;
+    requestId: string;
+    fileDocument: WorkspaceFileDocument;
+    fileBuffer: WorkspaceFileBuffer;
   };
   "workspace-file-window-return-requested": {
     documentId: string;
@@ -163,6 +178,8 @@ function isFileBuffer(value: unknown): value is WorkspaceFileBuffer {
       value.kind === "image" ||
       value.kind === "unsupported") &&
     (value.conflict === undefined || typeof value.conflict === "boolean") &&
+    (value.identityChanged === undefined ||
+      typeof value.identityChanged === "boolean") &&
     (value.previewDataUrl === undefined ||
       typeof value.previewDataUrl === "string") &&
     (value.unsupportedReason === undefined ||
@@ -213,7 +230,8 @@ function isValidEventPayload(
     case "workspace-file-window-attach-failed":
       return (
         hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
-        hasOptionalStringFields(value, ["message"])
+        hasOptionalStringFields(value, ["message", "reason"]) &&
+        (value.reason === undefined || value.reason === "closed-before-ready")
       );
     case "workspace-file-window-buffer-changed":
       return (
@@ -221,6 +239,24 @@ function isValidEventPayload(
         (value.fileDocument === undefined ||
           isFileDocument(value.fileDocument)) &&
         (value.fileBuffer === undefined || isFileBuffer(value.fileBuffer))
+      );
+    case "workspace-file-window-flush-requested":
+      return hasStringFields(value, [
+        "documentId",
+        "token",
+        "windowLabel",
+        "requestId",
+      ]);
+    case "workspace-file-window-flush-complete":
+      return (
+        hasStringFields(value, [
+          "documentId",
+          "token",
+          "windowLabel",
+          "requestId",
+        ]) &&
+        isFileDocument(value.fileDocument) &&
+        isFileBuffer(value.fileBuffer)
       );
     case "workspace-file-window-return-requested":
       return (
@@ -278,6 +314,8 @@ const workspaceContentWindowEventPayloadKeys: Record<
   "workspace-file-window-attached": true,
   "workspace-file-window-attach-failed": true,
   "workspace-file-window-buffer-changed": true,
+  "workspace-file-window-flush-requested": true,
+  "workspace-file-window-flush-complete": true,
   "workspace-file-window-return-requested": true,
   "workspace-file-window-return-complete": true,
   "workspace-file-window-return-failed": true,

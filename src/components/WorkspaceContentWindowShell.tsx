@@ -11,6 +11,8 @@ export function WorkspaceContentWindowShell({
   draggable = false,
   onDragStart,
   beforeClose,
+  isReady = true,
+  onCloseBeforeReady,
   onCloseRequested,
   children,
 }: {
@@ -19,13 +21,19 @@ export function WorkspaceContentWindowShell({
   draggable?: boolean;
   onDragStart?: (event: DragEvent<HTMLDivElement>) => void;
   beforeClose?: WorkspaceContentWindowBeforeCloseHook;
+  isReady?: boolean;
+  onCloseBeforeReady?: () => void;
   onCloseRequested: () => void;
   children: ReactNode;
 }) {
   const closeRequestedRef = useRef(onCloseRequested);
   const beforeCloseRef = useRef(beforeClose);
+  const isReadyRef = useRef(isReady);
+  const closeBeforeReadyRef = useRef(onCloseBeforeReady);
   closeRequestedRef.current = onCloseRequested;
   beforeCloseRef.current = beforeClose;
+  isReadyRef.current = isReady;
+  closeBeforeReadyRef.current = onCloseBeforeReady;
 
   useEffect(() => {
     let disposed = false;
@@ -33,6 +41,10 @@ export function WorkspaceContentWindowShell({
     void getCurrentWindow()
       .onCloseRequested((event) => {
         event.preventDefault();
+        if (!isReadyRef.current) {
+          closeBeforeReadyRef.current?.();
+          return;
+        }
         try {
           if (!shouldCloseWorkspaceWindow(beforeCloseRef.current)) return;
         } catch (reason) {

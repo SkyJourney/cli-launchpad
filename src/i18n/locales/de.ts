@@ -63,7 +63,10 @@ export const de = {
     description:
       "{{count}} eingebettete Terminalsitzungen laufen noch. Beim Beenden werden diese Sitzungen und ihre Kindprozesse beendet.",
     confirm: "Sitzungen beenden und schließen",
-    terminating: "Sitzungen werden beendet…",
+    unsavedDescription:
+      "{{count}} Datei(en) enthalten ungespeicherte Änderungen:",
+    confirmDiscard: "Änderungen verwerfen und schließen",
+    terminating: "Wird beendet…",
   },
   windowChrome: {
     titlebar: "Titelleiste des Anwendungsfensters",
@@ -458,6 +461,10 @@ export const de = {
       "Daten auf den Stand vom {{time}} zurücksetzen. Der aktuelle Stand wird vorher automatisch gesichert.",
     confirmRestoreAction: "Wiederherstellen",
     restoreFailed: "Wiederherstellung fehlgeschlagen: {{error}}",
+    restoreBlockedPtys: "{{count}} laufende Terminalsitzung(en)",
+    restoreBlockedDirtyFiles:
+      "{{count}} Dokument(e) mit ungespeicherten Änderungen",
+    restoreBlockedDetachedWindows: "{{count}} abgetrennte Inhaltsfenster",
     backupReason: {
       manual: "Manueller Wiederherstellungspunkt",
       pre_import: "Automatische Sicherung vor dem Import",
@@ -590,6 +597,10 @@ export const de = {
       "Die Datei auf dem Datenträger wurde geändert. Deine Änderungen bleiben erhalten. Lade die Datei vor dem erneuten Speichern neu.",
     directoryLimitReached:
       "Zu viele Einträge. Die ersten 5.000 werden angezeigt.",
+    directoryEntriesSkipped:
+      "{{count}} Einträge konnten nicht angezeigt werden.",
+    projectIdentityChanged:
+      "Das Projektverzeichnis hat sich geändert. Dieses Dokument ist veraltet; kopiere den Inhalt vor dem Schließen.",
     loadingFile: "Datei wird geladen…",
     fileCannotOpen: "Diese Datei kann hier nicht geöffnet werden",
     imagePreview: "Bildvorschau",

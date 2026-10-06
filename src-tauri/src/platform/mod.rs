@@ -5,6 +5,7 @@ pub mod file_cas;
 pub mod macos_launch_artifacts;
 pub mod opener;
 pub mod path_identity;
+pub mod path_rules;
 pub mod terminal;
 pub mod terminal_launch;
 pub mod window_geometry;

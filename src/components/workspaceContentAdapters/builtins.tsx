@@ -112,7 +112,9 @@ function TextFileContentAdapter({
     <div className="workspace-text-editor">
       {fileBuffer.conflict && (
         <div className="workspace-file-conflict" role="alert">
-          {t("workspaceFiles.saveConflict")}
+          {fileBuffer.identityChanged
+            ? t("workspaceFiles.projectIdentityChanged")
+            : t("workspaceFiles.saveConflict")}
         </div>
       )}
       <div className="workspace-text-editor-toolbar">
@@ -124,6 +126,7 @@ function TextFileContentAdapter({
           className="icon-button workspace-text-editor-save"
           disabled={
             readOnly ||
+            fileBuffer.identityChanged === true ||
             fileBuffer.saving ||
             fileBuffer.content === fileBuffer.savedContent
           }

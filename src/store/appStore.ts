@@ -62,6 +62,7 @@ interface AppState {
   setProjectDialog: (dialog: ProjectDialogState) => void;
   upsertPtySession: (session: PtySession) => void;
   removePtySession: (sessionId: string) => void;
+  clearPtySessions: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -111,4 +112,5 @@ export const useAppStore = create<AppState>((set) => ({
       delete next[sessionId];
       return { ptySessionsById: next };
     }),
+  clearPtySessions: () => set({ ptySessionsById: {} }),
 }));

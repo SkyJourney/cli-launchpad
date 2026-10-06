@@ -19,8 +19,22 @@ export class WorkspaceContentCoordinator {
   private readonly states = new Map<string, WorkspaceContentLifecycleState>();
   private readonly completedReturnIds = new Set<string>();
 
+  reset() {
+    this.states.clear();
+    this.completedReturnIds.clear();
+  }
+
   get(content: WorkspacePaneContentRef) {
     return this.states.get(keyOf(content));
+  }
+
+  listInPhases(
+    ...phases: WorkspaceContentLifecycleState["phase"][]
+  ): WorkspacePaneContentRef[] {
+    const accepted = new Set(phases);
+    return [...this.states.values()]
+      .filter((state) => accepted.has(state.phase))
+      .map((state) => ({ ...state.content }));
   }
 
   ensureAttached(

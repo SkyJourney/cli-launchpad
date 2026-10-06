@@ -231,7 +231,7 @@ mod tests {
             focused_pane_id: "root".to_string(),
             slots: Vec::new(),
             documents: Vec::new(),
-            detached_slot_ids: Vec::new(),
+            detached_contents: Vec::new(),
         }
         .to_json()
         .unwrap()

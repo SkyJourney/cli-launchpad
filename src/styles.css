@@ -3612,6 +3612,13 @@ h1 {
   margin: 0;
 }
 
+.app-exit-unsaved-files {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding-inline-start: 22px;
+}
+
 .app-exit-actions {
   display: flex;
   gap: 8px;

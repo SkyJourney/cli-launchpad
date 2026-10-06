@@ -23,6 +23,7 @@ import {
   finalizePtyHandoff,
   resizePtySession,
   reportPtyFrontendStage,
+  reattachPtySession,
   stagePtyHandoffSnapshot,
   terminatePtySession,
   writePtySession,
@@ -56,6 +57,7 @@ export interface PtyTerminalHandle {
   captureHandoff(): Promise<PtyHandoff>;
   cancelHandoff(token: string): Promise<void>;
   attachHandoff(sessionId: string, token: string): Promise<PtySession>;
+  reattachLostSession(sessionId: string): Promise<PtySession>;
   getSessionState(): PtySession["state"] | null;
 }
 
@@ -618,6 +620,68 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             const earlyExit = pendingExitRef.current.get(sessionId);
             pendingExitRef.current.delete(sessionId);
             const resolvedSession = applyPendingPtyExit(finalized, earlyExit);
+            updateSession(resolvedSession);
+            setHandoffBusy(false);
+            return resolvedSession;
+          } catch (reason) {
+            snapshotWaiterRef.current?.reject(new Error(String(reason)));
+            setHandoffBusy(false);
+            setError(String(reason));
+            throw reason;
+          }
+        },
+        async reattachLostSession(sessionId) {
+          const terminal = terminalRef.current;
+          const serialize = serializeRef.current;
+          if (
+            !terminal ||
+            !serialize ||
+            sessionRef.current?.sessionId !== sessionId
+          ) {
+            throw new Error(t("pty.terminalNotReady"));
+          }
+          setHandoffBusy(true);
+          setError(null);
+          const channel = new Channel<PtyEvent>();
+          const snapshotReady = new Promise<void>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              snapshotWaiterRef.current = null;
+              reject(new Error(t("pty.handoffSnapshotTimeout")));
+            }, 8_000);
+            snapshotWaiterRef.current = {
+              resolve: () => {
+                window.clearTimeout(timer);
+                snapshotWaiterRef.current = null;
+                resolve();
+              },
+              reject: (reason) => {
+                window.clearTimeout(timer);
+                snapshotWaiterRef.current = null;
+                reject(reason);
+              },
+              timer,
+            };
+          });
+          void snapshotReady.catch(() => undefined);
+          bindChannel(channel);
+          try {
+            const size = sizeOf(terminal);
+            const restored = await reattachPtySession(
+              sessionId,
+              channel,
+              {
+                data: serialize.serialize(),
+                cols: terminal.cols,
+                rows: terminal.rows,
+              },
+              lastWrittenSequenceRef.current,
+              size,
+            );
+            await snapshotReady;
+            lastSentSizeRef.current = size;
+            const earlyExit = pendingExitRef.current.get(sessionId);
+            pendingExitRef.current.delete(sessionId);
+            const resolvedSession = applyPendingPtyExit(restored, earlyExit);
             updateSession(resolvedSession);
             setHandoffBusy(false);
             return resolvedSession;

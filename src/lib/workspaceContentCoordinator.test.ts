@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceContentCoordinator } from "./workspaceContentCoordinator";
+import {
+  addWorkspaceFileToPane,
+  findWorkspacePane,
+  placeContentExclusively,
+  removeWorkspaceContentFromTree,
+  splitWorkspacePane,
+} from "./ptyWorkspaceLayout";
 
 describe("workspace content coordinator", () => {
+  it("clears all content owners and completed transfers when workspace data is restored", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "file", documentId: "doc-1" } as const;
+    const owner = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    coordinator.ensureAttached(content, owner);
+
+    coordinator.reset();
+
+    expect(coordinator.get(content)).toBeUndefined();
+    expect(coordinator.ensureAttached(content, owner).phase).toBe("attached");
+  });
+
   it("owns detach and return state transitions for mixed content kinds", () => {
     const coordinator = new WorkspaceContentCoordinator();
     const content = { kind: "file", documentId: "doc-1" } as const;
@@ -34,6 +57,74 @@ describe("workspace content coordinator", () => {
       "duplicate-recovery",
     );
     expect(coordinator.beginReturn(content, "return-1", "main")).toBeNull();
+  });
+
+  it("removes a file on detach-ready and returns it exclusively to another pane", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "file", documentId: "doc-1" } as const;
+    const source = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const target = { kind: "window", windowLabel: "workspace-file-1" } as const;
+    const withFile = addWorkspaceFileToPane(
+      splitWorkspacePane(
+        addWorkspaceFileToPane(
+          {
+            kind: "pane",
+            id: "pane-1",
+            paneNumber: 1,
+            contents: [],
+            activeContent: null,
+          },
+          "pane-1",
+          content.documentId,
+        ),
+        "pane-1",
+        "horizontal",
+        "split-1",
+        "pane-2",
+      ),
+      "pane-2",
+      content.documentId,
+    );
+
+    coordinator.beginDetach(content, source, target, "detach-1");
+    const detached = coordinator.completeHandoff(
+      content,
+      "detachReady",
+      "detach-1",
+    );
+    const detachedTree = removeWorkspaceContentFromTree(withFile, content);
+    expect(detached?.state.phase).toBe("detached");
+    expect(
+      findWorkspacePane(detachedTree, "pane-1")?.contents.some(
+        (entry) =>
+          entry.kind === "file" && entry.documentId === content.documentId,
+      ),
+    ).toBe(false);
+    expect(
+      findWorkspacePane(detachedTree, "pane-2")?.contents.some(
+        (entry) =>
+          entry.kind === "file" && entry.documentId === content.documentId,
+      ),
+    ).toBe(false);
+
+    coordinator.beginReturn(content, "return-1", "main", "pane-2");
+    const returnedTree = placeContentExclusively(
+      detachedTree,
+      "pane-2",
+      content,
+    );
+    expect(
+      coordinator.completeHandoff(content, "returnReady", "return-1")?.state
+        .phase,
+    ).toBe("attached");
+    expect(findWorkspacePane(returnedTree, "pane-1")?.contents).toEqual([]);
+    expect(findWorkspacePane(returnedTree, "pane-2")?.contents).toEqual([
+      content,
+    ]);
   });
 
   it("updates the pane owner when content moves within the workspace", () => {

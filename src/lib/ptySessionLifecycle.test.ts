@@ -3,6 +3,7 @@ import {
   applyPendingPtyExit,
   canTerminatePtySession,
   matchesDetachedWindow,
+  resolveDetachedStartTimeoutAction,
   resolveDetachedWindowFailureAction,
 } from "./ptySessionLifecycle";
 
@@ -80,6 +81,23 @@ describe("detached PTY window failure recovery", () => {
       "keep-open",
     );
   });
+});
+
+describe("detached PTY start timeout reconciliation", () => {
+  it.each([
+    ["ownedByAnotherWindow", true, "accept-detached-owner"],
+    ["ownedByAnotherWindow", false, "cancel-source-handoff"],
+    ["running", true, "cancel-source-handoff"],
+    ["ended", true, "remove-ended-session"],
+    [null, false, "retry-owner-query"],
+  ] as const)(
+    "uses backend ownership (%s, child exists=%s)",
+    (status, childExists, expected) => {
+      expect(resolveDetachedStartTimeoutAction(status, childExists)).toBe(
+        expected,
+      );
+    },
+  );
 });
 
 describe("detached PTY event identity", () => {

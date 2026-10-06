@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::tool::ToolKey;
 
-pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 3;
+pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 4;
 pub const MAX_WORKSPACE_LAYOUT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_WORKSPACE_LAYOUT_DEPTH: usize = 32;
 pub const MAX_WORKSPACE_LAYOUT_NODES: usize = 511;
@@ -44,7 +44,7 @@ pub struct WorkspaceLayoutDocument {
     #[serde(default)]
     pub documents: Vec<WorkspaceFileDocument>,
     #[serde(default)]
-    pub detached_slot_ids: Vec<String>,
+    pub detached_contents: Vec<WorkspacePaneContentRef>,
 }
 
 impl WorkspaceLayoutDocument {
@@ -61,6 +61,9 @@ impl WorkspaceLayoutDocument {
             .ok_or_else(|| WorkspaceLayoutError::InvalidJson("缺少 schemaVersion".into()))?;
         if source_version == 1 || source_version == 2 {
             migrate_legacy_content_refs(&mut value, source_version);
+            migrate_detached_slot_ids(&mut value);
+        } else if source_version == 3 {
+            migrate_detached_slot_ids(&mut value);
         }
         let document: Self = serde_json::from_value(value)
             .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
@@ -147,16 +150,35 @@ impl WorkspaceLayoutDocument {
             return invalid("焦点 pane 不存在");
         }
 
-        let mut detached_ids = HashSet::new();
-        for instance_id in &self.detached_slot_ids {
-            if !slots_by_id.contains_key(instance_id.as_str()) {
-                return invalid("独立窗口引用了不存在的 slot");
-            }
-            if !detached_ids.insert(instance_id.as_str()) {
-                return invalid("独立窗口 slot 重复");
-            }
-            if !referenced_slots.insert(instance_id.as_str()) {
-                return invalid("slot 同时出现在 pane 和独立窗口");
+        if self.detached_contents.len() > MAX_WORKSPACE_LAYOUT_SLOTS {
+            return invalid("独立窗口内容数量超过限制");
+        }
+        let mut detached_slots = HashSet::new();
+        let mut detached_documents = HashSet::new();
+        for content in &self.detached_contents {
+            match content {
+                WorkspacePaneContentRef::Pty { slot_id } => {
+                    if !slots_by_id.contains_key(slot_id.as_str()) {
+                        return invalid("独立窗口引用了不存在的 slot");
+                    }
+                    if !detached_slots.insert(slot_id.as_str()) {
+                        return invalid("独立窗口 slot 重复");
+                    }
+                    if !referenced_slots.insert(slot_id.as_str()) {
+                        return invalid("slot 同时出现在 pane 和独立窗口");
+                    }
+                }
+                WorkspacePaneContentRef::File { document_id } => {
+                    if !documents_by_id.contains_key(document_id.as_str()) {
+                        return invalid("独立窗口引用了不存在的文件文档");
+                    }
+                    if !detached_documents.insert(document_id.as_str()) {
+                        return invalid("独立窗口文件文档重复");
+                    }
+                    if !referenced_documents.insert(document_id.as_str()) {
+                        return invalid("文件文档同时出现在 pane 和独立窗口");
+                    }
+                }
             }
         }
 
@@ -172,7 +194,7 @@ impl WorkspaceLayoutDocument {
 
     pub fn validate_as_preset(&self) -> Result<(), WorkspaceLayoutError> {
         self.validate()?;
-        if !self.detached_slot_ids.is_empty() {
+        if !self.detached_contents.is_empty() {
             return invalid("命名布局不能包含独立窗口会话");
         }
         Ok(())
@@ -467,6 +489,29 @@ fn migrate_legacy_content_refs(layout: &mut serde_json::Value, source_version: u
     }
 }
 
+fn migrate_detached_slot_ids(layout: &mut serde_json::Value) {
+    let Some(object) = layout.as_object_mut() else {
+        return;
+    };
+    let legacy = object.remove("detachedSlotIds");
+    let detached_contents = match legacy {
+        Some(serde_json::Value::Array(slot_ids)) => slot_ids
+            .into_iter()
+            .map(|value| match value.as_str() {
+                Some(slot_id) => serde_json::json!({ "kind": "pty", "slotId": slot_id }),
+                None => value,
+            })
+            .collect(),
+        Some(value) => value,
+        None => serde_json::Value::Array(Vec::new()),
+    };
+    object.insert(
+        "schemaVersion".to_string(),
+        serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
+    );
+    object.insert("detachedContents".to_string(), detached_contents);
+}
+
 fn migrate_legacy_content_node(node: &mut serde_json::Value, source_version: u64) {
     let Some(object) = node.as_object_mut() else {
         return;
@@ -574,13 +619,11 @@ fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), Worksp
         MAX_DIRECTORY_PATH_CHARS,
         "项目内相对路径",
     )?;
-    if document.relative_path.starts_with('/')
-        || document.relative_path.contains('\\')
-        || document.relative_path.contains(':')
-        || document
-            .relative_path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+    if document.relative_path.is_empty()
+        || crate::services::project_directory::ProjectDirectory::validate_relative_path(
+            &document.relative_path,
+        )
+        .is_err()
     {
         return invalid("文件引用必须是规范的项目内相对路径");
     }
@@ -641,7 +684,7 @@ mod tests {
                 title: WorkspaceSlotTitle::Automatic,
             }],
             documents: Vec::new(),
-            detached_slot_ids: Vec::new(),
+            detached_contents: Vec::new(),
         }
     }
 
@@ -729,6 +772,68 @@ mod tests {
     }
 
     #[test]
+    fn workspace_layout_migrates_v3_detached_slots_to_v4_content_refs() {
+        let mut document = valid_document();
+        document.tree = WorkspaceLayoutNode::Pane {
+            id: "workspace-root".to_string(),
+            pane_number: 1,
+            contents: Vec::new(),
+            active_content: None,
+        };
+        let slot_id = document.slots[0].instance_id.clone();
+        let mut legacy = serde_json::to_value(&document).expect("serialize v3 layout");
+        legacy["schemaVersion"] = serde_json::json!(3);
+        legacy["detachedSlotIds"] = serde_json::json!([slot_id.clone()]);
+        legacy.as_object_mut().unwrap().remove("detachedContents");
+        let json = serde_json::to_string(&legacy).expect("serialize v3 layout");
+
+        let migrated = WorkspaceLayoutDocument::from_json(&json).expect("migrate v3 layout");
+
+        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(
+            migrated.detached_contents,
+            vec![WorkspacePaneContentRef::Pty { slot_id }]
+        );
+    }
+
+    #[test]
+    fn workspace_layout_rejects_detached_content_also_referenced_by_tree() {
+        let mut document = valid_document();
+        document.detached_contents = vec![WorkspacePaneContentRef::Pty {
+            slot_id: document.slots[0].instance_id.clone(),
+        }];
+
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("同时出现在 pane")
+        ));
+    }
+
+    #[test]
+    fn workspace_layout_rejects_detached_file_also_referenced_by_tree() {
+        let mut document = valid_document();
+        let document_id = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: document_id.clone(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\example".to_string(),
+            relative_path: "README.md".to_string(),
+        });
+        let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        contents.push(WorkspacePaneContentRef::File {
+            document_id: document_id.clone(),
+        });
+        document.detached_contents = vec![WorkspacePaneContentRef::File { document_id }];
+
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("同时出现在 pane")
+        ));
+    }
+
+    #[test]
     fn workspace_layout_migrates_v2_mixed_content_and_preserves_active_file() {
         let mut document = valid_document();
         let document_id = Uuid::new_v4().to_string();
@@ -794,6 +899,47 @@ mod tests {
             document.validate(),
             Err(WorkspaceLayoutError::Invalid(message)) if message.contains("相对路径")
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_layout_uses_unix_file_name_rules() {
+        let mut document = valid_document();
+        let file_id = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: file_id.clone(),
+            directory_id: 1,
+            directory_path: "/tmp/project".to_string(),
+            relative_path: r"notes:final/a\b.txt".to_string(),
+        });
+        if let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree {
+            contents.push(WorkspacePaneContentRef::File {
+                document_id: file_id,
+            });
+        }
+
+        assert!(document.validate().is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn workspace_layout_rejects_windows_ads_and_reserved_file_names() {
+        for relative_path in ["file:stream.txt", "CON.txt", "name."] {
+            let mut document = valid_document();
+            let file_id = Uuid::new_v4().to_string();
+            document.documents.push(WorkspaceFileDocument {
+                id: file_id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: relative_path.to_string(),
+            });
+            if let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree {
+                contents.push(WorkspacePaneContentRef::File {
+                    document_id: file_id,
+                });
+            }
+            assert!(document.validate().is_err(), "{relative_path}");
+        }
     }
 
     #[test]
@@ -932,12 +1078,14 @@ mod tests {
             contents: Vec::new(),
             active_content: None,
         };
-        document.detached_slot_ids = vec![slot_id];
+        document.detached_contents = vec![WorkspacePaneContentRef::Pty { slot_id }];
         document.validate().expect("detached slot is still managed");
 
         document
-            .detached_slot_ids
-            .push(document.slots[0].instance_id.clone());
+            .detached_contents
+            .push(WorkspacePaneContentRef::Pty {
+                slot_id: document.slots[0].instance_id.clone(),
+            });
         assert!(matches!(
             document.validate(),
             Err(WorkspaceLayoutError::Invalid(message)) if message.contains("重复")
@@ -954,7 +1102,7 @@ mod tests {
             contents: Vec::new(),
             active_content: None,
         };
-        document.detached_slot_ids = vec![slot_id];
+        document.detached_contents = vec![WorkspacePaneContentRef::Pty { slot_id }];
 
         assert!(document.validate().is_ok());
         assert!(matches!(
