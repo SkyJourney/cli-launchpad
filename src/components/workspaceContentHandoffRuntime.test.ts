@@ -35,7 +35,13 @@ describe("workspace content handoff runtime", () => {
       apiVersion: 1,
       kind: "pty",
       render: () => null,
-      presentation: { labels },
+      presentation: () => ({
+        title: "test",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
       lifecycle: {
         prepareHandoff: async ({ capabilities }) => {
           const payload = await capabilities.prepare();

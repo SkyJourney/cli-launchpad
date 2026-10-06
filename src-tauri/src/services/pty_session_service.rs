@@ -3,6 +3,7 @@ use std::{
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
         Arc, Condvar, Mutex,
     },
     thread,
@@ -38,6 +39,45 @@ const OUTPUT_LOW_WATERMARK: usize = 64 * 1024;
 const HANDOFF_PAUSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_HANDOFF_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OWNER_LOST_BUFFER_BYTES: usize = 256 * 1024;
+const PTY_INPUT_QUEUE_CAPACITY: usize = 32;
+const MAX_PTY_INPUT_BYTES: usize = 64 * 1024;
+
+fn enqueue_pty_input(sender: &SyncSender<Vec<u8>>, data: &[u8]) -> Result<(), AppError> {
+    if data.len() > MAX_PTY_INPUT_BYTES {
+        return Err(AppError::coded(
+            "pty_input_backpressure",
+            "终端输入片段超过安全上限，请分段粘贴",
+        ));
+    }
+    match sender.try_send(data.to_vec()) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(AppError::coded(
+            "pty_input_backpressure",
+            "终端输入队列已满，请稍后重试",
+        )),
+        Err(TrySendError::Disconnected(_)) => Err(AppError::coded(
+            "pty_input_unavailable",
+            "终端输入通道已关闭，请重新连接会话",
+        )),
+    }
+}
+
+fn start_pty_input_writer(
+    mut writer: Box<dyn Write + Send>,
+    receiver: Receiver<Vec<u8>>,
+    session_id: String,
+) -> std::io::Result<thread::JoinHandle<()>> {
+    thread::Builder::new()
+        .name(format!("pty-input-{session_id}"))
+        .spawn(move || {
+            while let Ok(data) = receiver.recv() {
+                if let Err(error) = writer.write_all(&data).and_then(|()| writer.flush()) {
+                    log::error!("PTY input write failed session_id={session_id} error={error}");
+                    break;
+                }
+            }
+        })
+}
 
 fn ensure_no_active_sessions(active_count: usize) -> Result<(), AppError> {
     if active_count > 0 {
@@ -104,7 +144,7 @@ struct ManagedSession {
     started_at_ms: i64,
     master: Mutex<Box<dyn MasterPty + Send>>,
     last_size: Mutex<(u16, u16)>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: SyncSender<Vec<u8>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     process_tree: Mutex<Option<ProcessTree>>,
     flow: Arc<OutputFlow>,
@@ -468,10 +508,13 @@ fn handoff_references_window(transfer: &PendingHandoff, window_label: &str) -> b
 }
 
 fn is_supported_workspace_window(window_label: &str) -> bool {
-    window_label == "main"
-        || window_label
-            .strip_prefix("terminal-")
-            .is_some_and(|suffix| !suffix.is_empty())
+    matches!(
+        crate::models::window_kind::window_kind_of(window_label),
+        Some(
+            crate::models::window_kind::WindowKind::Main
+                | crate::models::window_kind::WindowKind::Terminal
+        )
+    )
 }
 
 fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppError> {
@@ -494,22 +537,28 @@ impl PtySessionManager {
         app: &AppHandle,
         directory_id: i64,
         tool_key: ToolKey,
+        payload: &launch_service::CliLaunchPayload,
         resume_session_id: Option<&str>,
         size: PtySizeUpdate,
         window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         let _start_guard = self.begin_session_start()?;
-        let directory_path = directory_repo::get(connection, directory_id)
-            .ok()
-            .flatten()
-            .map(|directory| directory.path);
+        let directory = directory_repo::get(connection, directory_id)?
+            .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))?;
+        if !crate::platform::path_identity::paths_equal(&directory.path, &payload.directory) {
+            return Err(AppError::coded(
+                "project_identity_changed",
+                "项目目录在启动准备期间发生变化，请重试",
+            ));
+        }
+        let directory_path = directory.path;
         let result = self.create_inner(
             connection,
             app,
             directory_id,
             tool_key,
-            resume_session_id,
+            payload,
             size,
             window_label,
             on_event,
@@ -527,7 +576,7 @@ impl PtySessionManager {
         if let Err(error) = launch_history_repo::record(
             connection,
             directory_id,
-            directory_path.as_deref(),
+            Some(&directory_path),
             tool_key,
             action,
             result.is_ok(),
@@ -545,17 +594,13 @@ impl PtySessionManager {
         app: &AppHandle,
         directory_id: i64,
         tool_key: ToolKey,
-        resume_session_id: Option<&str>,
+        payload: &launch_service::CliLaunchPayload,
         size: PtySizeUpdate,
         window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         validate_size(size)?;
-        let payload = if let Some(session_id) = resume_session_id {
-            launch_service::resolve_resume_payload(connection, directory_id, tool_key, session_id)?
-        } else {
-            launch_service::resolve_payload(connection, directory_id, tool_key)?
-        };
+        let payload = payload.clone();
         directory_service::validate_path(&payload.directory)?;
 
         let pty_system = native_pty_system();
@@ -597,6 +642,13 @@ impl PtySessionManager {
             }
         };
         let session_id = Uuid::new_v4().to_string();
+        let (writer_sender, writer_receiver) = mpsc::sync_channel(PTY_INPUT_QUEUE_CAPACITY);
+        if let Err(error) = start_pty_input_writer(writer, writer_receiver, session_id.clone()) {
+            stop_spawned_child(&process_tree, &mut child);
+            return Err(error)
+                .context("创建 PTY 输入写入线程失败")
+                .map_err(Into::into);
+        }
         let now = now_ms();
         if let Err(error) = pty_session_repo::insert_running(
             connection,
@@ -618,7 +670,7 @@ impl PtySessionManager {
             started_at_ms: now,
             master: Mutex::new(pair.master),
             last_size: Mutex::new((size.cols, size.rows)),
-            writer: Mutex::new(writer),
+            writer: writer_sender,
             killer: Mutex::new(killer),
             process_tree: Mutex::new(Some(process_tree)),
             flow: Arc::new(OutputFlow::new()),
@@ -755,13 +807,7 @@ impl PtySessionManager {
     pub fn write(&self, session_id: &str, window_label: &str, data: &[u8]) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut writer = session
-            .writer
-            .lock()
-            .map_err(|_| AppError::msg("PTY 输入流锁中毒"))?;
-        writer.write_all(data)?;
-        writer.flush()?;
-        Ok(())
+        enqueue_pty_input(&session.writer, data)
     }
 
     pub fn resize(
@@ -1793,9 +1839,11 @@ mod tests {
     #[test]
     fn handoff_window_labels_are_restricted_to_workspace_windows() {
         assert!(is_supported_workspace_window("main"));
-        assert!(is_supported_workspace_window("terminal-abcd-1234"));
+        assert!(is_supported_workspace_window(
+            "terminal-8e783338-f464-4b10-b15e-b534748c6241"
+        ));
         assert!(!is_supported_workspace_window("settings"));
-        assert!(!is_supported_workspace_window("terminal-"));
+        assert!(!is_supported_workspace_window("terminal-invalid"));
     }
 
     #[test]
@@ -1847,5 +1895,59 @@ mod tests {
             pixel_height: 0,
         })
         .is_err());
+    }
+
+    struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn queued_pty_input_is_written_in_submission_order() {
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let (sender, receiver) = mpsc::sync_channel(3);
+        let worker = start_pty_input_writer(
+            Box::new(RecordingWriter(Arc::clone(&written))),
+            receiver,
+            "test-session".to_string(),
+        )
+        .unwrap();
+
+        enqueue_pty_input(&sender, b"first").unwrap();
+        enqueue_pty_input(&sender, b"second").unwrap();
+        enqueue_pty_input(&sender, b"third").unwrap();
+        drop(sender);
+        worker.join().unwrap();
+
+        assert_eq!(*written.lock().unwrap(), b"firstsecondthird");
+    }
+
+    #[test]
+    fn full_pty_input_queue_returns_a_typed_backpressure_error() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        enqueue_pty_input(&sender, b"first").unwrap();
+
+        let error = enqueue_pty_input(&sender, b"second").unwrap_err();
+        let value = serde_json::to_value(error).unwrap();
+
+        assert_eq!(value["code"], "pty_input_backpressure");
+    }
+
+    #[test]
+    fn oversized_pty_input_is_rejected_before_queueing() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+
+        let error = enqueue_pty_input(&sender, &vec![b'x'; MAX_PTY_INPUT_BYTES + 1]).unwrap_err();
+        let value = serde_json::to_value(error).unwrap();
+
+        assert_eq!(value["code"], "pty_input_backpressure");
     }
 }

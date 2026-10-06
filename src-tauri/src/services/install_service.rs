@@ -5,9 +5,6 @@ use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
 use crate::platform::detect;
 
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
 pub fn plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
@@ -72,32 +69,7 @@ pub(crate) fn resolve_program(program: &str) -> Result<String> {
 
 /// Execute only the executable path embedded in the confirmed plan.
 pub(crate) fn build_command(plan: &InstallPlan) -> Command {
-    let lower_program = plan.program.to_ascii_lowercase();
-    let command = if lower_program.ends_with(".cmd") || lower_program.ends_with(".bat") {
-        let mut command = Command::new(detect::system32("cmd.exe"));
-        command
-            .arg("/D")
-            .arg("/C")
-            .arg(&plan.program)
-            .args(&plan.args);
-        command
-    } else {
-        let mut command = Command::new(&plan.program);
-        command.args(&plan.args);
-        command
-    };
-    configure_command(command)
-}
-
-#[cfg(windows)]
-fn configure_command(mut command: Command) -> Command {
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-#[cfg(not(windows))]
-fn configure_command(command: Command) -> Command {
-    command
+    crate::platform::process::cli_command(std::path::Path::new(&plan.program), &plan.args)
 }
 
 #[cfg(test)]

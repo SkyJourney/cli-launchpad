@@ -31,9 +31,8 @@ impl CliAdapter for AntigravityAdapter {
         Vec::new()
     }
 
-    fn resume_args(&self, session_id: &str, mut existing_args: Vec<String>) -> Vec<String> {
-        existing_args.push(format!("--conversation={session_id}"));
-        existing_args
+    fn resume_args(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec![format!("--conversation={session_id}")])
     }
 
     fn query_update(&self) -> LatestVersion {

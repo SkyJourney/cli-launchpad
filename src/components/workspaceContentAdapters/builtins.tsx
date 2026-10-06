@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Save } from "lucide-react";
+import { FileText, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
 import type { WorkspaceFileDocument } from "../../lib/tauri";
@@ -7,6 +7,12 @@ import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import type { WorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { registerWorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { createWorkspaceEditorModelUri } from "../../lib/workspaceEditorModel";
+import {
+  defaultEngineId,
+  resolveEditorEngine,
+} from "../workspaceEditorEngineRegistry";
+import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
+import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
 
 const unsupportedReasonKeys = {
   binary: "workspaceFiles.unsupported.binary",
@@ -136,11 +142,14 @@ function TextFileContentAdapter({
         </button>
       </div>
       <WorkspaceEditorSurface
+        documentKey={fileDocument.id}
         value={fileBuffer.content}
         relativePath={fileDocument.relativePath}
         modelUri={createWorkspaceEditorModelUri(
           fileDocument.directoryId,
           fileDocument.relativePath,
+          fileDocument.id,
+          fileBuffer.epoch,
         )}
         theme={theme}
         readOnly={readOnly}
@@ -160,6 +169,8 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
     return <PtyContentAdapter portalTarget={context.pty?.portalTarget} />;
   },
   lifecycle: {
+    describeDisposalImpact: ({ isRunning, title }) =>
+      isRunning ? [{ kind: "runningPty", title }] : [],
     prepareHandoff: async ({ capabilities }) => {
       const payload = await capabilities.prepare();
       return { transferId: payload.handoff.token, payload };
@@ -168,17 +179,52 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),
   },
-  presentation: {
-    labels: {
-      menu: "pty.sessionMenu",
-      close: "pty.close",
-      closeCurrent: "pty.closeCurrent",
-      closeOthers: "pty.closeOthers",
-      closeAll: "pty.closeAllInPane",
-      splitAndMoveRight: "pty.splitAndMoveRight",
-      splitAndMoveDown: "pty.splitAndMoveDown",
-    },
+  presentation: (content, context) => {
+    const slot = context.ptySlots.find(
+      (candidate) => candidate.instanceId === content.slotId,
+    );
+    const session = slot?.sessionId
+      ? context.ptySessionsById[slot.sessionId]
+      : undefined;
+    const title = slot
+      ? workspaceSlotTitle(slot, context.directories)
+      : content.slotId;
+    const tool = slot
+      ? TOOLS.find((entry) => entry.key === slot.toolKey)
+      : undefined;
+    const ToolIcon = tool?.icon;
+    return {
+      title,
+      icon: ToolIcon ? <ToolIcon size={13} /> : null,
+      status:
+        session?.state === "running"
+          ? "running"
+          : session?.state === "failed" ||
+              (slot && isInvalidRestoredSlotState(slot.restoredState))
+            ? "failed"
+            : undefined,
+      tooltip: title,
+      closeLabelKey: "pty.close",
+    };
   },
+  labels: {
+    menu: "pty.sessionMenu",
+    close: "pty.close",
+    closeCurrent: "pty.closeCurrent",
+    closeOthers: "pty.closeOthers",
+    closeAll: "pty.closeAllInPane",
+    splitAndMoveRight: "pty.splitAndMoveRight",
+    splitAndMoveDown: "pty.splitAndMoveDown",
+  },
+  projectContextOf: (content, context) =>
+    (() => {
+      const slot = context.ptySlots.find(
+        (candidate) => candidate.instanceId === content.slotId,
+      );
+      return slot && !isInvalidRestoredSlotState(slot.restoredState)
+        ? slot.directoryId
+        : null;
+    })(),
 };
 
 const fileAdapter: WorkspaceContentAdapter<"file"> = {
@@ -200,7 +246,8 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     );
   },
   lifecycle: {
-    beforeClose: ({ isDirty, confirmDiscard }) => !isDirty || confirmDiscard(),
+    describeDisposalImpact: ({ isDirty, title }) =>
+      isDirty ? [{ kind: "dirtyFile", title }] : [],
     prepareHandoff: async ({ transferId, capabilities }) => ({
       transferId,
       payload: await capabilities.prepare(),
@@ -208,19 +255,68 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),
+    dispose: ({ content }) =>
+      resolveEditorEngine(defaultEngineId)?.releaseDocument(content.documentId),
   },
-  presentation: {
-    labels: {
-      menu: "workspaceFiles.fileMenu",
-      close: "workspaceFiles.closeFile",
-      closeCurrent: "workspaceFiles.closeFileNamed",
-      closeOthers: "workspaceFiles.closeOthers",
-      closeAll: "workspaceFiles.closeAllInPane",
-      splitAndMoveRight: "workspaceFiles.splitAndMoveRight",
-      splitAndMoveDown: "workspaceFiles.splitAndMoveDown",
-    },
+  presentation: (content, context) => {
+    const document = context.fileDocuments.find(
+      (candidate) => candidate.id === content.documentId,
+    );
+    const buffer = context.fileBuffers[content.documentId];
+    return {
+      title: document?.relativePath ?? content.documentId,
+      icon: <FileText size={13} />,
+      status:
+        buffer &&
+        (buffer.content !== buffer.savedContent ||
+          buffer.saving ||
+          buffer.conflict === true ||
+          buffer.identityChanged === true)
+          ? "dirty"
+          : undefined,
+      tooltip: document?.relativePath ?? content.documentId,
+      closeLabelKey: "workspaceFiles.closeFile",
+    };
   },
+  labels: {
+    menu: "workspaceFiles.fileMenu",
+    close: "workspaceFiles.closeFile",
+    closeCurrent: "workspaceFiles.closeFileNamed",
+    closeOthers: "workspaceFiles.closeOthers",
+    closeAll: "workspaceFiles.closeAllInPane",
+    splitAndMoveRight: "workspaceFiles.splitAndMoveRight",
+    splitAndMoveDown: "workspaceFiles.splitAndMoveDown",
+  },
+  projectContextOf: (content, context) =>
+    context.fileDocuments.find((document) => document.id === content.documentId)
+      ?.directoryId ?? null,
 };
+
+function workspaceSlotTitle(
+  slot: WorkspaceContentPresentationContext["ptySlots"][number],
+  directories: WorkspaceContentPresentationContext["directories"],
+): string {
+  if (slot.title.kind === "custom") return slot.title.value;
+  const directory = directories.find((entry) => entry.id === slot.directoryId);
+  const toolLabel = getTerminalTitleLabel(slot.toolKey);
+  const projectName = directory?.name ?? slot.projectName;
+  return (
+    (projectName || toolLabel) +
+    "-" +
+    toolLabel +
+    "-" +
+    String(slot.sequence).padStart(2, "0")
+  );
+}
+
+function isInvalidRestoredSlotState(state: string | undefined): boolean {
+  return (
+    state === "missingProject" ||
+    state === "projectIdentityMismatch" ||
+    state === "missingSession" ||
+    state === "sessionIdentityMismatch"
+  );
+}
 
 export function registerBuiltinWorkspaceContentAdapters(): () => void {
   const unregister = [

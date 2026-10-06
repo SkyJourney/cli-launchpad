@@ -1,26 +1,29 @@
 import { useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 import type { WorkspaceEditorEngineProps } from "./workspaceEditorEngineRegistry";
 import {
-  getWorkspaceEditorEngine,
   getWorkspaceEditorEngineRevision,
+  resolveEditorEngine,
   subscribeWorkspaceEditorEngines,
 } from "./workspaceEditorEngineRegistry";
-import { registerBuiltinWorkspaceEditorEngines } from "./workspaceEditorEngines/builtins";
-
-const unregisterBuiltinEngine = registerBuiltinWorkspaceEditorEngines();
 
 export { registerWorkspaceEditorEngine } from "./workspaceEditorEngineRegistry";
 
 export function WorkspaceEditorSurface(props: WorkspaceEditorEngineProps) {
+  const { t } = useTranslation();
   useSyncExternalStore(
     subscribeWorkspaceEditorEngines,
     getWorkspaceEditorEngineRevision,
     getWorkspaceEditorEngineRevision,
   );
-  const Engine = getWorkspaceEditorEngine("core.monaco").View;
+  const engine = resolveEditorEngine();
+  if (!engine) {
+    return (
+      <div className="pty-workspace-empty" role="status">
+        {t("workspaceFiles.editorUnavailable")}
+      </div>
+    );
+  }
+  const Engine = engine.View;
   return <Engine {...props} />;
-}
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => unregisterBuiltinEngine());
 }

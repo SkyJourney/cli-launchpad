@@ -13,13 +13,13 @@ import {
   Save,
   Trash2,
   X,
-  FileText,
 } from "lucide-react";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,15 +30,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
+import { createWindowLabel, windowKindOf } from "../lib/windowKinds";
 import {
   emitWorkspaceContentWindowEvent,
-  getWorkspaceContentWindowLabelPrefix,
   listenWorkspaceContentWindowEvent,
 } from "../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
-  activateWorkspaceSession,
-  activateWorkspaceFile,
   addWorkspaceFileToPane,
   addSessionToWorkspacePane,
   canSplitWorkspacePane,
@@ -49,21 +47,14 @@ import {
   hasWorkspaceContent,
   splitWorkspaceContentSequence,
   workspacePaneOtherContents,
-  moveWorkspaceFileToPane,
-  moveWorkspaceSession,
   MIN_WORKSPACE_PANE_HEIGHT,
   MIN_WORKSPACE_PANE_WIDTH,
   minimumWorkspacePaneExtent,
   isUsableWorkspaceSplitSizes,
   nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
-  removeWorkspaceSession,
-  removeWorkspaceContentFromTree,
-  placeContentExclusively,
   remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
-  splitAndMoveWorkspaceSession,
-  splitAndMoveWorkspaceFile,
   splitWorkspacePane,
   type SplitDirection,
   type WorkspacePane,
@@ -111,7 +102,6 @@ import {
   type WorkspaceLayoutDocument,
   type WorkspaceLayoutSlot,
   type WorkspaceLayoutPresetSummary,
-  type WorkspaceSlotStateKind,
   type WorkspacePaneContentRef,
 } from "../lib/tauri";
 import {
@@ -125,7 +115,6 @@ import {
   restoreWorkspaceRuntimeSnapshot,
   WorkspaceLayoutSaveQueue,
 } from "../lib/workspaceLayoutPersistence";
-import { getTerminalTitleLabel, TOOLS } from "../lib/tools";
 import {
   createWorkspaceFileBuffer,
   completeWorkspaceFileSave,
@@ -157,14 +146,20 @@ import { AnchoredPopover } from "./AnchoredPopover";
 import {
   WorkspaceContentView,
   getWorkspaceContentAdapter,
+  presentWorkspaceContent,
+  workspaceContentProjectContext,
+  type WorkspaceContentPresentationContext,
 } from "./WorkspaceContentView";
 import { WorkspaceContentTab } from "./WorkspaceContentTab";
 import { WorkspaceContentContextMenu } from "./WorkspaceContentContextMenu";
+import { executeWorkspaceCommand } from "../lib/workspaceContentCommand";
+import { partitionVisibleTabs } from "../lib/workspaceTabLayout";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
 import {
   closeWorkspaceContentBatch,
   disposeWorkspaceContent,
   shouldCloseWorkspaceContent,
+  type WorkspaceContentDisposalImpact,
   type WorkspaceContentDisposeContext,
 } from "../lib/workspaceContentClose";
 import {
@@ -275,11 +270,10 @@ interface PtyWorkspaceContextValue {
   activateFile: (paneId: string, documentId: string) => void;
   editFile: (documentId: string, content: string) => void;
   saveFile: (documentId: string) => Promise<void>;
-  closeFile: (documentId: string, skipDirtyConfirmation?: boolean) => void;
-  closeFiles: (documentIds: string[], skipDirtyConfirmation?: boolean) => void;
-  closePtySlots: (
-    slots: PtyWorkspaceSlot[],
-    skipConfirmation?: boolean,
+  closeContents: (
+    contents: WorkspacePaneContentRef[],
+    origin: "tab" | "menu" | "stack" | "window",
+    onApproved?: () => void,
   ) => Promise<void>;
   detachFile: (documentId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
@@ -348,6 +342,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const [layoutSaveError, setLayoutSaveError] = useState<string | null>(null);
   const [layoutResetError, setLayoutResetError] = useState<string | null>(null);
   const [layoutResetPending, setLayoutResetPending] = useState(false);
+  const [closeConfirmationImpacts, setCloseConfirmationImpacts] = useState<
+    WorkspaceContentDisposalImpact[] | null
+  >(null);
+  const closeConfirmationResolverRef = useRef<
+    ((confirmed: boolean) => void) | null
+  >(null);
   const [initialPaneId] = useState<string>(() => crypto.randomUUID());
   const [slots, setSlots] = useState<PtyWorkspaceSlot[]>([]);
   const [fileDocuments, setFileDocuments] = useState<WorkspaceFileDocument[]>(
@@ -662,7 +662,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const detachedContents =
         contentCoordinatorRef.current.listInPhases("detached");
       for (const content of detachedContents) {
-        activeTree = removeWorkspaceContentFromTree(activeTree, content);
+        activeTree = executeWorkspaceCommand(activeTree, {
+          type: "detach",
+          ref: content,
+        });
       }
       const activePanes = listWorkspacePanes(activeTree);
       const activeLayout = createWorkspaceLayoutDocument({
@@ -767,6 +770,41 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     setTree(next);
   }, []);
 
+  const setFocusedPane = useCallback((paneId: string) => {
+    focusedPaneIdRef.current = paneId;
+    setFocusedPaneId(paneId);
+  }, []);
+
+  const getWorkspacePresentationContext = useCallback(
+    (): WorkspaceContentPresentationContext => ({
+      directories: directories ?? [],
+      ptySlots: slotsRef.current,
+      ptySessionsById: useAppStore.getState().ptySessionsById,
+      fileDocuments: fileDocumentsRef.current,
+      fileBuffers: fileBuffersRef.current,
+      selectedDirectoryId: useAppStore.getState().selectedDirectoryId,
+    }),
+    [directories],
+  );
+
+  const syncProjectContext = useCallback(
+    (content: WorkspacePaneContentRef) => {
+      const directoryId = workspaceContentProjectContext(
+        content,
+        getWorkspacePresentationContext(),
+      );
+      if (directoryId === null) return;
+      const state = useAppStore.getState();
+      if (
+        state.view !== "detail" ||
+        state.selectedDirectoryId !== directoryId
+      ) {
+        state.openDirectory(directoryId);
+      }
+    },
+    [getWorkspacePresentationContext],
+  );
+
   const openProjectFile = useCallback(
     (
       directoryId: number,
@@ -844,7 +882,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           detachedFilesRef.current.get(document.id) ??
           pendingDetachedFilesRef.current.get(document.id);
         if (detachedWindow) {
-          await detachedWindow.window.setFocus().catch(() => undefined);
+          await detachedWindow.window.setFocus().catch((error: unknown) => {
+            console.warn(
+              "[window.set_focus_failed] 无法聚焦独立工作区窗口",
+              error,
+            );
+          });
           return;
         }
 
@@ -861,7 +904,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         setFocusedPaneId(pane.id);
         commitTree(
           hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
-            ? activateWorkspaceFile(treeRef.current, pane.id, document.id)
+            ? executeWorkspaceCommand(treeRef.current, {
+                type: "activate",
+                ref: { kind: "file", documentId: document.id },
+                paneId: pane.id,
+              })
             : addWorkspaceFileToPane(treeRef.current, pane.id, document.id),
         );
       })();
@@ -879,11 +926,18 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const activateFile = useCallback(
     (paneId: string, documentId: string) => {
-      focusedPaneIdRef.current = paneId;
-      setFocusedPaneId(paneId);
-      commitTree(activateWorkspaceFile(treeRef.current, paneId, documentId));
+      const content = { kind: "file", documentId } as const;
+      commitTree(
+        executeWorkspaceCommand(treeRef.current, {
+          type: "activate",
+          ref: content,
+          paneId,
+        }),
+      );
+      setFocusedPane(paneId);
+      syncProjectContext(content);
     },
-    [commitTree],
+    [commitTree, setFocusedPane, syncProjectContext],
   );
 
   const loadFile = useCallback(
@@ -1111,97 +1165,6 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [reloadFile, t],
   );
 
-  const closeFiles = useCallback(
-    (requestedDocumentIds: string[], skipDirtyConfirmation = false) => {
-      const documentIds = [...new Set(requestedDocumentIds)].filter(
-        (documentId) =>
-          fileDocumentsRef.current.some(
-            (document) => document.id === documentId,
-          ) && !detachedFileIdsRef.current.has(documentId),
-      );
-      if (documentIds.length === 0) return;
-      let discardAccepted = skipDirtyConfirmation;
-      const confirmDiscard = () => {
-        if (discardAccepted) return true;
-        discardAccepted = window.confirm(t("workspaceFiles.discardChanges"));
-        return discardAccepted;
-      };
-      const requestId = crypto.randomUUID();
-      const adapter = getWorkspaceContentAdapter("file");
-      const requests = documentIds.map((documentId) => {
-        const buffer = fileBuffersRef.current[documentId];
-        const content = { kind: "file", documentId } as const;
-        const pane = listWorkspacePanes(treeRef.current).find((candidate) =>
-          hasWorkspaceContent(candidate, content),
-        );
-        if (!pane) return null;
-        contentCoordinatorRef.current.ensureAttached(content, {
-          kind: "pane",
-          windowLabel: "main",
-          paneId: pane.id,
-        });
-        return {
-          content,
-          beforeClose: () =>
-            shouldCloseWorkspaceContent(adapter.lifecycle?.beforeClose, {
-              isDirty: Boolean(
-                buffer &&
-                (buffer.content !== buffer.savedContent ||
-                  buffer.saving ||
-                  buffer.conflict === true ||
-                  buffer.identityChanged === true),
-              ),
-              confirmDiscard,
-            }),
-        };
-      });
-      if (requests.some((request) => request === null)) return;
-      const validRequests = requests.filter(
-        (request): request is NonNullable<typeof request> => request !== null,
-      );
-      void closeWorkspaceContentBatch({
-        coordinator: contentCoordinatorRef.current,
-        requestId,
-        requests: validRequests,
-        dispose: (context) => {
-          if (context.content.kind === "file") {
-            return adapter.lifecycle?.dispose?.(
-              context as WorkspaceContentDisposeContext<"file">,
-            );
-          }
-        },
-        execute: () => {
-          const next = closeWorkspaceFileState(
-            {
-              tree: treeRef.current,
-              documents: fileDocumentsRef.current,
-              buffers: fileBuffersRef.current,
-            },
-            documentIds,
-          );
-          commitTree(next.tree);
-          fileDocumentsRef.current = next.documents;
-          setFileDocuments(next.documents);
-          fileBuffersRef.current = next.buffers;
-          setFileBuffers(next.buffers);
-          next.closedDocumentIds.forEach(invalidateFileOperationGeneration);
-          return next.closedDocumentIds.map((documentId) => ({
-            kind: "file" as const,
-            documentId,
-          }));
-        },
-      }).catch((reason) =>
-        console.error("Failed to close workspace files", reason),
-      );
-    },
-    [commitTree, t],
-  );
-  const closeFile = useCallback(
-    (documentId: string, skipDirtyConfirmation = false) =>
-      closeFiles([documentId], skipDirtyConfirmation),
-    [closeFiles],
-  );
-
   const detachFile = useCallback(
     async (documentId: string) => {
       if (
@@ -1230,7 +1193,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         );
         if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
         token = crypto.randomUUID();
-        const windowLabel = `${getWorkspaceContentWindowLabelPrefix("file")}${crypto.randomUUID()}`;
+        const windowLabel = createWindowLabel("workspaceContent");
         const handoffToken = token;
         const lifecycle = contentCoordinatorRef.current.beginDetach(
           { kind: "file", documentId },
@@ -1326,34 +1289,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const setFocusedPane = useCallback((paneId: string) => {
-    focusedPaneIdRef.current = paneId;
-    setFocusedPaneId(paneId);
-  }, []);
-
   const focusPane = useCallback(
     (paneId: string) => {
       const pane = findWorkspacePane(treeRef.current, paneId);
       if (!pane) return;
       setFocusedPane(paneId);
-      const activeSlot = slotsRef.current.find(
-        (slot) =>
-          slot.instanceId ===
-          (pane.activeContent?.kind === "pty"
-            ? pane.activeContent.slotId
-            : null),
-      );
-      if (activeSlot && !isInvalidRestoredSlotState(activeSlot.restoredState)) {
-        const state = useAppStore.getState();
-        if (
-          state.view !== "detail" ||
-          state.selectedDirectoryId !== activeSlot.directoryId
-        ) {
-          state.openDirectory(activeSlot.directoryId);
-        }
-      }
+      if (pane.activeContent) syncProjectContext(pane.activeContent);
     },
-    [setFocusedPane],
+    [setFocusedPane, syncProjectContext],
   );
 
   const removeSlot = useCallback(
@@ -1419,7 +1362,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       if (removedSlot?.sessionId) removePtySession(removedSlot.sessionId);
       slotsRef.current = nextSlots;
       setSlots(nextSlots);
-      const nextTree = removeWorkspaceSession(treeRef.current, instanceId);
+      const nextTree = executeWorkspaceCommand(treeRef.current, {
+        type: "close",
+        refs: [content],
+        origin: "window",
+      });
       commitTree(nextTree);
       if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
         setFocusedPane(listWorkspacePanes(nextTree)[0].id);
@@ -1428,102 +1375,235 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
     [commitTree, removePtySession, setFocusedPane],
   );
 
-  const closePtySlots = useCallback(
-    async (targetSlots: PtyWorkspaceSlot[], skipConfirmation = false) => {
-      if (targetSlots.length === 0) return;
-      const ptySessionsById = useAppStore.getState().ptySessionsById;
-      const runningCount = targetSlots.filter(
-        (slot) =>
-          !slot.restoredState &&
-          slot.sessionId &&
-          ptySessionsById[slot.sessionId]?.state === "running",
-      ).length;
-      if (
-        runningCount > 0 &&
-        !skipConfirmation &&
-        !window.confirm(t("pty.confirmCloseMany", { count: runningCount }))
-      ) {
-        return;
-      }
+  const confirmCloseImpacts = useCallback(
+    (impacts: WorkspaceContentDisposalImpact[]) =>
+      new Promise<boolean>((resolve) => {
+        if (closeConfirmationResolverRef.current) {
+          resolve(false);
+          return;
+        }
+        closeConfirmationResolverRef.current = resolve;
+        setCloseConfirmationImpacts(impacts);
+      }),
+    [],
+  );
 
-      const contents = targetSlots.map((slot) => ({
-        slot,
-        content: { kind: "pty", slotId: slot.instanceId } as const,
-      }));
-      const adapter = getWorkspaceContentAdapter("pty");
-      const requests = contents.map(({ content }) => {
+  const resolveCloseConfirmation = useCallback((confirmed: boolean) => {
+    const resolve = closeConfirmationResolverRef.current;
+    closeConfirmationResolverRef.current = null;
+    setCloseConfirmationImpacts(null);
+    resolve?.(confirmed);
+  }, []);
+
+  const closeContents = useCallback(
+    async (
+      requestedContents: WorkspacePaneContentRef[],
+      origin: "tab" | "menu" | "stack" | "window",
+      onApproved?: () => void,
+    ) => {
+      const uniqueContents: WorkspacePaneContentRef[] = [
+        ...new Map(
+          requestedContents.map((content) => [
+            content.kind === "pty"
+              ? `pty:${content.slotId}`
+              : `file:${content.documentId}`,
+            content,
+          ]),
+        ).values(),
+      ];
+      const ptySessionsById = useAppStore.getState().ptySessionsById;
+      type WorkspaceCloseTarget = {
+        content: WorkspacePaneContentRef;
+        slot?: PtyWorkspaceSlot;
+        beforeClose: () => boolean;
+        describeDisposalImpact: () => WorkspaceContentDisposalImpact[];
+      };
+      const closeTargets: WorkspaceCloseTarget[] = [];
+      for (const content of uniqueContents) {
         const pane = listWorkspacePanes(treeRef.current).find((candidate) =>
           hasWorkspaceContent(candidate, content),
         );
-        if (!pane) return null;
+        if (!pane) continue;
+
+        if (content.kind === "pty") {
+          const slot = slotsRef.current.find(
+            (candidate) => candidate.instanceId === content.slotId,
+          );
+          if (!slot || detachedInstanceIdsRef.current.has(content.slotId)) {
+            continue;
+          }
+          const session = slot.sessionId
+            ? ptySessionsById[slot.sessionId]
+            : undefined;
+          const title = presentWorkspaceContent(
+            content,
+            getWorkspacePresentationContext(),
+          ).title;
+          const adapter = getWorkspaceContentAdapter("pty");
+          contentCoordinatorRef.current.ensureAttached(content, {
+            kind: "pane",
+            windowLabel: "main",
+            paneId: pane.id,
+          });
+          closeTargets.push({
+            content,
+            slot,
+            beforeClose: () =>
+              shouldCloseWorkspaceContent(adapter.lifecycle?.beforeClose, {
+                isDirty: false,
+                confirmDiscard: () => false,
+              }),
+            describeDisposalImpact: () =>
+              adapter.lifecycle?.describeDisposalImpact?.({
+                isDirty: false,
+                isRunning: session?.state === "running",
+                title,
+              }) ?? [],
+          });
+          continue;
+        }
+
+        const document = fileDocumentsRef.current.find(
+          (candidate) => candidate.id === content.documentId,
+        );
+        if (
+          !document ||
+          detachedFileIdsRef.current.has(content.documentId) ||
+          handoffFileIdsRef.current.has(content.documentId)
+        ) {
+          continue;
+        }
+        const buffer = fileBuffersRef.current[content.documentId];
+        const isDirty = Boolean(
+          buffer &&
+          (buffer.content !== buffer.savedContent ||
+            buffer.saving ||
+            buffer.conflict === true ||
+            buffer.identityChanged === true),
+        );
+        const adapter = getWorkspaceContentAdapter("file");
         contentCoordinatorRef.current.ensureAttached(content, {
           kind: "pane",
           windowLabel: "main",
           paneId: pane.id,
         });
-        return {
+        closeTargets.push({
           content,
           beforeClose: () =>
             shouldCloseWorkspaceContent(adapter.lifecycle?.beforeClose, {
-              isDirty: false,
+              isDirty,
               confirmDiscard: () => false,
             }),
-        };
-      });
-      if (requests.some((request) => request === null)) return;
-      const validRequests = requests.filter(
-        (request): request is NonNullable<typeof request> => request !== null,
-      );
+          describeDisposalImpact: () =>
+            adapter.lifecycle?.describeDisposalImpact?.({
+              isDirty,
+              isRunning: false,
+              title: document.relativePath,
+            }) ?? [],
+        });
+      }
+      if (closeTargets.length === 0) return;
+
       const outcomes: Array<{
         slot: PtyWorkspaceSlot;
         result: "closed" | "pending" | "cancelled" | "terminating";
-      } | null> = [];
-      await closeWorkspaceContentBatch({
-        coordinator: contentCoordinatorRef.current,
-        requestId: crypto.randomUUID(),
-        requests: validRequests,
-        dispose: (context) =>
-          adapter.lifecycle?.dispose?.(
-            context as WorkspaceContentDisposeContext<"pty">,
-          ),
-        execute: async () => {
-          const results = await Promise.all(
-            contents.map(async ({ slot, content }) => {
-              if (slot.restoredState)
-                return { slot, content, result: "closed" as const };
-              const terminal = terminalRefs.current.get(slot.instanceId);
-              if (!terminal) return null;
-              try {
-                const result = await terminal.closeSession(false);
-                return { slot, content, result };
-              } catch {
-                return { slot, content, result: "cancelled" as const };
-              }
-            }),
-          );
-          outcomes.push(
-            ...results.map(
-              (result) =>
-                result && { slot: result.slot, result: result.result },
-            ),
-          );
-          for (const result of results) {
-            if (result?.result === "closed") {
-              removeSlot(result.slot.instanceId, "closed", {
-                lifecycleManaged: false,
-              });
+      }> = [];
+      try {
+        await closeWorkspaceContentBatch({
+          coordinator: contentCoordinatorRef.current,
+          requestId: crypto.randomUUID(),
+          requests: closeTargets,
+          confirmImpacts: confirmCloseImpacts,
+          onApproved,
+          dispose: (context) => {
+            if (context.content.kind === "pty") {
+              return getWorkspaceContentAdapter("pty").lifecycle?.dispose?.(
+                context as WorkspaceContentDisposeContext<"pty">,
+              );
             }
-          }
-          return results
-            .filter((result) => result?.result === "closed")
-            .map((result) => result!.content);
-        },
-      });
+            return getWorkspaceContentAdapter("file").lifecycle?.dispose?.(
+              context as WorkspaceContentDisposeContext<"file">,
+            );
+          },
+          execute: async () => {
+            const closedContents: WorkspacePaneContentRef[] = [];
+            const fileIds = closeTargets.flatMap((target) =>
+              target.content.kind === "file" ? [target.content.documentId] : [],
+            );
+            if (fileIds.length > 0) {
+              const next = closeWorkspaceFileState(
+                {
+                  tree: treeRef.current,
+                  documents: fileDocumentsRef.current,
+                  buffers: fileBuffersRef.current,
+                },
+                fileIds,
+              );
+              commitTree(next.tree);
+              fileDocumentsRef.current = next.documents;
+              setFileDocuments(next.documents);
+              fileBuffersRef.current = next.buffers;
+              setFileBuffers(next.buffers);
+              next.closedDocumentIds.forEach(invalidateFileOperationGeneration);
+              closedContents.push(
+                ...next.closedDocumentIds.map((documentId) => ({
+                  kind: "file" as const,
+                  documentId,
+                })),
+              );
+            }
+
+            const ptyTargets = closeTargets.flatMap((target) =>
+              target.content.kind === "pty"
+                ? [{ slot: target.slot!, content: target.content }]
+                : [],
+            );
+            const results = await Promise.all(
+              ptyTargets.map(async ({ slot, content }) => {
+                if (slot.restoredState) {
+                  return { slot, content, result: "closed" as const };
+                }
+                const terminal = terminalRefs.current.get(slot.instanceId);
+                if (!terminal) {
+                  return { slot, content, result: "cancelled" as const };
+                }
+                try {
+                  return {
+                    slot,
+                    content,
+                    result: await terminal.closeSession(false),
+                  };
+                } catch {
+                  return { slot, content, result: "cancelled" as const };
+                }
+              }),
+            );
+            outcomes.push(
+              ...results.map(({ slot, result }) => ({ slot, result })),
+            );
+            for (const result of results) {
+              if (result.result === "closed") {
+                removeSlot(result.slot.instanceId, "closed", {
+                  lifecycleManaged: false,
+                });
+                closedContents.push(result.content);
+              }
+            }
+            return closedContents;
+          },
+        });
+      } catch (reason) {
+        console.error(
+          `Failed to close workspace contents from ${origin}`,
+          reason,
+        );
+      }
+
       const pendingCount = outcomes.filter(
-        (outcome) => outcome?.result === "pending",
+        (outcome) => outcome.result === "pending",
       ).length;
       const failedCount = outcomes.filter(
-        (outcome) => outcome?.result === "cancelled",
+        (outcome) => outcome.result === "cancelled",
       ).length;
       if (pendingCount > 0) {
         toast.info(t("pty.closePending", { count: pendingCount }));
@@ -1532,7 +1612,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         toast.error(t("pty.closeFailedMany", { count: failedCount }));
       }
     },
-    [removeSlot, t],
+    [commitTree, confirmCloseImpacts, directories, removeSlot, t],
   );
 
   const launchSession = useCallback(
@@ -1581,47 +1661,30 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const activateSession = useCallback(
     (paneId: string, instanceId: string) => {
+      const content = { kind: "pty", slotId: instanceId } as const;
       try {
         commitTree(
-          activateWorkspaceSession(treeRef.current, paneId, instanceId),
+          executeWorkspaceCommand(treeRef.current, {
+            type: "activate",
+            ref: content,
+            paneId,
+          }),
         );
       } catch {
         return;
       }
       setFocusedPane(paneId);
-      const slot = slotsRef.current.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      if (slot && !isInvalidRestoredSlotState(slot.restoredState)) {
-        const state = useAppStore.getState();
-        if (
-          state.view !== "detail" ||
-          state.selectedDirectoryId !== slot.directoryId
-        ) {
-          state.openDirectory(slot.directoryId);
-        }
-      }
+      syncProjectContext(content);
     },
-    [commitTree, setFocusedPane],
+    [commitTree, setFocusedPane, syncProjectContext],
   );
 
   const splitPane = useCallback(
     (paneId: string, direction: SplitDirection) => {
       const sourcePane = findWorkspacePane(treeRef.current, paneId);
       if (!sourcePane) return;
-      const sourceSlot = slotsRef.current.find(
-        (slot) =>
-          slot.instanceId ===
-          (sourcePane.activeContent?.kind === "pty"
-            ? sourcePane.activeContent.slotId
-            : null),
-      );
-      if (sourceSlot) {
-        const state = useAppStore.getState();
-        if (state.selectedDirectoryId !== sourceSlot.directoryId) {
-          state.openDirectory(sourceSlot.directoryId);
-        }
-      }
+      if (sourcePane.activeContent)
+        syncProjectContext(sourcePane.activeContent);
       const newPaneId = crypto.randomUUID();
       const next = splitWorkspacePane(
         treeRef.current,
@@ -1633,132 +1696,107 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       commitTree(next);
       setFocusedPane(newPaneId);
     },
-    [commitTree, setFocusedPane],
+    [commitTree, setFocusedPane, syncProjectContext],
+  );
+
+  const splitAndMoveContent = useCallback(
+    (
+      paneId: string,
+      content: WorkspacePaneContentRef,
+      direction: SplitDirection,
+    ) => {
+      const sourcePane = findWorkspacePane(treeRef.current, paneId);
+      if (!sourcePane || !hasWorkspaceContent(sourcePane, content)) return;
+      const newPaneId = crypto.randomUUID();
+      const next = executeWorkspaceCommand(treeRef.current, {
+        type: "split",
+        ref: content,
+        toPaneId: newPaneId,
+        direction,
+        splitId: crypto.randomUUID(),
+      });
+      if (next === treeRef.current) return;
+      contentCoordinatorRef.current.ensureAttached(content, {
+        kind: "pane",
+        windowLabel: "main",
+        paneId: newPaneId,
+      });
+      commitTree(next);
+      setFocusedPane(newPaneId);
+      syncProjectContext(content);
+    },
+    [commitTree, setFocusedPane, syncProjectContext],
   );
 
   const splitAndMoveSession = useCallback(
-    (paneId: string, instanceId: string, direction: SplitDirection) => {
-      const sourcePane = findWorkspacePane(treeRef.current, paneId);
-      const slot = slotsRef.current.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      if (
-        !sourcePane ||
-        !hasWorkspaceContent(sourcePane, { kind: "pty", slotId: instanceId }) ||
-        !slot
-      )
-        return;
-      const newPaneId = crypto.randomUUID();
-      const next = splitAndMoveWorkspaceSession(
-        treeRef.current,
+    (paneId: string, instanceId: string, direction: SplitDirection) =>
+      splitAndMoveContent(
         paneId,
-        instanceId,
-        direction,
-        crypto.randomUUID(),
-        newPaneId,
-      );
-      contentCoordinatorRef.current.ensureAttached(
         { kind: "pty", slotId: instanceId },
-        { kind: "pane", windowLabel: "main", paneId: newPaneId },
-      );
-      commitTree(next);
-      setFocusedPane(newPaneId);
-      const state = useAppStore.getState();
-      if (
-        state.view !== "detail" ||
-        state.selectedDirectoryId !== slot.directoryId
-      ) {
-        state.openDirectory(slot.directoryId);
-      }
-    },
-    [commitTree, setFocusedPane],
+        direction,
+      ),
+    [splitAndMoveContent],
   );
 
   const splitAndMoveFile = useCallback(
-    (paneId: string, documentId: string, direction: SplitDirection) => {
-      const sourcePane = findWorkspacePane(treeRef.current, paneId);
-      if (
-        !sourcePane ||
-        !hasWorkspaceContent(sourcePane, { kind: "file", documentId })
-      )
-        return;
-      const nextPaneId = crypto.randomUUID();
-      const next = splitAndMoveWorkspaceFile(
-        treeRef.current,
-        paneId,
-        documentId,
-        direction,
-        crypto.randomUUID(),
-        nextPaneId,
-      );
-      contentCoordinatorRef.current.ensureAttached(
-        { kind: "file", documentId },
-        { kind: "pane", windowLabel: "main", paneId: nextPaneId },
-      );
-      commitTree(next);
-      setFocusedPane(nextPaneId);
-    },
-    [commitTree, setFocusedPane],
+    (paneId: string, documentId: string, direction: SplitDirection) =>
+      splitAndMoveContent(paneId, { kind: "file", documentId }, direction),
+    [splitAndMoveContent],
   );
 
-  const moveSession = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, instanceId: string) => {
+  const moveContent = useCallback(
+    (
+      sourcePaneId: string,
+      destinationPaneId: string,
+      content: WorkspacePaneContentRef,
+    ) => {
       const sourcePane = findWorkspacePane(treeRef.current, sourcePaneId);
       const destinationPane = findWorkspacePane(
         treeRef.current,
         destinationPaneId,
       );
-      const slot = slotsRef.current.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
       if (
         !sourcePane ||
-        !hasWorkspaceContent(sourcePane, { kind: "pty", slotId: instanceId }) ||
+        !hasWorkspaceContent(sourcePane, content) ||
         !destinationPane ||
-        !slot
+        sourcePaneId === destinationPaneId
       ) {
         return;
       }
-      const next = moveWorkspaceSession(
-        treeRef.current,
-        sourcePaneId,
-        destinationPaneId,
-        instanceId,
-      );
-      contentCoordinatorRef.current.ensureAttached(
-        { kind: "pty", slotId: instanceId },
-        { kind: "pane", windowLabel: "main", paneId: destinationPaneId },
-      );
+      const next = executeWorkspaceCommand(treeRef.current, {
+        type: "move",
+        ref: content,
+        toPaneId: destinationPaneId,
+      });
+      if (next === treeRef.current) return;
+      contentCoordinatorRef.current.ensureAttached(content, {
+        kind: "pane",
+        windowLabel: "main",
+        paneId: destinationPaneId,
+      });
       commitTree(next);
       setFocusedPane(destinationPaneId);
-      const state = useAppStore.getState();
-      if (
-        state.view !== "detail" ||
-        state.selectedDirectoryId !== slot.directoryId
-      ) {
-        state.openDirectory(slot.directoryId);
-      }
+      syncProjectContext(content);
     },
-    [commitTree, setFocusedPane],
+    [commitTree, setFocusedPane, syncProjectContext],
+  );
+
+  const moveSession = useCallback(
+    (sourcePaneId: string, destinationPaneId: string, instanceId: string) =>
+      moveContent(sourcePaneId, destinationPaneId, {
+        kind: "pty",
+        slotId: instanceId,
+      }),
+    [moveContent],
   );
 
   const moveFile = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, documentId: string) => {
-      const next = moveWorkspaceFileToPane(
-        treeRef.current,
-        sourcePaneId,
-        destinationPaneId,
+    (sourcePaneId: string, destinationPaneId: string, documentId: string) =>
+      moveContent(sourcePaneId, destinationPaneId, {
+        kind: "file",
         documentId,
-      );
-      if (next === treeRef.current) return;
-      contentCoordinatorRef.current.ensureAttached(
-        { kind: "file", documentId },
-        { kind: "pane", windowLabel: "main", paneId: destinationPaneId },
-      );
-      commitTree(next);
-      setFocusedPane(destinationPaneId);
-    },
-    [commitTree, setFocusedPane],
+      }),
+    [moveContent],
   );
 
   const isManagedDetachedDrag = useCallback(
@@ -1838,10 +1876,14 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         setDetachedInstanceIds((currentIds) =>
           new Set(currentIds).add(pending.instanceId),
         );
-        const nextTree = removeWorkspaceSession(
-          treeRef.current,
-          pending.instanceId,
-        );
+        const content = {
+          kind: "pty",
+          slotId: pending.instanceId,
+        } as const;
+        const nextTree = executeWorkspaceCommand(treeRef.current, {
+          type: "detach",
+          ref: content,
+        });
         commitTree(nextTree);
         if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
           setFocusedPane(listWorkspacePanes(nextTree)[0].id);
@@ -1903,7 +1945,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       const terminal = terminalRefs.current.get(instanceId);
       if (!terminal) throw new Error(t("pty.terminalNotReady"));
 
-      const windowLabel = `${getWorkspaceContentWindowLabelPrefix("pty")}${crypto.randomUUID()}`;
+      const windowLabel = createWindowLabel("terminal");
       const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
         hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
       );
@@ -1953,7 +1995,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         throw new Error(t("pty.detachedMoveUnavailable"));
       }
       const detachedRecord = { instanceId, sessionId, windowLabel };
-      const title = workspaceSlotTitle(slot, directories ?? []);
+      const title = presentWorkspaceContent(
+        { kind: "pty", slotId: instanceId },
+        getWorkspacePresentationContext(),
+      ).title;
       const childUrl = new URL(window.location.href);
       childUrl.search = "";
       childUrl.hash = "";
@@ -2057,10 +2102,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       setDetachedInstanceIds((current) =>
         new Set(current).add(payload.instanceId),
       );
-      const nextTree = removeWorkspaceSession(
-        treeRef.current,
-        payload.instanceId,
-      );
+      const content = { kind: "pty", slotId: payload.instanceId } as const;
+      const nextTree = executeWorkspaceCommand(treeRef.current, {
+        type: "detach",
+        ref: content,
+      });
       commitTree(nextTree);
       if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
         setFocusedPane(listWorkspacePanes(nextTree)[0].id);
@@ -2160,17 +2206,12 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           windowLabel: "main",
           paneId: targetPane.id,
         });
-        const nextTree = existingPane
-          ? activateWorkspaceSession(
-              currentTree,
-              existingPane.id,
-              slot.instanceId,
-            )
-          : addSessionToWorkspacePane(
-              currentTree,
-              targetPane.id,
-              slot.instanceId,
-            );
+        const nextTree = executeWorkspaceCommand(
+          currentTree,
+          existingPane
+            ? { type: "activate", ref: content, paneId: existingPane.id }
+            : { type: "return", ref: content, toPaneId: targetPane.id },
+        );
         commitTree(nextTree);
         setFocusedPane(existingPane?.id ?? targetPane.id);
         useAppStore.getState().openDirectory(slot.directoryId);
@@ -2200,10 +2241,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
         fail(t("pty.detachedSessionMissing"));
         return;
       }
-      if (
-        !knownDetached &&
-        !/^terminal-[0-9a-f-]{36}$/i.test(payload.windowLabel)
-      ) {
+      if (!knownDetached && windowKindOf(payload.windowLabel) !== "terminal") {
         fail(t("pty.detachedSessionMissing"));
         return;
       }
@@ -2364,17 +2402,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
             slotId: payload.instanceId,
           }),
         );
-        const nextTree = existingPane
-          ? activateWorkspaceSession(
-              currentTree,
-              existingPane.id,
-              payload.instanceId,
-            )
-          : addSessionToWorkspacePane(
-              currentTree,
-              targetPane.id,
-              payload.instanceId,
-            );
+        const content = { kind: "pty", slotId: payload.instanceId } as const;
+        const nextTree = executeWorkspaceCommand(
+          currentTree,
+          existingPane
+            ? { type: "activate", ref: content, paneId: existingPane.id }
+            : { type: "return", ref: content, toPaneId: targetPane.id },
+        );
         commitTree(nextTree);
         setFocusedPane(existingPane?.id ?? targetPane.id);
         detachedByInstanceRef.current.delete(payload.instanceId);
@@ -2626,7 +2660,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               return next;
             });
             commitTree(
-              removeWorkspaceContentFromTree(treeRef.current, content),
+              executeWorkspaceCommand(treeRef.current, {
+                type: "detach",
+                ref: content,
+              }),
             );
             pending.resolve();
           },
@@ -2903,11 +2940,11 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
               ) {
                 throw new Error(t("pty.detachedStateChanged"));
               }
-              const nextTree = placeContentExclusively(
-                treeRef.current,
-                targetPane.id,
-                content,
-              );
+              const nextTree = executeWorkspaceCommand(treeRef.current, {
+                type: "return",
+                ref: content,
+                toPaneId: targetPane.id,
+              });
               commitTree(nextTree);
               setFocusedPane(targetPane.id);
               const ownership = contentCoordinatorRef.current.completeHandoff(
@@ -3006,17 +3043,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
           next,
           fallbackPaneId,
         )?.activeContent;
-        const activeSlotId =
-          activeContent?.kind === "pty" ? activeContent.slotId : null;
-        const activeSlot = slotsRef.current.find(
-          (slot) => slot.instanceId === activeSlotId,
-        );
-        if (activeSlot) {
-          useAppStore.getState().openDirectory(activeSlot.directoryId);
-        }
+        if (activeContent) syncProjectContext(activeContent);
       }
     },
-    [commitTree, setFocusedPane],
+    [commitTree, setFocusedPane, syncProjectContext],
   );
 
   const updateSplitRatio = useCallback(
@@ -3078,7 +3108,10 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       "detaching",
     );
     for (const content of protectedContents) {
-      presetTree = removeWorkspaceContentFromTree(presetTree, content);
+      presetTree = executeWorkspaceCommand(presetTree, {
+        type: "detach",
+        ref: content,
+      });
     }
     const presetPanes = listWorkspacePanes(presetTree);
     const paneSlotIds = new Set(
@@ -3296,9 +3329,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       activateFile,
       editFile,
       saveFile,
-      closeFile,
-      closeFiles,
-      closePtySlots,
+      closeContents,
       detachFile,
       detachedFileIds,
       focusPane,
@@ -3347,9 +3378,7 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
       activateFile,
       editFile,
       saveFile,
-      closeFile,
-      closeFiles,
-      closePtySlots,
+      closeContents,
       detachFile,
       detachedFileIds,
       focusPane,
@@ -3381,6 +3410,13 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   return (
     <PtyWorkspaceContext.Provider value={value}>
       {children}
+      {closeConfirmationImpacts && (
+        <WorkspaceContentCloseDialog
+          impacts={closeConfirmationImpacts}
+          onCancel={() => resolveCloseConfirmation(false)}
+          onConfirm={() => resolveCloseConfirmation(true)}
+        />
+      )}
       {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
         <WorkspacePtySessionRegistry
           slots={slots}
@@ -3404,6 +3440,60 @@ export function usePtyWorkspace() {
     throw new Error("PtyWorkspaceProvider is missing");
   }
   return workspace;
+}
+
+function WorkspaceContentCloseDialog({
+  impacts,
+  onCancel,
+  onConfirm,
+}: {
+  impacts: WorkspaceContentDisposalImpact[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  const runningSessions = impacts.filter(
+    (impact) => impact.kind === "runningPty",
+  );
+  const dirtyFiles = impacts.filter((impact) => impact.kind === "dirtyFile");
+
+  return (
+    <div className="app-exit-overlay">
+      <section className="app-exit-dialog" role="alertdialog" aria-modal="true">
+        <h2>{t("common.confirm")}</h2>
+        {runningSessions.length > 0 && (
+          <>
+            <p>
+              {t("pty.confirmCloseMany", { count: runningSessions.length })}
+            </p>
+            <ul className="app-exit-unsaved-files">
+              {runningSessions.map((impact) => (
+                <li key={`pty:${impact.title}`}>{impact.title}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {dirtyFiles.length > 0 && (
+          <>
+            <p>{t("workspaceFiles.discardChanges")}</p>
+            <ul className="app-exit-unsaved-files">
+              {dirtyFiles.map((impact) => (
+                <li key={`file:${impact.title}`}>{impact.title}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        <div className="app-exit-actions">
+          <button className="ghost-button" onClick={onCancel}>
+            {t("common.cancel")}
+          </button>
+          <button className="primary-button" onClick={onConfirm}>
+            {t("common.confirm")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 export function WorkspaceLayoutControls() {
@@ -3456,9 +3546,7 @@ export function PtyWorkspaceRegion() {
     retryHydration,
     resetWorkspace,
     activateFile,
-    closeFile,
-    closeFiles,
-    closePtySlots,
+    closeContents,
     editFile,
     loadFile,
     saveFile,
@@ -3499,9 +3587,6 @@ export function PtyWorkspaceRegion() {
       </section>
     );
   }
-
-  const closeSlot = (slot: PtyWorkspaceSlot) => closePtySlots([slot]);
-  const closeSlots = closePtySlots;
 
   const workspacePanes = listWorkspacePanes(tree);
 
@@ -3554,8 +3639,7 @@ export function PtyWorkspaceRegion() {
           onFocusPane={focusPane}
           onActivateSession={activateSession}
           onActivateFile={activateFile}
-          onCloseFile={closeFile}
-          onCloseFiles={closeFiles}
+          onCloseContents={closeContents}
           onDetachFile={(documentId) => {
             void detachFile(documentId).catch((reason) =>
               toast.error(String(reason)),
@@ -3579,8 +3663,6 @@ export function PtyWorkspaceRegion() {
           }}
           onCloseEmptyPane={closeEmptyPane}
           onSplitResize={updateSplitRatio}
-          onCloseSlot={closeSlot}
-          onCloseSlots={closeSlots}
         />
       </div>
     </section>
@@ -3904,11 +3986,11 @@ interface WorkspaceTreeViewProps {
   onFocusPane: (paneId: string) => void;
   onActivateSession: (paneId: string, instanceId: string) => void;
   onActivateFile: (paneId: string, documentId: string) => void;
-  onCloseFile: (documentId: string, skipDirtyConfirmation?: boolean) => void;
-  onCloseFiles: (
-    documentIds: string[],
-    skipDirtyConfirmation?: boolean,
-  ) => void;
+  onCloseContents: (
+    contents: WorkspacePaneContentRef[],
+    origin: "tab" | "menu" | "stack" | "window",
+    onApproved?: () => void,
+  ) => Promise<void>;
   onDetachFile: (documentId: string) => void;
   onMoveFile: (
     sourcePaneId: string,
@@ -3947,8 +4029,6 @@ interface WorkspaceTreeViewProps {
     sizes: number[],
     phase: SplitResizePhase,
   ) => void;
-  onCloseSlot: (slot: PtyWorkspaceSlot) => void;
-  onCloseSlots: (slots: PtyWorkspaceSlot[], skipConfirmation?: boolean) => void;
 }
 
 function WorkspaceTreeView(props: WorkspaceTreeViewProps) {
@@ -4124,8 +4204,7 @@ function WorkspacePaneView({
   onFocusPane,
   onActivateSession,
   onActivateFile,
-  onCloseFile,
-  onCloseFiles,
+  onCloseContents,
   onDetachFile,
   onMoveFile,
   onEditFile,
@@ -4140,13 +4219,19 @@ function WorkspacePaneView({
   isManagedDetachedFileDrag,
   onDetachSession,
   onCloseEmptyPane,
-  onCloseSlot,
-  onCloseSlots,
 }: WorkspaceTreeViewProps & {
   pane: Extract<WorkspaceNode, { kind: "pane" }>;
 }) {
   const { t } = useTranslation();
   const paneName = t("pty.paneNumber", { number: pane.paneNumber });
+  const presentationContext: WorkspaceContentPresentationContext = {
+    directories,
+    ptySlots: slots,
+    ptySessionsById,
+    fileDocuments,
+    fileBuffers,
+    selectedDirectoryId,
+  };
   const paneSlots = listWorkspacePaneContents(pane, "pty")
     .map((content) =>
       content.kind === "pty"
@@ -4159,14 +4244,6 @@ function WorkspacePaneView({
   const activeFile = activeFileId
     ? fileDocuments.find((document) => document.id === activeFileId)
     : undefined;
-  const paneFiles = listWorkspacePaneContents(pane, "file")
-    .map((content) => (content.kind === "file" ? content.documentId : null))
-    .filter((documentId): documentId is string => documentId !== null)
-    .filter((documentId) => !detachedFileIds.has(documentId))
-    .map((documentId) =>
-      fileDocuments.find((document) => document.id === documentId),
-    )
-    .filter((document): document is WorkspaceFileDocument => Boolean(document));
   const paneContentEntries: ResolvedPaneContent[] = pane.contents.flatMap(
     (content): ResolvedPaneContent[] => {
       if (content.kind === "pty") {
@@ -4191,8 +4268,77 @@ function WorkspacePaneView({
     activeContentEntry && "slot" in activeContentEntry
       ? activeContentEntry.slot
       : undefined;
-  const previousContents = contentSequence.before;
-  const nextContents = contentSequence.after;
+  const paneContentSignature = paneContentEntries
+    .map((entry) => workspaceContentReactKey(entry.content))
+    .join("|");
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  const [tabStripWidth, setTabStripWidth] = useState(0);
+  const [tabWidths, setTabWidths] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const tabStrip = tabStripRef.current;
+    if (!tabStrip || typeof ResizeObserver === "undefined") return;
+
+    const measure = () => {
+      const nextStripWidth = tabStrip.clientWidth;
+      setTabStripWidth((current) =>
+        Math.abs(current - nextStripWidth) < 1 ? current : nextStripWidth,
+      );
+      const nextWidths: Record<string, number> = {};
+      tabStrip
+        .querySelectorAll<HTMLElement>("[data-workspace-content-key]")
+        .forEach((element) => {
+          const key = element.dataset.workspaceContentKey;
+          const width = element.getBoundingClientRect().width;
+          if (key && width > 0) nextWidths[key] = width;
+        });
+      setTabWidths((current) => {
+        const keys = Object.keys(nextWidths);
+        if (
+          keys.length === Object.keys(current).length &&
+          keys.every(
+            (key) => Math.abs((current[key] ?? 0) - nextWidths[key]) < 1,
+          )
+        ) {
+          return current;
+        }
+        return nextWidths;
+      });
+    };
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(tabStrip);
+    tabStrip
+      .querySelectorAll<HTMLElement>("[data-workspace-content-key]")
+      .forEach((element) => observer.observe(element));
+    measure();
+    return () => observer.disconnect();
+  }, [paneContentSignature]);
+  const activeTabIndex = Math.max(
+    0,
+    paneContentEntries.findIndex(
+      (entry) =>
+        pane.activeContent &&
+        workspaceContentReactKey(entry.content) ===
+          workspaceContentReactKey(pane.activeContent),
+    ),
+  );
+  const tabPartition = partitionVisibleTabs(
+    paneContentEntries.map(
+      (entry) =>
+        tabWidths[workspaceContentReactKey(entry.content)] ??
+        Number.POSITIVE_INFINITY,
+    ),
+    tabStripWidth,
+    activeTabIndex,
+    40,
+  );
+  const visibleTabIndexes = new Set(tabPartition.visible);
+  const visibleTabEntries = paneContentEntries.filter((_, index) =>
+    visibleTabIndexes.has(index),
+  );
+  const stackedTabEntries = paneContentEntries.filter(
+    (_, index) => !visibleTabIndexes.has(index),
+  );
   const related = paneSlots.some(
     (slot) => slot.directoryId === selectedDirectoryId,
   );
@@ -4263,57 +4409,87 @@ function WorkspacePaneView({
     onSplitAndMoveSession(pane.id, instanceId, direction);
   };
 
-  const renderActiveTab = (slot: PtyWorkspaceSlot) => {
-    const tool = TOOLS.find((entry) => entry.key === slot.toolKey)!;
-    const ToolIcon = tool.icon;
-    const session =
-      !slot.restoredState && slot.sessionId
-        ? ptySessionsById[slot.sessionId]
-        : undefined;
-    const title = workspaceSlotTitle(slot, directories);
+  const renderContentTab = (
+    entry: ResolvedPaneContent,
+    measureOnly = false,
+  ) => {
+    const { content } = entry;
+    const key = workspaceContentReactKey(content);
+    const presentation = presentWorkspaceContent(content, presentationContext);
+    const adapter = getWorkspaceContentAdapter(content.kind);
+    const title = presentation.title;
+    const isActive =
+      pane.activeContent !== null &&
+      pane.activeContent !== undefined &&
+      workspaceContentReactKey(pane.activeContent) === key;
+    const projectId = workspaceContentProjectContext(
+      content,
+      presentationContext,
+    );
 
     return (
       <WorkspaceContentTab
-        key={slot.instanceId}
+        key={key}
+        contentKey={key}
+        measureOnly={measureOnly}
         title={title}
-        active={
-          pane.activeContent?.kind !== "file" &&
-          pane.activeContent?.kind === "pty" &&
-          pane.activeContent.slotId === slot.instanceId
-        }
-        related={slot.directoryId === selectedDirectoryId}
-        closeLabel={t(
-          getWorkspaceContentAdapter("pty").presentation.labels.close,
-        )}
-        closeAccessibleName={t("pty.closeNamed", { name: title })}
+        active={isActive}
+        related={projectId !== null && projectId === selectedDirectoryId}
+        closeLabel={t(presentation.closeLabelKey)}
+        closeAccessibleName={t(adapter.labels.closeCurrent, { name: title })}
         draggable
-        onDragStart={(event) =>
-          beginWorkspaceSessionDrag(event, pane.id, slot.instanceId)
-        }
-        onActivate={() => onActivateSession(pane.id, slot.instanceId)}
-        onRequestClose={() => void onCloseSlot(slot)}
+        onDragStart={(event) => {
+          if (content.kind === "pty") {
+            beginWorkspaceSessionDrag(event, pane.id, content.slotId);
+            return;
+          }
+          const payload = encodeWorkspaceContentDrag({
+            kind: content.kind,
+            contentId: content.documentId,
+            sourcePaneId: pane.id,
+            sourceWindowLabel: "main",
+          });
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
+          event.dataTransfer.setData("text/plain", payload);
+        }}
+        onActivate={() => {
+          if (content.kind === "pty")
+            onActivateSession(pane.id, content.slotId);
+          else onActivateFile(pane.id, content.documentId);
+        }}
+        onRequestClose={() => void onCloseContents([content], "tab")}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
           onFocusPane(pane.id);
           setContextMenu({
-            target: { kind: "pty", instanceId: slot.instanceId },
+            target:
+              content.kind === "pty"
+                ? { kind: "pty", instanceId: content.slotId }
+                : { kind: "file", documentId: content.documentId },
             x: event.clientX,
             y: event.clientY,
           });
         }}
       >
-        <ToolIcon size={13} />
+        {presentation.icon}
+        {presentation.status && presentation.status !== "dirty" && (
+          <span
+            className={clsx("pty-pane-tab-status", {
+              running: presentation.status === "running",
+              failed: presentation.status === "failed",
+            })}
+            aria-hidden="true"
+          />
+        )}
         <span
-          className={clsx("pty-pane-tab-status", {
-            running: session?.state === "running",
-            failed:
-              session?.state === "failed" ||
-              isInvalidRestoredSlotState(slot.restoredState),
-          })}
-          aria-hidden="true"
-        />
-        <span className="pty-pane-tab-title">{title}</span>
+          className="pty-pane-tab-title"
+          title={presentation.tooltip ?? title}
+        >
+          {content.kind === "file" ? title.split(/[\\/]/).pop() : title}
+          {presentation.status === "dirty" ? " •" : ""}
+        </span>
       </WorkspaceContentTab>
     );
   };
@@ -4453,23 +4629,33 @@ function WorkspacePaneView({
             <span className="pty-pane-empty-title">{t("pty.emptyPane")}</span>
           )}
         </div>
-        <div className="pty-pane-tabs">
-          {previousContents.length > 0 && (
+        <div className="pty-pane-tabs" ref={tabStripRef}>
+          <div
+            className="pty-pane-active-tablist"
+            role="tablist"
+            aria-label={t("pty.paneSessions")}
+          >
+            {visibleTabEntries.map((entry) => renderContentTab(entry))}
+          </div>
+          {stackedTabEntries.length > 0 && (
             <PaneSessionStack
-              side="before"
+              side="overflow"
               sourcePaneId={pane.id}
-              entries={previousContents}
+              entries={stackedTabEntries}
               directories={directories}
+              ptySlots={slots}
               ptySessionsById={ptySessionsById}
+              fileDocuments={fileDocuments}
+              fileBuffers={fileBuffers}
+              selectedDirectoryId={selectedDirectoryId}
               onActivate={(entry) => {
                 if (entry.content.kind === "pty")
                   onActivateSession(pane.id, entry.content.slotId);
                 else onActivateFile(pane.id, entry.content.documentId);
               }}
-              onCloseContent={(entry) => {
-                if ("slot" in entry) onCloseSlot(entry.slot);
-                else onCloseFile(entry.file.id);
-              }}
+              onCloseContent={(entry) =>
+                void onCloseContents([entry.content], "stack")
+              }
               onContextMenu={(entry, x, y) => {
                 onFocusPane(pane.id);
                 setContextMenu({
@@ -4483,104 +4669,9 @@ function WorkspacePaneView({
               }}
             />
           )}
-          {activeSlot && (
-            <div
-              className="pty-pane-active-tablist"
-              role="tablist"
-              aria-label={t("pty.paneSessions")}
-            >
-              {renderActiveTab(activeSlot)}
-            </div>
-          )}
-          {paneFiles
-            .filter((file) => file.id === activeFileId)
-            .map((file) => {
-              const buffer = fileBuffers[file.id];
-              const fileName = file.relativePath.split("/").pop();
-              const dirty =
-                buffer &&
-                (buffer.content !== buffer.savedContent ||
-                  buffer.saving ||
-                  buffer.conflict === true ||
-                  buffer.identityChanged === true);
-              return (
-                <WorkspaceContentTab
-                  className="file-tab-group"
-                  key={file.id}
-                  title={file.relativePath}
-                  active={activeFileId === file.id}
-                  closeLabel={t(
-                    getWorkspaceContentAdapter("file").presentation.labels
-                      .close,
-                  )}
-                  closeAccessibleName={t("workspaceFiles.closeFileNamed", {
-                    name: file.relativePath,
-                  })}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    const payload = encodeWorkspaceContentDrag({
-                      kind: "file",
-                      contentId: file.id,
-                      sourcePaneId: pane.id,
-                      sourceWindowLabel: "main",
-                    });
-                    event.dataTransfer.setData(
-                      WORKSPACE_CONTENT_DRAG_TYPE,
-                      payload,
-                    );
-                    event.dataTransfer.setData("text/plain", payload);
-                  }}
-                  onActivate={() => onActivateFile(pane.id, file.id)}
-                  onRequestClose={() => onCloseFile(file.id)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onFocusPane(pane.id);
-                    onActivateFile(pane.id, file.id);
-                    setContextMenu({
-                      target: { kind: "file", documentId: file.id },
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                >
-                  <span className="pty-pane-tab-title">
-                    {fileName}
-                    {dirty ? " •" : ""}
-                  </span>
-                </WorkspaceContentTab>
-              );
-            })}
-          {nextContents.length > 0 && (
-            <PaneSessionStack
-              side="after"
-              sourcePaneId={pane.id}
-              entries={nextContents}
-              directories={directories}
-              ptySessionsById={ptySessionsById}
-              onActivate={(entry) => {
-                if (entry.content.kind === "pty")
-                  onActivateSession(pane.id, entry.content.slotId);
-                else onActivateFile(pane.id, entry.content.documentId);
-              }}
-              onCloseContent={(entry) => {
-                if ("slot" in entry) onCloseSlot(entry.slot);
-                else onCloseFile(entry.file.id);
-              }}
-              onContextMenu={(entry, x, y) => {
-                onFocusPane(pane.id);
-                setContextMenu({
-                  target:
-                    entry.content.kind === "pty"
-                      ? { kind: "pty", instanceId: entry.content.slotId }
-                      : { kind: "file", documentId: entry.content.documentId },
-                  x,
-                  y,
-                });
-              }}
-            />
-          )}
+          <div className="pty-pane-tab-measurements" aria-hidden="true">
+            {stackedTabEntries.map((entry) => renderContentTab(entry, true))}
+          </div>
         </div>
         <div className="pty-pane-actions">
           {canCloseEmptyPane &&
@@ -4663,82 +4754,27 @@ function WorkspacePaneView({
             paneContentRefs,
             targetContent,
           );
-          const itemTitle = targetSlot
-            ? workspaceSlotTitle(targetSlot, directories)
-            : (targetFile?.relativePath ?? "");
+          const itemTitle = presentWorkspaceContent(
+            targetContent,
+            presentationContext,
+          ).title;
           const adapter = getWorkspaceContentAdapter(target.kind);
           const labels = {
-            menu: t(adapter.presentation.labels.menu),
+            menu: t(adapter.labels.menu),
             closeCurrent: (name: string) =>
-              t(adapter.presentation.labels.closeCurrent, { name }),
+              t(adapter.labels.closeCurrent, { name }),
             closeOthers: (count: number) =>
-              t(adapter.presentation.labels.closeOthers, { count }),
-            closeAll: (count: number) =>
-              t(adapter.presentation.labels.closeAll, { count }),
-            splitAndMoveRight: t(adapter.presentation.labels.splitAndMoveRight),
-            splitAndMoveDown: t(adapter.presentation.labels.splitAndMoveDown),
+              t(adapter.labels.closeOthers, { count }),
+            closeAll: (count: number) => t(adapter.labels.closeAll, { count }),
+            splitAndMoveRight: t(adapter.labels.splitAndMoveRight),
+            splitAndMoveDown: t(adapter.labels.splitAndMoveDown),
           };
-          const closeContents = (
+          const requestCloseContents = (
             contents: WorkspacePaneContentRef[],
-            afterConfirm?: () => void,
+            afterApproval?: () => void,
           ) => {
             setContextMenu(null);
-            const ptySlots = contents
-              .filter(
-                (
-                  content,
-                ): content is Extract<
-                  WorkspacePaneContentRef,
-                  { kind: "pty" }
-                > => content.kind === "pty",
-              )
-              .map((content) =>
-                slots.find((slot) => slot.instanceId === content.slotId),
-              )
-              .filter((slot): slot is PtyWorkspaceSlot => Boolean(slot));
-            const fileIds = contents
-              .filter(
-                (
-                  content,
-                ): content is Extract<
-                  WorkspacePaneContentRef,
-                  { kind: "file" }
-                > => content.kind === "file",
-              )
-              .map((content) => content.documentId);
-            const hasDirtyFiles = fileIds.some((documentId) => {
-              const buffer = fileBuffers[documentId];
-              return Boolean(
-                buffer &&
-                (buffer.content !== buffer.savedContent ||
-                  buffer.saving ||
-                  buffer.conflict === true ||
-                  buffer.identityChanged === true),
-              );
-            });
-            if (
-              hasDirtyFiles &&
-              !window.confirm(t("workspaceFiles.discardChanges"))
-            ) {
-              return;
-            }
-            const runningPtyCount = ptySlots.filter(
-              (slot) =>
-                !slot.restoredState &&
-                slot.sessionId &&
-                ptySessionsById[slot.sessionId]?.state === "running",
-            ).length;
-            if (
-              runningPtyCount > 0 &&
-              !window.confirm(
-                t("pty.confirmCloseMany", { count: runningPtyCount }),
-              )
-            ) {
-              return;
-            }
-            afterConfirm?.();
-            if (ptySlots.length > 0) void onCloseSlots(ptySlots, true);
-            if (fileIds.length > 0) onCloseFiles(fileIds, true);
+            void onCloseContents(contents, "menu", afterApproval);
           };
           return (
             <WorkspaceContentContextMenu
@@ -4760,8 +4796,7 @@ function WorkspacePaneView({
                   id: candidate.id,
                   title: workspacePaneTitle(
                     candidate,
-                    slots,
-                    directories,
+                    presentationContext,
                     t("pty.paneNumber", { number: candidate.paneNumber }),
                     t("pty.emptyPane"),
                   ),
@@ -4818,15 +4853,15 @@ function WorkspacePaneView({
                 if (targetSlot) onDetachSession(targetSlot.instanceId);
                 else if (targetFile) onDetachFile(targetFile.id);
               }}
-              onCloseCurrent={() => closeContents([targetContent])}
+              onCloseCurrent={() => requestCloseContents([targetContent])}
               onCloseOthers={() =>
-                closeContents(otherContents, () => {
+                requestCloseContents(otherContents, () => {
                   if (targetSlot)
                     onActivateSession(pane.id, targetSlot.instanceId);
                   if (targetFile) onActivateFile(pane.id, targetFile.id);
                 })
               }
-              onCloseAll={() => closeContents(paneContentRefs)}
+              onCloseAll={() => requestCloseContents(paneContentRefs)}
             />
           );
         })()}
@@ -4839,32 +4874,76 @@ function PaneSessionStack({
   sourcePaneId,
   entries,
   directories,
+  ptySlots,
   ptySessionsById,
+  fileDocuments,
+  fileBuffers,
+  selectedDirectoryId,
   onActivate,
   onCloseContent,
   onContextMenu,
 }: {
-  side: "before" | "after";
+  side: "before" | "after" | "overflow";
   sourcePaneId: string;
   entries: ResolvedPaneContent[];
   directories: { id: number; name: string }[];
+  ptySlots: PtyWorkspaceSlot[];
   ptySessionsById: Record<string, PtySession>;
+  fileDocuments: WorkspaceFileDocument[];
+  fileBuffers: Record<string, WorkspaceFileBuffer | undefined>;
+  selectedDirectoryId: number | null;
   onActivate: (entry: ResolvedPaneContent) => void;
   onCloseContent: (entry: ResolvedPaneContent) => void;
   onContextMenu: (entry: ResolvedPaneContent, x: number, y: number) => void;
 }) {
   const { t } = useTranslation();
+  const presentationContext: WorkspaceContentPresentationContext = {
+    directories,
+    ptySlots,
+    ptySessionsById,
+    fileDocuments,
+    fileBuffers,
+    selectedDirectoryId,
+  };
   const anchorRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(0);
   const label = t(
-    side === "before" ? "pty.previousSessions" : "pty.nextSessions",
+    side === "before"
+      ? "pty.previousSessions"
+      : side === "after"
+        ? "pty.nextSessions"
+        : "pty.overflowContents",
     { count: entries.length },
   );
   const heading = t(
     side === "before"
       ? "pty.previousSessionsHeading"
-      : "pty.nextSessionsHeading",
+      : side === "after"
+        ? "pty.nextSessionsHeading"
+        : "pty.overflowContentsHeading",
   );
+
+  useEffect(() => {
+    if (!open) return;
+    const boundedIndex = Math.min(focusedIndex, entries.length - 1);
+    setFocusedIndex(Math.max(0, boundedIndex));
+    listRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-stack-index="${Math.max(0, boundedIndex)}"]`,
+      )
+      ?.focus();
+  }, [entries.length, focusedIndex, open]);
+
+  const focusStackEntry = (index: number) => {
+    if (entries.length === 0) return;
+    const nextIndex = (index + entries.length) % entries.length;
+    setFocusedIndex(nextIndex);
+    listRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-stack-index="${nextIndex}"]`)
+      ?.focus();
+  };
 
   return (
     <>
@@ -4893,33 +4972,38 @@ function PaneSessionStack({
           onClose={() => setOpen(false)}
           preferredWidth={320}
         >
-          <div className="pty-pane-session-stack-list" aria-label={heading}>
-            {entries.map((entry) => {
+          <div
+            ref={listRef}
+            className="pty-pane-session-stack-list"
+            aria-label={heading}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                focusStackEntry(focusedIndex + 1);
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                focusStackEntry(focusedIndex - 1);
+              } else if (event.key === "Delete") {
+                event.preventDefault();
+                onCloseContent(entries[focusedIndex]);
+              }
+            }}
+          >
+            {entries.map((entry, index) => {
               const slot = "slot" in entry ? entry.slot : undefined;
-              const file = "file" in entry ? entry.file : undefined;
-              const tool = slot
-                ? TOOLS.find((candidate) => candidate.key === slot.toolKey)
-                : undefined;
-              const ToolIcon = tool?.icon;
-              const session = slot
-                ? !slot.restoredState && slot.sessionId
-                  ? ptySessionsById[slot.sessionId]
-                  : undefined
-                : undefined;
-              const title = slot
-                ? workspaceSlotTitle(slot, directories)
-                : (file?.relativePath ?? "");
+              const presentation = presentWorkspaceContent(
+                entry.content,
+                presentationContext,
+              );
+              const title = presentation.title;
               const contentKey =
                 entry.content.kind === "pty"
                   ? `pty:${entry.content.slotId}`
                   : `file:${entry.content.documentId}`;
-              const closeLabel = t(
-                getWorkspaceContentAdapter(entry.content.kind).presentation
-                  .labels.close,
-              );
+              const closeLabel = t(presentation.closeLabelKey);
               const closeAccessibleName = t(
-                getWorkspaceContentAdapter(entry.content.kind).presentation
-                  .labels.closeCurrent,
+                getWorkspaceContentAdapter(entry.content.kind).labels
+                  .closeCurrent,
                 { name: title },
               );
 
@@ -4939,7 +5023,10 @@ function PaneSessionStack({
                     className="pty-pane-session-stack-session"
                     title={title}
                     aria-label={title}
+                    data-stack-index={index}
+                    tabIndex={index === focusedIndex ? 0 : -1}
                     draggable
+                    onFocus={() => setFocusedIndex(index)}
                     onDragStart={(event) => {
                       if (slot) {
                         beginWorkspaceSessionDrag(
@@ -4968,14 +5055,13 @@ function PaneSessionStack({
                       onActivate(entry);
                     }}
                   >
-                    {ToolIcon ? <ToolIcon size={14} /> : <FileText size={14} />}
-                    {slot && (
+                    {presentation.icon}
+                    {presentation.status && (
                       <span
                         className={clsx("pty-pane-tab-status", {
-                          running: session?.state === "running",
-                          failed:
-                            session?.state === "failed" ||
-                            isInvalidRestoredSlotState(slot.restoredState),
+                          running: presentation.status === "running",
+                          failed: presentation.status === "failed",
+                          dirty: presentation.status === "dirty",
                         })}
                         aria-hidden="true"
                       />
@@ -5023,39 +5109,23 @@ function beginWorkspaceSessionDrag(
   event.dataTransfer.setData("text/plain", payload);
 }
 
+function workspaceContentReactKey(content: WorkspacePaneContentRef): string {
+  return content.kind === "pty"
+    ? `pty:${content.slotId}`
+    : `file:${content.documentId}`;
+}
+
 function workspacePaneTitle(
   pane: WorkspacePane,
-  slots: PtyWorkspaceSlot[],
-  directories: { id: number; name: string }[],
+  presentationContext: WorkspaceContentPresentationContext,
   paneName: string,
   emptyPaneLabel: string,
 ): string {
   const activeContent = pane.activeContent;
-  const activeSlot =
-    activeContent?.kind === "pty"
-      ? slots.find((slot) => slot.instanceId === activeContent.slotId)
-      : undefined;
-  const targetTitle = activeSlot
-    ? workspaceSlotTitle(activeSlot, directories)
+  const targetTitle = activeContent
+    ? presentWorkspaceContent(activeContent, presentationContext).title
     : emptyPaneLabel;
   return `${paneName} · ${targetTitle}`;
-}
-
-function workspaceSlotTitle(
-  slot: PtyWorkspaceSlot,
-  directories: { id: number; name: string }[],
-): string {
-  if (slot.title.kind === "custom") return slot.title.value;
-  const directory = directories.find((entry) => entry.id === slot.directoryId);
-  const toolLabel = getTerminalTitleLabel(slot.toolKey);
-  const projectName = directory?.name ?? slot.projectName;
-  return (
-    (projectName || toolLabel) +
-    "-" +
-    toolLabel +
-    "-" +
-    String(slot.sequence).padStart(2, "0")
-  );
 }
 
 function toWorkspaceLayoutSlot(
@@ -5074,15 +5144,4 @@ function toWorkspaceLayoutSlot(
     resumeSessionId: slot.resumeSessionId ?? null,
     title: { ...slot.title },
   };
-}
-
-function isInvalidRestoredSlotState(
-  state: WorkspaceSlotStateKind | undefined,
-): boolean {
-  return (
-    state === "missingProject" ||
-    state === "projectIdentityMismatch" ||
-    state === "missingSession" ||
-    state === "sessionIdentityMismatch"
-  );
 }

@@ -7,6 +7,11 @@ export interface WorkspaceContentBeforeCloseContext {
   confirmDiscard: () => boolean;
 }
 
+export interface WorkspaceContentDisposalImpact {
+  kind: "runningPty" | "dirtyFile";
+  title: string;
+}
+
 export interface WorkspaceContentDisposeContext<
   Kind extends WorkspacePaneContentRef["kind"] =
     WorkspacePaneContentRef["kind"],
@@ -80,7 +85,12 @@ export async function closeWorkspaceContentBatch(args: {
   requests: Array<{
     content: WorkspacePaneContentRef;
     beforeClose: () => boolean;
+    describeDisposalImpact?: () => WorkspaceContentDisposalImpact[];
   }>;
+  confirmImpacts?: (
+    impacts: WorkspaceContentDisposalImpact[],
+  ) => boolean | Promise<boolean>;
+  onApproved?: () => void | Promise<void>;
   /** Performs domain-specific state changes and returns only committed closes. */
   execute: () => WorkspacePaneContentRef[] | Promise<WorkspacePaneContentRef[]>;
   dispose: (context: WorkspaceContentDisposeContext) => void | Promise<void>;
@@ -90,15 +100,30 @@ export async function closeWorkspaceContentBatch(args: {
       args.requests.map((request) => [contentKey(request.content), request]),
     ).values(),
   ];
+  if (unique.length === 0) return [];
+
+  let preflightApproved = true;
+  for (const request of unique) {
+    try {
+      if (!request.beforeClose()) preflightApproved = false;
+    } catch {
+      preflightApproved = false;
+    }
+  }
+  if (!preflightApproved) return [];
+
+  let impacts: WorkspaceContentDisposalImpact[];
+  try {
+    impacts = unique.flatMap(
+      (request) => request.describeDisposalImpact?.() ?? [],
+    );
+  } catch (error) {
+    console.error("Workspace content impact hook failed", error);
+    return [];
+  }
   if (
-    unique.length === 0 ||
-    unique.some((request) => {
-      try {
-        return !request.beforeClose();
-      } catch {
-        return true;
-      }
-    })
+    impacts.length > 0 &&
+    (!args.confirmImpacts || !(await args.confirmImpacts(impacts)))
   ) {
     return [];
   }
@@ -113,6 +138,7 @@ export async function closeWorkspaceContentBatch(args: {
 
   let committed: WorkspacePaneContentRef[];
   try {
+    await args.onApproved?.();
     committed = await args.execute();
   } catch (error) {
     for (const { content } of unique) {

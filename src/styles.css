@@ -1674,8 +1674,17 @@ pre,
   align-items: center;
   border-right: 1px solid var(--color-border-subtle);
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
+}
+
+.pty-pane-tab-group.measure-only {
+  left: -10000px;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+  width: max-content;
 }
 
 .pty-pane-tab,
@@ -1691,9 +1700,10 @@ pre,
 
 .pty-pane-tab {
   align-self: stretch;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   gap: 6px;
   min-width: 0;
+  max-width: 260px;
   padding: 5px 8px;
 }
 
@@ -1928,11 +1938,14 @@ pre,
 }
 
 .pty-pane-tab-title {
+  flex: 0 1 auto;
   font-size: var(--font-size-control-compact);
   line-height: var(--line-height-snug);
+  max-width: 200px;
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pty-pane-tab-close {

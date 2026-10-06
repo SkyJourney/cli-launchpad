@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 export interface WorkspaceEditorEngineProps {
+  documentKey: string;
   value: string;
   relativePath: string;
   modelUri: string;
@@ -13,7 +14,10 @@ export interface WorkspaceEditorEngine {
   id: string;
   apiVersion: 1;
   View: ComponentType<WorkspaceEditorEngineProps>;
+  releaseDocument: (documentKey: string) => void | Promise<void>;
 }
+
+export const defaultEngineId = "core.monaco";
 
 const engines = new Map<string, WorkspaceEditorEngine>();
 const listeners = new Set<() => void>();
@@ -47,6 +51,15 @@ export function getWorkspaceEditorEngine(id: string): WorkspaceEditorEngine {
   const engine = engines.get(id);
   if (!engine) throw new Error(`未注册编辑器引擎: ${id}`);
   return engine;
+}
+
+export function resolveEditorEngine(
+  preferredId?: string,
+): WorkspaceEditorEngine | undefined {
+  return (
+    (preferredId ? engines.get(preferredId) : undefined) ??
+    engines.get(defaultEngineId)
+  );
 }
 
 export function getWorkspaceEditorEngineRevision(): number {

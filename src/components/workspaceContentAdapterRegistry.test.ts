@@ -41,7 +41,13 @@ describe("workspace content adapter registry", () => {
       apiVersion: 1 as const,
       kind: "pty" as const,
       render: () => null,
-      presentation: { labels },
+      presentation: () => ({
+        title: "test",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
     };
     const dispose = registerWorkspaceContentAdapter(adapter);
 
@@ -58,7 +64,13 @@ describe("workspace content adapter registry", () => {
       apiVersion: 1,
       kind: "file",
       render: () => null,
-      presentation: { labels },
+      presentation: () => ({
+        title: "test",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
     });
     expect(() =>
       registerWorkspaceContentAdapter({
@@ -66,7 +78,13 @@ describe("workspace content adapter registry", () => {
         apiVersion: 1,
         kind: "pty",
         render: () => null,
-        presentation: { labels },
+        presentation: () => ({
+          title: "test",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
       }),
     ).toThrow("内容适配器 ID 已注册: test.first");
     expect(() =>
@@ -75,10 +93,34 @@ describe("workspace content adapter registry", () => {
         apiVersion: 1,
         kind: "file",
         render: () => null,
-        presentation: { labels },
+        presentation: () => ({
+          title: "test",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
       }),
     ).toThrow("内容类型已注册: file");
     first();
+  });
+
+  it("rejects unsupported API versions", () => {
+    expect(() =>
+      registerWorkspaceContentAdapter({
+        id: "test.unsupported-version",
+        apiVersion: 2,
+        kind: "pty",
+        render: () => null,
+        presentation: () => ({
+          title: "test",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
+      } as unknown as Parameters<typeof registerWorkspaceContentAdapter>[0]),
+    ).toThrow("不支持内容适配器 API 版本: 2");
   });
 
   it("notifies subscribers when registrations are added and removed", () => {
@@ -89,7 +131,13 @@ describe("workspace content adapter registry", () => {
       apiVersion: 1,
       kind: "pty",
       render: () => null,
-      presentation: { labels },
+      presentation: () => ({
+        title: "test",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
     });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -105,7 +153,13 @@ describe("workspace content adapter registry", () => {
         apiVersion: 1,
         kind: "pty",
         render: () => null,
-        presentation: { labels },
+        presentation: () => ({
+          title: "test",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
         lifecycle: {
           prepareHandoff: async ({ transferId }) => ({
             transferId,
@@ -122,7 +176,13 @@ describe("workspace content adapter registry", () => {
       apiVersion: 1,
       kind: "pty",
       render: () => null,
-      presentation: { labels },
+      presentation: () => ({
+        title: "test",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
       lifecycle: {
         prepareHandoff: async ({ transferId }) => ({
           transferId,

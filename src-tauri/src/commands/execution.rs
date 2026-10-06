@@ -20,7 +20,7 @@ pub async fn start_execution_task(
             .await
             .map_err(|error| AppError::msg(error.to_string()))??;
     install_service::verify_expected_fingerprint(&plan, &expected_fingerprint)
-        .map_err(|error| AppError::msg(error.to_string()))?;
+        .map_err(|_| AppError::coded("plan_changed", "安装计划已变化，请重新确认"))?;
     manager.start(&app, plan)
 }
 

@@ -7,19 +7,19 @@ import {
   getWorkspaceContentAdapterRevision,
   subscribeWorkspaceContentAdapters,
 } from "./workspaceContentAdapterRegistry";
-import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
-
-const unregisterBuiltins = registerBuiltinWorkspaceContentAdapters();
 
 export {
   getWorkspaceContentAdapter,
+  presentWorkspaceContent,
   registerWorkspaceContentAdapter,
+  workspaceContentProjectContext,
 } from "./workspaceContentAdapterRegistry";
 export type {
   WorkspaceContentAdapter,
   WorkspaceContentAdapterLabels,
   WorkspaceContentAdapterLifecycle,
   WorkspaceContentHandoffHookContext,
+  WorkspaceContentPresentationContext,
   WorkspaceContentRenderContext,
 } from "./workspaceContentAdapterRegistry";
 
@@ -64,8 +64,4 @@ export function WorkspaceContentView({
         }
       : {}),
   });
-}
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => unregisterBuiltins());
 }

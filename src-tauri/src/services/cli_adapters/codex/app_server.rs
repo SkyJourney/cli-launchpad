@@ -8,13 +8,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdout, Command};
 
 use crate::models::tool::ToolKey;
-use crate::platform::detect;
 
 const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_RESPONSE_LINES: usize = 2_000;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Send one stable request to a short-lived Codex App Server connection.
 /// A fresh process keeps lifecycle and failure isolation simple for infrequent
@@ -42,9 +38,6 @@ async fn request_inner(executable: &str, method: &str, params: Value) -> Result<
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-
     let mut child = command.spawn().context("无法启动 Codex App Server")?;
     let mut stdin = child
         .stdin
@@ -92,43 +85,7 @@ async fn request_inner(executable: &str, method: &str, params: Value) -> Result<
 }
 
 fn app_server_command(executable: &str) -> Command {
-    let extension = Path::new(executable)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    match extension.as_str() {
-        "cmd" | "bat" => {
-            let mut command = Command::new(detect::system32("cmd.exe"));
-            command
-                .arg("/D")
-                .arg("/C")
-                .arg(executable)
-                .arg("app-server")
-                .arg("--stdio");
-            command
-        }
-        "ps1" => {
-            let mut command =
-                Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
-            command
-                .arg("-NoProfile")
-                .arg("-NonInteractive")
-                .arg("-ExecutionPolicy")
-                .arg("Bypass")
-                .arg("-File")
-                .arg(executable)
-                .arg("app-server")
-                .arg("--stdio");
-            command
-        }
-        _ => {
-            let mut command = Command::new(executable);
-            command.arg("app-server").arg("--stdio");
-            command
-        }
-    }
+    crate::platform::process::cli_command(Path::new(executable), ["app-server", "--stdio"])
 }
 
 async fn write_message(stdin: &mut tokio::process::ChildStdin, value: &Value) -> Result<()> {

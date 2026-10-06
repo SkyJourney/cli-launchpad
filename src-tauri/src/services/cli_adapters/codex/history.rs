@@ -612,19 +612,17 @@ pub(crate) async fn search_index_source(directory_path: String) -> SessionSearch
         Ok(Err(error)) => {
             log::warn!("Codex 会话搜索失败，改用本地会话 metadata：{error}");
             let path = directory_path.clone();
-            tauri::async_runtime::spawn_blocking(move || search_codex_rollout_metadata(&path))
-                .await
-                .map_err(|join_error| anyhow!(join_error.to_string()))
-                .and_then(|source| source)
+            crate::services::session_service::spawn_search_index_blocking(move || {
+                search_codex_rollout_metadata(&path)
+            })
+            .await
         }
         Err(_) => {
             log::warn!("Codex 会话搜索超时，改用本地会话 metadata");
-            tauri::async_runtime::spawn_blocking(move || {
+            crate::services::session_service::spawn_search_index_blocking(move || {
                 search_codex_rollout_metadata(&directory_path)
             })
             .await
-            .map_err(|join_error| anyhow!(join_error.to_string()))
-            .and_then(|source| source)
         }
     };
     index_source(ToolKey::Codex, result)

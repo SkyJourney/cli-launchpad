@@ -31,11 +31,12 @@ impl CliAdapter for HermesAdapter {
         Box::pin(super::version::probe_current_version(path))
     }
 
-    fn resume_args(&self, session_id: &str, mut existing_args: Vec<String>) -> Vec<String> {
-        existing_args.push("--resume".to_string());
-        existing_args.push(session_id.to_string());
-        existing_args.push("--no-restore-cwd".to_string());
-        existing_args
+    fn resume_args(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "--resume".to_string(),
+            session_id.to_string(),
+            "--no-restore-cwd".to_string(),
+        ])
     }
 
     fn valid_session_id(&self, session_id: &str) -> bool {

@@ -9,6 +9,7 @@ export const ja = {
     back: "戻る",
     browse: "参照",
     cancel: "キャンセル",
+    confirm: "確認",
     save: "保存",
     copy: "コピー",
     more: "その他",
@@ -78,6 +79,8 @@ export const ja = {
     paneLabel: "ターミナルペイン",
     paneNumber: "ペイン {{number}}",
     paneSessions: "このペインのターミナルセッション",
+    inputBackpressure:
+      "ターミナル入力キューがいっぱいです。少し待ってから再試行してください。",
     layoutLoading: "ワークスペースを復元しています…",
     layoutNeedsReset:
       "ワークスペースのレイアウトを読み込めませんでした（{{reason}}）。元のデータは保持され、自動保存は一時停止しています。",
@@ -132,6 +135,8 @@ export const ja = {
     nextSessions: "後の項目 {{count}} 件",
     previousSessionsHeading: "前の項目",
     nextSessionsHeading: "後の項目",
+    overflowContents: "非表示の項目 {{count}} 件",
+    overflowContentsHeading: "非表示の項目",
     emptyPane: "空のペイン",
     empty:
       "右側からセッションを復元するか、このペインでファイルを開くか CLI を起動してください。",
@@ -583,6 +588,7 @@ export const ja = {
     projectIdentityChanged:
       "プロジェクトディレクトリの識別情報が変わりました。このドキュメントは古いため、閉じる前に内容をコピーしてください。",
     loadingFile: "ファイルを読み込み中…",
+    editorUnavailable: "テキストエディターは現在利用できません。",
     fileCannotOpen: "このファイルはここでは開けません",
     imagePreview: "画像プレビュー",
     unsupported: {

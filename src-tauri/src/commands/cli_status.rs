@@ -1,4 +1,5 @@
 use crate::models::cli_status::CliStatus;
+use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_detect_service};
 use crate::{with_cache, AppError, CacheDb};
 use tauri::State;
@@ -7,30 +8,41 @@ use tauri::State;
 pub async fn detect_cli_status(
     cache: State<'_, CacheDb>,
     force: Option<bool>,
+    tool_key: Option<ToolKey>,
 ) -> Result<Vec<CliStatus>, AppError> {
-    const KEY: &str = "cli-status";
+    let key = cache_key(tool_key);
     let probe_versions = force.unwrap_or(false);
     if !probe_versions {
         if let Some(cached) = with_cache(&cache, |connection| {
-            Ok(cache_service::get_fresh(connection, KEY, 30_000)?)
+            Ok(cache_service::get_fresh(connection, &key, 30_000)?)
         })? {
             return Ok(cached);
         }
     }
     let previous = with_cache(&cache, |connection| {
-        Ok(cache_service::get_any::<Vec<CliStatus>>(connection, KEY)?)
+        Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
     })?;
     // Detection runs bounded, kill-on-drop subprocesses per tool, so it is safe
     // to await directly on the async runtime.
-    let mut statuses = cli_detect_service::detect_all(probe_versions).await;
+    let mut statuses = match tool_key {
+        Some(tool_key) => vec![cli_detect_service::detect_one(tool_key, probe_versions).await],
+        None => cli_detect_service::detect_all(probe_versions).await,
+    };
     if !probe_versions {
         preserve_versions_for_unchanged_paths(&mut statuses, previous.as_deref());
     }
     with_cache(&cache, |connection| {
-        cache_service::put(connection, KEY, &statuses)?;
+        cache_service::put(connection, &key, &statuses)?;
         Ok(())
     })?;
     Ok(statuses)
+}
+
+fn cache_key(tool_key: Option<ToolKey>) -> String {
+    match tool_key {
+        Some(tool_key) => format!("cli-status:{}", tool_key.as_str()),
+        None => "cli-status:all".to_string(),
+    }
 }
 
 fn preserve_versions_for_unchanged_paths(
@@ -63,6 +75,13 @@ mod tests {
     use super::*;
     use crate::models::cli_status::CliAvailability;
     use crate::models::tool::ToolKey;
+
+    #[test]
+    fn status_cache_keys_are_isolated_per_tool() {
+        assert_eq!(cache_key(Some(ToolKey::Claude)), "cli-status:claude");
+        assert_eq!(cache_key(Some(ToolKey::Codex)), "cli-status:codex");
+        assert_eq!(cache_key(None), "cli-status:all");
+    }
 
     fn status(path: &str, version: Option<&str>) -> CliStatus {
         CliStatus {

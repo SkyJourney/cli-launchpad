@@ -9,6 +9,7 @@ export const fr = {
     back: "Retour",
     browse: "Parcourir",
     cancel: "Annuler",
+    confirm: "Confirmer",
     save: "Enregistrer",
     copy: "Copier",
     more: "Plus",
@@ -79,6 +80,8 @@ export const fr = {
     paneLabel: "Panneau de terminal",
     paneNumber: "Panneau {{number}}",
     paneSessions: "Sessions de terminal dans ce panneau",
+    inputBackpressure:
+      "La file d’entrée du terminal est pleine. Réessayez dans un instant.",
     layoutLoading: "Restauration de l’espace de travail…",
     layoutNeedsReset:
       "Impossible de lire la disposition de l’espace de travail ({{reason}}). Les données d’origine sont conservées et l’enregistrement automatique est suspendu.",
@@ -133,6 +136,8 @@ export const fr = {
     nextSessions: "{{count}} éléments suivants",
     previousSessionsHeading: "Éléments précédents",
     nextSessionsHeading: "Éléments suivants",
+    overflowContents: "{{count}} éléments masqués",
+    overflowContentsHeading: "Éléments masqués",
     emptyPane: "Panneau vide",
     empty:
       "Restaurez une session depuis la droite ou ouvrez un fichier ou démarrez une CLI dans ce panneau.",
@@ -601,6 +606,7 @@ export const fr = {
     projectIdentityChanged:
       "Le dossier du projet a changé. Ce document est obsolète ; copiez son contenu avant de le fermer.",
     loadingFile: "Chargement du fichier…",
+    editorUnavailable: "L’éditeur de texte est actuellement indisponible.",
     fileCannotOpen: "Ce fichier ne peut pas être ouvert ici",
     imagePreview: "Aperçu de l’image",
     unsupported: {

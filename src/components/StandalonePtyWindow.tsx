@@ -306,9 +306,6 @@ export function StandalonePtyWindow({
   }, [instanceId, sessionId]);
 
   useEffect(() => {
-    const suppressNativeContextMenu = (event: MouseEvent) =>
-      event.preventDefault();
-    document.addEventListener("contextmenu", suppressNativeContextMenu, true);
     let disposed = false;
     const unlisteners: (() => void)[] = [];
     const setup = async () => {
@@ -462,11 +459,6 @@ export function StandalonePtyWindow({
     void setup();
     return () => {
       disposed = true;
-      document.removeEventListener(
-        "contextmenu",
-        suppressNativeContextMenu,
-        true,
-      );
       if (returnTimeoutRef.current !== null) {
         window.clearTimeout(returnTimeoutRef.current);
       }

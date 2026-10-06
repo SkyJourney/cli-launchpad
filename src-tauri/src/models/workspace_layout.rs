@@ -325,14 +325,6 @@ pub struct WorkspaceLayoutPresetSummary {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceLayoutPreset {
-    pub summary: WorkspaceLayoutPresetSummary,
-    pub layout: WorkspaceLayoutDocument,
-    pub slot_states: Vec<WorkspaceSlotState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayoutApplyPlan {
     pub layout: WorkspaceLayoutDocument,
     pub slot_states: Vec<WorkspaceSlotState>,

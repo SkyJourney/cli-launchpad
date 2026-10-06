@@ -67,6 +67,38 @@ fn content_kind_contract_matches_rust_serialization() {
 }
 
 #[test]
+fn window_kind_contract_matches_rust_registry() {
+    use crate::models::window_kind::{window_kind_of, WindowKind};
+
+    let manifest: Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse WindowKind contract");
+    let kinds = manifest["kinds"]
+        .as_array()
+        .expect("window kinds must be an array");
+    for kind in kinds {
+        let id = kind["id"].as_str().expect("window kind needs an id");
+        let label = kind["label"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                format!(
+                    "{}8e783338-f464-4b10-b15e-b534748c6241",
+                    kind["labelPrefix"]
+                        .as_str()
+                        .expect("window kind needs a label rule")
+                )
+            });
+        let expected = match id {
+            "main" => WindowKind::Main,
+            "terminal" => WindowKind::Terminal,
+            "workspaceContent" => WindowKind::WorkspaceContent,
+            _ => panic!("unregistered Rust window kind: {id}"),
+        };
+        assert_eq!(window_kind_of(&label), Some(expected), "{id}");
+    }
+}
+
+#[test]
 fn app_command_contract_matches_the_registered_handler() {
     let commands: Vec<String> =
         serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");

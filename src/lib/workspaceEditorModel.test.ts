@@ -3,8 +3,10 @@ import { createWorkspaceEditorModelUri } from "./workspaceEditorModel";
 
 describe("workspace editor model identity", () => {
   it("uses the project identity and an encoded project-relative path", () => {
-    expect(createWorkspaceEditorModelUri(42, "src/组件 file.tsx")).toBe(
-      "file:///cli-launchpad/42/src/%E7%BB%84%E4%BB%B6%20file.tsx",
+    expect(
+      createWorkspaceEditorModelUri(42, "src/组件 file.tsx", "doc-1", 3),
+    ).toBe(
+      "file:///cli-launchpad/42/src/%E7%BB%84%E4%BB%B6%20file.tsx?document=doc-1&epoch=3",
     );
   });
 });

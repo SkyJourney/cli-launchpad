@@ -91,6 +91,16 @@ export async function setAppLanguage(language: AppLanguage) {
   await i18n.changeLanguage(language);
 }
 
+export async function applyRemoteAppLanguage(language: AppLanguage) {
+  await i18n.changeLanguage(language);
+}
+
+export function isAppLanguage(value: unknown): value is AppLanguage {
+  return (
+    typeof value === "string" && APP_LANGUAGES.includes(value as AppLanguage)
+  );
+}
+
 export function getAppLanguage(): AppLanguage {
   return normalizeLanguage(i18n.resolvedLanguage ?? i18n.language) ?? "en";
 }

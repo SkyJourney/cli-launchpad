@@ -22,6 +22,11 @@ describe("CLI adapter registry", () => {
       expect(tool.icon).toBeTruthy();
     }
   });
+
+  it("returns no adapter for an unknown runtime key", () => {
+    expect(() => getCliAdapter("future-cli")).not.toThrow();
+    expect(getCliAdapter("future-cli")).toBeUndefined();
+  });
 });
 
 describe("terminal title CLI labels", () => {
@@ -45,14 +50,6 @@ describe("managed CLI updates", () => {
     expect(isManagedUpdateAllowed("grok", { managedUpdateAllowed: true })).toBe(
       true,
     );
-  });
-
-  it("exposes Hermes management on all supported desktop platforms", () => {
-    const hermes = getCliAdapter("hermes");
-
-    expect(hermes.canManageSettings("windows")).toBe(true);
-    expect(hermes.canManageSettings("macos")).toBe(true);
-    expect(hermes.canManageSettings("linux")).toBe(true);
   });
 
   it("provides platform-appropriate installer effects", () => {

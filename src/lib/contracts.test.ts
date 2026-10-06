@@ -6,6 +6,12 @@ import { describe, expect, it } from "vitest";
 import { TOOLS } from "./tools";
 import type { ToolKey, WorkspacePaneContentRef } from "./tauri";
 import { getWorkspaceContentWindowLabelPrefix } from "./workspaceContentWindowProtocol";
+import {
+  createWindowLabel,
+  isDetachedWindowLabel,
+  windowKindOf,
+  windowRouteOf,
+} from "./windowKinds";
 
 const toolKeyTypeCoverage: Record<ToolKey, true> = {
   claude: true,
@@ -52,5 +58,20 @@ describe("shared contracts", () => {
     expect(workspaceContentWindow?.labelPrefix).toBe(
       getWorkspaceContentWindowLabelPrefix("file"),
     );
+  });
+
+  it("uses the shared window registry for labels and routing", () => {
+    const terminal = createWindowLabel("terminal");
+    const workspaceContent = createWindowLabel("workspaceContent");
+
+    expect(windowKindOf("main")).toBe("main");
+    expect(windowKindOf(terminal)).toBe("terminal");
+    expect(windowKindOf(workspaceContent)).toBe("workspaceContent");
+    expect(windowKindOf("terminal-invalid")).toBeNull();
+    expect(isDetachedWindowLabel("main")).toBe(false);
+    expect(isDetachedWindowLabel(terminal)).toBe(true);
+    expect(isDetachedWindowLabel(workspaceContent)).toBe(true);
+    expect(windowRouteOf(terminal)).toBe("terminal");
+    expect(windowRouteOf(workspaceContent)).toBe("workspace-content");
   });
 });

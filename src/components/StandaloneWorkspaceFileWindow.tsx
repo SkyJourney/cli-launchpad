@@ -30,6 +30,7 @@ import {
   emitWorkspaceContentWindowEvent,
   listenWorkspaceContentWindowEvent,
 } from "../lib/workspaceContentWindowProtocol";
+import { createWorkspaceFileBufferPublisher } from "../lib/workspaceFileBufferPublisher";
 import {
   attachWorkspaceContentHandoff,
   WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
@@ -51,12 +52,42 @@ export function StandaloneWorkspaceFileWindow({
   const [fileBuffer, setFileBuffer] = useState<WorkspaceFileBuffer>();
   const [returning, setReturning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileDocumentRef = useRef<WorkspaceFileDocument | undefined>(undefined);
   const currentBufferRef = useRef<WorkspaceFileBuffer | undefined>(undefined);
+  const bufferPublisherRef = useRef<ReturnType<
+    typeof createWorkspaceFileBufferPublisher
+  > | null>(null);
   const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
   const returningRef = useRef(false);
   const returnTimeoutRef = useRef<number | null>(null);
   currentBufferRef.current = fileBuffer;
+  fileDocumentRef.current = fileDocument;
   returningRef.current = returning;
+
+  if (bufferPublisherRef.current === null) {
+    bufferPublisherRef.current = createWorkspaceFileBufferPublisher((payload) =>
+      emitWorkspaceContentWindowEvent(
+        "main",
+        "workspace-file-window-buffer-changed",
+        payload,
+      ),
+    );
+  }
+
+  const publishBufferSnapshot = useCallback(
+    (buffer: WorkspaceFileBuffer | undefined) => {
+      const document = fileDocumentRef.current;
+      if (!document || !buffer) return;
+      bufferPublisherRef.current?.publishLatest({
+        documentId,
+        token,
+        windowLabel: getCurrentWindow().label,
+        fileDocument: document,
+        fileBuffer: buffer,
+      });
+    },
+    [documentId, token],
+  );
 
   const updateFileBuffer = useCallback(
     (
@@ -67,9 +98,10 @@ export function StandaloneWorkspaceFileWindow({
       const next = update(currentBufferRef.current);
       currentBufferRef.current = next;
       setFileBuffer(next);
+      publishBufferSnapshot(next);
       return next;
     },
-    [],
+    [publishBufferSnapshot],
   );
 
   const requestReturn = useCallback(
@@ -81,6 +113,7 @@ export function StandaloneWorkspaceFileWindow({
       setError(null);
       try {
         await fileOperationFlightsRef.current.waitForSave(documentId);
+        await bufferPublisherRef.current?.flush();
       } catch (reason) {
         returningRef.current = false;
         setReturning(false);
@@ -145,19 +178,6 @@ export function StandaloneWorkspaceFileWindow({
         }
         const submitted = beginWorkspaceFileSave(buffer);
         updateFileBuffer(() => submitted);
-        const publish = (next: WorkspaceFileBuffer) => {
-          void emitWorkspaceContentWindowEvent(
-            "main",
-            "workspace-file-window-buffer-changed",
-            {
-              documentId,
-              token,
-              windowLabel: getCurrentWindow().label,
-              fileDocument,
-              fileBuffer: next,
-            },
-          );
-        };
         try {
           const saved = await saveProjectTextFile(
             fileDocument.directoryId,
@@ -168,24 +188,21 @@ export function StandaloneWorkspaceFileWindow({
           );
           if (currentBufferRef.current?.epoch !== submitted.epoch) return;
           if (saved.kind === "conflict") {
-            const next = updateFileBuffer((current) =>
+            updateFileBuffer((current) =>
               markWorkspaceFileSaveConflict(current, submitted),
             );
-            if (next) publish(next);
             setError(t("workspaceFiles.saveConflict"));
             return;
           }
-          const next = updateFileBuffer((current) =>
+          updateFileBuffer((current) =>
             completeWorkspaceFileSave(current, submitted, saved),
           );
-          if (next) publish(next);
         } catch (reason) {
           if (currentBufferRef.current?.epoch !== submitted.epoch) return;
           if (isProjectIdentityChangedError(reason)) {
-            const next = updateFileBuffer((current) =>
+            updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            if (next) publish(next);
             setError(t("workspaceFiles.projectIdentityChanged"));
             return;
           }
@@ -195,7 +212,7 @@ export function StandaloneWorkspaceFileWindow({
           setError(getAppErrorMessage(reason));
         }
       }),
-    [documentId, fileDocument, t, updateFileBuffer, token],
+    [documentId, fileDocument, t, updateFileBuffer],
   );
 
   const reloadFile = useCallback(
@@ -224,42 +241,18 @@ export function StandaloneWorkspaceFileWindow({
           }
           updateFileBuffer(() => loaded);
           setError(null);
-          await emitWorkspaceContentWindowEvent(
-            "main",
-            "workspace-file-window-buffer-changed",
-            {
-              documentId,
-              token,
-              windowLabel: getCurrentWindow().label,
-              fileDocument,
-              fileBuffer: loaded,
-            },
-          );
         } catch (reason) {
           if (isProjectIdentityChangedError(reason)) {
-            const next = updateFileBuffer((current) =>
+            updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            if (next) {
-              await emitWorkspaceContentWindowEvent(
-                "main",
-                "workspace-file-window-buffer-changed",
-                {
-                  documentId,
-                  token,
-                  windowLabel: getCurrentWindow().label,
-                  fileDocument,
-                  fileBuffer: next,
-                },
-              );
-            }
             setError(t("workspaceFiles.projectIdentityChanged"));
             return;
           }
           setError(getAppErrorMessage(reason));
         }
       }),
-    [documentId, fileDocument, t, token, updateFileBuffer],
+    [documentId, fileDocument, t, updateFileBuffer],
   );
 
   useEffect(() => {
@@ -303,6 +296,7 @@ export function StandaloneWorkspaceFileWindow({
                         buffer: message.fileBuffer,
                       }),
                       attach: async (payload) => {
+                        fileDocumentRef.current = payload.document;
                         setFileDocument(payload.document);
                         updateFileBuffer(() => payload.buffer);
                       },
@@ -359,12 +353,13 @@ export function StandaloneWorkspaceFileWindow({
               "workspace-file-window-flush-requested",
               (event) => {
                 const request = event.payload;
+                const document = fileDocumentRef.current;
                 const buffer = currentBufferRef.current;
                 if (
                   request.documentId !== documentId ||
                   request.token !== token ||
                   request.windowLabel !== currentWindow.label ||
-                  !fileDocument ||
+                  !document ||
                   !buffer
                 ) {
                   return;
@@ -377,7 +372,7 @@ export function StandaloneWorkspaceFileWindow({
                     token,
                     windowLabel: currentWindow.label,
                     requestId: request.requestId,
-                    fileDocument,
+                    fileDocument: document,
                     fileBuffer: buffer,
                   },
                 );
@@ -435,26 +430,12 @@ export function StandaloneWorkspaceFileWindow({
     return () => {
       disposed = true;
       stops.forEach((stop) => stop());
+      bufferPublisherRef.current?.dispose();
       if (returnTimeoutRef.current !== null) {
         window.clearTimeout(returnTimeoutRef.current);
       }
     };
   }, [documentId, sourcePaneId, t, token]);
-
-  useEffect(() => {
-    if (!fileDocument || !fileBuffer) return;
-    void emitWorkspaceContentWindowEvent(
-      "main",
-      "workspace-file-window-buffer-changed",
-      {
-        documentId,
-        token,
-        windowLabel: getCurrentWindow().label,
-        fileDocument,
-        fileBuffer,
-      },
-    );
-  }, [documentId, fileBuffer, fileDocument, token]);
 
   const title = fileDocument?.relativePath ?? t("workspaceFiles.loadingFile");
   return (

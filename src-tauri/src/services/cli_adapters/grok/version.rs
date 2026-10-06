@@ -1,9 +1,8 @@
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use crate::models::tool::ToolKey;
-use crate::platform::detect;
+use crate::platform::process::{self, BoundedOutput};
 use crate::services::version_service::first_output_line;
 
 const GROK_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -28,6 +27,9 @@ pub(crate) struct GrokUpdateCheck {
 /// detection. This does not install or update the CLI.
 pub(crate) fn inspect_grok_update_check(path: &std::path::Path) -> Result<GrokUpdateCheck, String> {
     let output = run_grok_update_check(path)?;
+    if output.truncated {
+        return Err("Grok Build 官方版本检查输出超过安全读取上限".to_string());
+    }
     if !output.status.success() {
         let detail = first_output_line(&output.stderr)
             .or_else(|| first_output_line(&output.stdout))
@@ -83,77 +85,26 @@ pub(crate) fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {
 }
 
 pub(crate) fn grok_update_check_command(path: &std::path::Path) -> Command {
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let mut process = match extension.as_str() {
-        "cmd" | "bat" => {
-            let mut process = Command::new(detect::system32("cmd.exe"));
-            process.arg("/D").arg("/C").arg(path);
-            process
-        }
-        "ps1" => {
-            let mut process =
-                Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
-            process
-                .arg("-NoProfile")
-                .arg("-NonInteractive")
-                .arg("-ExecutionPolicy")
-                .arg("Bypass")
-                .arg("-File")
-                .arg(path);
-            process
-        }
-        _ => Command::new(path),
-    };
-    process
-        .args(["update", "--check", "--json"])
-        // pnpm sets this for child processes. Grok interprets it as evidence
-        // that Grok itself was installed by npm, then runs `npm view` instead
-        // of its native updater. Launchpad's pnpm environment must not alter
-        // the install source reported by the installed Grok binary.
-        .env_remove("npm_config_user_agent")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        process.creation_flags(0x0800_0000);
-    }
+    let mut process = process::cli_std_command(path, ["update", "--check", "--json"]);
+    // pnpm's marker makes Grok choose its npm updater even when this is the
+    // official native installation. Keep the source check independent of it.
+    process::remove_pnpm_user_agent_std(&mut process);
     process
 }
 
-fn run_grok_update_check(path: &std::path::Path) -> Result<Output, String> {
-    let mut child = grok_update_check_command(path)
-        .spawn()
-        .map_err(|error| format!("无法启动 Grok Build 版本检查：{error}"))?;
-    let deadline = Instant::now() + GROK_UPDATE_CHECK_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|error| format!("读取 Grok Build 版本检查结果失败：{error}"));
-            }
-            Ok(None) if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("Grok Build 官方版本检查超时".to_string());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("Grok Build 版本检查进程异常：{error}"));
-            }
+fn run_grok_update_check(path: &std::path::Path) -> Result<BoundedOutput, String> {
+    process::run_bounded_sync(
+        grok_update_check_command(path),
+        GROK_UPDATE_CHECK_TIMEOUT,
+        64 * 1024,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "Grok Build 官方版本检查超时".to_string()
+        } else {
+            format!("Grok Build 版本检查进程异常：{error}")
         }
-    }
+    })
 }
 
 #[cfg(test)]

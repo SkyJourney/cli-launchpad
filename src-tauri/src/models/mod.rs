@@ -9,6 +9,6 @@ pub mod install;
 pub mod launch_history;
 pub mod pty_session;
 pub mod session;
-pub mod terminal;
 pub mod tool;
+pub mod window_kind;
 pub mod workspace_layout;

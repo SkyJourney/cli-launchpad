@@ -235,36 +235,30 @@ async fn run_task_inner(
     }
     append_system_log(&app, &id, "任务已启动。\n");
 
-    let preflight = match cli_adapters::execution_preflight_message(&plan) {
-        Ok(preflight) => preflight,
-        Err(error) => {
+    let preflight_plan = plan.clone();
+    let preflight = tokio::task::spawn_blocking(move || {
+        cli_adapters::execution_preflight_message(&preflight_plan)
+    });
+    let preflight = match tokio::select! {
+        biased;
+        _ = &mut cancel => {
+            finish_cancelled(&app, &id, "用户在执行前校验期间终止了任务".to_string());
+            return;
+        }
+        result = preflight => result,
+    } {
+        Ok(Ok(preflight)) => preflight,
+        Ok(Err(error)) => {
             finish_failed(&app, &id, error);
+            return;
+        }
+        Err(error) => {
+            finish_failed(&app, &id, format!("CLI 执行前校验任务异常：{error}"));
             return;
         }
     };
     if let Some(message) = preflight {
         append_system_log(&app, &id, &format!("{message}\n"));
-        let validation_plan = plan.clone();
-        let verification =
-            tokio::task::spawn_blocking(move || cli_adapters::validate_execution(&validation_plan));
-        tokio::select! {
-            biased;
-            _ = &mut cancel => {
-                finish_cancelled(&app, &id, "用户在执行前校验期间终止了任务".to_string());
-                return;
-            }
-            result = verification => match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    finish_failed(&app, &id, format!("CLI 执行前校验失败：{error}"));
-                    return;
-                }
-                Err(error) => {
-                    finish_failed(&app, &id, format!("CLI 执行前校验任务异常：{error}"));
-                    return;
-                }
-            }
-        }
     }
 
     let version_before_update = match cli_adapters::should_verify_update_result(&plan) {

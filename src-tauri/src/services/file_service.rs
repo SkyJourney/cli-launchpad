@@ -31,8 +31,8 @@ pub enum ProjectFileKind {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectTextFile {
     pub content: String,
     pub revision: String,
@@ -194,33 +194,19 @@ fn list_directory_with_limit(
 }
 
 #[cfg(test)]
-pub fn read_text_file(root: &Path, relative_path: &str) -> Result<ProjectTextFile> {
+fn read_text_file(root: &Path, relative_path: &str) -> Result<ProjectTextFile> {
     let root = ProjectDirectory::open(root)?;
     read_text_file_in(&root, relative_path)
 }
 
-pub(crate) fn read_text_file_in(
-    root: &ProjectDirectory,
-    relative_path: &str,
-) -> Result<ProjectTextFile> {
-    let path = ProjectDirectory::path(relative_path)?;
-    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
-    let metadata = file.metadata().context("无法读取文件属性")?;
-    if !metadata.is_file() {
-        bail!("只能打开普通文本文件");
+#[cfg(test)]
+fn read_text_file_in(root: &ProjectDirectory, relative_path: &str) -> Result<ProjectTextFile> {
+    match open_file_in(root, relative_path)? {
+        ProjectFileOpenResult::Text { content, revision } => {
+            Ok(ProjectTextFile { content, revision })
+        }
+        _ => bail!("该文件不支持文本编辑"),
     }
-    if metadata.len() > MAX_TEXT_FILE_BYTES {
-        bail!("文件超过 2 MiB 文本编辑限制");
-    }
-    let bytes = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
-    if !is_plain_text(&bytes) {
-        bail!("该文件包含二进制内容，不能作为文本编辑");
-    }
-    let content = String::from_utf8(bytes).expect("plain text validation checks UTF-8");
-    Ok(ProjectTextFile {
-        revision: content_revision(content.as_bytes()),
-        content,
-    })
 }
 
 #[cfg(test)]

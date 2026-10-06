@@ -22,10 +22,8 @@ impl CliAdapter for GrokAdapter {
         version::grok_native_install_dirs()
     }
 
-    fn resume_args(&self, session_id: &str, mut existing_args: Vec<String>) -> Vec<String> {
-        existing_args.push("--resume".to_string());
-        existing_args.push(session_id.to_string());
-        existing_args
+    fn resume_args(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["--resume".to_string(), session_id.to_string()])
     }
 
     fn query_update(&self) -> LatestVersion {
@@ -58,9 +56,7 @@ impl CliAdapter for GrokAdapter {
     fn prepare_command(&self, plan: &InstallPlan) -> tokio::process::Command {
         let mut command = crate::services::install_service::build_command(plan);
         if plan.kind == InstallKind::Update {
-            // pnpm's marker makes Grok choose its npm updater even when the
-            // selected executable belongs to the official native installer.
-            command.env_remove("npm_config_user_agent");
+            crate::platform::process::remove_pnpm_user_agent(&mut command);
         }
         command
     }

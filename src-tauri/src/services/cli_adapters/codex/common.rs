@@ -32,10 +32,8 @@ impl CliAdapter for CodexAdapter {
         Vec::new()
     }
 
-    fn resume_args(&self, session_id: &str, existing_args: Vec<String>) -> Vec<String> {
-        let mut args = vec!["resume".to_string(), session_id.to_string()];
-        args.extend(existing_args);
-        args
+    fn resume_args(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["resume".to_string(), session_id.to_string()])
     }
 
     fn query_update(&self) -> LatestVersion {

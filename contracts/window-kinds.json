@@ -14,6 +14,8 @@
         "core:window:allow-destroy",
         "core:window:allow-is-maximized",
         "core:window:allow-minimize",
+        "core:window:allow-set-focus",
+        "core:window:allow-set-theme",
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
@@ -38,11 +40,14 @@
         "terminate_pty_session"
       ],
       "corePermissions": [
-        "core:default",
+        "core:event:allow-emit-to",
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
         "core:window:allow-close",
         "core:window:allow-destroy",
         "core:window:allow-is-maximized",
         "core:window:allow-minimize",
+        "core:window:allow-set-theme",
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
@@ -55,11 +60,14 @@
       "labelPrefix": "workspace-content-",
       "appCommands": ["open_project_file", "save_project_text_file"],
       "corePermissions": [
-        "core:default",
+        "core:event:allow-emit-to",
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
         "core:window:allow-close",
         "core:window:allow-destroy",
         "core:window:allow-is-maximized",
         "core:window:allow-minimize",
+        "core:window:allow-set-theme",
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"

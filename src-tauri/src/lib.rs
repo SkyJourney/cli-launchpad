@@ -7,7 +7,7 @@ mod models;
 mod platform;
 mod services;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
@@ -21,7 +21,8 @@ use models::app_setting::CloseBehavior;
 
 /// Business and cache databases are distinct managed-state types so commands
 /// cannot accidentally read cache rows through the configuration connection.
-pub struct Db(pub Mutex<Connection>);
+#[derive(Clone)]
+pub struct Db(pub Arc<Mutex<Connection>>);
 pub struct CacheDb(pub Mutex<Connection>);
 pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
 
@@ -45,6 +46,13 @@ pub fn update_close_behavior_state(
 /// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
 pub fn with_conn<T>(
     state: &State<'_, Db>,
+    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    with_connection(state.inner(), f)
+}
+
+pub fn with_connection<T>(
+    state: &Db,
     f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let mut conn = state
@@ -80,14 +88,6 @@ pub fn run() {
         .setup(|app| {
             let paths = services::storage_service::prepare(app.handle())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            #[cfg(target_os = "macos")]
-            match platform::macos_launch_artifacts::cleanup_stale(&paths.cache_dir) {
-                Ok(removed) if removed > 0 => {
-                    log::info!("removed {removed} stale macOS launch artifact(s)")
-                }
-                Ok(_) => {}
-                Err(error) => log::warn!("unable to prune macOS launch artifacts: {error}"),
-            }
             if let Err(error) = services::diagnostics_service::cleanup_logs(&paths) {
                 eprintln!("unable to prune diagnostic logs: {error}");
             }
@@ -188,11 +188,10 @@ pub fn run() {
                 log::warn!("marked {ended_pty_sessions} stale PTY session(s) as ended");
             }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
-            app.manage(Db(Mutex::new(connection)));
+            app.manage(Db(Arc::new(Mutex::new(connection))));
             app.manage(services::execution_service::ExecutionTaskManager::default());
             app.manage(services::pty_session_service::PtySessionManager::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
-            app.manage(commands::terminal::TerminalEnvironmentCache::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             let cache = match db::cache_connection::init_cache(&paths.cache_dir.join("cache.db")) {
                 Ok(cache) => cache,
@@ -217,8 +216,6 @@ pub fn run() {
             commands::cache::get_cache_stats,
             commands::cache::clear_cache,
             commands::diagnostics::export_diagnostics_to_path,
-            commands::launch::preview_launch,
-            commands::launch::launch_tool,
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
             commands::launch_history::get_launch_history_limit,
@@ -228,7 +225,6 @@ pub fn run() {
             commands::session::refresh_session_search_index,
             commands::session::set_session_alias,
             commands::session::delete_session_alias,
-            commands::session::resume_session,
             commands::pty_session::create_pty_session,
             commands::pty_session::begin_pty_handoff,
             commands::pty_session::stage_pty_handoff_snapshot,
@@ -242,7 +238,6 @@ pub fn run() {
             commands::pty_session::acknowledge_pty_output,
             commands::pty_session::report_pty_frontend_stage,
             commands::pty_session::terminate_pty_session,
-            commands::pty_session::list_pty_sessions,
             commands::pty_session::confirm_app_exit,
             commands::directory::list_directories,
             commands::directory::add_directory,
@@ -252,10 +247,8 @@ pub fn run() {
             commands::directory::reorder_directories,
             commands::directory::open_project_directory,
             commands::files::list_project_files,
-            commands::files::read_project_text_file,
             commands::files::open_project_file,
             commands::files::save_project_text_file,
-            commands::workspace_file_index::get_workspace_file_index,
             commands::execution::start_execution_task,
             commands::execution::list_execution_tasks,
             commands::execution::get_execution_task,
@@ -265,9 +258,6 @@ pub fn run() {
             commands::cli_status::detect_cli_status,
             commands::install::fetch_latest_version,
             commands::install::get_install_plan,
-            commands::terminal::detect_terminal_environment,
-            commands::terminal::get_launch_target,
-            commands::terminal::set_launch_target,
             commands::config::export_config_to_path,
             commands::config::import_config_from_path,
             commands::app_setting::get_close_behavior,
@@ -276,7 +266,6 @@ pub fn run() {
             commands::workspace_layout::save_workspace_layout,
             commands::workspace_layout::reset_workspace_layout,
             commands::workspace_layout::list_workspace_layout_presets,
-            commands::workspace_layout::get_workspace_layout_preset,
             commands::workspace_layout::create_workspace_layout_preset,
             commands::workspace_layout::update_workspace_layout_preset,
             commands::workspace_layout::rename_workspace_layout_preset,
@@ -286,7 +275,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 let label = window.label();
-                if label.starts_with("terminal-") {
+                if crate::models::window_kind::window_kind_of(label)
+                    == Some(crate::models::window_kind::WindowKind::Terminal)
+                {
                     let sessions =
                         window.state::<services::pty_session_service::PtySessionManager>();
                     for session_id in sessions.reclaim_window(label) {

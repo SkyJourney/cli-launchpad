@@ -97,6 +97,20 @@ mod windows {
             Ok(())
         }
 
+        pub fn configure_std(&self, _command: &mut std::process::Command) -> io::Result<()> {
+            Ok(())
+        }
+
+        pub fn attach_std(&self, child: &std::process::Child) -> io::Result<()> {
+            use std::os::windows::io::AsRawHandle;
+
+            let process = AsRawHandle::as_raw_handle(child) as HANDLE;
+            if unsafe { AssignProcessToJobObject(self.job, process) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
         pub fn terminate(&self) -> io::Result<()> {
             if unsafe { TerminateJobObject(self.job, 1) } == 0 {
                 return Err(io::Error::last_os_error());
@@ -234,6 +248,20 @@ mod unix {
             use std::os::unix::process::CommandExt;
 
             command.as_std_mut().process_group(0);
+            Ok(())
+        }
+
+        pub fn configure_std(&self, command: &mut std::process::Command) -> io::Result<()> {
+            use std::os::unix::process::CommandExt;
+
+            command.process_group(0);
+            Ok(())
+        }
+
+        pub fn attach_std(&self, child: &std::process::Child) -> io::Result<()> {
+            let pid =
+                i32::try_from(child.id()).map_err(|_| io::Error::other("子进程 ID 不可用"))?;
+            self.process_group.store(pid, Ordering::Release);
             Ok(())
         }
 

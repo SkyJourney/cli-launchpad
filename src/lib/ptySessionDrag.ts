@@ -1,3 +1,5 @@
+import { windowKindOf } from "./windowKinds";
+
 export const PTY_SESSION_DRAG_TYPE = "application/x-cli-launchpad-pty-session";
 
 const DRAG_PREFIX = "cli-launchpad-pty-v1:";
@@ -35,7 +37,7 @@ export function parsePtySessionDrag(raw: string): PtySessionDrag | null {
     }
     if (
       typeof data.sourceWindowLabel !== "string" ||
-      !/^terminal-[0-9a-f-]{36}$/i.test(data.sourceWindowLabel) ||
+      windowKindOf(data.sourceWindowLabel) !== "terminal" ||
       data.sourcePaneId !== undefined
     ) {
       return null;

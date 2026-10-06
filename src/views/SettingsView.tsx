@@ -233,10 +233,17 @@ export function SettingsView() {
   });
   const refreshDetectedVersions = async () => {
     await Promise.all([
-      queryClient.fetchQuery({
-        queryKey: qk.cliStatus(),
-        queryFn: () => detectCliStatus(true),
-      }),
+      ...TOOLS.map((tool) =>
+        queryClient.fetchQuery({
+          queryKey: qk.cliStatus(tool.key),
+          queryFn: async () => {
+            const statuses = await detectCliStatus(tool.key, true);
+            const status = statuses[0];
+            if (!status) throw new Error(`检测 ${tool.key} 状态时未返回结果`);
+            return status;
+          },
+        }),
+      ),
       ...TOOLS.filter((tool) => !activeTaskByTool.has(tool.key)).map((tool) =>
         queryClient.fetchQuery({
           queryKey: qk.latestVersion(tool.key),
@@ -443,14 +450,9 @@ export function SettingsView() {
           const installEffects = tool.installEffects?.(platform);
           const updateAvailable =
             availability === "available" && updatable === true;
-          const actionsAvailable =
-            tool.settingsActions && tool.canManageSettings(platform);
-          const canInstall =
-            actionsAvailable && !cliStatus.isFetching && isMissing;
+          const canInstall = !cliStatus.isFetching && isMissing;
           const canUpdate =
-            actionsAvailable &&
-            updateAvailable &&
-            isManagedUpdateAllowed(tool.key, latestEntry);
+            updateAvailable && isManagedUpdateAllowed(tool.key, latestEntry);
           const reconciliationKind = executionReconciliations.data[tool.key];
           const isReconciling = reconciliationKind != null;
           const busyKind = activeTask?.kind ?? reconciliationKind;
@@ -657,12 +659,6 @@ export function SettingsView() {
                               : t("settings.unavailable")}
                 </span>
               </div>
-
-              {!actionsAvailable && (
-                <p className="muted cli-action-message">
-                  {t("settings.managementComingSoon")}
-                </p>
-              )}
 
               {tool.showManagementMessage &&
                 availability === "available" &&

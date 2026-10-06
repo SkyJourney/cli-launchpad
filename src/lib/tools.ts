@@ -19,8 +19,10 @@ const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = {
 
 export const TOOLS: ToolMeta[] = Object.values(CLI_ADAPTERS);
 
-export function getCliAdapter(toolKey: ToolKey): CliAdapter {
-  return CLI_ADAPTERS[toolKey];
+export function getCliAdapter(toolKey: ToolKey): CliAdapter;
+export function getCliAdapter(toolKey: string): CliAdapter | undefined;
+export function getCliAdapter(toolKey: string): CliAdapter | undefined {
+  return CLI_ADAPTERS[toolKey as ToolKey];
 }
 
 export function getTerminalTitleLabel(toolKey: ToolKey): string {

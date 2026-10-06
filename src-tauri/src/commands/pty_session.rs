@@ -1,7 +1,6 @@
 use tauri::{ipc::Channel, State, WebviewWindow};
 
 use crate::{
-    db::pty_session_repo,
     models::{
         pty_session::{
             PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
@@ -10,7 +9,8 @@ use crate::{
         tool::ToolKey,
     },
     services::{
-        app_lifecycle::AppExitGate, pty_session_service::PtySessionManager, session_service,
+        app_lifecycle::AppExitGate, launch_service, pty_session_service::PtySessionManager,
+        session_service,
     },
     with_conn, AppError, Db,
 };
@@ -28,20 +28,31 @@ pub async fn create_pty_session(
     window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
     let _start_guard = state.begin_session_start()?;
+    let directory = with_conn(&db, |connection| {
+        Ok(launch_service::resolve_launch_directory(
+            connection,
+            directory_id,
+            tool_key,
+        )?)
+    })?;
     if let Some(session_id) = resume_session_id.as_deref() {
-        let path = with_conn(&db, |connection| {
-            Ok(session_service::directory_path(connection, directory_id)?)
-        })?;
-        if !session_service::session_belongs_to_directory(tool_key, &path, session_id).await? {
+        if !session_service::session_belongs_to_directory(tool_key, &directory, session_id).await? {
             return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
         }
     }
+    let payload = launch_service::resolve_payload_at_directory(
+        directory,
+        tool_key,
+        resume_session_id.as_deref(),
+    )
+    .await?;
     with_conn(&db, |connection| {
         state.create(
             connection,
             &app,
             directory_id,
             tool_key,
+            &payload,
             resume_session_id.as_deref(),
             size,
             window.label(),
@@ -158,7 +169,13 @@ pub fn get_pty_session_window_status(
     window: WebviewWindow,
     session_id: String,
 ) -> Result<PtySessionWindowStatus, AppError> {
-    if window.label() != "main" && !window.label().starts_with("terminal-") {
+    if !matches!(
+        crate::models::window_kind::window_kind_of(window.label()),
+        Some(
+            crate::models::window_kind::WindowKind::Main
+                | crate::models::window_kind::WindowKind::Terminal
+        )
+    ) {
         return Err(AppError::msg("当前窗口不允许查询终端所有权状态"));
     }
     state.window_status(&session_id, window.label())
@@ -182,19 +199,6 @@ pub fn reattach_pty_session(
         sequence,
         size,
     )
-}
-
-#[tauri::command]
-pub fn list_pty_sessions(
-    db: State<'_, Db>,
-    directory_id: i64,
-) -> Result<Vec<PtySession>, AppError> {
-    with_conn(&db, |connection| {
-        Ok(pty_session_repo::list_for_directory(
-            connection,
-            directory_id,
-        )?)
-    })
 }
 
 #[tauri::command]

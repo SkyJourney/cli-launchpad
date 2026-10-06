@@ -1,11 +1,9 @@
 use tauri::State;
 
-use crate::commands::terminal::{load_terminal_environment, TerminalEnvironmentCache};
 use crate::db::session_alias_repo;
 use crate::models::session::{SessionPage, SessionSearchIndexRefresh, SessionSearchResults};
 use crate::models::tool::ToolKey;
-use crate::services::storage_service::StoragePaths;
-use crate::services::{launch_service, session_service};
+use crate::services::session_service;
 use crate::{with_cache, with_conn, AppError, CacheDb, Db};
 
 #[tauri::command]
@@ -125,32 +123,4 @@ async fn ensure_session_belongs(
     } else {
         Err(AppError::msg("该会话不属于当前项目目录，已拒绝修改别名"))
     }
-}
-
-#[tauri::command]
-pub async fn resume_session(
-    state: State<'_, Db>,
-    terminal_cache: State<'_, TerminalEnvironmentCache>,
-    storage: State<'_, StoragePaths>,
-    directory_id: i64,
-    tool_key: ToolKey,
-    session_id: String,
-) -> Result<(), AppError> {
-    let path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
-    if !session_service::session_belongs_to_directory(tool_key, &path, &session_id).await? {
-        return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
-    }
-    let environment = load_terminal_environment(&terminal_cache, false).await?;
-    with_conn(&state, |conn| {
-        Ok(launch_service::resume(
-            conn,
-            &environment,
-            &storage,
-            directory_id,
-            tool_key,
-            &session_id,
-        )?)
-    })
 }

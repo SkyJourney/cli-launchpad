@@ -19,17 +19,13 @@ pub(crate) mod hermes;
 pub trait CliAdapter: Sync {
     fn tool_key(&self) -> ToolKey;
 
-    fn resume_args(&self, _session_id: &str, existing_args: Vec<String>) -> Vec<String> {
-        existing_args
-    }
+    fn resume_args(&self, session_id: &str) -> Result<Vec<String>>;
 
     fn valid_session_id(&self, session_id: &str) -> bool {
         crate::services::session_service::safe_session_id(session_id)
     }
 
-    fn command_candidates(&self) -> &'static [&'static str] {
-        &[]
-    }
+    fn command_candidates(&self) -> &'static [&'static str];
 
     fn additional_install_dirs(&self) -> Vec<PathBuf> {
         Vec::new()
@@ -133,6 +129,30 @@ pub fn installed_path(adapter: &dyn CliAdapter) -> Option<PathBuf> {
     .flatten()
 }
 
+pub async fn installed_path_async(adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+    let candidates = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        adapter.command_candidates()
+    }))
+    .ok()?;
+    for candidate in candidates {
+        if let Some(path) = crate::platform::detect::which(candidate).await {
+            return Some(path);
+        }
+    }
+    let additional_dirs = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        adapter.additional_install_dirs()
+    }))
+    .ok()?;
+    for candidate in candidates {
+        if let Some(path) =
+            crate::platform::detect::find_in_known_dirs_with(candidate, &additional_dirs)
+        {
+            return Some(path);
+        }
+    }
+    None
+}
+
 pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
     let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {
         get(tool_key).build_plan(kind)
@@ -141,22 +161,23 @@ pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
     Ok(plan)
 }
 
-pub fn validate_execution(plan: &InstallPlan) -> std::result::Result<(), String> {
-    catch_adapter(plan.tool_key, "校验执行任务", || {
-        get(plan.tool_key)
-            .validate_execution(plan)
-            .map_err(anyhow::Error::msg)
+pub fn execution_preflight_message(
+    plan: &InstallPlan,
+) -> std::result::Result<Option<&'static str>, String> {
+    catch_adapter(plan.tool_key, "执行前校验", || {
+        run_execution_preflight(get(plan.tool_key), plan)
     })
     .map_err(|error| error.to_string())
 }
 
-pub fn execution_preflight_message(
+fn run_execution_preflight(
+    adapter: &dyn CliAdapter,
     plan: &InstallPlan,
-) -> std::result::Result<Option<&'static str>, String> {
-    catch_adapter(plan.tool_key, "读取执行前检查", || {
-        Ok(get(plan.tool_key).execution_preflight_message(plan))
-    })
-    .map_err(|error| error.to_string())
+) -> Result<Option<&'static str>> {
+    adapter
+        .validate_execution(plan)
+        .map_err(anyhow::Error::msg)?;
+    Ok(adapter.execution_preflight_message(plan))
 }
 
 pub fn prepare_command(plan: &InstallPlan) -> Result<tokio::process::Command> {
@@ -182,24 +203,21 @@ pub async fn probe_plan_version(plan: &InstallPlan) -> Result<String, String> {
         .map_err(|error| format!("{} 版本探测适配器异常：{error}", tool_key.as_str()))?
 }
 
-pub fn resume_args(
-    tool_key: ToolKey,
-    session_id: &str,
-    existing_args: Vec<String>,
-) -> Result<Vec<String>> {
+pub fn resume_args(tool_key: ToolKey, session_id: &str) -> Result<Vec<String>> {
     if !valid_session_id(tool_key, session_id) {
         anyhow::bail!("{} 会话 ID 格式无效", tool_key.as_str());
     }
     catch_adapter(tool_key, "构造会话恢复参数", || {
-        Ok(get(tool_key).resume_args(session_id, existing_args))
+        get(tool_key).resume_args(session_id)
     })
 }
 
 pub fn valid_session_id(tool_key: ToolKey, session_id: &str) -> bool {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        get(tool_key).valid_session_id(session_id)
-    }))
-    .unwrap_or(false)
+    !session_id.starts_with('-')
+        && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            get(tool_key).valid_session_id(session_id)
+        }))
+        .unwrap_or(false)
 }
 
 fn catch_adapter<T>(
@@ -239,6 +257,14 @@ mod tests {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Hermes
         }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            anyhow::bail!("会话恢复未实现")
+        }
     }
 
     #[tokio::test]
@@ -255,5 +281,74 @@ mod tests {
         let index = adapter.search_index_source("project".to_string()).await;
         assert!(index.incomplete);
         assert!(index.documents.is_none());
+    }
+
+    struct ValidateWithoutMessageAdapter(std::sync::atomic::AtomicBool);
+
+    impl CliAdapter for ValidateWithoutMessageAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn validate_execution(&self, _plan: &InstallPlan) -> std::result::Result<(), String> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn execution_validation_runs_even_without_a_preflight_message() {
+        use std::sync::atomic::Ordering;
+
+        let adapter = ValidateWithoutMessageAdapter(std::sync::atomic::AtomicBool::new(false));
+        let plan = InstallPlan {
+            tool_key: ToolKey::Hermes,
+            kind: InstallKind::Update,
+            program: "hermes".to_string(),
+            args: vec!["update".to_string()],
+            fingerprint: String::new(),
+            source: "test".to_string(),
+            preview: "hermes update".to_string(),
+            effects: None,
+        };
+
+        assert_eq!(run_execution_preflight(&adapter, &plan).unwrap(), None);
+        assert!(adapter.0.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn adapter_resume_errors_fail_closed() {
+        let adapter = MissingHistoryAdapter;
+
+        assert!(adapter.resume_args("session").is_err());
+    }
+
+    #[test]
+    fn each_cli_rejects_unsafe_session_ids() {
+        let unsafe_ids = vec![
+            "-resume-as-option".to_string(),
+            "x".repeat(257),
+            "session id".to_string(),
+            "session/child".to_string(),
+            "session\\child".to_string(),
+        ];
+
+        for tool_key in ToolKey::ALL {
+            for session_id in &unsafe_ids {
+                assert!(
+                    !valid_session_id(tool_key, session_id),
+                    "{} accepted unsafe session id {session_id:?}",
+                    tool_key.as_str()
+                );
+            }
+        }
     }
 }

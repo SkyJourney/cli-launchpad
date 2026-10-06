@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use uuid::Uuid;
 
 use crate::models::tool::ToolKey;
 use crate::platform::detect;
+use crate::platform::process::{self, BoundedOutput};
 use crate::services::version_service::first_output_line;
 
 const HERMES_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
@@ -103,6 +102,17 @@ pub(crate) fn fetch_hermes_update_check() -> Result<HermesUpdateCheck, String> {
                 });
             }
         };
+    if output.truncated {
+        return Ok(HermesUpdateCheck {
+            update_available: None,
+            commits_behind: None,
+            error: Some("Hermes Agent 官方检查输出超过安全读取上限".to_string()),
+            managed_update_allowed: false,
+            management_message: Some(
+                "无法确认 Hermes Agent 更新状态；请检查 CLI 后重试".to_string(),
+            ),
+        });
+    }
     if !output.status.success() {
         let detail = first_output_line(&output.stderr)
             .or_else(|| first_output_line(&output.stdout))
@@ -240,106 +250,19 @@ fn run_hermes_command(
     path: &std::path::Path,
     args: &[&str],
     timeout: Duration,
-) -> Result<Output, String> {
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let mut command = match extension.as_str() {
-        "cmd" | "bat" => {
-            let mut command = Command::new(detect::system32("cmd.exe"));
-            command.arg("/D").arg("/C").arg(path).args(args);
-            command
+) -> Result<BoundedOutput, String> {
+    let mut command = process::cli_std_command(path, args);
+    command.env("NO_COLOR", "1");
+    process::run_bounded_sync(command, timeout, HERMES_OUTPUT_LIMIT).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "Hermes Agent 官方检查超时".to_string()
+        } else {
+            format!("无法启动 Hermes Agent 检查命令：{error}")
         }
-        "ps1" => {
-            let mut command =
-                Command::new(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
-            command
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                ])
-                .arg(path)
-                .args(args);
-            command
-        }
-        _ => {
-            let mut command = Command::new(path);
-            command.args(args);
-            command
-        }
-    };
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("NO_COLOR", "1");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("无法启动 Hermes Agent 检查命令：{error}"))?;
-    let stdout_reader = child
-        .stdout
-        .take()
-        .map(|mut stream| thread::spawn(move || read_bounded(&mut stream, HERMES_OUTPUT_LIMIT)));
-    let stderr_reader = child
-        .stderr
-        .take()
-        .map(|mut stream| thread::spawn(move || read_bounded(&mut stream, HERMES_OUTPUT_LIMIT)));
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("Hermes Agent 官方检查超时".to_string());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("Hermes Agent 检查进程异常：{error}"));
-            }
-        }
-    };
-    let stdout = stdout_reader
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
-    let stderr = stderr_reader
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
     })
 }
 
-fn read_bounded(reader: &mut impl std::io::Read, limit: usize) -> Vec<u8> {
-    let mut output = Vec::with_capacity(limit.min(4096));
-    let mut buffer = [0_u8; 4096];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(read) => {
-                let remaining = limit.saturating_sub(output.len());
-                output.extend_from_slice(&buffer[..read.min(remaining)]);
-            }
-        }
-    }
-    output
-}
-
-fn combined_output(output: &Output) -> String {
+fn combined_output(output: &BoundedOutput) -> String {
     let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
     combined.push('\n');
     combined.push_str(&String::from_utf8_lossy(&output.stderr));

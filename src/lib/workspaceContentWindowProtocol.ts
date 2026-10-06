@@ -1,6 +1,8 @@
-import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emitTo, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { WorkspaceFileDocument } from "./tauri";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
+import { windowLabelPrefix } from "./windowKinds";
 
 export interface WorkspaceContentWindowEventPayloads {
   "pty-detached-ready": {
@@ -328,38 +330,39 @@ async function ensureProtocolListener(): Promise<void> {
     await protocolRegistration;
     return;
   }
-  protocolRegistration = listen<WorkspaceContentWindowEnvelope>(
-    WORKSPACE_CONTENT_WINDOW_EVENT,
-    ({ payload }) => {
-      if (
-        !payload ||
-        payload.apiVersion !== PROTOCOL_VERSION ||
-        !isWorkspaceContentWindowEventName(payload.type) ||
-        !isValidEventPayload(payload.type, payload.payload)
-      ) {
-        return;
-      }
-      for (const subscriber of subscribers) {
-        if (subscriber.type === payload.type) {
-          try {
-            Promise.resolve(
-              subscriber.handler({ payload: payload.payload }),
-            ).catch((reason) =>
+  protocolRegistration = getCurrentWebviewWindow()
+    .listen<WorkspaceContentWindowEnvelope>(
+      WORKSPACE_CONTENT_WINDOW_EVENT,
+      ({ payload }) => {
+        if (
+          !payload ||
+          payload.apiVersion !== PROTOCOL_VERSION ||
+          !isWorkspaceContentWindowEventName(payload.type) ||
+          !isValidEventPayload(payload.type, payload.payload)
+        ) {
+          return;
+        }
+        for (const subscriber of subscribers) {
+          if (subscriber.type === payload.type) {
+            try {
+              Promise.resolve(
+                subscriber.handler({ payload: payload.payload }),
+              ).catch((reason) =>
+                console.error(
+                  `Workspace content event handler failed: ${payload.type}`,
+                  reason,
+                ),
+              );
+            } catch (reason) {
               console.error(
                 `Workspace content event handler failed: ${payload.type}`,
                 reason,
-              ),
-            );
-          } catch (reason) {
-            console.error(
-              `Workspace content event handler failed: ${payload.type}`,
-              reason,
-            );
+              );
+            }
           }
         }
-      }
-    },
-  )
+      },
+    )
     .then((stop) => {
       if (subscribers.size === 0) stop();
       else unlistenProtocol = stop;
@@ -410,5 +413,7 @@ export function emitWorkspaceContentWindowEvent<
 export function getWorkspaceContentWindowLabelPrefix(
   kind: "pty" | "file",
 ): "terminal-" | "workspace-content-" {
-  return kind === "pty" ? "terminal-" : "workspace-content-";
+  return windowLabelPrefix(kind === "pty" ? "terminal" : "workspaceContent") as
+    | "terminal-"
+    | "workspace-content-";
 }

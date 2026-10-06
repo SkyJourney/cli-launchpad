@@ -4,9 +4,9 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
+import { refreshCliStatusForTool } from "./useCliStatus";
 import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
-  detectCliStatus,
   fetchLatestVersion,
   listExecutionTasks,
   type ExecutionLogChunk,
@@ -98,10 +98,7 @@ export function useExecutionTaskEvents() {
               queryKey: qk.executionTask(task.id),
             });
             const refreshes: Promise<unknown>[] = [
-              queryClient.fetchQuery({
-                queryKey: qk.cliStatus(),
-                queryFn: () => detectCliStatus(true),
-              }),
+              refreshCliStatusForTool(queryClient, task.toolKey),
             ];
             if (
               getCliAdapter(task.toolKey).refreshLatestAfterExecution(task.kind)

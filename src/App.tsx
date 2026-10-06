@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   lazy,
   Suspense,
@@ -59,6 +60,7 @@ const AboutView = lazy(() =>
 import { useExecutionTaskEvents } from "./hooks/useExecutionTasks";
 import { indexByTool, useCliStatus } from "./hooks/useCliStatus";
 import { useThemeSync } from "./hooks/useThemeSync";
+import { useWindowLevelBehaviors } from "./hooks/useWindowLevelBehaviors";
 import { type ViewName, useAppStore } from "./store/appStore";
 import { confirmAppExit } from "./lib/tauri";
 import {
@@ -68,10 +70,12 @@ import {
 } from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
+import { windowKindOf } from "./lib/windowKinds";
 
 export function App() {
   const { t } = useTranslation();
   useThemeSync();
+  const windowKind = windowKindOf(getCurrentWindow().label);
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("detachedSessionId");
   const handoffToken = params.get("handoffToken");
@@ -83,7 +87,7 @@ export function App() {
   const detachedFileId = params.get("detachedFileId");
   const fileHandoffToken = params.get("fileHandoffToken");
   const fileSourcePaneId = params.get("sourcePaneId");
-  if (detachedFileId && fileHandoffToken) {
+  if (windowKind === "workspaceContent" && detachedFileId && fileHandoffToken) {
     return (
       <Suspense fallback={null}>
         <StandaloneWorkspaceFileWindow
@@ -94,7 +98,7 @@ export function App() {
       </Suspense>
     );
   }
-  if (sessionId && handoffToken && instanceId) {
+  if (windowKind === "terminal" && sessionId && handoffToken && instanceId) {
     return (
       <Suspense fallback={null}>
         <StandalonePtyWindow
@@ -108,6 +112,7 @@ export function App() {
       </Suspense>
     );
   }
+  if (windowKind !== "main") return null;
   return (
     <PtyWorkspaceProvider>
       <AppContent />
@@ -117,6 +122,7 @@ export function App() {
 
 function AppContent() {
   const { t } = useTranslation();
+  useWindowLevelBehaviors();
   const { collectExitImpacts, fileDocuments, fileBuffers, detachedFileIds } =
     usePtyWorkspace();
   const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
@@ -140,18 +146,6 @@ function AppContent() {
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   useExecutionTaskEvents();
-
-  useEffect(() => {
-    const suppressNativeContextMenu = (event: MouseEvent) =>
-      event.preventDefault();
-    document.addEventListener("contextmenu", suppressNativeContextMenu, true);
-    return () =>
-      document.removeEventListener(
-        "contextmenu",
-        suppressNativeContextMenu,
-        true,
-      );
-  }, []);
 
   useLayoutEffect(() => {
     let disposed = false;

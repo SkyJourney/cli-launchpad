@@ -1,7 +1,9 @@
 import type { ReactNode, DragEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Toaster } from "sonner";
 import { WindowResizeHandles, WindowTitlebar } from "./WindowTitlebar";
+import { useWindowLevelBehaviors } from "../hooks/useWindowLevelBehaviors";
 import type { WorkspaceContentWindowBeforeCloseHook } from "../lib/workspaceContentClose";
 import { shouldCloseWorkspaceWindow } from "../lib/workspaceContentClose";
 
@@ -26,6 +28,10 @@ export function WorkspaceContentWindowShell({
   onCloseRequested: () => void;
   children: ReactNode;
 }) {
+  useWindowLevelBehaviors();
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  );
   const closeRequestedRef = useRef(onCloseRequested);
   const beforeCloseRef = useRef(beforeClose);
   const isReadyRef = useRef(isReady);
@@ -69,6 +75,19 @@ export function WorkspaceContentWindowShell({
     };
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateTheme = () =>
+      setResolvedTheme(root.dataset.theme === "light" ? "light" : "dark");
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    updateTheme();
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <main className="standalone-pty-window standalone-workspace-content-window">
       <WindowTitlebar variant="standalone" actions={actions}>
@@ -81,6 +100,12 @@ export function WorkspaceContentWindowShell({
         </div>
       </WindowTitlebar>
       {children}
+      <Toaster
+        position="top-center"
+        offset={{ top: "calc(var(--window-titlebar-height) + 6px)" }}
+        theme={resolvedTheme}
+        richColors
+      />
       <WindowResizeHandles />
     </main>
   );

@@ -4,15 +4,14 @@ import type { ToolKey } from "./tauri";
 /// invalidations always agree (no stray string literals to drift).
 export const qk = {
   directories: () => ["directories"],
-  cliStatus: () => ["cli-status"],
+  cliStatus: (toolKey?: ToolKey) =>
+    toolKey ? ["cli-status", toolKey] : ["cli-status"],
   latestVersions: () => ["latest-version"],
   latestVersion: (toolKey: ToolKey) => ["latest-version", toolKey],
   backups: () => ["backups"],
   launchHistory: () => ["launch-history"],
   launchHistoryLimit: () => ["launch-history-limit"],
   cacheStats: () => ["cache-stats"],
-  terminalEnvironment: () => ["terminal-environment"],
-  launchTarget: () => ["launch-target"],
   closeBehavior: () => ["close-behavior"],
   appVersion: () => ["app-version"],
   executionTasks: () => ["execution-tasks", "list"],

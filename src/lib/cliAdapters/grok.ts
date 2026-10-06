@@ -2,7 +2,7 @@ import grokIcon from "../../assets/icons/brands/grok.svg";
 import { createSvgAssetIcon } from "../../components/SvgAssetIcon";
 import type { ExecutionStream } from "../tauri";
 import { hasUpdate } from "../format";
-import type { CliAdapter, CliPlatform } from "./types";
+import type { CliAdapter } from "./types";
 
 const GrokIcon = createSvgAssetIcon(grokIcon, true);
 
@@ -11,8 +11,6 @@ export const grokAdapter: CliAdapter = {
   label: "Grok Build",
   shortLabel: "GB",
   icon: GrokIcon,
-  settingsActions: true,
-  canManageSettings: (_platform: CliPlatform) => true,
   terminalPaste: { controlV: "terminal", windowsAltV: "terminal" },
   latestStatusKind: "version",
   installEffects: (platform) =>

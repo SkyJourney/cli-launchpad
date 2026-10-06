@@ -23,9 +23,6 @@ export interface CliAdapter {
   label: string;
   shortLabel: string;
   icon: ComponentType<{ size?: number | string }>;
-  colorPrimary?: string;
-  settingsActions: boolean;
-  canManageSettings(platform: CliPlatform): boolean;
   terminalPaste: TerminalPasteBehavior;
   latestStatusKind: "version" | "branch-update";
   installEffects?: (platform: CliPlatform) => InstallEffectsNotice | undefined;

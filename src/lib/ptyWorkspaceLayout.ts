@@ -517,6 +517,7 @@ export function addWorkspaceContentToPane(
   node: WorkspaceNode,
   paneId: string,
   content: WorkspacePaneContentRef,
+  index?: number,
 ): WorkspaceNode {
   return updateWorkspacePane(node, paneId, (pane) => {
     if (
@@ -526,9 +527,15 @@ export function addWorkspaceContentToPane(
     ) {
       return { ...pane, activeContent: content };
     }
+    const insertionIndex = Math.min(
+      Math.max(index ?? pane.contents.length, 0),
+      pane.contents.length,
+    );
+    const contents = [...pane.contents];
+    contents.splice(insertionIndex, 0, content);
     return {
       ...pane,
-      contents: [...pane.contents, content],
+      contents,
       activeContent: content,
     };
   });
@@ -570,12 +577,13 @@ export function placeContentExclusively(
   node: WorkspaceNode,
   paneId: string,
   content: WorkspacePaneContentRef,
+  index?: number,
 ): WorkspaceNode {
   if (!findWorkspacePane(node, paneId)) {
     throw new Error(`Workspace pane not found: ${paneId}`);
   }
   const withoutContent = removeWorkspaceContentFromTree(node, content);
-  return addWorkspaceContentToPane(withoutContent, paneId, content);
+  return addWorkspaceContentToPane(withoutContent, paneId, content, index);
 }
 
 export function activateWorkspaceContent(

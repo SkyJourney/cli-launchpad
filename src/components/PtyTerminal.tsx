@@ -45,6 +45,7 @@ import {
   isClipboardTextUnavailable,
 } from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
+import { getAppErrorCode, getAppErrorMessage } from "../lib/appErrors";
 import "@xterm/xterm/css/xterm.css";
 
 export interface PtyTerminalHandle {
@@ -66,6 +67,12 @@ export type PtySessionCloseResult =
   | "terminating"
   | "cancelled"
   | "pending";
+
+function ptyInputErrorMessage(reason: unknown, backpressureMessage: string) {
+  return getAppErrorCode(reason) === "pty_input_backpressure"
+    ? backpressureMessage
+    : getAppErrorMessage(reason);
+}
 
 interface PtyTerminalProps {
   active?: boolean;
@@ -238,7 +245,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         const active = sessionRef.current;
         if (interactiveRef.current && active?.state === "running") {
           void writePtySession(active.sessionId, data).catch((reason) =>
-            setError(String(reason)),
+            setError(ptyInputErrorMessage(reason, t("pty.inputBackpressure"))),
           );
         } else if (startingRef.current) {
           // ConPTY can ask xterm for its cursor position before create_pty_session
@@ -301,14 +308,18 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           if (pasteBehavior.windowsAltV === "escape-v" && isWindows && altV) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u001bv").catch((reason) =>
-              setError(String(reason)),
+              setError(
+                ptyInputErrorMessage(reason, t("pty.inputBackpressure")),
+              ),
             );
             return false;
           }
           if (pasteBehavior.controlV === "control-v" && controlV) {
             event.preventDefault();
             void writePtySession(active.sessionId, "\u0016").catch((reason) =>
-              setError(String(reason)),
+              setError(
+                ptyInputErrorMessage(reason, t("pty.inputBackpressure")),
+              ),
             );
             return false;
           }
@@ -511,7 +522,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           } catch (reason) {
             pendingInputRef.current = [];
             lastSentSizeRef.current = null;
-            setError(String(reason));
+            setError(ptyInputErrorMessage(reason, t("pty.inputBackpressure")));
           } finally {
             startingRef.current = false;
             setStarting(false);

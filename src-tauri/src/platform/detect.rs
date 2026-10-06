@@ -1,18 +1,6 @@
-#[cfg(not(windows))]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[cfg(windows)]
-use std::time::Duration;
-
-use tokio::process::Command;
-
-#[cfg(windows)]
-const WHERE_TIMEOUT: Duration = Duration::from_secs(5);
 const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Resolve a trusted Windows system binary to its full `System32` path so we do
 /// not rely on PATH/CWD for system tools. Falls back to the bare name.
@@ -35,13 +23,11 @@ pub async fn which(command: &str) -> Option<PathBuf> {
 
     #[cfg(windows)]
     {
-        let mut process = Command::new(system32("where.exe"));
-        process.arg(command).kill_on_drop(true);
-        process.creation_flags(CREATE_NO_WINDOW);
-        let future = process.output();
-        let output = tokio::time::timeout(WHERE_TIMEOUT, future)
+        let program_path = system32("where.exe");
+        let program = Path::new(&program_path);
+        let process = super::process::cli_command(program, [command]);
+        let output = super::process::run_bounded(process, VERSION_TIMEOUT, 64 * 1024)
             .await
-            .ok()?
             .ok()?;
         if !output.status.success() {
             return None;
@@ -61,53 +47,29 @@ pub(crate) async fn probe_version_with_env(
     path: &std::path::Path,
     environment: &[(String, std::ffi::OsString)],
 ) -> Result<String, String> {
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let mut process = match extension.as_str() {
-        "cmd" | "bat" => {
-            let mut process = Command::new(system32("cmd.exe"));
-            process.arg("/D").arg("/C").arg(path).arg("--version");
-            process
-        }
-        "ps1" => {
-            let mut process = Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe"));
-            process
-                .arg("-NoProfile")
-                .arg("-NonInteractive")
-                .arg("-ExecutionPolicy")
-                .arg("Bypass")
-                .arg("-File")
-                .arg(path)
-                .arg("--version");
-            process
-        }
-        _ => {
-            let mut process = Command::new(path);
-            process.arg("--version");
-            process
-        }
-    };
+    let mut process = super::process::cli_command(path, ["--version"]);
     for (key, value) in environment {
         process.env(key.as_str(), value);
     }
-    process.kill_on_drop(true);
-    #[cfg(windows)]
-    process.creation_flags(CREATE_NO_WINDOW);
-
-    let output = tokio::time::timeout(VERSION_TIMEOUT, process.output())
+    let output = super::process::run_bounded(process, VERSION_TIMEOUT, 32 * 1024)
         .await
-        .map_err(|_| "版本命令执行超时".to_string())?
-        .map_err(|error| format!("无法启动版本命令：{error}"))?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                "版本命令执行超时".to_string()
+            } else {
+                format!("无法启动版本命令：{error}")
+            }
+        })?;
 
     if !output.status.success() {
         let detail = first_output_line(&output.stderr)
             .or_else(|| first_output_line(&output.stdout))
             .unwrap_or_else(|| format!("退出码 {}", output.status));
         return Err(format!("版本命令失败：{detail}"));
+    }
+
+    if output.truncated {
+        log::debug!("CLI version output exceeded the bounded read limit");
     }
 
     first_output_line(&output.stdout)
@@ -134,11 +96,10 @@ pub fn which_path_sync(command: &str) -> Option<String> {
 
     #[cfg(windows)]
     {
-        let mut cmd = std::process::Command::new(system32("where.exe"));
-        cmd.arg(command);
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        let output = cmd.output().ok()?;
+        let program_path = system32("where.exe");
+        let program = Path::new(&program_path);
+        let cmd = super::process::cli_std_command(program, [command]);
+        let output = super::process::run_bounded_sync(cmd, VERSION_TIMEOUT, 64 * 1024).ok()?;
         if !output.status.success() {
             return None;
         }

@@ -55,6 +55,7 @@ interface AppState {
   ptySessionsById: Record<string, PtySession>;
   setView: (view: ViewName) => void;
   setThemeMode: (mode: ThemeMode) => void;
+  applyRemoteThemeMode: (mode: ThemeMode) => void;
   selectDirectory: (id: number | null) => void;
   openDirectory: (id: number) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -78,6 +79,7 @@ export const useAppStore = create<AppState>((set) => ({
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
     set({ themeMode: mode });
   },
+  applyRemoteThemeMode: (mode) => set({ themeMode: mode }),
   selectDirectory: (id) => {
     if (id == null) window.localStorage.removeItem(LAST_DIRECTORY_STORAGE_KEY);
     else window.localStorage.setItem(LAST_DIRECTORY_STORAGE_KEY, String(id));

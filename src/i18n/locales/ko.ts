@@ -9,6 +9,7 @@ export const ko = {
     back: "뒤로",
     browse: "찾아보기",
     cancel: "취소",
+    confirm: "확인",
     save: "저장",
     copy: "복사",
     more: "더 보기",
@@ -77,6 +78,8 @@ export const ko = {
     paneLabel: "터미널 패널",
     paneNumber: "패널 {{number}}",
     paneSessions: "이 창의 터미널 세션",
+    inputBackpressure:
+      "터미널 입력 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.",
     layoutLoading: "작업 공간 복원 중…",
     layoutNeedsReset:
       "작업 공간 레이아웃을 읽지 못했습니다({{reason}}). 원본 데이터는 보존되며 자동 저장은 일시 중지됩니다.",
@@ -127,6 +130,8 @@ export const ko = {
     nextSessions: "다음 항목 {{count}}개",
     previousSessionsHeading: "이전 항목",
     nextSessionsHeading: "다음 항목",
+    overflowContents: "숨겨진 항목 {{count}}개",
+    overflowContentsHeading: "숨겨진 항목",
     emptyPane: "빈 창",
     empty:
       "오른쪽에서 세션을 복원하거나 이 창에서 파일을 열거나 CLI를 시작하세요.",
@@ -571,6 +576,7 @@ export const ko = {
     projectIdentityChanged:
       "프로젝트 디렉터리의 신원이 변경되었습니다. 이 문서는 오래된 상태입니다. 닫기 전에 내용을 복사하세요.",
     loadingFile: "파일을 읽는 중…",
+    editorUnavailable: "텍스트 편집기를 현재 사용할 수 없습니다.",
     fileCannotOpen: "이 파일은 여기서 열 수 없습니다",
     imagePreview: "이미지 미리보기",
     unsupported: {

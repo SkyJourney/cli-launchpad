@@ -115,14 +115,6 @@ pub fn reorder(conn: &mut Connection, ordered_ids: &[i64]) -> rusqlite::Result<(
     transaction.commit()
 }
 
-pub fn touch_last_used(conn: &Connection, id: i64) -> rusqlite::Result<()> {
-    conn.execute(
-        "update directories set last_used_at = datetime('now') where id = ?1",
-        params![id],
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

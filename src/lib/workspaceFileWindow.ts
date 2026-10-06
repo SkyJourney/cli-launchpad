@@ -1,3 +1,5 @@
+import { windowKindOf } from "./windowKinds";
+
 export interface WorkspaceFileWindowIdentity {
   documentId: string;
   token: string;
@@ -12,6 +14,6 @@ export function matchesWorkspaceFileWindow(
     expected.documentId === actual.documentId &&
     expected.token === actual.token &&
     expected.windowLabel === actual.windowLabel &&
-    /^workspace-content-[0-9a-f-]{36}$/i.test(actual.windowLabel)
+    windowKindOf(actual.windowLabel) === "workspaceContent"
   );
 }

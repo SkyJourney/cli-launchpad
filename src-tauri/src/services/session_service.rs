@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
@@ -22,12 +23,44 @@ pub(crate) const TITLE_MAX_CHARS: usize = 100;
 const MAX_PAGE_SIZE: usize = 50;
 const OFFSET_CURSOR_PREFIX: &str = "offset:";
 const MAX_SEARCH_QUERY_CHARS: usize = 200;
+const SEARCH_INDEX_ADAPTER_BUDGET: Duration = Duration::from_secs(10);
+const MAX_CONCURRENT_SEARCH_INDEX_SCANS: usize = 2;
+static SEARCH_INDEX_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 pub(crate) const MAX_SEARCH_FIELD_CHARS: usize = 4_000;
 pub(crate) const MAX_SEARCH_SESSIONS_PER_TOOL: usize = 5_000;
 pub(crate) const MAX_SEARCH_DIRECTORY_ENTRIES: usize = 20_000;
 pub(crate) const MAX_SEARCH_METADATA_LINE_BYTES: u64 = 64 * 1024;
 pub(crate) const MAX_SEARCH_PREVIEW_BYTES_PER_SESSION: u64 = 64 * 1024;
 pub(crate) const MAX_CLAUDE_PREVIEW_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(crate) async fn acquire_search_index_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
+    SEARCH_INDEX_SEMAPHORE
+        .get_or_init(|| {
+            Arc::new(tokio::sync::Semaphore::new(
+                MAX_CONCURRENT_SEARCH_INDEX_SCANS,
+            ))
+        })
+        .clone()
+        .acquire_owned()
+        .await
+        .ok()
+}
+
+pub(crate) async fn spawn_search_index_blocking<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let permit = acquire_search_index_permit()
+        .await
+        .ok_or_else(|| anyhow!("会话搜索索引并发限流器不可用"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        operation()
+    })
+    .await
+    .map_err(|error| anyhow!("会话搜索索引阻塞任务异常：{error}"))?
+}
 
 #[cfg(test)]
 use crate::services::cli_adapters::claude::history::{
@@ -93,7 +126,12 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
         let task = tasks.spawn(async move {
-            let source = adapter.search_index_source(path).await;
+            let source = bounded_search_index_source(
+                tool_key,
+                adapter.search_index_source(path),
+                SEARCH_INDEX_ADAPTER_BUDGET,
+            )
+            .await;
             (tool_key, source)
         });
         task_tools.insert(task.id(), tool_key);
@@ -141,6 +179,42 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
             .unwrap_or(usize::MAX)
     });
     Ok(sources)
+}
+
+async fn bounded_search_index_source<F>(
+    tool_key: ToolKey,
+    source_future: F,
+    budget: Duration,
+) -> SessionSearchIndexSource
+where
+    F: std::future::Future<Output = SessionSearchIndexSource>,
+{
+    match tokio::time::timeout(budget, source_future).await {
+        Ok(source) if source.tool_key == tool_key => source,
+        Ok(source) => {
+            log::warn!(
+                "session adapter returned mismatched tool expected={} actual={}",
+                tool_key.as_str(),
+                source.tool_key.as_str()
+            );
+            SessionSearchIndexSource {
+                tool_key,
+                documents: None,
+                incomplete: true,
+            }
+        }
+        Err(_) => {
+            log::warn!(
+                "{} 会话索引扫描超过预算，保留上次可用索引",
+                tool_key.as_str()
+            );
+            SessionSearchIndexSource {
+                tool_key,
+                documents: None,
+                incomplete: true,
+            }
+        }
+    }
 }
 
 pub fn search_indexed_sessions(
@@ -423,6 +497,7 @@ pub(crate) fn extract_text_content(content: &Value) -> Option<String> {
 
 pub(crate) fn safe_session_id(value: &str) -> bool {
     !value.is_empty()
+        && !value.starts_with('-')
         && value.len() <= 200
         && value
             .bytes()
@@ -1114,6 +1189,7 @@ mod tests {
         assert!(safe_session_id("7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345"));
         assert!(!safe_session_id("../outside"));
         assert!(!safe_session_id("folder\\outside"));
+        assert!(!safe_session_id("-resume-as-option"));
     }
 
     #[test]
@@ -1145,5 +1221,21 @@ mod tests {
         assert_eq!(normalize_alias("  简洁标题  ").unwrap(), "简洁标题");
         assert!(normalize_alias("  ").is_err());
         assert!(normalize_alias(&"长".repeat(TITLE_MAX_CHARS + 1)).is_err());
+    }
+
+    #[tokio::test]
+    async fn stalled_search_adapter_is_marked_incomplete_within_budget() {
+        let started = std::time::Instant::now();
+        let source = bounded_search_index_source(
+            ToolKey::Claude,
+            std::future::pending(),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(source.incomplete);
+        assert!(source.documents.is_none());
+        assert_eq!(source.tool_key, ToolKey::Claude);
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 }

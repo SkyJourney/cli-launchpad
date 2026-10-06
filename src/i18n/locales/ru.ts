@@ -9,6 +9,7 @@ export const ru = {
     back: "Назад",
     browse: "Обзор",
     cancel: "Отмена",
+    confirm: "Подтвердить",
     save: "Сохранить",
     copy: "Копировать",
     more: "Ещё",
@@ -77,6 +78,8 @@ export const ru = {
     paneLabel: "Область терминала",
     paneNumber: "Область {{number}}",
     paneSessions: "Сессии терминала в этой области",
+    inputBackpressure:
+      "Очередь ввода терминала заполнена. Повторите попытку чуть позже.",
     layoutLoading: "Восстановление рабочего пространства…",
     layoutNeedsReset:
       "Не удалось прочитать раскладку рабочего пространства ({{reason}}). Исходные данные сохранены, автосохранение приостановлено.",
@@ -130,6 +133,8 @@ export const ru = {
     nextSessions: "Следующих элементов: {{count}}",
     previousSessionsHeading: "Предыдущие элементы",
     nextSessionsHeading: "Следующие элементы",
+    overflowContents: "Скрытых элементов: {{count}}",
+    overflowContentsHeading: "Скрытые элементы",
     emptyPane: "Пустая область",
     empty:
       "Восстановите сессию справа или откройте файл либо запустите CLI в этой области.",
@@ -588,6 +593,7 @@ export const ru = {
     projectIdentityChanged:
       "Идентификатор каталога проекта изменился. Документ устарел; скопируйте его содержимое перед закрытием.",
     loadingFile: "Загрузка файла…",
+    editorUnavailable: "Текстовый редактор сейчас недоступен.",
     fileCannotOpen: "Этот файл нельзя открыть здесь",
     imagePreview: "Предпросмотр изображения",
     unsupported: {

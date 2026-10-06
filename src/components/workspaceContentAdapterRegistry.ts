@@ -1,11 +1,15 @@
 import type { ReactNode } from "react";
 import type {
+  PtySession,
+  ToolKey,
   WorkspaceFileDocument,
   WorkspacePaneContentRef,
+  WorkspaceSlotStateKind,
 } from "../lib/tauri";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
 import type {
   WorkspaceContentBeforeCloseHook,
+  WorkspaceContentDisposalImpact,
   WorkspaceContentDisposeContext,
   WorkspaceContentWindowBeforeCloseHook,
 } from "../lib/workspaceContentClose";
@@ -36,6 +40,32 @@ export interface WorkspaceContentAdapterLabels {
   closeAll: string;
   splitAndMoveRight: string;
   splitAndMoveDown: string;
+}
+
+export interface WorkspaceContentPresentationContext {
+  directories: readonly { id: number; name: string }[];
+  ptySlots: readonly {
+    instanceId: string;
+    directoryId: number;
+    projectName: string;
+    toolKey: ToolKey;
+    sequence: number;
+    title: { kind: "automatic" } | { kind: "custom"; value: string };
+    sessionId?: string | null;
+    restoredState?: WorkspaceSlotStateKind;
+  }[];
+  ptySessionsById: Record<string, PtySession>;
+  fileDocuments: readonly WorkspaceFileDocument[];
+  fileBuffers: Readonly<Record<string, WorkspaceFileBuffer | undefined>>;
+  selectedDirectoryId: number | null;
+}
+
+export interface WorkspaceContentPresentation {
+  title: string;
+  icon: ReactNode;
+  status?: "running" | "failed" | "dirty";
+  tooltip?: string;
+  closeLabelKey: string;
 }
 
 export interface WorkspaceContentHandoffHookContext<
@@ -85,6 +115,11 @@ export interface WorkspaceContentAdapterLifecycle<
     WorkspacePaneContentRef["kind"],
 > {
   beforeClose?: WorkspaceContentBeforeCloseHook;
+  describeDisposalImpact?: (context: {
+    isDirty: boolean;
+    isRunning: boolean;
+    title: string;
+  }) => WorkspaceContentDisposalImpact[];
   beforeWindowClose?: WorkspaceContentWindowBeforeCloseHook;
   prepareHandoff?: (
     context: WorkspaceContentHandoffHookContext<Kind>,
@@ -111,9 +146,15 @@ export interface WorkspaceContentAdapter<
   apiVersion: 1;
   kind: Kind;
   render: (context: WorkspaceContentRenderContext) => ReactNode;
-  presentation: {
-    labels: WorkspaceContentAdapterLabels;
-  };
+  presentation: (
+    content: Extract<WorkspacePaneContentRef, { kind: Kind }>,
+    context: WorkspaceContentPresentationContext,
+  ) => WorkspaceContentPresentation;
+  labels: WorkspaceContentAdapterLabels;
+  projectContextOf: (
+    content: Extract<WorkspacePaneContentRef, { kind: Kind }>,
+    context: WorkspaceContentPresentationContext,
+  ) => number | null;
   lifecycle?: WorkspaceContentAdapterLifecycle<Kind>;
 }
 
@@ -169,6 +210,26 @@ export function getWorkspaceContentAdapter<
   const adapter = adaptersByKind.get(kind);
   if (!adapter) throw new Error(`未注册内容适配器: ${kind}`);
   return adapter as WorkspaceContentAdapter<Kind>;
+}
+
+export function presentWorkspaceContent(
+  content: WorkspacePaneContentRef,
+  context: WorkspaceContentPresentationContext,
+): WorkspaceContentPresentation {
+  if (content.kind === "pty") {
+    return getWorkspaceContentAdapter("pty").presentation(content, context);
+  }
+  return getWorkspaceContentAdapter("file").presentation(content, context);
+}
+
+export function workspaceContentProjectContext(
+  content: WorkspacePaneContentRef,
+  context: WorkspaceContentPresentationContext,
+): number | null {
+  if (content.kind === "pty") {
+    return getWorkspaceContentAdapter("pty").projectContextOf(content, context);
+  }
+  return getWorkspaceContentAdapter("file").projectContextOf(content, context);
 }
 
 export function getWorkspaceContentAdapterRevision(): number {

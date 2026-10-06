@@ -181,6 +181,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  getCurrentWebviewWindow: vi.fn(() =>
+    getWindowMock(mockState.currentWindowLabel),
+  ),
   WebviewWindow: class MockWebviewWindow {
     label: string;
 

@@ -4,16 +4,17 @@
   "description": "独立工作区内容窗口所需的事件与窗口控制能力。",
   "windows": ["workspace-content-*"],
   "permissions": [
-    "core:default",
+    "core:event:allow-emit-to",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-is-maximized",
     "core:window:allow-minimize",
+    "core:window:allow-set-theme",
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "core:window:allow-toggle-maximize",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
     "allow-open-project-file",
     "allow-save-project-text-file"
   ]

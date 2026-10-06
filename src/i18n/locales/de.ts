@@ -9,6 +9,7 @@ export const de = {
     back: "Zurück",
     browse: "Durchsuchen",
     cancel: "Abbrechen",
+    confirm: "Bestätigen",
     save: "Speichern",
     copy: "Kopieren",
     more: "Mehr",
@@ -80,6 +81,8 @@ export const de = {
     paneLabel: "Terminalbereich",
     paneNumber: "Bereich {{number}}",
     paneSessions: "Terminalsitzungen in diesem Bereich",
+    inputBackpressure:
+      "Die Terminal-Eingabewarteschlange ist voll. Bitte gleich erneut versuchen.",
     layoutLoading: "Arbeitsbereich wird wiederhergestellt…",
     layoutNeedsReset:
       "Das Arbeitsbereichlayout konnte nicht gelesen werden ({{reason}}). Die Originaldaten bleiben erhalten und das automatische Speichern wurde pausiert.",
@@ -134,6 +137,8 @@ export const de = {
     nextSessions: "{{count}} spätere Einträge",
     previousSessionsHeading: "Frühere Inhalte",
     nextSessionsHeading: "Spätere Inhalte",
+    overflowContents: "{{count}} ausgeblendete Inhalte",
+    overflowContentsHeading: "Ausgeblendete Inhalte",
     emptyPane: "Leerer Bereich",
     empty:
       "Stelle rechts eine Sitzung wieder her oder öffne hier eine Datei bzw. starte eine CLI.",
@@ -602,6 +607,7 @@ export const de = {
     projectIdentityChanged:
       "Das Projektverzeichnis hat sich geändert. Dieses Dokument ist veraltet; kopiere den Inhalt vor dem Schließen.",
     loadingFile: "Datei wird geladen…",
+    editorUnavailable: "Der Texteditor ist derzeit nicht verfügbar.",
     fileCannotOpen: "Diese Datei kann hier nicht geöffnet werden",
     imagePreview: "Bildvorschau",
     unsupported: {

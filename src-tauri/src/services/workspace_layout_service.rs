@@ -9,10 +9,10 @@ use uuid::Uuid;
 use crate::db::{directory_repo, pty_session_repo, workspace_layout_repo};
 use crate::models::workspace_layout::{
     validate_preset_name, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
-    WorkspaceLayoutPreset, WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveResult,
-    WorkspaceLayoutSlot, WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus,
-    WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
-    MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveResult, WorkspaceLayoutSlot,
+    WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus, WorkspacePaneContentRef,
+    WorkspaceSlotState, WorkspaceSlotStateKind, MAX_WORKSPACE_LAYOUT_PRESETS,
+    WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
@@ -126,21 +126,6 @@ pub fn list_presets(
     connection: &Connection,
 ) -> Result<Vec<WorkspaceLayoutPresetSummary>, AppError> {
     Ok(workspace_layout_repo::list_presets(connection)?)
-}
-
-pub fn get_preset(connection: &Connection, id: &str) -> Result<WorkspaceLayoutPreset, AppError> {
-    let row = workspace_layout_repo::get_preset(connection, id)?
-        .ok_or_else(|| AppError::msg("命名布局不存在"))?;
-    let layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
-    let mut layout = layout;
-    let slot_states = resolve_layout_slots(connection, &mut layout)?;
-    let mut summary = row.summary;
-    summary.schema_version = i64::from(layout.schema_version);
-    Ok(WorkspaceLayoutPreset {
-        summary,
-        layout,
-        slot_states,
-    })
 }
 
 pub fn create_preset(
@@ -1403,7 +1388,7 @@ mod tests {
                 [&preset.id],
             )
             .unwrap();
-        assert!(get_preset(&connection, &preset.id).is_err());
+        assert!(plan_apply_preset(&connection, &preset.id, &layout).is_err());
         assert!(delete_preset(&connection, &preset.id).unwrap());
     }
 }

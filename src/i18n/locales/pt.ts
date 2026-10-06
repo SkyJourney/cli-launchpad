@@ -9,6 +9,7 @@ export const pt = {
     back: "Voltar",
     browse: "Procurar",
     cancel: "Cancelar",
+    confirm: "Confirmar",
     save: "Salvar",
     copy: "Copiar",
     more: "Mais",
@@ -78,6 +79,8 @@ export const pt = {
     paneLabel: "Painel do terminal",
     paneNumber: "Painel {{number}}",
     paneSessions: "Sessões de terminal neste painel",
+    inputBackpressure:
+      "A fila de entrada do terminal está cheia. Tente novamente em instantes.",
     layoutLoading: "Restaurando espaço de trabalho…",
     layoutNeedsReset:
       "Não foi possível ler o layout do espaço de trabalho ({{reason}}). Os dados originais foram preservados e o salvamento automático está pausado.",
@@ -132,6 +135,8 @@ export const pt = {
     nextSessions: "{{count}} itens seguintes",
     previousSessionsHeading: "Itens anteriores",
     nextSessionsHeading: "Itens seguintes",
+    overflowContents: "{{count}} itens ocultos",
+    overflowContentsHeading: "Itens ocultos",
     emptyPane: "Painel vazio",
     empty:
       "Restaure uma sessão à direita ou abra um arquivo ou inicie uma CLI neste painel.",
@@ -597,6 +602,7 @@ export const pt = {
     projectIdentityChanged:
       "A identidade do diretório do projeto mudou. Este documento está desatualizado; copie o conteúdo antes de fechá-lo.",
     loadingFile: "Carregando arquivo…",
+    editorUnavailable: "O editor de texto está indisponível no momento.",
     fileCannotOpen: "Este arquivo não pode ser aberto aqui",
     imagePreview: "Pré-visualização da imagem",
     unsupported: {

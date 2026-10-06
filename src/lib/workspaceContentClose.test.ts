@@ -262,6 +262,144 @@ describe("workspace content close adapters", () => {
     expect(coordinator.get(second)?.phase).toBe("attached");
   });
 
+  it("runs every preflight and cancels a mixed batch when any item vetoes", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const pane = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const pty = { kind: "pty", slotId: "slot-1" } as const;
+    const file = { kind: "file", documentId: "file-1" } as const;
+    coordinator.ensureAttached(pty, pane);
+    coordinator.ensureAttached(file, pane);
+    const ptyPreflight = vi.fn(() => true);
+    const filePreflight = vi.fn(() => false);
+    const confirmImpacts = vi.fn(() => true);
+    const execute = vi.fn(() => [pty, file]);
+
+    const closed = await closeWorkspaceContentBatch({
+      coordinator,
+      requestId: "batch-vetoed",
+      requests: [
+        { content: pty, beforeClose: ptyPreflight },
+        { content: file, beforeClose: filePreflight },
+      ],
+      confirmImpacts,
+      execute,
+      dispose: vi.fn(),
+    });
+
+    expect(closed).toEqual([]);
+    expect(ptyPreflight).toHaveBeenCalledOnce();
+    expect(filePreflight).toHaveBeenCalledOnce();
+    expect(confirmImpacts).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(coordinator.get(pty)?.phase).toBe("attached");
+    expect(coordinator.get(file)?.phase).toBe("attached");
+  });
+
+  it("asks once for combined PTY and file impacts and cancels both on rejection", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const pane = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const pty = { kind: "pty", slotId: "slot-1" } as const;
+    const file = { kind: "file", documentId: "file-1" } as const;
+    coordinator.ensureAttached(pty, pane);
+    coordinator.ensureAttached(file, pane);
+    const confirmImpacts = vi.fn(() => false);
+    const execute = vi.fn(() => [pty, file]);
+    const dispose = vi.fn();
+
+    const closed = await closeWorkspaceContentBatch({
+      coordinator,
+      requestId: "batch-cancelled",
+      requests: [
+        {
+          content: pty,
+          beforeClose: () => true,
+          describeDisposalImpact: () => [
+            { kind: "runningPty", title: "Terminal" },
+          ],
+        },
+        {
+          content: file,
+          beforeClose: () => true,
+          describeDisposalImpact: () => [
+            { kind: "dirtyFile", title: "src/main.ts" },
+          ],
+        },
+      ],
+      confirmImpacts,
+      execute,
+      dispose,
+    });
+
+    expect(closed).toEqual([]);
+    expect(confirmImpacts).toHaveBeenCalledOnce();
+    expect(confirmImpacts).toHaveBeenCalledWith([
+      { kind: "runningPty", title: "Terminal" },
+      { kind: "dirtyFile", title: "src/main.ts" },
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+    expect(coordinator.get(pty)?.phase).toBe("attached");
+    expect(coordinator.get(file)?.phase).toBe("attached");
+  });
+
+  it("commits and disposes a mixed batch once after one approval", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const pane = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const pty = { kind: "pty", slotId: "slot-1" } as const;
+    const file = { kind: "file", documentId: "file-1" } as const;
+    coordinator.ensureAttached(pty, pane);
+    coordinator.ensureAttached(file, pane);
+    const confirmImpacts = vi.fn(() => true);
+    const onApproved = vi.fn();
+    const execute = vi.fn(() => [pty, file]);
+    const dispose = vi.fn();
+
+    const closed = await closeWorkspaceContentBatch({
+      coordinator,
+      requestId: "batch-approved",
+      requests: [
+        {
+          content: pty,
+          beforeClose: () => true,
+          describeDisposalImpact: () => [
+            { kind: "runningPty", title: "Terminal" },
+          ],
+        },
+        {
+          content: file,
+          beforeClose: () => true,
+          describeDisposalImpact: () => [
+            { kind: "dirtyFile", title: "src/main.ts" },
+          ],
+        },
+      ],
+      confirmImpacts,
+      onApproved,
+      execute,
+      dispose,
+    });
+
+    expect(closed).toEqual([pty, file]);
+    expect(confirmImpacts).toHaveBeenCalledOnce();
+    expect(onApproved).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(coordinator.get(pty)).toBeUndefined();
+    expect(coordinator.get(file)).toBeUndefined();
+  });
+
   it("cancels all lifecycle approvals if the domain close operation fails", async () => {
     const coordinator = new WorkspaceContentCoordinator();
     const content = { kind: "file", documentId: "file-1" } as const;

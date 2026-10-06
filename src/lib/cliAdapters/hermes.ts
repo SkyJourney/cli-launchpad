@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import hermesAgentAvatar from "../../assets/icons/brands/hermesagent.webp";
 import type { InstallKind } from "../tauri";
-import type { CliAdapter, CliPlatform } from "./types";
+import type { CliAdapter } from "./types";
 
 const HermesAgentIcon: CliAdapter["icon"] = ({ size = 24 }) =>
   createElement("img", {
@@ -18,9 +18,6 @@ export const hermesAdapter: CliAdapter = {
   label: "Hermes Agent",
   shortLabel: "HA",
   icon: HermesAgentIcon,
-  settingsActions: true,
-  canManageSettings: (platform: CliPlatform) =>
-    platform === "windows" || platform === "macos" || platform === "linux",
   terminalPaste: { controlV: "terminal", windowsAltV: "terminal" },
   latestStatusKind: "branch-update",
   installEffects: (platform) =>

@@ -7,6 +7,10 @@ import htmlWorker from "monaco-editor/languages/features/html/html.worker.js?wor
 import tsWorker from "monaco-editor/languages/features/typescript/ts.worker.js?worker";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveWorkspaceEditorLanguage } from "../../lib/workspaceEditorLanguage";
+import {
+  takeWorkspaceEditorModelUris,
+  registerWorkspaceEditorModel,
+} from "../../lib/workspaceEditorModelRegistry";
 
 import "monaco-editor/features/anchorSelect/register.js";
 import "monaco-editor/features/bracketMatching/register.js";
@@ -101,6 +105,7 @@ const languageFeatureLoaders: Record<string, () => Promise<unknown>> = {
 };
 
 export function MonacoWorkspaceEditor({
+  documentKey,
   value,
   relativePath,
   modelUri,
@@ -109,6 +114,7 @@ export function MonacoWorkspaceEditor({
   onChange,
   onSave,
 }: {
+  documentKey: string;
   value: string;
   relativePath: string;
   modelUri: string;
@@ -155,6 +161,7 @@ export function MonacoWorkspaceEditor({
         value={value}
         onChange={(nextValue) => onChange(nextValue ?? "")}
         onMount={(editor, api) => {
+          registerWorkspaceEditorModel(documentKey, modelUri);
           editor.addAction({
             id: "cli-launchpad.save-file",
             label: "Save File",
@@ -179,4 +186,10 @@ export function MonacoWorkspaceEditor({
       />
     </div>
   );
+}
+
+export function releaseMonacoWorkspaceDocument(documentKey: string): void {
+  for (const modelUri of takeWorkspaceEditorModelUris(documentKey)) {
+    monaco.editor.getModel(monaco.Uri.parse(modelUri))?.dispose();
+  }
 }

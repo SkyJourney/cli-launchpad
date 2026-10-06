@@ -3,6 +3,7 @@ export const en = {
     back: "Back",
     browse: "Browse",
     cancel: "Cancel",
+    confirm: "Confirm",
     save: "Save",
     copy: "Copy",
     more: "More",
@@ -71,6 +72,7 @@ export const en = {
     paneLabel: "Terminal pane",
     paneNumber: "Pane-{{number}}",
     paneSessions: "Terminal sessions in this pane",
+    inputBackpressure: "The terminal input queue is full. Try again shortly.",
     layoutLoading: "Restoring workspace…",
     layoutNeedsReset:
       "The workspace layout could not be read ({{reason}}). The original data is preserved and autosave is paused.",
@@ -124,6 +126,8 @@ export const en = {
     nextSessions: "{{count}} later items",
     previousSessionsHeading: "Earlier items",
     nextSessionsHeading: "Later items",
+    overflowContents: "{{count}} hidden items",
+    overflowContentsHeading: "Hidden items",
     emptyPane: "Empty pane",
     empty:
       "Restore a session from the right, or open a file or start a CLI in this pane.",
@@ -575,6 +579,7 @@ export const en = {
       "This directory has too many entries. Showing the first 5,000.",
     directoryEntriesSkipped: "{{count}} entries could not be displayed.",
     loadingFile: "Loading file…",
+    editorUnavailable: "The text editor is currently unavailable.",
     fileCannotOpen: "This file cannot be opened here",
     imagePreview: "Image preview",
     unsupported: {

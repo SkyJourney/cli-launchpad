@@ -3,6 +3,7 @@ export const zh = {
     back: "返回",
     browse: "浏览",
     cancel: "取消",
+    confirm: "确认",
     save: "保存",
     copy: "复制",
     more: "更多",
@@ -70,6 +71,7 @@ export const zh = {
     paneLabel: "终端窗格",
     paneNumber: "窗格-{{number}}",
     paneSessions: "此窗格中的终端会话",
+    inputBackpressure: "终端输入队列已满，请稍后重试。",
     layoutLoading: "正在恢复工作区…",
     layoutNeedsReset:
       "工作区布局无法读取（{{reason}}）。原数据已保留，自动保存已暂停。",
@@ -113,6 +115,8 @@ export const zh = {
     nextSessions: "{{count}} 个更后的内容",
     previousSessionsHeading: "更早的内容",
     nextSessionsHeading: "更后的内容",
+    overflowContents: "{{count}} 个隐藏内容",
+    overflowContentsHeading: "隐藏内容",
     emptyPane: "空窗格",
     empty: "从右侧恢复会话，或在此窗格打开文件、启动 CLI。",
     starting: "正在创建终端会话…",
@@ -532,6 +536,7 @@ export const zh = {
     directoryLimitReached: "目录条目过多，仅显示前 5,000 项。",
     directoryEntriesSkipped: "有 {{count}} 个条目无法显示。",
     loadingFile: "正在读取文件…",
+    editorUnavailable: "文本编辑器当前不可用。",
     fileCannotOpen: "此文件无法在此处打开",
     imagePreview: "图片预览",
     unsupported: {

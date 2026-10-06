@@ -51,6 +51,10 @@ pub async fn detect_all(probe_versions: bool) -> Vec<CliStatus> {
     statuses
 }
 
+pub async fn detect_one(tool_key: ToolKey, probe_versions: bool) -> CliStatus {
+    detect_tool(cli_adapters::get(tool_key), probe_versions).await
+}
+
 async fn detect_tool(adapter: &'static dyn CliAdapter, probe_versions: bool) -> CliStatus {
     let tool_key = adapter.tool_key();
     let additional_install_dirs = adapter.additional_install_dirs();

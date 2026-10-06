@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::models::workspace_layout::{
-    WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutPreset,
-    WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveResult, WorkspaceLayoutStateRead,
+    WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutPresetSummary,
+    WorkspaceLayoutSaveResult, WorkspaceLayoutStateRead,
 };
 use crate::services::workspace_layout_service;
 use crate::{with_conn, AppError, Db};
@@ -15,14 +15,19 @@ pub fn get_workspace_layout(state: State<'_, Db>) -> Result<WorkspaceLayoutState
 }
 
 #[tauri::command]
-pub fn save_workspace_layout(
+pub async fn save_workspace_layout(
     state: State<'_, Db>,
     revision: i64,
     layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutSaveResult, AppError> {
-    with_conn(&state, |connection| {
-        workspace_layout_service::save_current(connection, revision, &layout)
+    let db = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::with_connection(&db, |connection| {
+            workspace_layout_service::save_current(connection, revision, &layout)
+        })
     })
+    .await
+    .map_err(|error| AppError::msg(format!("工作区布局保存任务异常：{error}")))?
 }
 
 /// Explicitly replace an unreadable or unsupported workspace with the empty
@@ -38,16 +43,6 @@ pub fn list_workspace_layout_presets(
 ) -> Result<Vec<WorkspaceLayoutPresetSummary>, AppError> {
     with_conn(&state, |connection| {
         workspace_layout_service::list_presets(connection)
-    })
-}
-
-#[tauri::command]
-pub fn get_workspace_layout_preset(
-    state: State<'_, Db>,
-    id: String,
-) -> Result<WorkspaceLayoutPreset, AppError> {
-    with_conn(&state, |connection| {
-        workspace_layout_service::get_preset(connection, &id)
     })
 }
 

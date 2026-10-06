@@ -9,6 +9,7 @@ export const ar = {
     back: "رجوع",
     browse: "استعراض",
     cancel: "إلغاء",
+    confirm: "تأكيد",
     save: "حفظ",
     copy: "نسخ",
     more: "المزيد",
@@ -77,6 +78,7 @@ export const ar = {
     paneLabel: "لوحة طرفية",
     paneNumber: "اللوحة {{number}}",
     paneSessions: "جلسات الطرفية في هذه اللوحة",
+    inputBackpressure: "قائمة إدخال الطرفية ممتلئة. حاول مرة أخرى بعد قليل.",
     layoutLoading: "جارٍ استعادة مساحة العمل…",
     layoutNeedsReset:
       "تعذرت قراءة تخطيط مساحة العمل ({{reason}}). تم الاحتفاظ بالبيانات الأصلية وإيقاف الحفظ التلقائي مؤقتًا.",
@@ -128,6 +130,8 @@ export const ar = {
     nextSessions: "{{count}} عناصر لاحقة",
     previousSessionsHeading: "عناصر سابقة",
     nextSessionsHeading: "عناصر لاحقة",
+    overflowContents: "عناصر مخفية: {{count}}",
+    overflowContentsHeading: "عناصر مخفية",
     emptyPane: "لوحة فارغة",
     empty: "استعد جلسة من اليمين، أو افتح ملفًا أو ابدأ CLI في هذه اللوحة.",
     starting: "جارٍ إنشاء جلسة الطرفية…",
@@ -568,6 +572,7 @@ export const ar = {
     projectIdentityChanged:
       "تغيّرت هوية مجلد المشروع. هذا المستند قديم؛ انسخ محتواه قبل إغلاقه.",
     loadingFile: "جارٍ تحميل الملف…",
+    editorUnavailable: "محرر النصوص غير متاح حاليًا.",
     fileCannotOpen: "لا يمكن فتح هذا الملف هنا",
     imagePreview: "معاينة الصورة",
     unsupported: {

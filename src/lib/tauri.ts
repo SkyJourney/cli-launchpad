@@ -97,12 +97,6 @@ export interface WorkspaceLayoutPresetSummary {
   updatedAtMs: number;
 }
 
-export interface WorkspaceLayoutPreset {
-  summary: WorkspaceLayoutPresetSummary;
-  layout: WorkspaceLayoutDocument;
-  slotStates: WorkspaceSlotState[];
-}
-
 export interface WorkspaceLayoutApplyPlan {
   layout: WorkspaceLayoutDocument;
   slotStates: WorkspaceSlotState[];
@@ -134,28 +128,6 @@ export interface ProjectDirectoryListing {
   skippedCount: number;
 }
 
-export interface WorkspaceFileMetadata {
-  relativePath: string;
-  kind: "directory" | "file" | "other";
-  extension: string | null;
-  size: number;
-  modifiedAtMs: number | null;
-  hidden: boolean;
-  ignored: boolean;
-  symbolicLink: boolean;
-}
-
-export interface WorkspaceFileIndex {
-  entries: WorkspaceFileMetadata[];
-  truncated: boolean;
-  scannedAtMs: number;
-}
-
-export interface ProjectTextFile {
-  content: string;
-  revision: string;
-}
-
 export type ProjectTextFileSaveResult =
   | { kind: "saved"; content: string; revision: string }
   | { kind: "conflict" };
@@ -169,85 +141,6 @@ export type ProjectFileOpenResult =
     };
 
 export type CloseBehavior = "minimize_to_tray" | "quit";
-
-export type TerminalDistribution =
-  | "stable"
-  | "preview"
-  | "canary"
-  | "unpackaged";
-export type ShellFamily = "pwsh" | "windows_power_shell" | "cmd" | "unknown";
-export type ProfilePreservation =
-  | "exact"
-  | "command_continuation"
-  | "appearance_only";
-
-export interface TerminalProfileTarget {
-  targetId: string;
-  name: string;
-  guid: string;
-  source: string | null;
-  isDefault: boolean;
-  shellFamily: ShellFamily;
-  preservation: ProfilePreservation;
-  preservationReason: string;
-}
-
-export interface WindowsTerminalHost {
-  id: string;
-  distribution: TerminalDistribution;
-  displayName: string;
-  executablePath: string;
-  version: string | null;
-  supportsAppendCommandLine: boolean;
-  settingsPath: string | null;
-  profiles: TerminalProfileTarget[];
-}
-
-export interface DirectShellTarget {
-  targetId: string;
-  displayName: string;
-  shellFamily: ShellFamily;
-  executablePath: string;
-  priority: number;
-}
-
-export type TerminalPlatform = "windows" | "macos" | "linux" | "other";
-export type MacosTerminalLaunchMode =
-  | "command_document"
-  | "apple_script"
-  | "direct_arguments";
-
-export interface MacosTerminalHost {
-  targetId: string;
-  displayName: string;
-  applicationPath: string;
-  bundleIdentifier: string;
-  executablePath: string | null;
-  version: string | null;
-  launchMode: MacosTerminalLaunchMode;
-}
-
-export type LinuxTerminalLaunchMode =
-  | "xdg_terminal_exec"
-  | "direct_arguments"
-  | "shell_wrapped";
-
-export interface LinuxTerminalHost {
-  targetId: string;
-  displayName: string;
-  executablePath: string;
-  launchMode: LinuxTerminalLaunchMode;
-}
-
-export interface TerminalEnvironment {
-  platform: TerminalPlatform;
-  windowsTerminalHosts: WindowsTerminalHost[];
-  macosTerminalHosts: MacosTerminalHost[];
-  linuxTerminalHosts: LinuxTerminalHost[];
-  directShells: DirectShellTarget[];
-  recommendedTargetId: string | null;
-  warnings: string[];
-}
 
 export interface SessionInfo {
   toolKey: ToolKey;
@@ -488,28 +381,6 @@ export function listProjectFiles(
   });
 }
 
-export function getWorkspaceFileIndex(
-  directoryId: number,
-  forceRefresh = false,
-) {
-  return invoke<WorkspaceFileIndex>("get_workspace_file_index", {
-    directoryId,
-    forceRefresh,
-  });
-}
-
-export function readProjectTextFile(
-  directoryId: number,
-  directoryPath: string,
-  relativePath: string,
-) {
-  return invoke<ProjectTextFile>("read_project_text_file", {
-    directoryId,
-    directoryPath,
-    relativePath,
-  });
-}
-
 export function openProjectFile(
   directoryId: number,
   directoryPath: string,
@@ -539,8 +410,8 @@ export function saveProjectTextFile(
 }
 
 // CLI detection
-export function detectCliStatus(force = false) {
-  return invoke<CliStatus[]>("detect_cli_status", { force });
+export function detectCliStatus(toolKey?: ToolKey, force = false) {
+  return invoke<CliStatus[]>("detect_cli_status", { force, toolKey });
 }
 
 // Config backup (file-based)
@@ -647,10 +518,6 @@ export function listWorkspaceLayoutPresets() {
   return invoke<WorkspaceLayoutPresetSummary[]>(
     "list_workspace_layout_presets",
   );
-}
-
-export function getWorkspaceLayoutPreset(id: string) {
-  return invoke<WorkspaceLayoutPreset>("get_workspace_layout_preset", { id });
 }
 
 export function createWorkspaceLayoutPreset(
@@ -793,19 +660,6 @@ export function terminatePtySession(sessionId: string) {
 
 export function confirmAppExit() {
   return invoke<void>("confirm_app_exit");
-}
-
-// Terminal environment and launch target
-export function detectTerminalEnvironment(force = false) {
-  return invoke<TerminalEnvironment>("detect_terminal_environment", { force });
-}
-
-export function getLaunchTarget() {
-  return invoke<string>("get_launch_target");
-}
-
-export function setLaunchTarget(targetId: string) {
-  return invoke<void>("set_launch_target", { targetId });
 }
 
 export function getCloseBehavior() {

@@ -34,10 +34,8 @@ impl CliAdapter for ClaudeAdapter {
         })
     }
 
-    fn resume_args(&self, session_id: &str, mut existing_args: Vec<String>) -> Vec<String> {
-        existing_args.push("--resume".to_string());
-        existing_args.push(session_id.to_string());
-        existing_args
+    fn resume_args(&self, session_id: &str) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["--resume".to_string(), session_id.to_string()])
     }
 
     fn query_update(&self) -> LatestVersion {

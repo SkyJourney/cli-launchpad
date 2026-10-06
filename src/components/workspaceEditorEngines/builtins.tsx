@@ -12,6 +12,11 @@ const LazyMonacoWorkspaceEditor = lazy(() =>
 const monacoEngine: WorkspaceEditorEngine = {
   id: "core.monaco",
   apiVersion: 1,
+  releaseDocument: async (documentKey) => {
+    const { releaseMonacoWorkspaceDocument } =
+      await import("../workspaceEditor/MonacoWorkspaceEditor");
+    releaseMonacoWorkspaceDocument(documentKey);
+  },
   View: function MonacoEngineView(props) {
     const { t } = useTranslation();
     return (

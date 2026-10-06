@@ -249,11 +249,10 @@ pub(crate) async fn list_sessions_page(
 }
 
 pub(crate) async fn search_index_source(directory_path: String) -> SessionSearchIndexSource {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || search_antigravity_documents(&directory_path))
-            .await
-            .map_err(|error| anyhow!(error.to_string()))
-            .and_then(|source| source);
+    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+        search_antigravity_documents(&directory_path)
+    })
+    .await;
     index_source(ToolKey::Antigravity, result)
 }
 

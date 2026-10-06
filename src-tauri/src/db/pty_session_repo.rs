@@ -54,6 +54,7 @@ pub fn finish(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn list_for_directory(
     connection: &Connection,
     directory_id: i64,
