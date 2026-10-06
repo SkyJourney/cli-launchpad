@@ -3,7 +3,7 @@ name: 记忆健康检查报告
 description: 项目记忆结构、引用、矛盾和过期状态检查结果
 type: lint
 last_updated: 2026-10-06
-commit: a674462
+commit: 06efdb1
 ---
 
 # Memory Lint Report
