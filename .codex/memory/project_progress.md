@@ -3,7 +3,7 @@ name: 项目进度
 description: 当前完成状态和近期待办
 type: project
 last_updated: 2026-10-06
-commit: 8da6a76
+commit: 312e01d
 ---
 
 # 项目进度
@@ -136,9 +136,9 @@ commit: 8da6a76
 ## 0.4.0 M6 基础抽象收口
 
 - 2026-10-06 M6 收口原则已与用户对齐：软件层维护可验证的统一抽象，不抹平操作系统差异；Windows、macOS、Linux 分别按其原生能力落地适配。
-- 第 1 波实现处理中，包含应用退出前检查脏文件、独立文件窗生命周期、PTY handoff 所有权与回收、文件路径身份、备份恢复协调、安装计划确认和任务槽位释放。布局 schema 升到 v4，以 `detachedContents` 统一记录独立 PTY/文件所有权，并迁移 v3 detached slot ID。
-- 2026-10-06 本机 Windows 全量门禁通过：前端 210 项、Rust 289 项、`pnpm run build`、`cargo fmt --check`、`cargo check`、变更文件 Prettier 与 `git diff --check` 均通过；构建提示 Monaco chunk 超 500 KB。本波三平台 CI 尚待推送后验证。
-- 实施位置、测试名及未完成验收见 [M6 基础抽象体检与收口审查报告第 5 节](../../docs/milestones/0.4.0/M6-abstraction-baseline-audit.md)；B2-F01 退出矩阵、B3R-F05 强制销毁子窗口、J1 备份恢复和 M6 三平台实机记录仍待对应环境验收。
+- 第 1 波实现已完成，覆盖应用退出前检查脏文件、独立文件窗生命周期、PTY handoff 所有权与回收、文件路径身份、备份恢复协调、安装计划确认和任务槽位释放。布局 schema 升到 v4，以 `detachedContents` 统一记录独立 PTY/文件所有权，并迁移 v3 detached slot ID。
+- 2026-10-06 本机 Windows 全量门禁通过：前端 210 项、Rust 289 项、`pnpm run build`、`cargo fmt --check`、`cargo check`、变更文件 Prettier 与 `git diff --check` 均通过；构建提示 Monaco chunk 超 500 KB。CI run [37400004745](https://github.com/SkyJourney/cli-launchpad/actions/runs/37400004745) 的 Windows、macOS、Ubuntu 全部门禁通过。首轮 run [37399404615](https://github.com/SkyJourney/cli-launchpad/actions/runs/37399404615) 揭示 macOS 无法创建非法 UTF-8 测试文件名，按平台能力将该用例限定在 Linux 后复验通过。
+- 实施位置、测试名及未完成验收见 [M6 基础抽象体检与收口审查报告第 5 节](../../docs/milestones/0.4.0/M6-abstraction-baseline-audit.md)；B2-F01 退出矩阵、B3R-F05 强制销毁子窗口、J1 备份恢复和 M6 三平台实机记录仍待对应环境验收。第一波阶段报告后等待用户确认，再进入下一波。
 
 **See Also：** [[decisions.md#M6-统一软件抽象并使用平台原生适配]] [[project_overview.md#CLI-适配器与公共生命周期]]
 
