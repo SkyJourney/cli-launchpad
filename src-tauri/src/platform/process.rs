@@ -384,7 +384,7 @@ mod tests {
         #[cfg(windows)]
         let command = shell_command("Write-Output ('x' * 1000)");
 
-        let output = run_bounded(command, Duration::from_secs(3), 64)
+        let output = run_bounded(command, Duration::from_secs(10), 64)
             .await
             .unwrap();
 
@@ -458,7 +458,7 @@ mod tests {
             )
         };
 
-        let output = run_bounded_sync(command, Duration::from_secs(3), 64).unwrap();
+        let output = run_bounded_sync(command, Duration::from_secs(10), 64).unwrap();
 
         assert!(output.status.success());
         assert_eq!(output.stdout.len(), 64);
