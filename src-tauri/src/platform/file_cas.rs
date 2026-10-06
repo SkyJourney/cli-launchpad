@@ -1006,7 +1006,7 @@ fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
@@ -1231,18 +1231,22 @@ mod tests {
                 .env(WORKER_REVISION, &expected)
                 .env(WORKER_PAYLOAD, payload)
                 .env(WORKER_RESULT, result_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap()
         });
 
         std::thread::sleep(Duration::from_millis(100));
         std::fs::write(&gate, "go").unwrap();
-        for worker in workers {
-            let output = worker.wait_with_output().unwrap();
+        let outputs = workers.map(|worker| worker.wait_with_output().unwrap());
+        for (payload, output) in ["process-a", "process-b"].into_iter().zip(outputs) {
             assert!(
                 output.status.success(),
-                "CAS worker failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                "CAS worker {payload} failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
             );
         }
         let outcomes = ["process-a", "process-b"].map(|payload| {
