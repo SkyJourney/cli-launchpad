@@ -133,6 +133,8 @@ Rust command/history/version/platform 实现位于 `src-tauri/src/services/cli_a
 
 > 后续状态（2026-10-03）：Windows 下 macOS 专用字段的死代码警告已修复；上述门禁记录保留当日实际结果。Vite 主 bundle 超 500 KB 提示仍存在。
 
+> M6 追溯说明（2026-10-06）：G4 时期“主题变化更新 xterm 画布”描述的是订阅与刷新行为，不代表浅色、深色提供不同 ANSI 配色。当前终端 ANSI palette 在两种应用主题下保持相同深色配色；M6 的 B2-F05 按用户确认保留此行为。当前代码与测试证据见 `src/lib/themes.ts`、`src/components/PtyTerminal.tsx` 及 `src/hooks/useThemeSync.test.tsx`；跨平台原生主题行为仍列入 M6 实机矩阵。
+
 ### 阶段 1：主题控制层与语义 token
 
 1. 定义主题标识、主题偏好、解析结果和语义 token 契约，区分用户偏好 `system` 与最终应用的浅/深主题。

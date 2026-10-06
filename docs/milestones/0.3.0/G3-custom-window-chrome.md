@@ -159,7 +159,7 @@
 - [x] Tauri 主窗口配置随 Windows 开发版构建通过；平台窗口装饰配置及 macOS overlay 参数已复核。
 - [x] 动态独立窗口创建逻辑显式应用平台装饰策略，并有纯逻辑测试覆盖。
 - [x] 窗口操作封装覆盖最小化、最大化/还原、关闭、拖动、缩放及 API 错误反馈。
-- [x] 最大化事件订阅支持清理；窗口标题栏组件卸载时解除监听。
+- [x] 窗口操作封装的最大化事件订阅支持清理（`src/lib/windowChrome.test.ts`）。标题栏拖动逻辑由纯函数测试覆盖；目前没有 `WindowTitlebar` 组件专属测试，因此本条不声称组件卸载监听行为经过独立组件测试。M6 增加的主题同步与内容窗口壳测试分别见 `src/hooks/useThemeSync.test.tsx`、`src/components/WorkspaceContentWindowShell.test.tsx`。
 - [x] 标题栏拖动/双击判别及会话拖放契约有测试覆盖；窗口控件不触发拖动。
 - [x] 关闭按钮复用既有窗口关闭路径；托盘、PTY 保护与独立窗口交接行为通过用户实机验收。
 - [x] Prettier、前端 65 项测试、TypeScript/生产构建、Rust 格式、212 项 Rust 测试、Rust 编译检查和 `git diff --check` 均通过。

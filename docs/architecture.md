@@ -65,18 +65,18 @@ claude / codex / agy / grok
 
 - Workspace 内容宿主/协调器是视图归属和 pane 拓扑的唯一所有者：维护 pane ID、分栏树、焦点、每 pane 的有序内容引用及活动项，并为标签激活/关闭、批量关闭、移动、拆分和窗口交接提供统一命令入口。适配器不得直接改布局树，也不得以内容类型分支复制通用 UI 行为。内容自身的权威状态仍由领域所有者管理：Rust PTY service 拥有 PTY 进程和会话事实，文件 service 校验文件身份/读写版本，Git service 以系统 Git 为事实来源。
 - 内建内容适配器通过应用启动期注册 API 装配；registry 校验稳定 ID、API 版本、支持的内容类型和冲突。当前内容 adapter 契约为 `apiVersion: 2`；关闭操作可在领域层返回 pending，内容在退出事件确认前保持 `closing`，不接受取消、移动、拆分或窗口交接，退出后以关闭原因完成 dispose。当前只允许编译进应用的内建适配器，不从磁盘或网络加载第三方代码。每个适配器声明类型化展示信息与菜单文案，接收宿主注入的内容引用和受限服务能力，并实现真实的 pane/独立窗口内容呈现、内部交互及类型特有生命周期驱动。通用菜单、标签关闭按钮、焦点/激活、pane 拓扑、window shell 和 Tauri capability 不由 adapter 复制或动态授予。
-- Adapter 契约分为三类入口：`render(context)` 承载实际内容视图；`presentation(content, capabilities)` 提供标题、图标、状态与类型文案；可选的同步关闭钩子 `beforeClose`/`beforeWindowClose` 实现应用特有拦截。需要独立窗口的 adapter 另外提供类型化 `prepareHandoff`、`attachHandoff`、`rollbackHandoff` 驱动以及终态 `dispose`。Handoff driver 只负责调用该内容领域 service、携带类型 payload 和恢复内容内部运行态；不创建 Tauri 窗口、不改 pane tree、不自行订阅公共协议。宿主传入内容身份、owner、目标、一次性交接 ID 与被授权的 service callbacks；未知能力不得由 adapter 自行从全局 API 获取。`beforeClose` 仍为同步否决点；领域关闭返回 pending 后，`closing` 不能撤销，只有 owner 结束事件能完成该关闭。
+- Adapter 契约分为三类入口：`render(context)` 承载实际内容视图；`presentation(content, context)` 提供标题、图标、状态与类型文案；可选的同步关闭钩子 `beforeClose`/`beforeWindowClose` 实现应用特有拦截。需要独立窗口的 adapter 另外提供类型化 `prepareHandoff`、`attachHandoff`、`rollbackHandoff` 驱动以及终态 `dispose`。Handoff driver 只负责调用该内容领域 service、携带类型 payload 和恢复内容内部运行态；不创建 Tauri 窗口、不改 pane tree、不自行订阅公共协议。宿主传入内容身份、owner、目标、一次性交接 ID 与被授权的 service callbacks；未知能力不得由 adapter 自行从全局 API 获取。`beforeClose` 仍为同步否决点；领域关闭返回 pending 后，`closing` 不能撤销，只有 owner 结束事件能完成该关闭。
 - 宿主统一执行关闭决策：`beforeClose` 用于关闭 pane 内容、关闭其他/全部等会丢弃内容归属的动作，返回 `true` 才继续、返回 `false` 则拦截；同一批量关闭在执行前先评估所有目标，任一目标拦截时不部分删除。`beforeWindowClose` 在原生子窗口关闭导致内容销毁前执行，同样 `true` 继续、`false` 保持窗口和内容。钩子当前同步且抛错按拒绝处理；如未来需要异步确认，须版本化契约并明确 pending UI/取消语义。pane 内移动、激活、分栏以及成功的交接不是破坏性关闭，不得误触发 `beforeClose`。
 - 窗口壳只负责平台标题栏/拖动/尺寸控件、原生 close-request 进入点、返回入口和生命周期协调器的调用；G3 的主窗口托盘/退出确认、macOS overlay 与平台装饰策略保持其既有 owner。子窗口关闭、返回和 pane 内容关闭最终统一经过 workspace/window lifecycle coordinator，具体 adapter 负责准备类型化交接数据和执行 PTY/file 领域操作。`beforeWindowClose` 返回 true 表示允许宿主继续执行该窗口已配置的关闭策略；该策略可以是交还工作区、结束只属于该窗口的内容或销毁空壳，不将所有内容强制套成相同的 dispose 行为。
 - 内容交接状态由前端生命周期协调器管理视图归属，使用随机一次性交接身份并核验来源/目标窗口、内容身份和代次；Rust PTY service 的会话/窗口归属仍是 PTY 权威事实。主窗只在目标窗口 ready 并完成领域 attach 后提交 pane 移除；任一步失败回滚到原 owner。返回流程对称，防止两个窗口同时呈现可写内容或内容暂时无 owner。重复、乱序、过期事件必须幂等忽略；关闭、自然退出和应用卸载负责移除监听、计时器、窗口引用和内容运行时资源。
-- 交接通用状态：`attached → detaching → detached → returning → attached`。分离失败回到 `attached`，返回失败回到 `detached`；明确关闭经过关闭钩子后进入 `disposed`。PTY payload 只传令牌、身份和必要终端快照，由 Rust attach/detach；文件 payload 只在受信窗口握手中以内存传递项目 ID、相对路径、编辑缓冲和版本，不写入布局或业务数据库。文件路径授权与每次读写校验不能由 payload 替代。
+- 交接通用状态：`attached → detaching → detached → returning → attached`。分离失败回到 `attached`，返回失败回到 `detached`；明确关闭经过关闭钩子后进入 `disposed`。PTY payload 只传令牌、身份和必要终端快照，由 Rust attach/detach；文件 payload 经 Tauri 窗口事件在运行期传递项目 ID、相对路径、编辑缓冲和版本；协议核对事件版本、一次性 token 与窗口 label，不将 payload 持久化，不写入布局或业务数据库。文件路径授权与每次读写校验不能由 payload 替代。
 - **当前实现状态（M6 阶段 6）：** `WorkspaceContentCoordinator` 驱动 owner 状态；`workspaceContentWindowProtocol` 统一版本化跨窗事件；`workspaceContentHandoffRuntime` 统一创建窗口并调用 adapter 的 prepare/attach/rollback drivers；`closeWorkspaceContentBatch` 统一关闭前置拦截、批量批准、部分成功回滚和 dispose 完成通知。PTY 终止返回 pending 时 coordinator 保持 `closing`，禁止取消和拓扑变更；退出事件完成 `disposed` 并通知 adapter。未知内容及缺失 adapter 显示内容级占位，adapter render 错误由内容级 ErrorBoundary 隔离，关闭仍走统一入口。PTY 终止与文件状态移除仍由宿主注入为领域操作。`workspaceContentWindowRegistry` 共用待启动窗口注册、超时、撤销与 pending→detached 转移机制；PTY token、文件 buffer 和树更新保留领域边界。pane 标签序列和堆叠列表共同覆盖 PTY/文件内容，关闭菜单按 pane 全部内容计数；PTY adapter 经渲染上下文挂载由 `WorkspacePtySessionRegistry` 持有的稳定 portal target，不接管 PTY 会话。pane 树及窗口事件回调编排仍由 `PtyWorkspace` 管理，PTY 结束与文件状态移除仍由各自领域操作执行。阶段状态与剩余门禁以 `docs/milestones/0.4.0/M6-workspace-files.md` 为准。
-- 每类子窗口由静态 Tauri capability 按 label 前缀授予最小权限。Adapter registry 只能声明需要的能力以供审查，不能生成或扩大 ACL；新增窗口类别必须同步增加静态 capability 和覆盖 listen/emit/窗口 API 的配置或启动测试。应用不授予工作区内容窗口任意文件系统权限。
+- 每类子窗口由静态 Tauri capability 按 label 前缀授予最小权限。Adapter registry 只能声明需要的能力以供审查，不能生成或扩大 ACL；新增窗口类别必须同步增加静态 capability 和覆盖窗口 kind 与静态 capability 一致性、窗口 API 权限的自动化契约测试。应用不授予工作区内容窗口任意文件系统权限。
 - 内容标签采用共同的宽度分配规则：标题自然收缩，单项标题最大 200 CSS px 并省略；可用空间不足时活动项保持可见，其他类型统一收进内容堆叠列表。列表命令仍经宿主统一入口执行，使用 ResizeObserver/等价布局观测处理窗口尺寸变化，不能因窄 pane 隐藏内容或改变其 owner。
 - 文本编辑器视图依赖独立的编辑器引擎接口；文件身份、读写、版本冲突和脏状态仍由工作区文件服务/协调器管理。Monaco 是首个引擎实现，语言贡献按需装载；后续 Git 差异、blame 与 LSP 能力作为受控贡献接入，不让 Monaco 内建功能替代应用的文件安全与生命周期。
 - 工作区索引目前没有生产服务、Tauri command 或前端调用方；M6 的文件浏览直接读取有界目录列表。项目级元数据缓存、全文搜索和语言服务/LSP 是后续能力的分层设计参考，不代表当前已交付。若重新引入索引，元数据缓存不得保存文件正文，扫描须局限于项目根目录并在单条目错误时保留部分结果；语言服务失效不得影响文件浏览与文本编辑。B3R-F06 的原 partial-scan 修复建议及本次删除原因记录在 M6 审查报告 WP5。
 - 文件引用由项目 ID 和项目内相对路径组成。Rust file service 在每次操作时从数据库读取项目根目录，并将其打开为保留的目录 capability；前端提供的相对路径经校验后，只通过该目录句柄进行枚举、读取、图片预览和写回。越界符号链接由 capability 文件系统层拒绝，避免 canonicalize 检查与后续路径 I/O 之间被替换的竞态；特殊文件和不支持内容也在服务层拒绝。只向前端返回有界目录项、文本内容、版本/修改标识和错误，不把任意绝对路径当成授权凭据。
-- 项目文件读取、写入、目录列表和变更通知由 Rust service 通过受限 Tauri commands 提供；不为文件浏览器授予整个用户目录的宽泛前端 fs 权限。所有项目文件命令均使用 Tauri async command，并将阻塞文件操作派发到 blocking pool。文本保存经 `platform/file_cas` 公共 CAS 协调器处理：锁内读取并比较调用方版本，目标文件身份仍匹配时才使用项目目录 capability 下的原子替换；锁等待有界，冲突作为类型化结果返回，保留编辑草稿并提供重新载入入口。普通无条件原子写入复用同一临时文件和平台替换机制，但不打开目标文件读取或加锁。临时文件在写入数据前就设置仅当前用户可访问的权限。Unix 在同目录原子 rename 后，通过仍打开的文件句柄恢复目标权限；Windows 在持有不可删除的父目录句柄时使用其最终路径执行 `ReplaceFileW`，由系统保留目标 DACL，并在替换前恢复 Windows 文件属性。macOS/Linux 使用同目录 rename。平台 adapter 只负责锁、文件身份和原子替换，修订计算与 CAS 冲突语义由公共层统一。该锁协调遵守本协议的 Launchpad 写入方；不遵守操作系统文件锁协议的外部程序仍可能并发改写，跨平台文件系统没有可普遍依赖的内容条件替换原语，因此保存前需重读校验，且不得将锁描述为对任意外部写入的绝对互斥。项目目录仍是用户数据，不复制到业务数据库。
+- 项目文件读取、写入和目录列表由 Rust service 通过受限 Tauri commands 提供；当前没有文件系统 watcher，也不提供变更通知流；不为文件浏览器授予整个用户目录的宽泛前端 fs 权限。所有项目文件命令均使用 Tauri async command，并将阻塞文件操作派发到 blocking pool。文本保存经 `platform/file_cas` 公共 CAS 协调器处理：锁内读取并比较调用方版本，目标文件身份仍匹配时才使用项目目录 capability 下的原子替换；锁等待有界，冲突作为类型化结果返回，保留编辑草稿并提供重新载入入口。普通无条件原子写入复用同一临时文件和平台替换机制，但不打开目标文件读取或加锁。临时文件在写入数据前就设置仅当前用户可访问的权限。Unix 在同目录原子 rename 后，通过仍打开的文件句柄恢复目标权限；Windows 在持有不可删除的父目录句柄时使用其最终路径执行 `ReplaceFileW`，由系统保留目标 DACL，并在替换前恢复 Windows 文件属性。macOS/Linux 使用同目录 rename。平台 adapter 只负责锁、文件身份和原子替换，修订计算与 CAS 冲突语义由公共层统一。该锁协调遵守本协议的 Launchpad 写入方；不遵守操作系统文件锁协议的外部程序仍可能并发改写，跨平台文件系统没有可普遍依赖的内容条件替换原语，因此保存前需重读校验，且不得将锁描述为对任意外部写入的绝对互斥。项目目录仍是用户数据，不复制到业务数据库。
 - Unix 原子 rename 成功后若恢复权限失败，文件内容仍视为已保存：后端记录警告，并通过类型化保存结果通知主工作区与独立文件窗口检查访问权限。CAS 的 `.UUID.writing` 文件默认不显示在项目浏览器；设置页只能由用户主动扫描登记项目中超过 24 小时的匹配文件，逐项预览和确认后，经 Rust service 重新校验项目相对路径、普通文件类型、修改时间、大小和文件身份再删除。
 - Markdown renderer 对原始文件内容生成受清理的连续 HTML；浏览器渲染器和主题 CSS 必须与工作台 UI 样式隔离。Markdown 预览不使用分页引擎、不生成 PDF/Word，也不执行文档提供的脚本。ECharts 浏览器运行时在预览适配器生命周期内创建、重排和销毁。
 - Markdown 主题是文档样式偏好，与应用浅色/深色主题分离；主题 CSS、图片字体资源和相对链接仅能在受控预览边界中解析。复用 md-to-pdf 分包之前，必须验证其浏览器入口、依赖打包、安全过滤和授权，不直接引入其分页/导出链路。
@@ -142,47 +142,7 @@ cli_status
 
 ## Tauri commands 清单
 
-```text
-项目
-  list_directories / add_directory / update_directory / remove_directory / set_directory_pinned
-
-启动
-  preview_launch / launch_tool / resume_session
-
-PTY 工作台（0.3.0 目标）
-  create_pty_session（新建或按已验证的 CLI session ID 恢复） / write_pty_session / resize_pty_session
-  terminate_pty_session / list_pty_sessions / get_pty_session
-  outputs and state changes streamed from Rust to the matching terminal view
-
-工具
-  list_tools
-
-CLI 状态与版本
-  detect_cli_status            被动检测安装与全路径；显式刷新时才执行 --version
-  fetch_latest_version         按 tool_key 独立查询一个 CLI 的最新状态
-  get_install_plan             返回结构化安装/更新命令（仅预览，不执行）
-  start_execution_task         创建后台安装/更新任务
-  list/get/cancel/clear_execution_task(s)  查询、终止与清理任务
-
-会话历史
-  list_sessions                按目录和工具实时读取会话
-  set/delete_session_alias     设置或删除匹配会话 ID 的本地别名
-  PTY 恢复前重新验证 CLI session ID 属于目标项目，再将 CLI 专用参数传给内置 PTY
-
-模型目录
-  get_model_catalog            获取已接入 CLI 的模型选项，支持强制刷新（0.3.0 工作台不展示模型配置）
-
-终端启动配置
-  detect_terminal_environment / get_launch_target / set_launch_target
-
-桌面行为配置
-  get_close_behavior / set_close_behavior
-
-配置备份
-  export_config_to_path / import_config_from_path   读写 JSON 文件（配合文件对话框）
-```
-
-commands 保持小而清晰，业务组合放在 services。
+Tauri command 名称和窗口 capability 授权以 `contracts/app-commands.json` 为人工维护的契约清单；Rust 测试 `app_command_contract_matches_the_registered_handler` 校验清单与实际 handler 注册一致，`window_kind_contract_matches_capabilities` 校验窗口类别与 capability 对应关系。此处不复制易过期的命令名列表。IPC 入口保持小而清晰，业务组合放在 services。
 
 ## 桌面集成
 
@@ -438,13 +398,13 @@ Platform primitives and persistent execution task manager
 ```
 
 - 管理能力由适配器声明命令候选、CLI 专属已知安装目录、安装来源、当前版本探测与解析、更新检查与比较语义，以及固定结构化安装/更新计划。Grok 安装来源校验、Hermes 官方更新语义、Codex Windows PowerShell 5.1 安装和更新封装均保留为对应 CLI 差异。
-- 运行时能力由适配器提供启动与恢复参数以及可选能力标记；项目目录归属校验、PTY 创建/尺寸/退出、会话窗口与独立窗口状态机仍由公共服务管理。关闭、移动窗格或应用布局不得由适配器创建或复制 PTY。
+- 启动参数由各 CLI 的 `resume_args` 和 PTY 创建组合逻辑生成；`CliAdapter` 不声明通用能力标记，项目目录归属校验、PTY 创建/尺寸/退出、会话窗口与独立窗口状态机仍由公共服务管理。关闭、移动窗格或应用布局不得由适配器创建或复制 PTY。
 - 历史适配器只负责定位各 CLI 的本地事实来源、读取所需 metadata、校验项目归属并映射到规范会话 DTO。公共历史服务、SQLite FTS 索引和搜索负责统一分页、查询、别名合并和去重，去重键为 `ToolKey + session_id`；适配器不各自建立检索引擎，也不把完整 transcript 或项目路径写入搜索缓存。
 - CLI 图标与名称属于展示能力，存放在前端适配器/注册表中，并使用与 Rust 相同的 `ToolKey`；不把 React 资源塞进 Rust CLI 适配器。公共 UI 负责选择展示，不复制各 CLI 的交互状态逻辑。
 - Rust 适配器按 CLI 组织公共实现与平台实现：`<cli>/common.rs` 放稳定的命令候选、命令语义、解析、参数和数据转换；`<cli>/platform.rs` 放安装/更新等平台命令计划，并通过平台条件分支覆盖确有操作系统差异的实现。只有平台差异需要独立维护时再拆成 `platform/{windows,macos,linux}`。共享路径解析、进程执行、PTY 和文件访问能力优先留在公共 platform primitives；不为每种 CLI 和每个平台复制一份无差异实现。
-- 适配器合约为可选能力提供安全默认值：未接入历史时返回空页、未配置安装/更新时明确报错、未配置状态查询时返回未知并附错误；一个适配器能力缺失不得阻塞其他 CLI 或主应用启动。接入新 CLI 时按阶段替换默认能力，不要求一次实现全部模块。
+- 适配器合约为可选能力提供安全默认值：未接入历史时返回显式错误、未配置安装/更新时明确报错、未配置状态查询时返回未知并附错误；一个适配器能力缺失不得阻塞其他 CLI 或主应用启动。接入新 CLI 时按阶段替换默认能力，不要求一次实现全部模块。
 - 公共协调器按 CLI 独立执行状态查询；路径探测、当前版本和更新状态查询可并行，单项慢响应或失败不得阻塞其他 CLI。前端查询 Hook 使用每 CLI 的缓存键与状态，支持设置页自动刷新、手动强制刷新和任务完成后的定向回读。
-- 统一状态至少包含安装状态与路径、当前版本及其探测错误、更新状态（可用/不可用/未知）、最新版本或提交差异、缓存来源与成功检查时间，以及最近一次查询错误。Hermes 等非语义版本工具通过适配器映射到同一更新状态模型。
+- 统一查询结果包含安装状态与路径、当前版本及探测错误、更新状态、最新版本或提交差异、缓存来源与最近一次查询错误；`CliStatus` DTO 没有最后成功检查时间字段。Hermes 等非语义版本工具通过适配器映射到同一更新状态模型。
 - Rust 持久缓存只保存成功的更新探测结果；失败时可一并返回最后成功数据与本次错误，但不得刷新成功缓存时间。没有可用历史结果时返回未知状态和错误，不推断为已是最新。
 - 适配器只生成受信任的结构化命令计划和受限执行准备信息，不接收任意命令或用户拼接参数。公共平台执行器负责进程启动、超时、输出通道和参数边界；环境修改仅在受控执行时临时应用，不持久化环境变量或密钥。
 - 安装/更新确认后仍进入现有 Rust `ExecutionTaskManager`。任务按 `ToolKey` 分槽：同一 CLI 同时最多运行一个任务，不同 CLI 可并行；管理器继续负责状态、日志、取消、平台进程树及 SQLite 历史，适配器不另建任务生命周期。
@@ -515,13 +475,13 @@ Claude 版本探测设置 `DISABLE_AUTOUPDATER=1`，避免查询当前版本时�
   Codex：releases.openai.com Codex latest channel
   Antigravity：官方安装器使用的平台 manifest
   Grok Build：进入设置页或用户手动刷新版本时独立运行官方 `grok update --check --json`，解析 `latestVersion` 和 `installer`，不触发更新；启动子进程时移除 pnpm 注入的 `npm_config_user_agent`，避免把官方原生安装误判为 npm 安装；Windows 官方 stable 二进制地址不作为版本号 API。
-  Hermes Agent：进入设置页或手动刷新时，对已识别的官方 Windows 源码安装独立运行一次 `hermes update --check`，使用 CLI 默认更新目标并按落后提交数显示状态，不做语义版本比较；浅克隆可能只有“有更新”而没有精确提交数。检查不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata。仅根据已解析的完整可执行路径及默认源码 checkout 目录判定托管资格，不再串行运行 `--install-id` 与 `--plan`。读取 `hermes --version` 时使用临时 `HERMES_HOME` 禁用默认的被动更新网络检查，不更改用户配置。MSIX/Store 状态由所属更新渠道提供。
+  Hermes Agent：进入设置页或手动刷新时，对已识别的官方源码安装独立运行一次 `hermes update --check`，使用 CLI 默认更新目标并按落后提交数显示状态，不做语义版本比较；浅克隆可能只有“有更新”而没有精确提交数。检查不应用代码、不安装依赖或重启 Gateway，但会获取 Git 更新 metadata。仅根据已解析的完整可执行路径及默认源码 checkout 目录判定托管资格，不再串行运行 `--install-id` 与 `--plan`。读取 `hermes --version` 时使用临时 `HERMES_HOME` 禁用默认的被动更新网络检查，不更改用户配置。MSIX/Store 状态由所属更新渠道提供。
 
 更新命令（结构化参数，先预览后确认）
   Claude：claude update
   Codex：codex update
   Antigravity：agy update
-  Grok Build：grok update（计划只定位可执行文件；任务启动后在后台复核 JSON 的 `installer=internal` 与 `.grok/bin` 或 `GROK_BIN_DIR` 路径，校验通过才执行；更新子进程移除 pnpm 注入的 `npm_config_user_agent`）
+  Grok Build：`grok update`（计划依据已解析的可执行路径生成；后台任务启动前复核 JSON 的 `installer=internal` 与 `.grok/bin` 或 `GROK_BIN_DIR` 路径，校验通过才执行；更新子进程移除 pnpm 注入的 `npm_config_user_agent`）
   Hermes Agent：解析到的 Hermes CLI 完整路径加 `update` 参数（确认浮窗展示完整路径；默认分支、安装渠道及更新过程交由 Hermes CLI 处理，不重复读取计划或执行前复核）
 ```
 

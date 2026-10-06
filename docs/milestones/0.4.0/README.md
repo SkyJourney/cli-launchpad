@@ -31,5 +31,5 @@ M7 与 M8 可在 M6 验收后并行推进；M9 依赖 M8 的 Git service 和状�
 
 ## 状态
 
-- M6：实现及 Windows 自动门禁进行中；Monaco 编辑器与工作区索引调研见 [M6 编辑器与索引调研](M6-editor-and-index-research.md)；macOS/Linux 实机验收待对应环境验证。
-- M7–M10：待开始。
+- M6：第三波实现及三平台 CI 已通过；第四波 WP7 文档追溯与扩展成本演练已完成，本机自动门禁通过；第四波三平台 CI 待运行。Windows、macOS、Linux 实机验收尚未执行，A 层未关闭；X-F05 CSP 三平台生产包运行检查未完成，B 层未关闭。状态与实机验收矩阵见 [M6](M6-workspace-files.md) 和[基础抽象审查报告](M6-abstraction-baseline-audit.md)。
+- M7–M10：M6 A/B 门禁关闭前不得开始。

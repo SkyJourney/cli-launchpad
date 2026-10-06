@@ -68,7 +68,7 @@ Grok Build 终端标题使用 `项目名-GB-序号`，其他界面显示官方�
 - Windows 安装计划固定来自 `https://x.ai/cli/install.ps1`，以 PowerShell 程序和固定参数生成，并显式设为 stable 通道；macOS/Linux 计划对应官方 `https://x.ai/cli/install.sh`，不开放脚本输入。
 - 安装确认界面展示完整程序调用，并说明安装目录、替换文件、`config.toml`、PowerShell 补全、用户 PATH、网络下载与可选部署密钥副作用。
 - 安装和更新复用现有持久化任务管理器、并发隔离、日志、取消及历史；任务结束后重新读取 CLI 状态和版本/来源。
-- Grok 更新须同时满足 CLI 检查 JSON 的 `installer` 精确为 `internal`、当前可执行文件位于官方 `.grok/bin` 或 `GROK_BIN_DIR`；计划生成和任务启动前分别复核。npm、未知来源、缺失标记或路径不符时不创建更新任务，并显示手动更新说明。
+- Grok 更新计划根据已解析的可执行文件路径生成结构化命令；计划阶段不运行更新检查或复核安装路径。后台任务启动前运行 Grok 检查 JSON，并要求 `installer` 精确为 `internal` 且当前可执行文件位于官方 `.grok/bin` 或 `GROK_BIN_DIR`；来源未知、缺失标记或路径不符时不执行更新并显示手动更新说明。代码位置：`src-tauri/src/services/cli_adapters/grok/platform.rs`、`grok/version.rs`；任务前置校验：`grok/common.rs`。
 - 版本刷新只运行 `grok update --check --json` 并读取 `latestVersion` 与 `installer`；此检查不执行更新。
 
 **验收：** 安装计划来源不可被输入覆盖；完成/失败/取消都能回读并刷新状态；更新不会误操作 npm 或未知来源安装。
