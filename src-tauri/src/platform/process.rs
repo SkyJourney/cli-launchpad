@@ -382,7 +382,11 @@ mod tests {
         #[cfg(unix)]
         let command = shell_command("printf '%01000d' 0");
         #[cfg(windows)]
-        let command = shell_command("Write-Output ('x' * 1000)");
+        let command = {
+            let mut command = Command::new(detect::system32("cmd.exe"));
+            command.args(["/D", "/C", "echo"]).arg("x".repeat(1000));
+            command
+        };
 
         let output = run_bounded(command, Duration::from_secs(10), 64)
             .await
@@ -447,14 +451,10 @@ mod tests {
         };
         #[cfg(windows)]
         let command = {
+            let output = "x".repeat(1000);
             cli_std_command(
-                Path::new(&detect::system32("WindowsPowerShell\\v1.0\\powershell.exe")),
-                [
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Write-Output ('x' * 1000)",
-                ],
+                Path::new(&detect::system32("cmd.exe")),
+                ["/D", "/C", "echo", output.as_str()],
             )
         };
 
