@@ -1,0 +1,106 @@
+name: Flaky probe
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Number of repeated test runs per platform
+        required: false
+        default: "20"
+        type: string
+      filter:
+        description: Rust test name filter
+        required: false
+        default: "platform::file_cas"
+        type: string
+      cas_rounds:
+        description: Rounds per cross-process CAS test run
+        required: false
+        default: "50"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaky-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      REPEAT: ${{ inputs.repeat || '20' }}
+      FILTER: ${{ inputs.filter || 'platform::file_cas' }}
+      CLI_LAUNCHPAD_CAS_ROUNDS: ${{ inputs.cas_rounds || '50' }}
+      RUST_BACKTRACE: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev xdg-utils
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Placeholder frontend dist
+        run: |
+          mkdir -p dist
+          echo '<!doctype html><title>probe</title>' > dist/index.html
+
+      - name: Build tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-run
+
+      - name: Repeat filtered tests
+        run: |
+          mkdir -p probe
+          fails=0
+          for i in $(seq 1 "$REPEAT"); do
+            if ! cargo test --manifest-path src-tauri/Cargo.toml --locked -- "$FILTER" > "probe/run-$i.log" 2>&1; then
+              fails=$((fails+1))
+              cp "probe/run-$i.log" "probe/failed-$i.log"
+            fi
+          done
+          deleted=0
+          for f in probe/failed-*.log; do
+            [ -e "$f" ] || continue
+            if grep -q '(deleted)' "$f"; then
+              deleted=$((deleted+1))
+            fi
+          done
+          echo "failures=$fails/$REPEAT" | tee probe/summary.txt
+          echo "deleted_alias_logs=$deleted" | tee -a probe/summary.txt
+          test "$fails" -eq 0
+
+      - name: Upload probe logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: flaky-probe-${{ matrix.os }}
+          path: probe/
+          if-no-files-found: warn
+          retention-days: 14

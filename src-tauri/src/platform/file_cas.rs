@@ -360,7 +360,10 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
                 // the destination unavailable while its pathname is swapped.
                 thread::sleep(LOCK_RETRY_INTERVAL);
             }
-            Err(error) => return Err(error).context("无法打开待保存文件"),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("无法打开待保存文件：{}", path.display()))
+            }
         }
     };
     loop {
@@ -1006,7 +1009,7 @@ fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    use std::process::{Command, Stdio};
+    use std::process::{Child, Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
@@ -1175,6 +1178,68 @@ mod tests {
     const WORKER_REVISION: &str = "CLI_LAUNCHPAD_PROJECT_CAS_REVISION";
     const WORKER_PAYLOAD: &str = "CLI_LAUNCHPAD_PROJECT_CAS_PAYLOAD";
     const WORKER_RESULT: &str = "CLI_LAUNCHPAD_PROJECT_CAS_RESULT";
+    const CAS_ROUNDS_ENV: &str = "CLI_LAUNCHPAD_CAS_ROUNDS";
+    const WORKER_WAIT_LIMIT: Duration = Duration::from_secs(30);
+    const WORKER_NAMES: [&str; 2] = ["process-a", "process-b"];
+
+    fn cas_rounds() -> usize {
+        match std::env::var(CAS_ROUNDS_ENV) {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(rounds) if rounds >= 1 => rounds,
+                _ => panic!("{CAS_ROUNDS_ENV} 必须是不小于 1 的整数，实际为 {value:?}"),
+            },
+            Err(_) => 1,
+        }
+    }
+
+    fn describe_outputs(outputs: &[Output; 2]) -> String {
+        WORKER_NAMES
+            .iter()
+            .zip(outputs)
+            .map(|(name, output)| {
+                format!(
+                    "[{name}] 退出状态：{}\n[{name}] stdout：\n{}\n[{name}] stderr：\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn read_worker_results(root: &Path) -> [String; 2] {
+        WORKER_NAMES.map(|payload| {
+            std::fs::read_to_string(root.join(format!("{payload}.result")))
+                .unwrap_or_else(|error| format!("<无结果文件：{error}>"))
+        })
+    }
+
+    fn wait_for_workers(mut workers: [Child; 2], root: &Path, round: usize) -> [Output; 2] {
+        let deadline = Instant::now() + WORKER_WAIT_LIMIT;
+        loop {
+            let finished = workers
+                .iter_mut()
+                .all(|worker| worker.try_wait().unwrap().is_some());
+            if finished {
+                return workers.map(|worker| worker.wait_with_output().unwrap());
+            }
+            if Instant::now() >= deadline {
+                for worker in workers.iter_mut() {
+                    let _ = worker.kill();
+                }
+                let outputs = workers.map(|worker| worker.wait_with_output().unwrap());
+                let results = read_worker_results(root);
+                panic!(
+                    "第 {round} 轮：CAS worker 未在 {WORKER_WAIT_LIMIT:?} 内结束，已强制终止\nprocess-a 结果：{}\nprocess-b 结果：{}\n{}",
+                    results[0],
+                    results[1],
+                    describe_outputs(&outputs)
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     fn revision(bytes: &[u8]) -> String {
         Sha256::digest(bytes)
@@ -1206,19 +1271,21 @@ mod tests {
             &expected,
             1024,
             revision,
-        )
-        .unwrap();
-        std::fs::write(result_path, format!("{outcome:?}")).unwrap();
+        );
+        let text = match outcome {
+            Ok(outcome) => format!("{outcome:?}"),
+            Err(error) => format!("Error: {error:#}"),
+        };
+        std::fs::write(result_path, text).unwrap();
     }
 
-    #[test]
-    fn separate_processes_using_same_revision_allow_only_one_winner() {
+    fn run_cas_round(round: usize) {
         let root = tempdir().unwrap();
         std::fs::write(root.path().join("note.txt"), "original").unwrap();
         let expected = revision(b"original");
         let gate = root.path().join("start");
 
-        let workers = ["process-a", "process-b"].map(|payload| {
+        let workers = WORKER_NAMES.map(|payload| {
             let result_path = root.path().join(format!("{payload}.result"));
             Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -1237,35 +1304,55 @@ mod tests {
                 .unwrap()
         });
 
-        std::thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
         std::fs::write(&gate, "go").unwrap();
-        let outputs = workers.map(|worker| worker.wait_with_output().unwrap());
-        for (payload, output) in ["process-a", "process-b"].into_iter().zip(outputs) {
+        let outputs = wait_for_workers(workers, root.path(), round);
+
+        let results = read_worker_results(root.path());
+        let report = format!(
+            "第 {round} 轮\nprocess-a 结果：{}\nprocess-b 结果：{}\n{}",
+            results[0],
+            results[1],
+            describe_outputs(&outputs),
+        );
+
+        for (payload, output) in WORKER_NAMES.into_iter().zip(&outputs) {
             assert!(
                 output.status.success(),
-                "CAS worker {payload} failed with {}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
+                "CAS worker {payload} 异常退出\n{report}"
             );
         }
-        let outcomes = ["process-a", "process-b"].map(|payload| {
-            std::fs::read_to_string(root.path().join(format!("{payload}.result"))).unwrap()
-        });
         assert_eq!(
-            outcomes.iter().filter(|value| *value == "Written").count(),
-            1
+            results.iter().filter(|value| *value == "Written").count(),
+            1,
+            "必须恰好一个 Written\n{report}"
         );
         assert_eq!(
-            outcomes.iter().filter(|value| *value == "Conflict").count(),
-            1
+            results.iter().filter(|value| *value == "Conflict").count(),
+            1,
+            "必须恰好一个 Conflict\n{report}"
         );
-        assert!(matches!(
-            std::fs::read_to_string(root.path().join("note.txt"))
-                .unwrap()
-                .as_str(),
-            "process-a" | "process-b"
-        ));
+        let note = std::fs::read_to_string(root.path().join("note.txt")).unwrap();
+        assert!(
+            matches!(note.as_str(), "process-a" | "process-b"),
+            "note.txt 内容异常：{note:?}\n{report}"
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".writing"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "存在 .writing 残留：{leftovers:?}\n{report}"
+        );
+    }
+
+    #[test]
+    fn separate_processes_using_same_revision_allow_only_one_winner() {
+        for round in 1..=cas_rounds() {
+            run_cas_round(round);
+        }
     }
 
     #[test]
@@ -1459,6 +1546,33 @@ mod tests {
         restore.join().unwrap();
         drop(locked);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+    }
+
+    #[test]
+    fn lock_current_error_names_the_requested_path() {
+        let root = tempdir().unwrap();
+        let directory = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        let error = lock_current(&directory, Path::new("missing-note.txt")).unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("无法打开待保存文件：missing-note.txt"),
+            "错误文本必须带相对路径，实际为：{message}"
+        );
+        let root_kind = error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        assert_eq!(
+            root_kind,
+            Some(std::io::ErrorKind::NotFound),
+            "根因必须保留为 NotFound，实际为：{message}"
+        );
+        assert!(
+            !root.path().join("missing-note.txt").exists(),
+            "lock_current 不得创建目标文件"
+        );
     }
 
     #[cfg(unix)]
