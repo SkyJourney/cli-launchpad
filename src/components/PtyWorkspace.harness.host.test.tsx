@@ -19,7 +19,9 @@ import { tauriMock } from "../test/tauriMock";
 import { fakeTerminals, resetFakeTerminals } from "../test/host/hostMocks";
 import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
 import {
+  createBackend,
   DEFAULT_FILE_WINDOW_LABEL,
+  DIRECTORY,
   DEFAULT_PTY_WINDOW_LABEL,
   detachFileToWindow,
   detachPtyToWindow,
@@ -65,7 +67,14 @@ describe("host harness helpers", () => {
 
   it("launchPty creates a fake terminal session owned by the injected coordinator", async () => {
     const coordinator = new WorkspaceContentCoordinator();
-    const workspace = await mountWorkspace({ coordinator });
+    // 目录列表延迟返回：launchSession 在项目目录未加载时会静默返回，
+    // 这里用慢响应证明 harness 会等查询稳定，而不是靠固定轮数的 flush（CI 的 Ubuntu 上曾因此失败）。
+    const backend = createBackend();
+    backend.handlers.set("list_directories", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return [DIRECTORY];
+    });
+    const workspace = await mountWorkspace({ backend, coordinator });
     host = workspace;
 
     const { slot, terminal } = await launchPty(workspace);

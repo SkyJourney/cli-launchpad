@@ -187,6 +187,38 @@ export async function flush(times = 5) {
   }
 }
 
+/**
+ * 反复 flush，直到条件成立；超过 maxRounds 轮仍不成立时抛错（带 label）。
+ * 比固定轮数的 flush 稳：慢速 CI（例如 Ubuntu runner）上查询、effect 的完成轮数不确定。
+ */
+export async function flushUntil(
+  done: () => boolean,
+  label: string,
+  maxRounds = 200,
+) {
+  for (let round = 0; round < maxRounds; round += 1) {
+    if (done()) return;
+    await flush(1);
+  }
+  if (!done()) {
+    throw new Error(
+      `flushUntil: ${label} was not reached after ${maxRounds} rounds`,
+    );
+  }
+}
+
+/** 至少发起过一个查询，并且所有查询都已离开 pending 与 fetching。 */
+function queriesSettled(queryClient: QueryClient) {
+  const queries = queryClient.getQueryCache().getAll();
+  return (
+    queries.length > 0 &&
+    queries.every(
+      (query) =>
+        query.state.fetchStatus === "idle" && query.state.status !== "pending",
+    )
+  );
+}
+
 export function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -311,6 +343,14 @@ export async function mountWorkspace(
     </QueryClientProvider>
   );
   const view = render(options.strict ? <StrictMode>{tree}</StrictMode> : tree);
+  await flush();
+  // 项目目录等查询没有返回时，launchSession 会静默返回；先等查询稳定再把宿主交给测试。
+  await flushUntil(
+    () => queriesSettled(queryClient),
+    "workspace queries settled",
+  );
+  // 查询缓存稳定之后，订阅者的重渲染还要再过几个 tick（notifyManager 与 React 调度），
+  // 此时 launchSession 等回调才拿到最新的目录列表。
   await flush();
   let disposed = false;
   return {
@@ -521,11 +561,19 @@ export async function launchPty(host: WorkspaceHost, tool: ToolKey = "claude") {
   await act(async () => {
     host.ctx().launchSession(DIRECTORY.id, tool);
   });
-  await flush(10);
-  const slots = host.ctx().slots;
-  const slot = slots[slots.length - 1];
-  if (!slot?.sessionId)
-    throw new Error("launchPty: no running slot was created");
+  const runningSlot = () => {
+    const slots = host.ctx().slots;
+    const last = slots[slots.length - 1];
+    return last?.sessionId ? last : undefined;
+  };
+  await flushUntil(() => {
+    const running = runningSlot();
+    return Boolean(
+      running && host.ctx().terminalRefs.current.get(running.instanceId),
+    );
+  }, "launchPty: a running slot with a fake terminal handle");
+  const slot = runningSlot();
+  if (!slot) throw new Error("launchPty: no running slot was created");
   const terminal = host.ctx().terminalRefs.current.get(slot.instanceId);
   if (!terminal)
     throw new Error("launchPty: the fake terminal handle is missing");
