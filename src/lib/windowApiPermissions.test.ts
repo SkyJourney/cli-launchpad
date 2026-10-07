@@ -4,30 +4,15 @@ import windowKinds from "../../contracts/window-kinds.json";
 import defaultCapability from "../../src-tauri/capabilities/default.json";
 import terminalCapability from "../../src-tauri/capabilities/terminal-window.json";
 import workspaceContentCapability from "../../src-tauri/capabilities/workspace-content-window.json";
-import { computeImportClosure, projectSources } from "../test/sourceClosure";
+import { projectSources } from "../test/sourceClosure";
 import { CORE_DEFAULT_IMPLIES } from "../test/tauriMock";
+import {
+  closureOfWindowKind,
+  MAIN_ONLY_MODULES,
+  type WindowKindId,
+} from "../test/windowClosures";
 
 type Capability = { permissions: Array<string | { identifier: string }> };
-type KindId = "main" | "terminal" | "workspaceContent";
-
-const ENTRIES: Record<KindId, string[]> = {
-  main: ["src/main.tsx"],
-  terminal: [
-    "src/components/StandalonePtyWindow.tsx",
-    "src/hooks/useThemeSync.ts",
-  ],
-  workspaceContent: [
-    "src/components/StandaloneWorkspaceFileWindow.tsx",
-    "src/hooks/useThemeSync.ts",
-  ],
-};
-
-// 只在 label === "main" 时执行：useThemeSync.ts 的 `currentWindowLabel === "main"`
-// 分支才会调用 appPreferencesMain。子窗口闭包在此处停止遍历。
-// 运行时证明属于 FE-T32；该规格在 tmp/goals/README.md 总表中尚未分配目标，
-// 在它落地之前，这条豁免只有静态依据（见用例 keeps the main-only exemptions narrow and live）。
-const MAIN_ONLY_MODULES = ["src/lib/appPreferencesMain.ts"];
-
 // 只豁免“该文件对该权限规则的命中”，不是整文件排除。
 // createWorkspaceContentWindow（内含 new WebviewWindow）只由 PtyWorkspace.tsx 调用，
 // 子窗口只使用同文件的 prepare/attach/rollback 三个函数。
@@ -39,7 +24,7 @@ const MAIN_ONLY_USES = [
   },
 ] as const;
 
-const CAPABILITIES: Record<KindId, Capability> = {
+const CAPABILITIES: Record<WindowKindId, Capability> = {
   main: defaultCapability,
   terminal: terminalCapability,
   workspaceContent: workspaceContentCapability,
@@ -119,12 +104,6 @@ const apiPermissionRequirements: Array<{
   },
 ];
 
-function closureOf(kindId: KindId): string[] {
-  return computeImportClosure(ENTRIES[kindId], projectSources, {
-    stopAt: kindId === "main" ? [] : MAIN_ONLY_MODULES,
-  });
-}
-
 function expandPermissions(capability: Capability): Set<string> {
   const granted = new Set<string>();
   for (const entry of capability.permissions) {
@@ -147,10 +126,10 @@ function without(capability: Capability, ...identifiers: string[]): Capability {
 }
 
 function findMissingPermissions(
-  kindId: KindId,
+  kindId: WindowKindId,
   capability: Capability,
 ): string[] {
-  const closure = closureOf(kindId);
+  const closure = closureOfWindowKind(kindId);
   const granted = expandPermissions(capability);
   const missing = new Set<string>();
   for (const rule of apiPermissionRequirements) {
@@ -179,15 +158,15 @@ function findMissingPermissions(
 
 describe("native API permissions by window kind", () => {
   it.each(windowKinds.kinds)("grants APIs used by $id", (kind) => {
-    const kindId = kind.id as KindId;
+    const kindId = kind.id as WindowKindId;
 
     expect(findMissingPermissions(kindId, CAPABILITIES[kindId])).toEqual([]);
   });
 
   it("scans every module in each window kind's import closure", () => {
-    const main = closureOf("main");
-    const terminal = closureOf("terminal");
-    const workspaceContent = closureOf("workspaceContent");
+    const main = closureOfWindowKind("main");
+    const terminal = closureOfWindowKind("terminal");
+    const workspaceContent = closureOfWindowKind("workspaceContent");
 
     expect(terminal).toEqual(
       expect.arrayContaining([
@@ -201,7 +180,7 @@ describe("native API permissions by window kind", () => {
     );
     expect(main).toContain("src/hooks/useExecutionTasks.ts");
     for (const id of ["main", "terminal", "workspaceContent"] as const) {
-      expect(() => closureOf(id)).not.toThrow();
+      expect(() => closureOfWindowKind(id)).not.toThrow();
     }
     expect(terminal).not.toContain("src/lib/appPreferencesMain.ts");
     expect(workspaceContent).not.toContain("src/lib/appPreferencesMain.ts");
@@ -279,9 +258,9 @@ describe("native API permissions by window kind", () => {
   });
 
   it("keeps the main-only exemptions narrow and live", () => {
-    const terminal = closureOf("terminal");
-    const workspaceContent = closureOf("workspaceContent");
-    const main = closureOf("main");
+    const terminal = closureOfWindowKind("terminal");
+    const workspaceContent = closureOfWindowKind("workspaceContent");
+    const main = closureOfWindowKind("main");
 
     for (const use of MAIN_ONLY_USES) {
       expect(terminal).toContain(use.path);

@@ -2,10 +2,18 @@ import appCommands from "../../contracts/app-commands.json";
 import contentKinds from "../../contracts/content-kinds.json";
 import toolKeys from "../../contracts/tool-keys.json";
 import windowKinds from "../../contracts/window-kinds.json";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { registerBuiltinContributions } from "../bootstrap/registerBuiltinContributions";
+import {
+  getWorkspaceContentAdapter,
+  registerWorkspaceContentAdapter,
+} from "../components/workspaceContentAdapterRegistry";
 import { TOOLS } from "./tools";
 import type { ToolKey, WorkspacePaneContentRef } from "./tauri";
-import { getWorkspaceContentWindowLabelPrefix } from "./workspaceContentWindowProtocol";
+import {
+  encodeWorkspaceContentDrag,
+  parseWorkspaceContentDrag,
+} from "./workspaceContentDrag";
 import {
   createWindowLabel,
   isDetachedWindowLabel,
@@ -28,6 +36,15 @@ const contentKindTypeCoverage: Record<WorkspacePaneContentRef["kind"], true> = {
 };
 
 describe("shared contracts", () => {
+  let unregisterContributions: (() => void) | undefined;
+  beforeEach(() => {
+    unregisterContributions = registerBuiltinContributions();
+  });
+  afterEach(() => {
+    unregisterContributions?.();
+    unregisterContributions = undefined;
+  });
+
   it("matches the TypeScript CLI registry and union", () => {
     expect(TOOLS.map((tool) => tool.key)).toEqual(toolKeys);
     expect(Object.keys(toolKeyTypeCoverage)).toEqual(toolKeys);
@@ -56,12 +73,8 @@ describe("shared contracts", () => {
     const workspaceContentWindow = windowKinds.kinds.find(
       (kind) => kind.id === "workspaceContent",
     );
-    expect(terminalWindow?.labelPrefix).toBe(
-      getWorkspaceContentWindowLabelPrefix("pty"),
-    );
-    expect(workspaceContentWindow?.labelPrefix).toBe(
-      getWorkspaceContentWindowLabelPrefix("file"),
-    );
+    expect(terminalWindow?.labelPrefix).toBe("terminal-");
+    expect(workspaceContentWindow?.labelPrefix).toBe("workspace-content-");
   });
 
   it("uses the shared window registry for labels and routing", () => {
@@ -77,5 +90,45 @@ describe("shared contracts", () => {
     expect(isDetachedWindowLabel(workspaceContent)).toBe(true);
     expect(windowRouteOf(terminal)).toBe("terminal");
     expect(windowRouteOf(workspaceContent)).toBe("workspace-content");
+  });
+
+  it("keeps built-in adapter kinds and API versions in the content-kind contract", () => {
+    expect(contentKinds.kinds).toEqual(["pty", "file"]);
+    for (const kind of contentKinds.kinds) {
+      expect(
+        getWorkspaceContentAdapter(kind as "pty" | "file").apiVersion,
+      ).toBe(contentKinds.adapterApiVersion);
+    }
+    expect(() =>
+      registerWorkspaceContentAdapter({
+        id: "contract-test.markdown",
+        apiVersion: contentKinds.adapterApiVersion + 1,
+        kind: "markdownPreview",
+      } as never),
+    ).toThrow(
+      `不支持内容适配器 API 版本: ${contentKinds.adapterApiVersion + 1}`,
+    );
+  });
+
+  it("accepts drag payloads exactly for the contract kinds", () => {
+    for (const kind of contentKinds.kinds) {
+      const raw = encodeWorkspaceContentDrag({
+        kind,
+        contentId: "x",
+        sourcePaneId: "p",
+        sourceWindowLabel: "main",
+      } as never);
+      expect(parseWorkspaceContentDrag(raw)?.kind).toBe(kind);
+    }
+    expect(
+      parseWorkspaceContentDrag(
+        encodeWorkspaceContentDrag({
+          kind: "markdownPreview",
+          contentId: "x",
+          sourcePaneId: "p",
+          sourceWindowLabel: "main",
+        } as never),
+      ),
+    ).toBeNull();
   });
 });

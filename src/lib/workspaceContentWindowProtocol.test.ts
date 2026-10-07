@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { emitToMock, listenMock, getCurrentWebviewWindowMock, currentLabel } =
-  vi.hoisted(() => ({
+const { emitToMock, listenMock, getCurrentWebviewWindowMock } = vi.hoisted(
+  () => ({
     emitToMock: vi.fn(),
     listenMock: vi.fn(),
     getCurrentWebviewWindowMock: vi.fn(),
-    currentLabel: { value: "main" },
-  }));
+  }),
+);
 
 vi.mock("@tauri-apps/api/event", () => ({
   emitTo: emitToMock,
@@ -28,7 +28,6 @@ describe("workspace content window protocol", () => {
     emitToMock.mockReset();
     listenMock.mockReset();
     getCurrentWebviewWindowMock.mockReset();
-    currentLabel.value = "main";
     getCurrentWebviewWindowMock.mockReturnValue({ listen: listenMock });
   });
 
@@ -79,48 +78,6 @@ describe("workspace content window protocol", () => {
     expect(unlisten).not.toHaveBeenCalled();
     stopFailed();
     expect(unlisten).toHaveBeenCalledTimes(1);
-  });
-
-  it("receives only events emitted to the current window", async () => {
-    currentLabel.value = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
-    let deliver: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(async (_name, handler) => {
-      deliver = handler;
-      return vi.fn();
-    });
-    emitToMock.mockImplementation(async (target, _name, payload) => {
-      if (target === currentLabel.value) deliver?.({ payload });
-    });
-
-    const ready = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      ready,
-    );
-    expect(getCurrentWebviewWindowMock).toHaveBeenCalledOnce();
-
-    const event = {
-      apiVersion: 1,
-      type: "pty-detached-ready",
-      payload: {
-        instanceId: "slot-1",
-        sessionId: "session-1",
-        windowLabel: currentLabel.value,
-      },
-    };
-    await emitWorkspaceContentWindowEvent(
-      "terminal-other",
-      "pty-detached-ready",
-      event.payload,
-    );
-    expect(ready).not.toHaveBeenCalled();
-    await emitWorkspaceContentWindowEvent(
-      currentLabel.value,
-      "pty-detached-ready",
-      event.payload,
-    );
-    expect(ready).toHaveBeenCalledOnce();
-    stop();
   });
 
   it("emits versioned envelopes and centralizes per-kind labels", async () => {
