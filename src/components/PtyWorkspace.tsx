@@ -353,7 +353,17 @@ const PtyWorkspaceContext = createContext<PtyWorkspaceContextValue | null>(
   null,
 );
 
-export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
+/**
+ * @param coordinator 仅测试注入：宿主 harness 用它观察与断言内容归属状态。
+ * 生产代码（`App.tsx`）不传该属性，行为与注入前完全一致。
+ */
+export function PtyWorkspaceProvider({
+  children,
+  coordinator,
+}: {
+  children: ReactNode;
+  coordinator?: WorkspaceContentCoordinator;
+}) {
   const { t } = useTranslation();
   const { data: directories } = useDirectories();
   const [hydrationStatus, setHydrationStatus] =
@@ -403,7 +413,9 @@ export function PtyWorkspaceProvider({ children }: { children: ReactNode }) {
   const detachedByInstanceRef = useRef(new Map<string, WebviewWindow>());
   const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
   const detachedFilesRef = useRef(new Map<string, WebviewWindow>());
-  const contentCoordinatorRef = useRef(new WorkspaceContentCoordinator());
+  const contentCoordinatorRef = useRef(
+    coordinator ?? new WorkspaceContentCoordinator(),
+  );
   const ptyReturnWaitAbortRef = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
