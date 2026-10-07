@@ -67,11 +67,14 @@ describe("app preferences protocol", () => {
     );
 
     await vi.waitFor(() => {
-      expect(tauriMock.state.emittedEvents).toContainEqual({
-        target: label,
-        eventName: APP_PREFERENCES_EVENT,
-        payload: { apiVersion: 1, theme: "dark", language: "ja" },
-      });
+      expect(tauriMock.state.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          target: label,
+          eventName: APP_PREFERENCES_EVENT,
+          payload: { apiVersion: 1, theme: "dark", language: "ja" },
+          windowLabel: "main",
+        }),
+      );
     });
   });
 

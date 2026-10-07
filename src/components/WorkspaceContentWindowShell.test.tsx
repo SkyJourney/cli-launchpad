@@ -12,7 +12,7 @@ import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
 
 describe("WorkspaceContentWindowShell", () => {
   it("routes a pre-ready close to the attach rollback policy", async () => {
-    const label = "workspace-content-test";
+    const label = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
     tauriMock.setCurrentWindowLabel(label);
     const onCloseBeforeReady = vi.fn();
     const onCloseRequested = vi.fn();

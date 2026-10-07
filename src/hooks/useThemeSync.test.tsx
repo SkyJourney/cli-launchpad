@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyRemoteAppLanguage, setAppLanguage } from "../i18n";
 import { APP_PREFERENCES_EVENT } from "../lib/appPreferences";
 import { useAppStore } from "../store/appStore";
@@ -10,6 +10,12 @@ import { useThemeSync } from "./useThemeSync";
 const preference = { apiVersion: 1, theme: "dark", language: "ar" } as const;
 
 describe("useThemeSync", () => {
+  // 前一个用例挂载的 hook 若不卸载，会在后一个用例的子窗口 label 下被重新触发，
+  // 以主窗口专用的方式调用 getByLabel（ACL 开启后表现为未处理的拒绝）。
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(async () => {
     useAppStore.getState().applyRemoteThemeMode("system");
     await applyRemoteAppLanguage("en");
@@ -30,10 +36,13 @@ describe("useThemeSync", () => {
     await setAppLanguage("ar");
 
     await vi.waitFor(() => {
-      expect(tauriMock.state.invokeCalls).toContainEqual({
-        command: "set_tray_menu_labels",
-        args: { show: "إظهار النافذة الرئيسية", quit: "إنهاء" },
-      });
+      expect(tauriMock.state.invokeCalls).toContainEqual(
+        expect.objectContaining({
+          command: "set_tray_menu_labels",
+          args: { show: "إظهار النافذة الرئيسية", quit: "إنهاء" },
+          windowLabel: "main",
+        }),
+      );
     });
   });
 
@@ -46,11 +55,14 @@ describe("useThemeSync", () => {
     renderHook(() => useThemeSync());
 
     await vi.waitFor(() => {
-      expect(tauriMock.state.emittedEvents).toContainEqual({
-        target: "main",
-        eventName: "app-preferences-requested",
-        payload: { apiVersion: 1, windowLabel: label },
-      });
+      expect(tauriMock.state.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          target: "main",
+          eventName: "app-preferences-requested",
+          payload: { apiVersion: 1, windowLabel: label },
+          windowLabel: label,
+        }),
+      );
     });
     tauriMock.emitEvent(APP_PREFERENCES_EVENT, preference, label);
 
@@ -86,11 +98,14 @@ describe("useThemeSync", () => {
 
     finishRegistration?.(vi.fn());
     await vi.waitFor(() =>
-      expect(tauriMock.state.emittedEvents).toContainEqual({
-        target: "main",
-        eventName: "app-preferences-requested",
-        payload: { apiVersion: 1, windowLabel: label },
-      }),
+      expect(tauriMock.state.emittedEvents).toContainEqual(
+        expect.objectContaining({
+          target: "main",
+          eventName: "app-preferences-requested",
+          payload: { apiVersion: 1, windowLabel: label },
+          windowLabel: label,
+        }),
+      ),
     );
     pendingHandler?.({ payload: preference });
 
