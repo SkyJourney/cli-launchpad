@@ -1,0 +1,6 @@
+# CI-08 基线：HEAD 上已存在的 if let Ok( 测试反模式（弱测试 T2-N03，RS-T42 由目标 011 清理）。
+# 格式：<文件路径><制表符><去掉行首空白的原文>。目标 011 清理后必须删除对应行，否则脚本因“基线条目已不再命中”失败。
+src-tauri/src/services/install_service.rs	if let Ok(plan) = plan(ToolKey::Claude, InstallKind::Install) {
+src-tauri/src/services/install_service.rs	if let Ok(plan) = plan(ToolKey::Claude, InstallKind::Update) {
+src-tauri/src/services/install_service.rs	if let Ok(plan) = plan(ToolKey::Codex, InstallKind::Update) {
+src-tauri/src/services/install_service.rs	if let Ok(plan) = plan(ToolKey::Antigravity, InstallKind::Update) {

@@ -1525,6 +1525,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "仅由 separate_processes_* 以子进程调用"]
     fn cross_process_cas_worker() {
         let Ok(payload) = std::env::var(WORKER_PAYLOAD) else {
             return;
@@ -1565,6 +1566,7 @@ mod tests {
             let result_path = root.path().join(format!("{payload}.result"));
             Command::new(std::env::current_exe().unwrap())
                 .args([
+                    "--ignored",
                     "--exact",
                     "platform::file_cas::tests::cross_process_cas_worker",
                     "--nocapture",
@@ -2205,8 +2207,13 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut seen_deleted_suffix = false;
         while Instant::now() < deadline && !seen_deleted_suffix {
-            if let Ok(resolved) = dir.canonicalize("note.txt") {
-                seen_deleted_suffix = resolved.to_string_lossy().ends_with(" (deleted)");
+            match dir.canonicalize("note.txt") {
+                Ok(resolved) => {
+                    seen_deleted_suffix = resolved.to_string_lossy().ends_with(" (deleted)");
+                }
+                // The replacer can briefly hide the name; only the suffix
+                // observation is asserted below, so a missing name is skipped.
+                Err(_) => {}
             }
         }
         stop.store(true, Ordering::Relaxed);

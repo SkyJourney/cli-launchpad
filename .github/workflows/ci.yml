@@ -96,12 +96,36 @@ jobs:
         if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
+      - name: List Rust tests
+        if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked -- --list \
+            | tr -d '\r' | sed -n 's/: test$//p' | sort > "test-reports/rust-listed-${RUNNER_OS}.txt"
+          echo "listed=$(wc -l < "test-reports/rust-listed-${RUNNER_OS}.txt")"
+
       - name: Run Rust tests
         id: rust_tests
         if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
         run: |
           set -o pipefail
           cargo test --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tee "test-reports/rust-test-${RUNNER_OS}.log"
+
+      - name: Extract executed Rust tests
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: |
+          tr -d '\r' < "test-reports/rust-test-${RUNNER_OS}.log" \
+            | sed -nE 's/^test ([^ ]+) \.\.\. (ok|FAILED|ignored).*$/\1 \2/p' \
+            | sort -u > "test-reports/rust-executed-${RUNNER_OS}.txt"
+          echo "executed=$(wc -l < "test-reports/rust-executed-${RUNNER_OS}.txt")"
+
+      - name: Assert Rust test inventory
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: node scripts/ci/assert-rust-test-inventory.mjs "${RUNNER_OS}" "test-reports/rust-listed-${RUNNER_OS}.txt" "test-reports/rust-executed-${RUNNER_OS}.txt"
+
+      - name: Check Rust test anti-patterns
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: bash scripts/ci/check-rust-test-antipatterns.sh
 
       - name: Upload test reports
         if: ${{ always() }}
