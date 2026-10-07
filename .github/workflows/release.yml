@@ -65,6 +65,8 @@ jobs:
     name: Cross-platform test suite
     needs: validate
     uses: ./.github/workflows/ci.yml
+    with:
+      extended_matrix: true
 
   build:
     name: Build ${{ matrix.label }}

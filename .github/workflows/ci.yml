@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      extended_matrix:
+        description: Also run the Windows ARM64, Ubuntu ARM64 and macOS Intel entries
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 2 * * *"
 
 permissions:
   contents: read
@@ -27,10 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - windows-latest
-          - macos-latest
-          - ubuntu-24.04
+        os: ${{ fromJSON((inputs.extended_matrix || github.event_name == 'schedule') && '["windows-latest","macos-latest","ubuntu-24.04","windows-11-arm","ubuntu-24.04-arm","macos-15-intel"]' || '["windows-latest","macos-latest","ubuntu-24.04"]') }}
     defaults:
       run:
         shell: bash
@@ -122,6 +127,10 @@ jobs:
       - name: Assert Rust test inventory
         if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
         run: node scripts/ci/assert-rust-test-inventory.mjs "${RUNNER_OS}" "test-reports/rust-listed-${RUNNER_OS}.txt" "test-reports/rust-executed-${RUNNER_OS}.txt"
+
+      - name: Assert contract fixtures are unchanged
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: git diff --exit-code -- contracts/fixtures
 
       - name: Check Rust test anti-patterns
         if: ${{ !cancelled() && runner.os == 'Linux' }}
