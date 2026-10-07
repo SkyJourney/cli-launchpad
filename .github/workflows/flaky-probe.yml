@@ -103,6 +103,16 @@ jobs:
           echo "deleted_alias_logs=$deleted" | tee -a probe/summary.txt
           test "$fails" -eq 0
 
+      - name: Characterize upstream canonicalize race
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p probe
+          if cargo test --manifest-path src-tauri/Cargo.toml --locked -- --ignored --exact platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement --nocapture > probe/characterization.log 2>&1; then
+            echo "characterization=observed" | tee probe/characterization.txt
+          else
+            echo "characterization=not_observed" | tee probe/characterization.txt
+          fi
+
       - name: Upload probe logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v7

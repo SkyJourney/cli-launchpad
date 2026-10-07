@@ -64,6 +64,13 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 /// Implementations receive a retained directory capability and a relative
 /// target, so platform adapters cannot silently fall back to ambient paths.
 pub trait FileCasAdapter {
+    /// Resolves the requested project-relative path to the relative path that
+    /// the shared flow locks. The default delegates to the capability's
+    /// canonicalization; tests inject stale results through this seam.
+    fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
+        Ok(root.canonicalize(relative)?)
+    }
+
     fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File>;
     fn path_matches_locked_file(&self, directory: &Dir, path: &Path, locked: &File)
         -> Result<bool>;
@@ -243,6 +250,92 @@ where
     )
 }
 
+fn destination_names_match(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    if cfg!(target_os = "linux") {
+        left == right
+    } else {
+        left == right
+            || left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    }
+}
+
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// Returns whether `resolved` can be trusted as the destination for
+/// `requested`. `Ok(false)` means the resolution is stale and must be redone.
+pub(crate) fn validate_resolved_destination(
+    root: &Dir,
+    requested: &Path,
+    resolved: &Path,
+) -> Result<bool> {
+    match root.symlink_metadata(resolved) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("无法检查解析后的目标文件：{}", resolved.display()))
+        }
+    }
+    let (Some(requested_name), Some(resolved_name)) = (requested.file_name(), resolved.file_name())
+    else {
+        // 没有可比较的最后组件（例如请求以 `..` 结尾）：只做存在性校验，
+        // 其余错误由 parent_and_name 按原有文案报告。
+        return Ok(true);
+    };
+    if destination_names_match(requested_name, resolved_name) {
+        return Ok(true);
+    }
+    let metadata = match root.symlink_metadata(requested) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("无法检查请求的目标文件：{}", requested.display()))
+        }
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let target = match root.read_link(requested) {
+        Ok(target) => target,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("无法读取符号链接：{}", requested.display()))
+        }
+    };
+    Ok(target
+        .file_name()
+        .is_some_and(|name| destination_names_match(name, resolved_name)))
+}
+
+pub(crate) fn resolve_cas_destination_with(
+    adapter: &impl FileCasAdapter,
+    root: &Dir,
+    relative: &Path,
+) -> Result<PathBuf> {
+    for _ in 0..MAX_IDENTITY_RETRIES {
+        let resolved = adapter
+            .resolve_destination(root, relative)
+            .context("项目文件不存在或无法访问")?;
+        if validate_resolved_destination(root, relative, &resolved)? {
+            return Ok(resolved);
+        }
+    }
+    bail!("待保存文件在并发替换期间持续变化，请重试")
+}
+
+/// SEAM-12 的无 adapter 入口，只供测试直接调用；生产路径使用
+/// `resolve_cas_destination_with`。
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn resolve_cas_destination(root: &Dir, relative: &Path) -> Result<PathBuf> {
+    resolve_cas_destination_with(&NativeFileCasAdapter, root, relative)
+}
+
 pub fn compare_and_swap_with_adapter<R, Revision>(
     adapter: &impl FileCasAdapter,
     root: &Dir,
@@ -256,15 +349,25 @@ where
     R: PartialEq,
     Revision: Fn(&[u8]) -> R,
 {
-    let canonical = root
-        .canonicalize(relative_destination)
-        .context("项目文件不存在或无法访问")?;
-    let (parent, destination) = parent_and_name(root, &canonical)?;
+    let mut canonical = resolve_cas_destination_with(adapter, root, relative_destination)?;
+    let (parent, mut destination) = parent_and_name(root, &canonical)?;
     let mut temporary = create_temporary(adapter, &parent, replacement)?;
     temporary.finish_writing()?;
 
     for _ in 0..MAX_IDENTITY_RETRIES {
-        let locked = adapter.lock_current(&parent, &destination)?;
+        let locked = match adapter.lock_current(&parent, &destination) {
+            Ok(locked) => locked,
+            Err(error) if !cfg!(windows) && is_not_found(&error) => {
+                let fresh = resolve_cas_destination_with(adapter, root, relative_destination)?;
+                if fresh.parent() != canonical.parent() {
+                    bail!("待保存文件所在目录在保存期间发生变化，请重试");
+                }
+                destination = PathBuf::from(fresh.file_name().context("文件路径不能为空")?);
+                canonical = fresh;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if !adapter.path_matches_locked_file(&parent, &destination, &locked)? {
             drop(locked);
             continue;
@@ -354,10 +457,14 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
         match open_target(directory, path) {
             Ok(file) => break file.into_std(),
             Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
+                if cfg!(windows)
+                    && error.kind() == std::io::ErrorKind::NotFound
+                    && Instant::now() < deadline =>
             {
-                // A concurrent Windows atomic replacement can briefly make
-                // the destination unavailable while its pathname is swapped.
+                // Windows only: a concurrent atomic replacement can briefly make the
+                // destination unavailable while its pathname is swapped. Unix rename
+                // never hides the name, so NotFound there means the resolution is
+                // stale and the shared flow re-resolves.
                 thread::sleep(LOCK_RETRY_INTERVAL);
             }
             Err(error) => {
@@ -1173,6 +1280,108 @@ mod tests {
         }
     }
 
+    struct DeletedAliasOnceAdapter {
+        native: NativeFileCasAdapter,
+        resolutions: AtomicUsize,
+    }
+
+    impl FileCasAdapter for DeletedAliasOnceAdapter {
+        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
+            if self.resolutions.fetch_add(1, Ordering::Relaxed) == 0 {
+                return Ok(PathBuf::from("note.txt (deleted)"));
+            }
+            self.native.resolve_destination(root, relative)
+        }
+
+        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
+            self.native.lock_current(directory, path)
+        }
+
+        fn path_matches_locked_file(
+            &self,
+            directory: &Dir,
+            path: &Path,
+            locked: &File,
+        ) -> Result<bool> {
+            self.native
+                .path_matches_locked_file(directory, path, locked)
+        }
+
+        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
+            self.native.create_private_temporary(directory, path)
+        }
+
+        fn commit(
+            &self,
+            directory: &Dir,
+            destination: &Path,
+            temporary: &Path,
+            temporary_file: &mut Option<File>,
+            locked_target: Option<&File>,
+            permissions: Option<std::fs::Permissions>,
+        ) -> Result<bool> {
+            self.native.commit(
+                directory,
+                destination,
+                temporary,
+                temporary_file,
+                locked_target,
+                permissions,
+            )
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    struct ResolveCountingAdapter {
+        native: NativeFileCasAdapter,
+        resolutions: AtomicUsize,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FileCasAdapter for ResolveCountingAdapter {
+        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
+            self.resolutions.fetch_add(1, Ordering::Relaxed);
+            self.native.resolve_destination(root, relative)
+        }
+
+        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
+            self.native.lock_current(directory, path)
+        }
+
+        fn path_matches_locked_file(
+            &self,
+            directory: &Dir,
+            path: &Path,
+            locked: &File,
+        ) -> Result<bool> {
+            self.native
+                .path_matches_locked_file(directory, path, locked)
+        }
+
+        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
+            self.native.create_private_temporary(directory, path)
+        }
+
+        fn commit(
+            &self,
+            directory: &Dir,
+            destination: &Path,
+            temporary: &Path,
+            temporary_file: &mut Option<File>,
+            locked_target: Option<&File>,
+            permissions: Option<std::fs::Permissions>,
+        ) -> Result<bool> {
+            self.native.commit(
+                directory,
+                destination,
+                temporary,
+                temporary_file,
+                locked_target,
+                permissions,
+            )
+        }
+    }
+
     const WORKER_GATE: &str = "CLI_LAUNCHPAD_PROJECT_CAS_GATE";
     const WORKER_ROOT: &str = "CLI_LAUNCHPAD_PROJECT_CAS_ROOT";
     const WORKER_REVISION: &str = "CLI_LAUNCHPAD_PROJECT_CAS_REVISION";
@@ -1527,6 +1736,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
     }
 
+    #[cfg(windows)]
     #[test]
     fn lock_current_retries_a_temporary_missing_path() {
         let root = tempdir().unwrap();
@@ -1546,6 +1756,96 @@ mod tests {
         restore.join().unwrap();
         drop(locked);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+    }
+
+    fn file_names(root: &Path) -> Vec<String> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn cas_retries_when_resolved_destination_is_a_deleted_alias() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "before").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let adapter = DeletedAliasOnceAdapter {
+            native: NativeFileCasAdapter,
+            resolutions: AtomicUsize::new(0),
+        };
+
+        let started = Instant::now();
+        let outcome = compare_and_swap_with_adapter(
+            &adapter,
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        );
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(&outcome, Ok(CompareAndSwapOutcome::Written)),
+            "实际结果：{outcome:?}"
+        );
+        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("note.txt")).unwrap(),
+            "after"
+        );
+        let names = file_names(root.path());
+        assert!(
+            !names.iter().any(|name| name.ends_with(".writing")),
+            "存在 .writing 残留：{names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name == "note.txt (deleted)"),
+            "不应出现别名文件：{names:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "耗时 {elapsed:?}，不得走 2 秒锁超时"
+        );
+    }
+
+    #[test]
+    fn cas_never_targets_a_real_file_named_like_a_deleted_alias() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "before").unwrap();
+        std::fs::write(root.path().join("note.txt (deleted)"), "decoy").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let adapter = DeletedAliasOnceAdapter {
+            native: NativeFileCasAdapter,
+            resolutions: AtomicUsize::new(0),
+        };
+
+        let outcome = compare_and_swap_with_adapter(
+            &adapter,
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        );
+
+        assert!(
+            matches!(&outcome, Ok(CompareAndSwapOutcome::Written)),
+            "实际结果：{outcome:?}"
+        );
+        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("note.txt")).unwrap(),
+            "after"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("note.txt (deleted)")).unwrap(),
+            "decoy",
+            "诱饵文件必须保持原样"
+        );
     }
 
     #[test]
@@ -1572,6 +1872,288 @@ mod tests {
         assert!(
             !root.path().join("missing-note.txt").exists(),
             "lock_current 不得创建目标文件"
+        );
+    }
+
+    #[test]
+    fn validate_resolved_destination_accepts_an_existing_file_with_the_requested_name() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(
+            validate_resolved_destination(&dir, Path::new("note.txt"), Path::new("note.txt"))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn validate_resolved_destination_rejects_a_missing_resolved_path() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(!validate_resolved_destination(
+            &dir,
+            Path::new("note.txt"),
+            Path::new("note.txt (deleted)")
+        )
+        .unwrap());
+        assert!(
+            !validate_resolved_destination(&dir, Path::new("note.txt"), Path::new("gone.txt"))
+                .unwrap()
+        );
+        assert!(
+            !validate_resolved_destination(&dir, Path::new("gone.txt"), Path::new("gone.txt"))
+                .unwrap(),
+            "不存在的解析结果即使名字一致也不可信"
+        );
+    }
+
+    #[test]
+    fn validate_resolved_destination_rejects_an_existing_decoy_with_a_different_name() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        std::fs::write(root.path().join("note.txt (deleted)"), "decoy").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(!validate_resolved_destination(
+            &dir,
+            Path::new("note.txt"),
+            Path::new("note.txt (deleted)")
+        )
+        .unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_resolved_destination_accepts_the_symlink_target_name() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("real.txt"), "x").unwrap();
+        std::fs::write(root.path().join("other.txt"), "y").unwrap();
+        std::os::unix::fs::symlink("real.txt", root.path().join("link.txt")).unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(
+            validate_resolved_destination(&dir, Path::new("link.txt"), Path::new("real.txt"))
+                .unwrap()
+        );
+        assert!(
+            !validate_resolved_destination(&dir, Path::new("link.txt"), Path::new("other.txt"))
+                .unwrap(),
+            "符号链接指向 real.txt 时，other.txt 不是可信的解析结果"
+        );
+    }
+
+    #[test]
+    fn validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only() {
+        let root = tempdir().unwrap();
+        std::fs::create_dir(root.path().join("sub")).unwrap();
+        std::fs::write(root.path().join("sub").join("a.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(
+            validate_resolved_destination(&dir, Path::new("sub/.."), Path::new("sub")).unwrap()
+        );
+        assert!(
+            !validate_resolved_destination(&dir, Path::new("sub/.."), Path::new("missing"))
+                .unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_resolved_destination_ignores_case_differences_on_windows() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        assert!(
+            validate_resolved_destination(&dir, Path::new("NOTE.TXT"), Path::new("note.txt"))
+                .unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_current_does_not_spin_on_unix_when_the_path_is_missing() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        let started = Instant::now();
+        let error = lock_current(&dir, Path::new("missing.txt")).unwrap_err();
+        let elapsed = started.elapsed();
+
+        let kind = error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        assert_eq!(
+            kind,
+            Some(std::io::ErrorKind::NotFound),
+            "实际为：{error:#}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "耗时 {elapsed:?}，Unix 上不得自旋等待 2 秒"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolve_cas_destination_never_returns_a_deleted_alias_under_concurrent_replacement() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let replacer = {
+            let stop = Arc::clone(&stop);
+            let base = root.path().to_path_buf();
+            thread::spawn(move || {
+                let temporary = base.join(".r.tmp");
+                let target = base.join("note.txt");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&temporary, "x").unwrap();
+                    std::fs::rename(&temporary, &target).unwrap();
+                }
+            })
+        };
+        let adapter = ResolveCountingAdapter {
+            native: NativeFileCasAdapter,
+            resolutions: AtomicUsize::new(0),
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut iterations = 0_usize;
+        let mut failures = Vec::new();
+        while iterations < 200_000 && Instant::now() < deadline && failures.len() < 5 {
+            iterations += 1;
+            match resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt")) {
+                Ok(resolved) if resolved == Path::new("note.txt") => {}
+                other => failures.push(format!("{other:?}")),
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        let resolutions = adapter.resolutions.load(Ordering::Relaxed);
+        eprintln!(
+            "iterations={iterations} resolutions={resolutions} retries={}",
+            resolutions.saturating_sub(iterations)
+        );
+        assert!(failures.is_empty(), "解析结果异常：{failures:?}");
+        assert!(
+            iterations >= 100,
+            "循环次数过少（{iterations}），测试没有真正施压"
+        );
+        assert_eq!(
+            resolve_cas_destination(&dir, Path::new("note.txt")).unwrap(),
+            PathBuf::from("note.txt")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "刻画上游 cap-primitives 竞态，仅在 flaky 探针中运行"]
+    fn cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let replacer = {
+            let stop = Arc::clone(&stop);
+            let base = root.path().to_path_buf();
+            thread::spawn(move || {
+                let temporary = base.join(".r.tmp");
+                let target = base.join("note.txt");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&temporary, "x").unwrap();
+                    std::fs::rename(&temporary, &target).unwrap();
+                }
+            })
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut seen_deleted_suffix = false;
+        while Instant::now() < deadline && !seen_deleted_suffix {
+            if let Ok(resolved) = dir.canonicalize("note.txt") {
+                seen_deleted_suffix = resolved.to_string_lossy().ends_with(" (deleted)");
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(
+            seen_deleted_suffix,
+            "5 秒内没有观察到 canonicalize 返回 ` (deleted)` 后缀"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_survives_tight_external_atomic_replacement_loop() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "same").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let replacer = {
+            let stop = Arc::clone(&stop);
+            let base = root.path().to_path_buf();
+            thread::spawn(move || {
+                let temporary = base.join(".r.tmp");
+                let target = base.join("note.txt");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&temporary, "same").unwrap();
+                    std::fs::rename(&temporary, &target).unwrap();
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+
+        let started = Instant::now();
+        let mut failures = Vec::new();
+        for round in 0..300 {
+            let outcome = compare_and_swap_in_directory(
+                &dir,
+                Path::new("note.txt"),
+                b"same",
+                &revision(b"same"),
+                1024,
+                revision,
+            );
+            match outcome {
+                Ok(CompareAndSwapOutcome::Written) => {}
+                Ok(other) => failures.push(format!("第 {round} 轮：非预期结果 {other:?}")),
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    if !message.contains("持续变化") {
+                        failures.push(format!("第 {round} 轮：{message}"));
+                    }
+                }
+            }
+        }
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(failures.is_empty(), "保存结果异常：{failures:?}");
+        let leftovers: Vec<String> = file_names(root.path())
+            .into_iter()
+            .filter(|name| name.ends_with(".writing"))
+            .collect();
+        assert!(leftovers.is_empty(), "存在 .writing 残留：{leftovers:?}");
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "300 轮耗时 {elapsed:?}，超过 20 秒"
         );
     }
 
