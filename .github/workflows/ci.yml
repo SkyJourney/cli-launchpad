@@ -12,17 +12,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.workflow == 'CI' }}
 
 env:
   CARGO_INCREMENTAL: "0"
-  RUST_BACKTRACE: short
+  RUST_BACKTRACE: "1"
 
 jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -30,9 +31,15 @@ jobs:
           - windows-latest
           - macos-latest
           - ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Prepare report directory
+        run: mkdir -p test-reports
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -65,21 +72,42 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install dependencies
+        id: install
         run: pnpm install --frozen-lockfile
 
       - name: Run frontend tests
-        run: pnpm test
+        id: frontend_tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm exec vitest run --reporter=default --reporter=junit --outputFile.junit=test-reports/vitest-junit.xml
 
       - name: Build frontend
+        id: frontend_build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run build
 
       - name: Check Rust formatting
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Check Rust compilation
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        id: rust_check
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        id: rust_tests
+        if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tee "test-reports/rust-test-${RUNNER_OS}.log"
+
+      - name: Upload test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: test-reports/
+          if-no-files-found: warn
+          retention-days: 14
