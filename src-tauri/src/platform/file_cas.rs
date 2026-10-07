@@ -57,6 +57,12 @@ pub enum CompareAndSwapOutcome {
 }
 
 const MAX_IDENTITY_RETRIES: usize = 8;
+/// Budget for re-resolving a stale destination (m6-002). It is separate from
+/// `MAX_IDENTITY_RETRIES` because stale resolutions come in bursts when the
+/// resolving thread is preempted next to a tight external replacement loop.
+const MAX_RESOLUTION_RETRIES: usize = 32;
+const RESOLUTION_YIELD_ATTEMPTS: usize = 4;
+const RESOLUTION_BACKOFF: Duration = Duration::from_millis(1);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -318,12 +324,21 @@ pub(crate) fn resolve_cas_destination_with(
     root: &Dir,
     relative: &Path,
 ) -> Result<PathBuf> {
-    for _ in 0..MAX_IDENTITY_RETRIES {
+    for attempt in 0..MAX_RESOLUTION_RETRIES {
         let resolved = adapter
             .resolve_destination(root, relative)
             .context("项目文件不存在或无法访问")?;
         if validate_resolved_destination(root, relative, &resolved)? {
             return Ok(resolved);
+        }
+        // A stale resolution usually means this thread was preempted between
+        // the two steps of the capability's canonicalization while another
+        // process replaced the file. Immediate retries tend to be preempted
+        // the same way, so give the replacer room before resolving again.
+        if attempt < RESOLUTION_YIELD_ATTEMPTS {
+            thread::yield_now();
+        } else {
+            thread::sleep(RESOLUTION_BACKOFF);
         }
     }
     bail!("待保存文件在并发替换期间持续变化，请重试")
@@ -1331,6 +1346,58 @@ mod tests {
         }
     }
 
+    struct StaleAliasAdapter {
+        native: NativeFileCasAdapter,
+        stale_resolutions: usize,
+        resolutions: AtomicUsize,
+    }
+
+    impl FileCasAdapter for StaleAliasAdapter {
+        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
+            if self.resolutions.fetch_add(1, Ordering::Relaxed) < self.stale_resolutions {
+                return Ok(PathBuf::from("note.txt (deleted)"));
+            }
+            self.native.resolve_destination(root, relative)
+        }
+
+        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
+            self.native.lock_current(directory, path)
+        }
+
+        fn path_matches_locked_file(
+            &self,
+            directory: &Dir,
+            path: &Path,
+            locked: &File,
+        ) -> Result<bool> {
+            self.native
+                .path_matches_locked_file(directory, path, locked)
+        }
+
+        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
+            self.native.create_private_temporary(directory, path)
+        }
+
+        fn commit(
+            &self,
+            directory: &Dir,
+            destination: &Path,
+            temporary: &Path,
+            temporary_file: &mut Option<File>,
+            locked_target: Option<&File>,
+            permissions: Option<std::fs::Permissions>,
+        ) -> Result<bool> {
+            self.native.commit(
+                directory,
+                destination,
+                temporary,
+                temporary_file,
+                locked_target,
+                permissions,
+            )
+        }
+    }
+
     #[cfg(target_os = "linux")]
     struct ResolveCountingAdapter {
         native: NativeFileCasAdapter,
@@ -1845,6 +1912,62 @@ mod tests {
             std::fs::read_to_string(root.path().join("note.txt (deleted)")).unwrap(),
             "decoy",
             "诱饵文件必须保持原样"
+        );
+    }
+
+    #[test]
+    fn resolve_cas_destination_survives_many_consecutive_stale_resolutions() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let adapter = StaleAliasAdapter {
+            native: NativeFileCasAdapter,
+            stale_resolutions: 20,
+            resolutions: AtomicUsize::new(0),
+        };
+
+        let resolved = resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt"));
+
+        assert_eq!(
+            resolved.as_ref().ok(),
+            Some(&PathBuf::from("note.txt")),
+            "实际结果：{resolved:?}"
+        );
+        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 21);
+    }
+
+    #[test]
+    fn resolve_cas_destination_gives_up_when_resolutions_never_stabilize() {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let adapter = StaleAliasAdapter {
+            native: NativeFileCasAdapter,
+            stale_resolutions: usize::MAX,
+            resolutions: AtomicUsize::new(0),
+        };
+
+        let started = Instant::now();
+        let error = resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt"))
+            .expect_err("永不稳定的解析必须报错");
+        let elapsed = started.elapsed();
+
+        assert!(
+            format!("{error:#}").contains("持续变化"),
+            "实际错误：{error:#}"
+        );
+        assert_eq!(
+            adapter.resolutions.load(Ordering::Relaxed),
+            MAX_RESOLUTION_RETRIES
+        );
+        assert_eq!(
+            file_names(root.path()),
+            vec!["note.txt".to_string()],
+            "解析阶段不得创建任何文件"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "放弃前的退避总耗时 {elapsed:?} 过长"
         );
     }
 
