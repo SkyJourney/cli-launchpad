@@ -1,6 +1,13 @@
 name: Flaky probe
 
 on:
+  # 临时触发器（附录 A 方案二）：工作流文件不在默认分支时 gh workflow run 返回 404，
+  # 仅在 m6-closure 上改动本文件时才触发；由目标 081 统一删除。
+  push:
+    branches:
+      - m6-closure
+    paths:
+      - ".github/workflows/flaky-probe.yml"
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
