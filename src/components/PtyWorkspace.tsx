@@ -2901,6 +2901,11 @@ export function PtyWorkspaceProvider({
               ) {
                 return;
               }
+              // init 尚未发出（ready 处理器还没有为该 pending 准备好 handoffPayload）时，
+              // 任何 attached 都是乱序或伪造的，忽略它。
+              if (pending.handoffPayload === undefined) {
+                return;
+              }
               const content = {
                 kind: "file",
                 documentId: pending.documentId,
@@ -5106,7 +5111,7 @@ function WorkspacePaneView({
           onEditFile={onEditFile}
           onSaveFile={onSaveFile}
           onCloseUnsupported={() => {
-            if (pane.activeContent?.kind === "unknown") {
+            if (pane.activeContent) {
               void onCloseContents([pane.activeContent], "tab");
             }
           }}

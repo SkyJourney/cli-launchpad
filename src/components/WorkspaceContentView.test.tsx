@@ -101,7 +101,10 @@ describe("WorkspaceContentView", () => {
     );
 
     try {
-      renderContent({ kind: "pty", slotId: "terminal-1" });
+      const { onCloseUnsupported } = renderContent({
+        kind: "pty",
+        slotId: "terminal-1",
+      });
       expect(screen.getByRole("alert").textContent).toContain(
         "workspaceContent.unsupportedTitle:pty",
       );
@@ -111,6 +114,8 @@ describe("WorkspaceContentView", () => {
       expect(screen.getByRole("button").textContent).toBe(
         "workspaceContent.closeUnsupported",
       );
+      fireEvent.click(screen.getByRole("button"));
+      expect(onCloseUnsupported).toHaveBeenCalledOnce();
     } finally {
       consoleError.mockRestore();
     }
