@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "name": "savedWithWarning",
+      "value": {
+        "content": "saved",
+        "kind": "saved",
+        "revision": "r2",
+        "warning": "permissionsNotRestored"
+      }
+    },
+    {
+      "name": "savedWithoutWarning",
+      "value": {
+        "content": "saved",
+        "kind": "saved",
+        "revision": "r2",
+        "warning": null
+      }
+    },
+    {
+      "name": "conflict",
+      "value": {
+        "kind": "conflict"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ProjectTextFileSaveResult"
+}

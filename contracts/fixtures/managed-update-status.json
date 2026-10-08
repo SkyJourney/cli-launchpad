@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "name": "allowed",
+      "value": {
+        "status": "allowed"
+      }
+    },
+    {
+      "name": "denied",
+      "value": {
+        "reasonKey": "settings.grokUpdateSourceDenied",
+        "status": "denied"
+      }
+    },
+    {
+      "name": "notApplicable",
+      "value": {
+        "status": "notApplicable"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ManagedUpdateStatus"
+}

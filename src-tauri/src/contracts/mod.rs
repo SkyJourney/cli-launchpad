@@ -6,12 +6,17 @@ use std::{
 
 use serde_json::{json, Value};
 
-const APP_COMMANDS_JSON: &str = include_str!("../../contracts/app-commands.json");
-const TOOL_KEYS_JSON: &str = include_str!("../../contracts/tool-keys.json");
-const CONTENT_KINDS_JSON: &str = include_str!("../../contracts/content-kinds.json");
-const WINDOW_KINDS_JSON: &str = include_str!("../../contracts/window-kinds.json");
-const LIB_RS: &str = include_str!("lib.rs");
-const TAURI_CONFIG_JSON: &str = include_str!("../tauri.conf.json");
+mod fixtures;
+mod serde_lint;
+
+const APP_COMMANDS_JSON: &str = include_str!("../../../contracts/app-commands.json");
+const TOOL_KEYS_JSON: &str = include_str!("../../../contracts/tool-keys.json");
+const CONTENT_KINDS_JSON: &str = include_str!("../../../contracts/content-kinds.json");
+const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
+const LIB_RS: &str = include_str!("../lib.rs");
+const TAURI_CONFIG_JSON: &str = include_str!("../../tauri.conf.json");
+const SERDE_LINT_ALLOWLIST_JSON: &str =
+    include_str!("../../../contracts/serde-lint-allowlist.json");
 
 fn sorted_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut values: Vec<String> = values.into_iter().collect();
@@ -818,9 +823,9 @@ fn production_csp_matches_exact_directive_contract() {
         .is_none());
 
     for overlay in [
-        include_str!("../tauri.macos.conf.json"),
-        include_str!("../tauri.windows.conf.json"),
-        include_str!("../tauri.offline.conf.json"),
+        include_str!("../../tauri.macos.conf.json"),
+        include_str!("../../tauri.windows.conf.json"),
+        include_str!("../../tauri.offline.conf.json"),
     ] {
         let value: Value = serde_json::from_str(overlay).expect("parse config overlay");
         assert!(
@@ -828,4 +833,336 @@ fn production_csp_matches_exact_directive_contract() {
             "platform or offline overlays must not override app.security"
         );
     }
+}
+
+#[test]
+fn serde_lint_reports_known_bad_shapes() {
+    use serde_lint::scan_serialize_items;
+
+    // F1：外部标签枚举只有 rename_all，字段仍是 snake_case。
+    let f1 = r#"#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum E { A { mime_type: String } }"#;
+    let found = scan_serialize_items(f1, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "E::A");
+    assert!(found[0].detail.contains("mime_type"), "{found:?}");
+
+    // F2：加上 rename_all_fields 后不报。
+    let f2 = r#"#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+enum E { A { mime_type: String } }"#;
+    assert_eq!(scan_serialize_items(f2, "fixture.rs"), Vec::new());
+
+    // F3：没有 Serialize 不报。
+    let f3 = "enum E { A { mime_type: String } }";
+    assert_eq!(scan_serialize_items(f3, "fixture.rs"), Vec::new());
+
+    // F4 / F4b：结构体含多词字段，有无 rename_all。
+    let f4 = "#[derive(Serialize)]\nstruct S { mime_type: String }";
+    let found = scan_serialize_items(f4, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "S");
+    let f4b = r#"#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct S { mime_type: String }"#;
+    assert_eq!(scan_serialize_items(f4b, "fixture.rs"), Vec::new());
+
+    // F5a / F5b：字段级 rename 豁免该字段。
+    let f5a = r#"#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+enum E { A { #[serde(rename = "mimeType")] mime_type: String } }"#;
+    assert_eq!(scan_serialize_items(f5a, "fixture.rs"), Vec::new());
+    let f5b = r#"#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum E { A { #[serde(rename = "mimeType")] mime_type: String } }"#;
+    assert_eq!(scan_serialize_items(f5b, "fixture.rs"), Vec::new());
+
+    // 反向：测试模块里的类型不扫描。
+    let in_tests =
+        "#[cfg(test)]\nmod tests {\n    #[derive(Serialize)]\n    struct T { a_b: u8 }\n}\n";
+    assert_eq!(scan_serialize_items(in_tests, "fixture.rs"), Vec::new());
+
+    // 反向：测试模块里的字符串字面量 "{" 不能让花括号计数错位，模块之后的 F1 仍要被报出。
+    let brace_in_string =
+        format!("#[cfg(test)]\nmod tests {{\n    const X: &str = \"{{\";\n}}\n{f1}");
+    let found = scan_serialize_items(&brace_in_string, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "E::A");
+
+    // 反向：原始字符串、字符字面量、注释里的花括号同样不影响计数。
+    let tricky = format!(
+        "#[cfg(test)]\nmod tests {{\n    const A: &str = r#\"}}}}\"#;\n    const B: char = '{{';\n    const C: char = '\\'';\n    // }}}}\n    /* }} */\n}}\n{f1}"
+    );
+    let found = scan_serialize_items(&tricky, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+fn collect_rust_sources(directory: &Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(directory).expect("read source directory") {
+        let path = entry.expect("read source entry").path();
+        if path.is_dir() {
+            collect_rust_sources(&path, files);
+        } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+#[test]
+fn serialize_items_with_multiword_fields_declare_camel_case_renaming() {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rust_sources(&source_root, &mut files);
+    files.sort();
+    println!("serde lint scanned {} rust files", files.len());
+    assert!(
+        files.len() >= 50,
+        "serde lint scanned only {} files; is the source path wrong?",
+        files.len()
+    );
+
+    let allowlist: Value =
+        serde_json::from_str(SERDE_LINT_ALLOWLIST_JSON).expect("parse serde lint allowlist");
+    let allowed: Vec<(String, String)> = allowlist["allow"]
+        .as_array()
+        .expect("allowlist.allow must be an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["item"].as_str().expect("allowlist item").to_string(),
+                entry["reason"]
+                    .as_str()
+                    .expect("allowlist reason")
+                    .to_string(),
+            )
+        })
+        .collect();
+    for (item, reason) in &allowed {
+        assert!(
+            !reason.trim().is_empty(),
+            "allowlist entry {item} needs a reason"
+        );
+    }
+
+    let mut reported: Vec<String> = Vec::new();
+    let mut details: Vec<String> = Vec::new();
+    for path in &files {
+        let relative = path
+            .strip_prefix(&source_root)
+            .expect("file under src")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for violation in serde_lint::scan_serialize_items(&source, &relative) {
+            let key = format!("{}::{}", violation.file, violation.item);
+            if !allowed.iter().any(|(item, _)| *item == key) {
+                details.push(format!(
+                    "{} :: {} :: {}",
+                    violation.file, violation.item, violation.detail
+                ));
+            }
+            reported.push(key);
+        }
+    }
+    for (item, _) in &allowed {
+        assert!(
+            reported.contains(item),
+            "allowlist entry {item} is stale: the lint no longer reports it"
+        );
+    }
+    assert!(
+        details.is_empty(),
+        "serde lint violations (Serialize items with multiword fields need camelCase renaming):\n{}",
+        details.join("\n")
+    );
+}
+
+#[test]
+fn ipc_dto_variants_serialize_with_camel_case_field_names() {
+    use std::collections::BTreeSet;
+
+    let samples = fixtures::ipc_dto_samples();
+    for dto in &samples {
+        assert!(!dto.cases.is_empty(), "{} has no sample", dto.type_name);
+        for (case, value) in &dto.cases {
+            fixtures::assert_camel_case_keys(
+                value,
+                &format!("{}.{case}", dto.type_name),
+                &["WorkspacePaneContentRef.unknown.raw"],
+            );
+        }
+    }
+
+    let find = |type_name: &str, case_name: &str| -> &Value {
+        let dto = samples
+            .iter()
+            .find(|dto| dto.type_name == type_name)
+            .unwrap_or_else(|| panic!("missing samples for {type_name}"));
+        &dto.cases
+            .iter()
+            .find(|(case, _)| case == case_name)
+            .unwrap_or_else(|| panic!("missing case {type_name}.{case_name}"))
+            .1
+    };
+    let keys = |value: &Value| -> BTreeSet<String> {
+        value
+            .as_object()
+            .expect("sample must be an object")
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let expected = |names: &[&str]| -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    };
+
+    let image = find("ProjectFileOpenResult", "image");
+    assert_eq!(keys(image), expected(&["kind", "mimeType", "base64Data"]));
+    assert!(image.get("mime_type").is_none() && image.get("base64_data").is_none());
+    let denied = find("ManagedUpdateStatus", "denied");
+    assert_eq!(keys(denied), expected(&["status", "reasonKey"]));
+    assert!(denied.get("reason_key").is_none());
+
+    // 含 Option 字段的类型：Some 与 None 两种样本都存在，且 Some 的字段非 null、None 的字段为 null。
+    let option_cases: &[(&str, &str, &str, &[&str])] = &[
+        (
+            "ProjectTextFileSaveResult",
+            "savedWithWarning",
+            "savedWithoutWarning",
+            &["/warning"],
+        ),
+        (
+            "PtyEvent",
+            "exitedWithCode",
+            "exitedWithoutCode",
+            &["/exitCode"],
+        ),
+        (
+            "PtySession",
+            "endedFull",
+            "runningMinimal",
+            &["/endedAtMs", "/exitCode"],
+        ),
+        (
+            "ExecutionTask",
+            "failedFull",
+            "runningMinimal",
+            &["/finishedAtMs", "/exitCode", "/errorMessage"],
+        ),
+        (
+            "InstallPlan",
+            "installFull",
+            "installMinimal",
+            &["/effects"],
+        ),
+        (
+            "LatestVersion",
+            "latestFull",
+            "latestMinimal",
+            &["/latest", "/commitsBehind", "/error"],
+        ),
+        (
+            "CliStatus",
+            "availableFull",
+            "missingMinimal",
+            &[
+                "/path",
+                "/resolvedCommand",
+                "/version",
+                "/versionError",
+                "/latestVersion",
+            ],
+        ),
+        (
+            "WorkspaceLayoutStateRead",
+            "readyFull",
+            "missing",
+            &["/revision", "/schemaVersion", "/updatedAtMs", "/layout"],
+        ),
+    ];
+    for (type_name, some_case, none_case, pointers) in option_cases {
+        for pointer in *pointers {
+            let some = find(type_name, some_case)
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("{type_name}.{some_case} lacks {pointer}"));
+            assert!(
+                !some.is_null(),
+                "{type_name}.{some_case}{pointer} must be Some"
+            );
+            let none = find(type_name, none_case)
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("{type_name}.{none_case} lacks {pointer}"));
+            assert!(
+                none.is_null(),
+                "{type_name}.{none_case}{pointer} must be None"
+            );
+        }
+    }
+}
+
+#[test]
+fn golden_fixtures_match_serialized_dtos() {
+    use std::collections::BTreeSet;
+
+    const HINT: &str = "UPDATE_CONTRACT_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --locked golden_fixtures 重新生成";
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("contracts")
+        .join("fixtures");
+    // 只有显式设置环境变量才写文件；默认模式绝不创建或改写任何 fixture。
+    let update = std::env::var_os("UPDATE_CONTRACT_FIXTURES").is_some();
+
+    let mut expected_files = BTreeSet::new();
+    for dto in fixtures::ipc_dto_samples() {
+        let Some(file) = dto.fixture_file else {
+            continue;
+        };
+        assert!(
+            expected_files.insert(file.to_string()),
+            "duplicate fixture file {file}"
+        );
+        let cases = dto
+            .cases
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.clone()))
+            .collect();
+        let expected = fixtures::render_fixture(&fixtures::golden_fixture(dto.type_name, cases));
+        let path = directory.join(file);
+        if update {
+            fs::create_dir_all(&directory).expect("create fixture directory");
+            fs::write(&path, &expected)
+                .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+        }
+        // Windows 的 autocrlf 检出会把仓库文件变成 CRLF，比较前归一为 LF。
+        let actual = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {file}: {error}；{HINT}"))
+            .replace("\r\n", "\n");
+        if actual != expected {
+            let line = actual
+                .lines()
+                .zip(expected.lines())
+                .position(|(left, right)| left != right)
+                .map_or_else(
+                    || "长度不同".to_string(),
+                    |index| format!("第 {} 行", index + 1),
+                );
+            panic!("fixture {file} 与 Rust 序列化结果不一致（{line}）；{HINT}");
+        }
+    }
+
+    assert_eq!(expected_files.len(), 12, "fixture 映射表必须恰好 12 个文件");
+    let found: BTreeSet<String> = fs::read_dir(&directory)
+        .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
+        .map(|entry| entry.expect("read fixture entry").path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .map(|path| {
+            path.file_name()
+                .expect("fixture file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(found, expected_files, "目录里的 fixture 与映射表不一致");
 }

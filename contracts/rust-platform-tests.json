@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 325, "Linux": 326, "macOS": 323 },
+  "minimumPassed": { "Windows": 330, "Linux": 331, "macOS": 328 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker"
@@ -12,13 +12,18 @@
       "contracts::content_kind_contract_covers_every_known_variant",
       "contracts::content_kind_contract_matches_rust_serialization",
       "contracts::csp_parser_rejects_duplicate_directives",
+      "contracts::golden_fixtures_match_serialized_dtos",
       "contracts::handler_parser_ignores_comments_and_rejects_malformed_entries",
+      "contracts::ipc_dto_variants_serialize_with_camel_case_field_names",
       "contracts::production_csp_matches_exact_directive_contract",
+      "contracts::serde_lint_reports_known_bad_shapes",
+      "contracts::serialize_items_with_multiword_fields_declare_camel_case_renaming",
       "contracts::tauri_csp_defines_production_and_development_policies",
       "contracts::tool_key_contract_matches_the_rust_registry",
       "contracts::window_kind_contract_matches_capabilities",
       "contracts::window_kind_contract_matches_rust_registry",
       "db::workspace_layout_repo::tests::save_current_distinguishes_stale_from_incompatible_schema",
+      "models::install::tests::managed_update_status_reads_legacy_snake_case_cache",
       "models::tool::tests::all_lists_every_variant_exactly_once",
       "models::window_kind::tests::window_label_fixture_vectors_match_rust_registry",
       "models::workspace_layout::tests::legacy_payload_fixtures_migrate_to_current_version",

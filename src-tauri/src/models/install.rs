@@ -66,10 +66,18 @@ impl InstallPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "status", rename_all = "camelCase")]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ManagedUpdateStatus {
     Allowed,
-    Denied { reason_key: String },
+    Denied {
+        /// 旧版本把字段写成 `reason_key` 并存进了 JSON 缓存，仍要能读。
+        #[serde(alias = "reason_key")]
+        reason_key: String,
+    },
     NotApplicable,
 }
 
@@ -149,5 +157,23 @@ mod tests {
         assert_eq!(cached.managed_update, ManagedUpdateStatus::NotApplicable);
         assert_eq!(cached.update_availability, UpdateAvailability::Unknown);
         assert_eq!(cached.commits_behind, None);
+    }
+
+    #[test]
+    fn managed_update_status_reads_legacy_snake_case_cache() {
+        let expected = ManagedUpdateStatus::Denied {
+            reason_key: "k".to_string(),
+        };
+        // 旧版本把 reason_key 写进了 JSON 缓存；新版本仍要能读。
+        let legacy: ManagedUpdateStatus =
+            serde_json::from_str(r#"{"status":"denied","reason_key":"k"}"#).unwrap();
+        assert_eq!(legacy, expected);
+        let current: ManagedUpdateStatus =
+            serde_json::from_str(r#"{"status":"denied","reasonKey":"k"}"#).unwrap();
+        assert_eq!(current, expected);
+
+        let serialized = serde_json::to_string(&expected).unwrap();
+        assert!(serialized.contains("reasonKey"), "{serialized}");
+        assert!(!serialized.contains("reason_key"), "{serialized}");
     }
 }

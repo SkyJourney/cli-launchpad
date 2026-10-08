@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "output",
+      "value": {
+        "dataBase64": "aGk=",
+        "sequence": 1,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "type": "output"
+      }
+    },
+    {
+      "name": "snapshot",
+      "value": {
+        "cols": 120,
+        "data": "hi",
+        "rows": 30,
+        "sequence": 2,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "type": "snapshot"
+      }
+    },
+    {
+      "name": "exitedWithCode",
+      "value": {
+        "exitCode": 0,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "state": "exited",
+        "type": "exited"
+      }
+    },
+    {
+      "name": "exitedWithoutCode",
+      "value": {
+        "exitCode": null,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "state": "terminated",
+        "type": "exited"
+      }
+    },
+    {
+      "name": "failed",
+      "value": {
+        "message": "spawn failed",
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "type": "failed"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "PtyEvent"
+}

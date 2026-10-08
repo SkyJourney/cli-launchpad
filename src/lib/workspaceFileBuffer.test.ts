@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import projectFileOpenResultFixture from "../../contracts/fixtures/project-file-open-result.json";
 import {
   beginWorkspaceFileSave,
   completeWorkspaceFileSave,
@@ -237,13 +238,10 @@ describe("workspace file operation flights", () => {
 
 describe("workspace file open results", () => {
   it("turns a bounded image result into an inert data URL preview", () => {
-    expect(
-      createWorkspaceFileBuffer({
-        kind: "image",
-        mimeType: "image/png",
-        base64Data: "cG5n",
-      }),
-    ).toEqual({
+    const image = projectFileOpenResultFixture.cases.find(
+      (item) => item.name === "image",
+    )!.value as { kind: "image"; mimeType: string; base64Data: string };
+    expect(createWorkspaceFileBuffer(image)).toEqual({
       kind: "image",
       epoch: 0,
       version: 0,

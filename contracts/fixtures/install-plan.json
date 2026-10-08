@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "name": "installFull",
+      "value": {
+        "args": [
+          "--stable"
+        ],
+        "effects": "Writes the CLI into the user profile.",
+        "fingerprint": "6235235624bf6b231396ad60c809aeab086c1d80e950240a112da4bc582ddce4",
+        "kind": "install",
+        "preview": "C:\\tools\\installer.exe --stable",
+        "program": "C:\\tools\\installer.exe",
+        "source": "official installer",
+        "toolKey": "grok"
+      }
+    },
+    {
+      "name": "installMinimal",
+      "value": {
+        "args": [
+          "--stable"
+        ],
+        "effects": null,
+        "fingerprint": "6235235624bf6b231396ad60c809aeab086c1d80e950240a112da4bc582ddce4",
+        "kind": "install",
+        "preview": "C:\\tools\\installer.exe --stable",
+        "program": "C:\\tools\\installer.exe",
+        "source": "official installer",
+        "toolKey": "grok"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "InstallPlan"
+}

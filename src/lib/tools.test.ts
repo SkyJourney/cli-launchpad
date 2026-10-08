@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import managedUpdateFixture from "../../contracts/fixtures/managed-update-status.json";
 import {
   getCliAdapter,
   getTerminalTitleLabel,
@@ -53,18 +54,16 @@ describe("managed CLI updates", () => {
   });
 
   it("renders update policy and availability directly from the backend DTO", () => {
+    const fixtureValue = (name: string) =>
+      managedUpdateFixture.cases.find((item) => item.name === name)!.value;
+    const allowed = fixtureValue("allowed") as { status: "allowed" };
+    const denied = fixtureValue("denied") as {
+      status: "denied";
+      reasonKey: string;
+    };
     expect(isManagedUpdateAllowed(undefined)).toBe(false);
-    expect(
-      isManagedUpdateAllowed({ managedUpdate: { status: "allowed" } }),
-    ).toBe(true);
-    expect(
-      isManagedUpdateAllowed({
-        managedUpdate: {
-          status: "denied",
-          reasonKey: "settings.grokUpdateSourceDenied",
-        },
-      }),
-    ).toBe(false);
+    expect(isManagedUpdateAllowed({ managedUpdate: allowed })).toBe(true);
+    expect(isManagedUpdateAllowed({ managedUpdate: denied })).toBe(false);
     expect(getLatestUpdateAvailability(undefined)).toBe("unknown");
     expect(
       getLatestUpdateAvailability({

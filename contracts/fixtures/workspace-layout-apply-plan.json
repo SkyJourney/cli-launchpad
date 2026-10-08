@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "name": "plan",
+      "value": {
+        "layout": {
+          "detachedContents": [],
+          "documents": [
+            {
+              "directoryId": 42,
+              "directoryPath": "C:\\Projects\\sample",
+              "id": "11111111-2222-4333-8444-555555555553",
+              "relativePath": "src/main.rs"
+            }
+          ],
+          "focusedPaneId": "pane-1",
+          "schemaVersion": 5,
+          "slots": [
+            {
+              "directoryId": 42,
+              "directoryPath": "C:\\Projects\\sample",
+              "instanceId": "11111111-2222-4333-8444-555555555551",
+              "projectName": "sample",
+              "resumeSessionId": "resume-1",
+              "sequence": 1,
+              "sessionId": "11111111-2222-4333-8444-555555555552",
+              "title": {
+                "kind": "custom",
+                "value": "Review"
+              },
+              "toolKey": "codex"
+            }
+          ],
+          "tree": {
+            "activeContent": {
+              "kind": "pty",
+              "slotId": "11111111-2222-4333-8444-555555555551"
+            },
+            "contents": [
+              {
+                "kind": "pty",
+                "slotId": "11111111-2222-4333-8444-555555555551"
+              },
+              {
+                "documentId": "11111111-2222-4333-8444-555555555553",
+                "kind": "file"
+              }
+            ],
+            "id": "pane-1",
+            "kind": "pane",
+            "paneNumber": 1
+          }
+        },
+        "slotStates": [
+          {
+            "currentProjectName": "sample",
+            "instanceId": "11111111-2222-4333-8444-555555555551",
+            "state": "running"
+          }
+        ]
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "WorkspaceLayoutApplyPlan"
+}

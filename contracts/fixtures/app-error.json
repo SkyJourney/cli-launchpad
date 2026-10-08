@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "name": "withoutParams",
+      "value": {
+        "code": "file.not_found",
+        "message": "file not found"
+      }
+    },
+    {
+      "name": "withParams",
+      "value": {
+        "code": "file.too_large",
+        "message": "file too large",
+        "params": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "AppError"
+}
