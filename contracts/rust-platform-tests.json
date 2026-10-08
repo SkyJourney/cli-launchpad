@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 350, "Linux": 350, "macOS": 347 },
+  "minimumPassed": { "Windows": 351, "Linux": 351, "macOS": 348 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -57,6 +57,7 @@
       "services::app_lifecycle::tests::main_close_request_decisions",
       "services::app_lifecycle::tests::destroyed_file_window_revokes_only_its_grant",
       "services::app_lifecycle::tests::destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions",
+      "services::app_lifecycle::tests::destroyed_window_notifies_main_only_for_workspace_content_windows",
       "services::app_lifecycle::tests::lib_rs_delegates_exit_and_window_events_to_decision_functions",
       "services::app_lifecycle::tests::exit_decision_function_does_not_terminate_anything",
       "services::execution_service::tests::active_count_reports_registered_tasks",

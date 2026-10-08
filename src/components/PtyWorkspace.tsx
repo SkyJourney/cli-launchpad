@@ -226,6 +226,10 @@ interface PtySessionOwnerLostEvent {
   sessionId: string;
 }
 
+interface WorkspaceContentWindowLostEvent {
+  windowLabel: string;
+}
+
 interface PtyReturnRequestEvent extends DetachedWindowRecord {
   token: string;
   targetPaneId?: string;
@@ -2325,6 +2329,47 @@ export function PtyWorkspaceProvider({
     [],
   );
 
+  // 文件独立窗被销毁（崩溃或被强制关闭）后，Rust 通知主窗口：只回收 coordinator 认为
+  // “由该窗口持有（detached）”的文件。正常返回/关闭之后窗口同样会触发 Destroyed，
+  // 此时状态已不是 detached，函数直接返回。顺序固定：ownerEnded → 删句柄 → ensureAttached
+  // → 一次 commitTree；镜像到主窗口的 buffer 原样保留，不读盘、不弹提示。
+  const handleWorkspaceContentWindowLost = useCallback(
+    ({ windowLabel }: WorkspaceContentWindowLostEvent) => {
+      const coordinator = contentCoordinatorRef.current;
+      const lost = coordinator.listWindowOwned().filter((content) => {
+        if (content.kind !== "file") return false;
+        const state = coordinator.get(content);
+        return (
+          state?.phase === "detached" &&
+          state.owner.kind === "window" &&
+          state.owner.windowLabel === windowLabel
+        );
+      });
+      if (lost.length === 0) return;
+      const targetPane =
+        findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
+        listWorkspacePanes(treeRef.current)[0];
+      let nextTree = treeRef.current;
+      for (const content of lost) {
+        if (content.kind !== "file") continue;
+        coordinator.ownerEnded(content);
+        detachedFilesRef.current.delete(workspaceFileKey(content.documentId));
+        coordinator.ensureAttached(content, {
+          kind: "pane",
+          windowLabel: "main",
+          paneId: targetPane.id,
+        });
+        nextTree = addWorkspaceFileToPane(
+          nextTree,
+          targetPane.id,
+          content.documentId,
+        );
+      }
+      commitTree(nextTree);
+    },
+    [commitTree],
+  );
+
   const handlePtySessionOwnerLost = useCallback(
     async ({ sessionId }: PtySessionOwnerLostEvent) => {
       const attemptReattach = async (attempt: number): Promise<void> => {
@@ -2722,6 +2767,35 @@ export function PtyWorkspaceProvider({
     handlePtySessionOwnerLost,
     removeSlot,
   ]);
+
+  // 独立 effect：依赖只有稳定回调（不含 t），语言切换不会注销重建该监听。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: () => void = () => undefined;
+    void setupWorkspaceContentListeners({
+      registrations: [
+        listen<WorkspaceContentWindowLostEvent>(
+          "workspace-content-window-lost",
+          (event) => {
+            handleWorkspaceContentWindowLost(event.payload);
+          },
+        ),
+      ],
+      isDisposed: () => disposed,
+      onError: (failures) =>
+        console.error(
+          "Workspace content window lost listener setup failed",
+          failures,
+        ),
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten();
+    };
+  }, [handleWorkspaceContentWindowLost]);
 
   useEffect(() => {
     let disposed = false;

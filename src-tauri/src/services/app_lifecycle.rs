@@ -112,6 +112,17 @@ pub fn cleanup_destroyed_window(
     Ok(cleanup)
 }
 
+/// 文件独立窗销毁后通知主窗口回收内容的事件名（后端到 main 的事件，不走窗口协议信封）。
+pub const WORKSPACE_CONTENT_WINDOW_LOST_EVENT: &str = "workspace-content-window-lost";
+
+/// 仅当 `label` 是合法的 `workspace-content-<uuid>` 窗口时返回事件载荷 `{"windowLabel": label}`，
+/// 其他任何 label（main、terminal-*、非法 label、空串）返回 `None`。
+/// 载荷只含窗口 label，不承载 token、路径或文件内容（广播不得携带敏感数据）。
+pub fn workspace_content_window_lost_payload(label: &str) -> Option<serde_json::Value> {
+    (window_kind_of(label) == Some(WindowKind::WorkspaceContent))
+        .then(|| serde_json::json!({ "windowLabel": label }))
+}
+
 /// Whether the system tray could be created. Held as managed state only
 /// (never persisted): a later launch re-detects it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,8 +158,9 @@ mod tests {
     use super::AppExitGate;
     use super::{
         cleanup_destroyed_window, decide_close_request, decide_exit_request,
-        effective_close_behavior, setup_tray_or_degrade, DestroyedWindowCleanup,
-        ExitRequestDecision, MainCloseDecision, TrayAvailability,
+        effective_close_behavior, setup_tray_or_degrade, workspace_content_window_lost_payload,
+        DestroyedWindowCleanup, ExitRequestDecision, MainCloseDecision, TrayAvailability,
+        WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
     };
     use crate::models::app_setting::CloseBehavior;
     use crate::services::content_window_grants::{
@@ -572,5 +584,46 @@ mod tests {
         gate.authorize();
         assert!(gate.consume_authorization());
         assert!(!gate.consume_authorization());
+    }
+
+    #[test]
+    fn destroyed_window_notifies_main_only_for_workspace_content_windows() {
+        assert_eq!(
+            WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
+            "workspace-content-window-lost"
+        );
+        assert_eq!(
+            workspace_content_window_lost_payload(FILE_L1),
+            Some(serde_json::json!({ "windowLabel": FILE_L1 }))
+        );
+        // 反向断言：载荷不承载 token、路径等敏感数据，只有窗口 label。
+        let serialized = workspace_content_window_lost_payload(FILE_L1)
+            .unwrap()
+            .to_string();
+        assert!(!serialized.contains("token"));
+        assert!(!serialized.contains("path"));
+
+        for label in [
+            "main",
+            TERM_T1,
+            "workspace-content-invalid",
+            "workspace-content-",
+            "",
+            "MAIN",
+            "workspace-content-8e783338-f464-4b10-b15e-b534748c6241-extra",
+        ] {
+            assert_eq!(
+                workspace_content_window_lost_payload(label),
+                None,
+                "label {label:?} 不应触发通知"
+            );
+        }
+
+        // 与 window_kind_of 的大小写不敏感规则一致，载荷里的 label 原样保留。
+        let upper = "workspace-content-8E783338-F464-4B10-B15E-B534748C6241";
+        assert_eq!(
+            workspace_content_window_lost_payload(upper),
+            Some(serde_json::json!({ "windowLabel": upper }))
+        );
     }
 }

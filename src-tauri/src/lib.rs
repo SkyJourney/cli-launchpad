@@ -327,6 +327,20 @@ pub fn run() {
                         log::warn!("unable to clean up destroyed window label={label}: {error}");
                     }
                 }
+                // 清理失败也要通知：清理只影响授权表与会话路由，不能阻止主窗口回收文件内容。
+                if let Some(payload) =
+                    services::app_lifecycle::workspace_content_window_lost_payload(label)
+                {
+                    if let Err(error) = window.app_handle().emit_to(
+                        "main",
+                        services::app_lifecycle::WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
+                        payload,
+                    ) {
+                        log::warn!(
+                            "unable to notify main window about lost content window label={label}: {error}"
+                        );
+                    }
+                }
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let close_behavior = window
