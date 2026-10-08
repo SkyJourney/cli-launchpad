@@ -2,6 +2,13 @@ name: Acceptance build
 
 on:
   workflow_dispatch:
+  # 临时触发器（用户在 B05 Q1 中授权）：新工作流在合并到默认分支前无法用 gh workflow run
+  # 触发，所以推送该文件时自动运行。目标 081 统一删除。
+  push:
+    branches:
+      - m6-closure
+    paths:
+      - .github/workflows/acceptance-build.yml
 
 permissions:
   contents: read
