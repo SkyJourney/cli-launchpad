@@ -2,6 +2,7 @@
   "version": 1,
   "minimumPassed": { "Windows": 347, "Linux": 348, "macOS": 345 },
   "allowedIgnored": [
+    "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker",
     "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions"

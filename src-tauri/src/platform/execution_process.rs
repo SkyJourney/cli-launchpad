@@ -53,6 +53,97 @@ pub(crate) fn assert_windows_process_terminates(pid: u32, within: std::time::Dur
     panic!("孙进程 {pid} 在 {within:?} 后仍然存活");
 }
 
+/// 进程树测试用的“工人”：让测试二进制自己充当父进程和孙进程。
+///
+/// 早先用 PowerShell 嵌套 `Start-Process` 造孙进程，空载冷启动就要 0.3–0.7 秒，
+/// CI 上数百个测试并行时会被放大到数秒，导致“孙进程没来得及启动”类偶发超时；
+/// 同时 PowerShell 的慢启动还掩盖了“spawn 之后才 attach”的竞态（N8）。
+/// 测试二进制自启动约 60 毫秒，且工人会等到自己确实进入带
+/// `KILL_ON_JOB_CLOSE` 的 Job 之后才派生孙进程，所以验证是确定的，不靠运气。
+#[cfg(all(test, windows))]
+pub(crate) mod tree_worker {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const MODE: &str = "CLP_TREE_WORKER_MODE";
+    const PID_FILE: &str = "CLP_TREE_WORKER_PID_FILE";
+    const SLEEP: Duration = Duration::from_secs(120);
+
+    /// 测试二进制调用工人所需的参数；调用方再附加 [`envs`]。
+    pub(crate) const ARGS: [&str; 4] = [
+        "--ignored",
+        "--exact",
+        "platform::execution_process::tree_worker::process_tree_worker",
+        "--nocapture",
+    ];
+
+    pub(crate) fn envs(pid_file: &Path) -> [(&'static str, std::ffi::OsString); 2] {
+        [
+            (MODE, "parent".into()),
+            (PID_FILE, pid_file.as_os_str().to_owned()),
+        ]
+    }
+
+    /// 本进程是否已在带 `KILL_ON_JOB_CLOSE` 的 Job 里。`hJob` 传 NULL 表示“调用进程所在的 Job”。
+    /// 未被任何 Job 约束时查询失败，返回 false。
+    fn in_kill_on_close_job() -> bool {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectExtendedLimitInformation, QueryInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        unsafe {
+            let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            let queried = QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JobObjectExtendedLimitInformation,
+                &mut information as *mut _ as *mut _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            );
+            queried != 0
+                && information.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    != 0
+        }
+    }
+
+    #[test]
+    #[ignore = "仅由进程树测试以子进程调用"]
+    fn process_tree_worker() {
+        let Ok(mode) = std::env::var(MODE) else {
+            return;
+        };
+        match mode.as_str() {
+            "sleeper" => std::thread::sleep(SLEEP),
+            "parent" => {
+                // 父进程被 spawn 出来之后才会被 attach 到 Job；先等进入 Job 再派生孙进程，
+                // 孙进程才一定继承 Job，不会逃逸。
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !in_kill_on_close_job() {
+                    assert!(Instant::now() < deadline, "工人 30 秒内未被放进 Job");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let pid_file = std::path::PathBuf::from(std::env::var(PID_FILE).unwrap());
+                // 孙进程不继承标准流，避免占住 run_bounded 的输出管道。
+                let grandchild = Command::new(std::env::current_exe().unwrap())
+                    .args(ARGS)
+                    .env(MODE, "sleeper")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                // 先写临时文件再改名，读取方不会看到写了一半的 pid。
+                let staging = pid_file.with_extension("tmp");
+                std::fs::write(&staging, grandchild.id().to_string()).unwrap();
+                std::fs::rename(&staging, &pid_file).unwrap();
+                std::thread::sleep(SLEEP);
+            }
+            other => panic!("未知工人模式：{other}"),
+        }
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use std::mem::size_of;
@@ -206,15 +297,11 @@ mod windows {
         async fn job_object_terminate_kills_grandchild_processes() {
             let directory = tempfile::tempdir().unwrap();
             let pid_file = directory.path().join("pid.txt");
-            let script = format!(
-                "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 60' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 60",
-                pid_file.display().to_string().replace('\'', "''")
-            );
-            let mut command = tokio::process::Command::new(crate::platform::detect::system32(
-                "WindowsPowerShell\\v1.0\\powershell.exe",
-            ));
+            // 工人（测试二进制自身）会等到被 attach 进 Job 之后才派生孙进程。
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
             command
-                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .args(super::super::tree_worker::ARGS)
+                .envs(super::super::tree_worker::envs(&pid_file))
                 .creation_flags(CREATE_NO_WINDOW);
             let mut child = command.spawn().expect("spawn grandchild launcher");
             let tree = ProcessTree::new().expect("create job object");
@@ -228,9 +315,12 @@ mod windows {
                 if let Some(pid) = parsed {
                     break pid;
                 }
+                // 工人只依赖测试二进制自启动（常态约 60 毫秒），但 CI 上几百个测试并行时
+                // 调度仍可能停顿数秒。这里是轮询，pid 一出现就返回，所以 45 秒只是兜底上限，
+                // 不增加常规耗时；孙进程睡 120 秒，覆盖这个上限。
                 assert!(
-                    started.elapsed() < Duration::from_secs(10),
-                    "孙进程未在 10 秒内启动，提高超时值"
+                    started.elapsed() < Duration::from_secs(45),
+                    "孙进程未在 45 秒内启动"
                 );
                 tokio::time::sleep(Duration::from_millis(100)).await;
             };

@@ -423,25 +423,26 @@ mod tests {
     async fn windows_timeout_kills_grandchild_processes() {
         // run_bounded 是 spawn 之后才 attach，理论上存在逃逸窗口（N8，由后续目标处理）；
         // 这里验证的是正常路径：超时必须结束整棵 Job 内的进程树。
-        // 孙进程要等 PowerShell 冷启动后才会写出 pid 文件；负载高的 runner 上 5 秒可能不够
-        // （CI 上出现过一次）。每个尝试都必须以 TimedOut 结束，只在孙进程尚未写出 pid 时
-        // 放大超时重试，所以正常路径仍是 5 秒，断言语义不变。
+        // 父/孙进程都是测试二进制自身（见 execution_process::tree_worker），工人会等到
+        // 被 attach 进 Job 之后才派生孙进程，因此不依赖 PowerShell 冷启动速度，也不会
+        // 撞上 N8 的逃逸窗口。超时本身是被测行为，必须保持短；极端调度停顿下孙进程仍可能
+        // 没赶在 5 秒内写出 pid，所以每个尝试都必须以 TimedOut 结束，只在 pid 尚未写出时
+        // 放大超时重试，正常路径仍是 5 秒，断言语义不变。
         let mut pid = None;
         for timeout_seconds in [5, 15, 45] {
             let directory = tempfile::tempdir().unwrap();
             let pid_file = directory.path().join("pid.txt");
-            let script = format!(
-                "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 120",
-                pid_file.display().to_string().replace('\'', "''")
-            );
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(crate::platform::execution_process::tree_worker::ARGS)
+                .envs(crate::platform::execution_process::tree_worker::envs(
+                    &pid_file,
+                ));
+            command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
 
-            let error = run_bounded(
-                shell_command(&script),
-                Duration::from_secs(timeout_seconds),
-                64,
-            )
-            .await
-            .unwrap_err();
+            let error = run_bounded(command, Duration::from_secs(timeout_seconds), 64)
+                .await
+                .unwrap_err();
 
             assert_eq!(error.kind(), io::ErrorKind::TimedOut);
             pid = std::fs::read_to_string(&pid_file)
