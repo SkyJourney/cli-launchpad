@@ -1,3 +1,4 @@
+mod app_menu;
 mod commands;
 #[cfg(test)]
 mod contracts;
@@ -14,7 +15,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
-use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
@@ -96,7 +97,7 @@ pub fn with_cache_connection<T>(
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 show_main_window(&window);
@@ -348,6 +349,16 @@ pub fn run() {
                 }
             }
         })
+        .on_menu_event(|app, event| {
+            if app_menu::route_app_menu_event(event.id().as_ref())
+                == app_menu::AppMenuCommand::RequestExit
+            {
+                app_menu::request_app_exit(app);
+            }
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(|app| app_menu::build_macos_menu(app));
+    let app = builder
         .build(tauri::generate_context!())
         .expect("failed to build CLI Launchpad");
     app.run(handle_run_event);
@@ -420,12 +431,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     show_main_window(&window);
                 }
             }
-            "quit" => {
-                if let Err(error) = app.save_window_state(persistent_window_state_flags()) {
-                    log::warn!("unable to save main window state before tray exit: {error}");
-                }
-                app.exit(0);
-            }
+            "quit" => app_menu::request_app_exit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

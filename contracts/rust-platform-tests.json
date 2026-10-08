@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 332, "Linux": 333, "macOS": 330 },
+  "minimumPassed": { "Windows": 336, "Linux": 337, "macOS": 334 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker"
@@ -46,7 +46,11 @@
       "services::workspace_layout_service::tests::concurrent_saves_of_one_revision_on_a_legacy_row_have_one_winner",
       "services::workspace_layout_service::tests::future_schema_row_is_never_overwritten_by_autosave",
       "services::workspace_layout_service::tests::legacy_schema_rows_are_saved_after_in_memory_migration_to_current_version",
-      "services::workspace_layout_service::tests::save_result_maps_outcomes_to_camel_case_dto"
+      "services::workspace_layout_service::tests::save_result_maps_outcomes_to_camel_case_dto",
+      "app_menu::tests::custom_quit_menu_item_requests_gated_exit",
+      "app_menu::tests::macos_app_menu_entries_replace_predefined_quit",
+      "app_menu::tests::predefined_entries_are_all_constructible_names",
+      "app_menu::tests::custom_menu_ids_are_unique_and_not_tray_ids"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
