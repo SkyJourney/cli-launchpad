@@ -1,0 +1,77 @@
+name: Acceptance build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Acceptance build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundle_args: --bundles nsis
+          - os: macos-latest
+            bundle_args: --bundles dmg
+          - os: ubuntu-24.04
+            bundle_args: --bundles deb,rpm,appimage
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev xdg-utils
+          # linuxdeploy's downloaded AppImage tooling needs libfuse2 to run;
+          # Ubuntu renamed the package to libfuse2t64 on newer releases.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build with acceptance hooks
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: pnpm tauri build --features acceptance-hooks ${{ matrix.bundle_args }}
+
+      - name: Upload acceptance artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: acceptance-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/
+          retention-days: 7

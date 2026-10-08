@@ -1342,3 +1342,173 @@ struct S { #[serde(skip_serializing_if = "Option::is_none")] a_b: Option<u8> }"#
 struct S { #[serde(skip)] a_b: u8 }"#;
     assert_eq!(scan_serialize_items(skipped, "fixture.rs"), Vec::new());
 }
+
+const ACCEPTANCE_GATE: &str = "#[cfg(feature = \"acceptance-hooks\")]";
+
+/// 返回出现 `needle` 且“本行及其前 12 行”都没有验收 feature 门的行号（1 起算）。
+fn find_ungated_marker_lines(source: &str, needle: &str) -> Vec<usize> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut violations = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains(needle) {
+            continue;
+        }
+        let start = index.saturating_sub(12);
+        let gated = lines[start..=index]
+            .iter()
+            .any(|candidate| candidate.contains(ACCEPTANCE_GATE));
+        if !gated {
+            violations.push(index + 1);
+        }
+    }
+    violations
+}
+
+fn rust_source_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).expect("read source directory") {
+        let path = entry.expect("read source entry").path();
+        if path.is_dir() {
+            files.extend(rust_source_files(&path));
+        } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// 返回 `header` 所在行之后、下一个以 `[` 开头的行之前的文本。
+fn toml_section<'a>(text: &'a str, header: &str) -> Option<&'a str> {
+    let start = text.find(header)? + header.len();
+    let rest = &text[start..];
+    let mut offset = 0;
+    for (index, line) in rest.split_inclusive('\n').enumerate() {
+        // 第 0 段是 header 行的剩余部分，不是下一个段标题。
+        if index > 0 && line.trim_start().starts_with('[') {
+            return Some(&rest[..offset]);
+        }
+        offset += line.len();
+    }
+    Some(rest)
+}
+
+#[test]
+fn acceptance_hooks_feature_is_opt_in_and_gated() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // 检索串用 concat! 拼接，测试文件自己就不含完整字面量，不会命中自己。
+    let marker = concat!("acceptance.", "force_destroy_windows");
+    let menu_text = concat!("验收：强制销毁", "全部独立窗口");
+
+    // ① feature 存在、是空列表，且不在 default 里。
+    let cargo = fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
+    let features =
+        toml_section(&cargo, "[features]").expect("Cargo.toml must define a [features] section");
+    assert!(
+        features
+            .lines()
+            .any(|line| line.trim() == "acceptance-hooks = []"),
+        "[features] must contain `acceptance-hooks = []`:\n{features}"
+    );
+    for line in features
+        .lines()
+        .filter(|line| line.trim_start().starts_with("default"))
+    {
+        assert!(
+            !line.contains("acceptance-hooks"),
+            "acceptance-hooks must not be a default feature: {line}"
+        );
+    }
+
+    // ② 标记字符串与菜单文案只能出现在带 cfg 门的代码附近。
+    let mut marker_occurrences = 0;
+    for path in rust_source_files(&root.join("src")) {
+        let source = fs::read_to_string(&path).expect("read Rust source");
+        marker_occurrences += source.matches(marker).count();
+        for needle in [marker, menu_text] {
+            let violations = find_ungated_marker_lines(&source, needle);
+            assert!(
+                violations.is_empty(),
+                "{} lines {violations:?} mention the acceptance hook without the feature gate within 12 lines",
+                path.display()
+            );
+        }
+    }
+    // 防止扫描空转而“通过”：标记至少要在源码里出现一次。
+    assert!(
+        marker_occurrences >= 1,
+        "the acceptance marker must exist (behind the gate) in src"
+    );
+
+    // ③ 发布与配置文件不得提到这个 feature。
+    let mut guarded = vec![
+        root.join("../.github/workflows/release.yml"),
+        root.join("../package.json"),
+    ];
+    for entry in fs::read_dir(root).expect("read src-tauri directory") {
+        let path = entry.expect("read src-tauri entry").path();
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if name.starts_with("tauri") && name.ends_with(".conf.json") {
+            guarded.push(path);
+        }
+    }
+    for entry in fs::read_dir(root.join("capabilities")).expect("read capabilities directory") {
+        let path = entry.expect("read capability entry").path();
+        if path.extension().and_then(|value| value.to_str()) == Some("json") {
+            guarded.push(path);
+        }
+    }
+    for path in guarded {
+        let text = fs::read_to_string(&path).expect("read guarded file");
+        assert!(
+            !text.contains("acceptance-hooks"),
+            "{} must not mention the acceptance feature",
+            path.display()
+        );
+    }
+    assert!(
+        !fs::read_to_string(root.join("tauri.conf.json"))
+            .expect("read tauri.conf.json")
+            .contains("acceptance"),
+        "tauri.conf.json must not reference the acceptance feature"
+    );
+}
+
+#[test]
+fn acceptance_marker_scanner_flags_ungated_occurrences() {
+    let gate = ACCEPTANCE_GATE;
+    let needle = "NEEDLE";
+
+    // 紧邻 cfg 门：通过。
+    assert_eq!(
+        find_ungated_marker_lines(&format!("{gate}\nconst A: &str = \"NEEDLE\";"), needle),
+        Vec::<usize>::new()
+    );
+    // 没有 cfg 门：报告行号。
+    assert_eq!(
+        find_ungated_marker_lines("const A: &str = \"NEEDLE\";", needle),
+        vec![1]
+    );
+    // 边界：cfg 在第 1 行、NEEDLE 在第 13 行，窗口（本行及其前 12 行）刚好包含 cfg。
+    assert_eq!(
+        find_ungated_marker_lines(&format!("{gate}{}NEEDLE", "\n".repeat(12)), needle),
+        Vec::<usize>::new()
+    );
+    // 边界：NEEDLE 在第 14 行，cfg 落到窗口之外。
+    assert_eq!(
+        find_ungated_marker_lines(&format!("{gate}{}NEEDLE", "\n".repeat(13)), needle),
+        vec![14]
+    );
+    // 两处出现，只有第二处没有门：只报第二处。
+    assert_eq!(
+        find_ungated_marker_lines(&format!("{gate}\nNEEDLE{}NEEDLE", "\n".repeat(20)), needle),
+        vec![22]
+    );
+    // 反向：源码里没有 NEEDLE 时没有任何报告。
+    assert_eq!(
+        find_ungated_marker_lines("fn main() {}", needle),
+        Vec::<usize>::new()
+    );
+}

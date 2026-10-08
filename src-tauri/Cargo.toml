@@ -8,6 +8,9 @@ homepage = "https://github.com/SkyJourney/cli-launchpad"
 repository = "https://github.com/SkyJourney/cli-launchpad"
 edition = "2021"
 
+[features]
+acceptance-hooks = []
+
 [lib]
 name = "cli_launchpad_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

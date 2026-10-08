@@ -113,6 +113,10 @@ jobs:
         if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
+      - name: Check Rust compilation with the acceptance feature
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' && runner.os == 'Linux' }}
+        run: cargo check --manifest-path src-tauri/Cargo.toml --features acceptance-hooks --locked
+
       - name: List Rust tests
         if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
         run: |

@@ -181,6 +181,22 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.build_args }}
 
+      - name: Assert release binary has no acceptance marker
+        shell: bash
+        run: |
+          found=0
+          for binary in $(find src-tauri/target -maxdepth 4 -type f \( -name cli-launchpad -o -name cli-launchpad.exe \) -path '*/release/*'); do
+            found=$((found + 1))
+            if grep -a -q "acceptance.force_destroy_windows" "$binary"; then
+              echo "release binary contains the acceptance marker: $binary" >&2
+              exit 1
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "no release binary found; the guard cannot run" >&2
+            exit 1
+          fi
+
       - name: Prepare Windows release asset
         if: runner.os == 'Windows'
         shell: pwsh

@@ -431,9 +431,45 @@ fn show_main_window(window: &WebviewWindow) {
     let _ = window.set_focus();
 }
 
+/// Menu item id of the acceptance-only hook (see the cargo feature in Cargo.toml).
+#[cfg(feature = "acceptance-hooks")]
+const ACCEPTANCE_FORCE_DESTROY_MENU_ID: &str = "acceptance.force_destroy_windows";
+
+/// Menu text of the acceptance-only hook.
+#[cfg(feature = "acceptance-hooks")]
+const ACCEPTANCE_FORCE_DESTROY_MENU_TEXT: &str = "验收：强制销毁全部独立窗口";
+
+/// Destroys every detached window without CloseRequested or JS interception,
+/// so manual acceptance can verify main-window recovery.
+#[cfg(feature = "acceptance-hooks")]
+fn acceptance_force_destroy_detached_windows(app: &tauri::AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if !models::window_kind::is_detached_window_label(&label) {
+            continue;
+        }
+        match window.destroy() {
+            Ok(()) => log::warn!("acceptance hook destroyed window label={label}"),
+            Err(error) => {
+                log::warn!("acceptance hook could not destroy window label={label}: {error}")
+            }
+        }
+    }
+}
+
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    #[cfg(feature = "acceptance-hooks")]
+    let acceptance_item = MenuItem::with_id(
+        app,
+        ACCEPTANCE_FORCE_DESTROY_MENU_ID,
+        ACCEPTANCE_FORCE_DESTROY_MENU_TEXT,
+        true,
+        None::<&str>,
+    )?;
+    #[cfg(feature = "acceptance-hooks")]
+    let menu = Menu::with_items(app, &[&show, &quit, &acceptance_item])?;
+    #[cfg(not(feature = "acceptance-hooks"))]
     let menu = Menu::with_items(app, &[&show, &quit])?;
     {
         let labels = app.state::<TrayMenuLabelsState>();
@@ -460,6 +496,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app_menu::request_app_exit(app),
+            #[cfg(feature = "acceptance-hooks")]
+            ACCEPTANCE_FORCE_DESTROY_MENU_ID => acceptance_force_destroy_detached_windows(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
