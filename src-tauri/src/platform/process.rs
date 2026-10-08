@@ -418,22 +418,35 @@ mod tests {
     async fn windows_timeout_kills_grandchild_processes() {
         // run_bounded 是 spawn 之后才 attach，理论上存在逃逸窗口（N8，由后续目标处理）；
         // 这里验证的是正常路径：超时必须结束整棵 Job 内的进程树。
-        let directory = tempfile::tempdir().unwrap();
-        let pid_file = directory.path().join("pid.txt");
-        let script = format!(
-            "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 60' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 60",
-            pid_file.display().to_string().replace('\'', "''")
-        );
+        // 孙进程要等 PowerShell 冷启动后才会写出 pid 文件；负载高的 runner 上 5 秒可能不够
+        // （CI 上出现过一次）。每个尝试都必须以 TimedOut 结束，只在孙进程尚未写出 pid 时
+        // 放大超时重试，所以正常路径仍是 5 秒，断言语义不变。
+        let mut pid = None;
+        for timeout_seconds in [5, 15, 45] {
+            let directory = tempfile::tempdir().unwrap();
+            let pid_file = directory.path().join("pid.txt");
+            let script = format!(
+                "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 120",
+                pid_file.display().to_string().replace('\'', "''")
+            );
 
-        let error = run_bounded(shell_command(&script), Duration::from_secs(5), 64)
+            let error = run_bounded(
+                shell_command(&script),
+                Duration::from_secs(timeout_seconds),
+                64,
+            )
             .await
             .unwrap_err();
 
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        let pid = std::fs::read_to_string(&pid_file)
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok())
-            .unwrap_or_else(|| panic!("孙进程未在超时前启动，提高超时值"));
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            pid = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+        }
+        let pid = pid.unwrap_or_else(|| panic!("孙进程在 45 秒内仍未启动"));
         crate::platform::execution_process::assert_windows_process_terminates(
             pid,
             Duration::from_secs(3),
