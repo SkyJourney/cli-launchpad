@@ -231,7 +231,10 @@ pub fn run() {
             app.manage(CacheDb(Arc::new(Mutex::new(cache))));
             app.manage(paths);
 
-            setup_tray(app.handle())?;
+            // 托盘创建失败不能让应用启动失败：降级后主窗口关闭一律走“退出”确认。
+            let tray_availability =
+                services::app_lifecycle::setup_tray_or_degrade(|| setup_tray(app.handle()));
+            app.manage(tray_availability);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -332,8 +335,19 @@ pub fn run() {
                     .lock()
                     .map(|behavior| *behavior)
                     .unwrap_or_default();
-                match services::app_lifecycle::decide_close_request(window.label(), close_behavior)
-                {
+                // 托管状态在 setup 结束前可能还不存在：按不可用处理（可以退出，
+                // 比隐藏后找不回窗口更安全）。
+                let tray = window
+                    .try_state::<services::app_lifecycle::TrayAvailability>()
+                    .map(|state| state.inner().clone())
+                    .unwrap_or_else(|| services::app_lifecycle::TrayAvailability::Unavailable {
+                        reason: "tray state not initialized".to_string(),
+                    });
+                match services::app_lifecycle::decide_close_request(
+                    window.label(),
+                    close_behavior,
+                    &tray,
+                ) {
                     services::app_lifecycle::MainCloseDecision::NotMainWindow => {}
                     services::app_lifecycle::MainCloseDecision::HideToTray => {
                         api.prevent_close();

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 343, "Linux": 344, "macOS": 341 },
+  "minimumPassed": { "Windows": 347, "Linux": 348, "macOS": 345 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker",
@@ -58,7 +58,11 @@
       "services::app_lifecycle::tests::destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions",
       "services::app_lifecycle::tests::lib_rs_delegates_exit_and_window_events_to_decision_functions",
       "services::app_lifecycle::tests::exit_decision_function_does_not_terminate_anything",
-      "services::execution_service::tests::active_count_reports_registered_tasks"
+      "services::execution_service::tests::active_count_reports_registered_tasks",
+      "services::app_lifecycle::tests::close_decision_matrix_with_tray_availability",
+      "services::app_lifecycle::tests::degradation_never_rewrites_the_saved_close_behavior",
+      "services::app_lifecycle::tests::tray_creation_failure_is_logged_and_does_not_abort_startup",
+      "services::app_lifecycle::tests::exit_request_still_goes_through_the_exit_gate_when_tray_is_unavailable"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

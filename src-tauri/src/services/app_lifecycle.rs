@@ -73,12 +73,13 @@ pub enum MainCloseDecision {
 /// 纯决策：窗口类别通过注册表判断，不比较字符串字面量。
 pub fn decide_close_request(
     window_label: &str,
-    close_behavior: CloseBehavior,
+    stored: CloseBehavior,
+    tray: &TrayAvailability,
 ) -> MainCloseDecision {
     if window_kind_of(window_label) != Some(WindowKind::Main) {
         return MainCloseDecision::NotMainWindow;
     }
-    match close_behavior {
+    match effective_close_behavior(stored, tray) {
         CloseBehavior::MinimizeToTray => MainCloseDecision::HideToTray,
         CloseBehavior::Quit => MainCloseDecision::RequestAppExit,
     }
@@ -111,12 +112,43 @@ pub fn cleanup_destroyed_window(
     Ok(cleanup)
 }
 
+/// Whether the system tray could be created. Held as managed state only
+/// (never persisted): a later launch re-detects it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayAvailability {
+    Available,
+    Unavailable { reason: String },
+}
+
+/// 创建托盘；失败只记一次 warn 并降级，绝不让应用启动失败，也不重试。
+/// 返回值不是 Result，调用方没有 ? 可用。
+pub fn setup_tray_or_degrade(create: impl FnOnce() -> tauri::Result<()>) -> TrayAvailability {
+    match create() {
+        Ok(()) => TrayAvailability::Available,
+        Err(error) => {
+            let reason = error.to_string();
+            log::warn!("system tray unavailable; closing the main window will quit: {reason}");
+            TrayAvailability::Unavailable { reason }
+        }
+    }
+}
+
+/// 有效关闭行为：托盘不可用时恒为“退出”（隐藏到托盘后窗口再也找不回来），
+/// 可用时原样返回已保存的值。纯函数，不读写数据库，也不改写已保存的设置。
+pub fn effective_close_behavior(stored: CloseBehavior, tray: &TrayAvailability) -> CloseBehavior {
+    match tray {
+        TrayAvailability::Available => stored,
+        TrayAvailability::Unavailable { .. } => CloseBehavior::Quit,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AppExitGate;
     use super::{
         cleanup_destroyed_window, decide_close_request, decide_exit_request,
-        DestroyedWindowCleanup, ExitRequestDecision, MainCloseDecision,
+        effective_close_behavior, setup_tray_or_degrade, DestroyedWindowCleanup,
+        ExitRequestDecision, MainCloseDecision, TrayAvailability,
     };
     use crate::models::app_setting::CloseBehavior;
     use crate::services::content_window_grants::{
@@ -257,32 +289,40 @@ mod tests {
     #[test]
     fn main_close_request_decisions() {
         assert_eq!(
-            decide_close_request("main", CloseBehavior::MinimizeToTray),
+            decide_close_request(
+                "main",
+                CloseBehavior::MinimizeToTray,
+                &TrayAvailability::Available
+            ),
             MainCloseDecision::HideToTray
         );
         assert_eq!(
-            decide_close_request("main", CloseBehavior::Quit),
+            decide_close_request("main", CloseBehavior::Quit, &TrayAvailability::Available),
             MainCloseDecision::RequestAppExit
         );
         assert_eq!(
-            decide_close_request(TERM_T1, CloseBehavior::Quit),
+            decide_close_request(TERM_T1, CloseBehavior::Quit, &TrayAvailability::Available),
             MainCloseDecision::NotMainWindow
         );
         assert_eq!(
-            decide_close_request(FILE_L1, CloseBehavior::MinimizeToTray),
+            decide_close_request(
+                FILE_L1,
+                CloseBehavior::MinimizeToTray,
+                &TrayAvailability::Available
+            ),
             MainCloseDecision::NotMainWindow
         );
         // 大小写与空白敏感。
         assert_eq!(
-            decide_close_request("MAIN", CloseBehavior::Quit),
+            decide_close_request("MAIN", CloseBehavior::Quit, &TrayAvailability::Available),
             MainCloseDecision::NotMainWindow
         );
         assert_eq!(
-            decide_close_request("", CloseBehavior::Quit),
+            decide_close_request("", CloseBehavior::Quit, &TrayAvailability::Available),
             MainCloseDecision::NotMainWindow
         );
         assert_eq!(
-            decide_close_request("main ", CloseBehavior::Quit),
+            decide_close_request("main ", CloseBehavior::Quit, &TrayAvailability::Available),
             MainCloseDecision::NotMainWindow
         );
     }
@@ -378,6 +418,153 @@ mod tests {
         assert!(!LIB_RS.contains(".reclaim_window("));
         assert!(!LIB_RS.contains("grants.revoke("));
         assert!(!LIB_RS.contains("window.label() != \"main\""));
+    }
+
+    fn unavailable() -> TrayAvailability {
+        TrayAvailability::Unavailable {
+            reason: "no tray host".to_string(),
+        }
+    }
+
+    #[test]
+    fn close_decision_matrix_with_tray_availability() {
+        use MainCloseDecision::{HideToTray, NotMainWindow, RequestAppExit};
+        let rows = [
+            ("main", CloseBehavior::MinimizeToTray, true, HideToTray),
+            ("main", CloseBehavior::MinimizeToTray, false, RequestAppExit),
+            ("main", CloseBehavior::Quit, true, RequestAppExit),
+            ("main", CloseBehavior::Quit, false, RequestAppExit),
+            (TERM_T1, CloseBehavior::MinimizeToTray, false, NotMainWindow),
+            (FILE_L1, CloseBehavior::Quit, false, NotMainWindow),
+            ("MAIN", CloseBehavior::Quit, false, NotMainWindow),
+        ];
+        for (index, (label, stored, available, expected)) in rows.into_iter().enumerate() {
+            let tray = if available {
+                TrayAvailability::Available
+            } else {
+                unavailable()
+            };
+            assert_eq!(
+                decide_close_request(label, stored, &tray),
+                expected,
+                "row {}",
+                index + 1
+            );
+        }
+        // 反向断言：降级后主窗关闭不会被隐藏到托盘（隐藏后窗口再也找不回来）。
+        assert_ne!(
+            decide_close_request("main", CloseBehavior::MinimizeToTray, &unavailable()),
+            HideToTray
+        );
+        // 非主窗口不受托盘状态影响。
+        for (label, stored) in [
+            (TERM_T1, CloseBehavior::MinimizeToTray),
+            (FILE_L1, CloseBehavior::Quit),
+            ("MAIN", CloseBehavior::Quit),
+        ] {
+            assert_eq!(
+                decide_close_request(label, stored, &TrayAvailability::Available),
+                decide_close_request(label, stored, &unavailable()),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn degradation_never_rewrites_the_saved_close_behavior() {
+        use crate::db::{app_setting_repo, connection};
+
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations(&db).unwrap();
+        app_setting_repo::set_close_behavior(&db, CloseBehavior::MinimizeToTray).unwrap();
+        let tray = unavailable();
+
+        assert_eq!(
+            effective_close_behavior(app_setting_repo::get_close_behavior(&db).unwrap(), &tray),
+            CloseBehavior::Quit
+        );
+        // 已保存的设置没有被改写。
+        assert_eq!(
+            app_setting_repo::get_close_behavior(&db).unwrap(),
+            CloseBehavior::MinimizeToTray
+        );
+        // 托盘恢复可用后回到已保存的值。
+        assert_eq!(
+            effective_close_behavior(CloseBehavior::MinimizeToTray, &TrayAvailability::Available),
+            CloseBehavior::MinimizeToTray
+        );
+        assert_eq!(
+            effective_close_behavior(CloseBehavior::Quit, &tray),
+            CloseBehavior::Quit
+        );
+        // 反向断言：不可用原因的文本不影响结果。
+        let other_reason = TrayAvailability::Unavailable {
+            reason: "another reason".to_string(),
+        };
+        assert_eq!(
+            effective_close_behavior(CloseBehavior::MinimizeToTray, &other_reason),
+            CloseBehavior::Quit
+        );
+    }
+
+    #[test]
+    fn tray_creation_failure_is_logged_and_does_not_abort_startup() {
+        let created = std::cell::Cell::new(0);
+
+        let tray = setup_tray_or_degrade(|| {
+            created.set(created.get() + 1);
+            Err(tauri::Error::Anyhow(anyhow::anyhow!("no tray host")))
+        });
+
+        assert_eq!(created.get(), 1);
+        match &tray {
+            TrayAvailability::Unavailable { reason } => {
+                assert!(reason.contains("no tray host"));
+            }
+            other => panic!("expected the tray to degrade, got {other:?}"),
+        }
+        // 函数返回的是 TrayAvailability 而不是 Result，调用方没有 ? 可用，
+        // setup 的后续步骤因此一定会继续执行。
+        let after_degrade = std::cell::Cell::new(false);
+        after_degrade.set(true);
+        assert!(after_degrade.get());
+        assert_eq!(
+            setup_tray_or_degrade(|| Ok(())),
+            TrayAvailability::Available
+        );
+        // 反向断言：失败后闭包仍只被调用过一次，不重试。
+        assert_eq!(created.get(), 1);
+
+        assert!(!LIB_RS.contains("setup_tray(app.handle())?"));
+        assert!(LIB_RS.contains("setup_tray_or_degrade("));
+    }
+
+    #[test]
+    fn exit_request_still_goes_through_the_exit_gate_when_tray_is_unavailable() {
+        let gate = AppExitGate::default();
+        let tray = unavailable();
+
+        assert_eq!(
+            decide_close_request("main", CloseBehavior::MinimizeToTray, &tray),
+            MainCloseDecision::RequestAppExit
+        );
+        assert_eq!(
+            decide_exit_request(&gate, 1, 0, true),
+            ExitRequestDecision::PreventAndAskMain {
+                pty_count: 1,
+                execution_task_count: 0
+            }
+        );
+        assert_eq!(
+            decide_exit_request(&gate, 0, 2, true),
+            ExitRequestDecision::PreventAndAskMain {
+                pty_count: 0,
+                execution_task_count: 2
+            }
+        );
+        // 反向断言：关闭决策没有授权退出。
+        assert!(!gate.consume_authorization());
     }
 
     #[test]
