@@ -1,10 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::Path,
 };
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 const APP_COMMANDS_JSON: &str = include_str!("../../contracts/app-commands.json");
 const TOOL_KEYS_JSON: &str = include_str!("../../contracts/tool-keys.json");
@@ -31,6 +31,269 @@ fn json_strings(value: &Value) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// 删除 `//` 与（可嵌套的）`/* */` 注释，普通字符串字面量原样保留。
+/// 前提（前置检查第 9 项已核对）：被扫描的源码没有 '"' 字符字面量和原始字符串。
+fn strip_rust_comments(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0;
+    let mut in_string = false;
+    while index < chars.len() {
+        let current = chars[index];
+        if in_string {
+            output.push(current);
+            if current == '\\' && index + 1 < chars.len() {
+                output.push(chars[index + 1]);
+                index += 2;
+                continue;
+            }
+            if current == '"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if current == '"' {
+            in_string = true;
+            output.push(current);
+            index += 1;
+            continue;
+        }
+        if current == '/' && chars.get(index + 1) == Some(&'/') {
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if current == '/' && chars.get(index + 1) == Some(&'*') {
+            let mut depth = 1usize;
+            index += 2;
+            while index < chars.len() && depth > 0 {
+                if chars[index] == '/' && chars.get(index + 1) == Some(&'*') {
+                    depth += 1;
+                    index += 2;
+                } else if chars[index] == '*' && chars.get(index + 1) == Some(&'/') {
+                    depth -= 1;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            output.push(' ');
+            continue;
+        }
+        output.push(current);
+        index += 1;
+    }
+    output
+}
+
+fn parse_handler_commands(source: &str) -> Result<Vec<String>, String> {
+    let stripped = strip_rust_comments(source);
+    let marker = "generate_handler![";
+    let start = stripped
+        .find(marker)
+        .ok_or_else(|| "generate_handler! marker not found".to_string())?
+        + marker.len();
+    let mut depth = 1usize;
+    let mut end = None;
+    for (offset, character) in stripped[start..].char_indices() {
+        match character {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end.ok_or_else(|| "generate_handler! is not closed".to_string())?;
+    let entries: Vec<&str> = stripped[start..end].split(',').map(str::trim).collect();
+    let mut names = Vec::new();
+    for (position, entry) in entries.iter().enumerate() {
+        if entry.is_empty() {
+            if position + 1 == entries.len() {
+                continue;
+            }
+            return Err("empty handler entry".to_string());
+        }
+        let segments: Vec<&str> = entry.split("::").collect();
+        let valid = segments.len() >= 3
+            && segments[0] == "commands"
+            && segments.iter().all(|segment| is_identifier(segment));
+        if !valid {
+            return Err(format!(
+                "handler entry must be commands::<module>::<function>: {entry}"
+            ));
+        }
+        names.push(segments[segments.len() - 1].to_string());
+    }
+    if names.is_empty() {
+        return Err("generate_handler! lists no commands".to_string());
+    }
+    Ok(names)
+}
+
+fn tauri_command_functions(source: &str) -> Result<Vec<String>, String> {
+    let stripped = strip_rust_comments(source);
+    let marker = "#[tauri::command]";
+    let mut names = Vec::new();
+    let mut rest = stripped.as_str();
+    while let Some(position) = rest.find(marker) {
+        rest = &rest[position + marker.len()..];
+        let mut tail = rest.trim_start();
+        while tail.starts_with("#[") {
+            let close = tail
+                .find(']')
+                .ok_or_else(|| "unterminated attribute after #[tauri::command]".to_string())?;
+            tail = tail[close + 1..].trim_start();
+        }
+        let declaration = tail
+            .strip_prefix("pub async fn ")
+            .or_else(|| tail.strip_prefix("pub fn "))
+            .ok_or_else(|| {
+                format!(
+                    "#[tauri::command] must precede pub fn: {}",
+                    tail.chars().take(60).collect::<String>()
+                )
+            })?;
+        let name: String = declaration
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            return Err("missing command function name".to_string());
+        }
+        names.push(name);
+    }
+    Ok(names)
+}
+
+fn permission_identifier(permission: &Value) -> Option<&str> {
+    match permission {
+        Value::String(text) => Some(text.as_str()),
+        Value::Object(object) => object.get("identifier").and_then(Value::as_str),
+        _ => None,
+    }
+}
+
+fn capability_contract_violations(
+    kind: &Value,
+    capability: &Value,
+    app_commands: &[String],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let kind_id = kind["id"].as_str().unwrap_or("<missing id>");
+    let Some(permissions) = capability["permissions"].as_array() else {
+        return vec!["capability permissions must be an array".to_string()];
+    };
+
+    let mut actual_commands = BTreeSet::new();
+    let mut actual_core = BTreeSet::new();
+    let mut actual_plugin: Vec<Value> = Vec::new();
+    for permission in permissions {
+        let Some(identifier) = permission_identifier(permission) else {
+            violations.push(format!("permission without identifier: {permission}"));
+            continue;
+        };
+        for forbidden in ["fs:", "shell:", "http:"] {
+            if identifier.starts_with(forbidden) {
+                violations.push(format!("forbidden permission namespace: {identifier}"));
+            }
+        }
+        if identifier.ends_with(":default") && !(kind_id == "main" && identifier == "core:default")
+        {
+            violations.push(format!(
+                "default permission set is not allowed: {identifier}"
+            ));
+        }
+        match permission {
+            Value::String(text) if text.starts_with("allow-") => {
+                actual_commands.insert(text["allow-".len()..].replace('-', "_"));
+            }
+            Value::String(text) if text.starts_with("core:") => {
+                actual_core.insert(text.clone());
+            }
+            other => actual_plugin.push(other.clone()),
+        }
+    }
+
+    let declared_commands: BTreeSet<String> = if kind["appCommands"].as_str() == Some("all") {
+        app_commands.iter().cloned().collect()
+    } else {
+        json_strings(&kind["appCommands"]).into_iter().collect()
+    };
+    for command in declared_commands.difference(&actual_commands) {
+        violations.push(format!("app command missing from capability: {command}"));
+    }
+    for command in actual_commands.difference(&declared_commands) {
+        violations.push(format!("app command not declared in contract: {command}"));
+    }
+
+    let declared_core: BTreeSet<String> =
+        json_strings(&kind["corePermissions"]).into_iter().collect();
+    for permission in declared_core.difference(&actual_core) {
+        violations.push(format!(
+            "core permission missing from capability: {permission}"
+        ));
+    }
+    for permission in actual_core.difference(&declared_core) {
+        violations.push(format!(
+            "core permission not declared in contract: {permission}"
+        ));
+    }
+
+    let Some(declared_plugin) = kind["pluginPermissions"].as_array() else {
+        violations.push(format!(
+            "window kind {kind_id} must declare pluginPermissions"
+        ));
+        return violations;
+    };
+    for declared in declared_plugin {
+        if !actual_plugin.contains(declared) {
+            violations.push(format!(
+                "plugin permission missing or changed: {}",
+                permission_identifier(declared).unwrap_or("<missing identifier>")
+            ));
+        }
+    }
+    for actual in &actual_plugin {
+        if !declared_plugin.contains(actual) {
+            violations.push(format!(
+                "plugin permission not declared in contract: {}",
+                permission_identifier(actual).unwrap_or("<missing identifier>")
+            ));
+        }
+    }
+    violations
+}
+
+fn parse_csp(policy: &str) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    let mut directives = BTreeMap::new();
+    for raw in policy.split(';') {
+        let text = raw.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let mut parts = text.split_whitespace();
+        let name = parts.next().expect("non-empty directive").to_string();
+        let values: BTreeSet<String> = parts.map(str::to_string).collect();
+        if directives.insert(name.clone(), values).is_some() {
+            return Err(format!("duplicate CSP directive: {name}"));
+        }
+    }
+    Ok(directives)
 }
 
 #[test]
@@ -139,28 +402,41 @@ fn app_command_contract_matches_the_registered_handler() {
     let command_set: HashSet<&str> = commands.iter().map(String::as_str).collect();
     assert_eq!(commands.len(), command_set.len(), "duplicate app command");
 
-    let handler_marker = "generate_handler![";
-    let handler = LIB_RS
-        .split_once(handler_marker)
-        .expect("lib.rs must register a Tauri handler")
-        .1
-        .split_once("])")
-        .expect("generate_handler! must close")
-        .0;
-    let handler_commands = sorted_strings(
-        handler
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| {
-                entry
-                    .rsplit("::")
-                    .next()
-                    .expect("handler entry must name a command")
-                    .to_string()
-            }),
+    let handler_commands =
+        sorted_strings(parse_handler_commands(LIB_RS).expect("parse generate_handler!"));
+    assert_eq!(sorted_strings(commands.clone()), handler_commands);
+
+    // 契约中的每个命令在 src/commands/*.rs 里恰好有一个紧跟 #[tauri::command] 的 pub fn。
+    let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("commands");
+    let mut found: Vec<String> = Vec::new();
+    for entry in fs::read_dir(commands_dir).expect("read commands directory") {
+        let path = entry.expect("read commands entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read command source");
+        found.extend(
+            tauri_command_functions(&source)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+        );
+    }
+    for command in &commands {
+        let count = found.iter().filter(|name| *name == command).count();
+        assert_eq!(
+            count, 1,
+            "{command} must be defined exactly once with #[tauri::command]"
+        );
+    }
+    let extra: Vec<&String> = found
+        .iter()
+        .filter(|name| !command_set.contains(name.as_str()))
+        .collect();
+    assert!(
+        extra.is_empty(),
+        "#[tauri::command] functions missing from the contract: {extra:?}"
     );
-    assert_eq!(sorted_strings(commands), handler_commands);
 }
 
 #[test]
@@ -187,6 +463,8 @@ fn window_kind_contract_matches_capabilities() {
         );
     }
 
+    let app_commands: Vec<String> =
+        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
     let capability_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
     let mut found_capabilities = HashSet::new();
     for entry in fs::read_dir(capability_dir).expect("read capability directory") {
@@ -218,40 +496,10 @@ fn window_kind_contract_matches_capabilities() {
         let actual_windows = json_strings(&capability["windows"]);
         assert_eq!(actual_windows, vec![expected_window], "{capability_id}");
 
-        let declared_commands = if kind["appCommands"].as_str() == Some("all") {
-            serde_json::from_str::<Vec<String>>(APP_COMMANDS_JSON)
-                .expect("parse app command contract")
-        } else {
-            json_strings(&kind["appCommands"])
-        };
-        let actual_commands = sorted_strings(
-            capability["permissions"]
-                .as_array()
-                .expect("capability permissions must be an array")
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|permission| permission.strip_prefix("allow-"))
-                .map(|command| command.replace('-', "_")),
-        );
-        assert_eq!(
-            sorted_strings(declared_commands),
-            actual_commands,
-            "app commands for {capability_id}"
-        );
-
-        let declared_core_permissions = sorted_strings(json_strings(&kind["corePermissions"]));
-        let actual_core_permissions = sorted_strings(
-            capability["permissions"]
-                .as_array()
-                .expect("capability permissions must be an array")
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|permission| permission.starts_with("core:"))
-                .map(str::to_string),
-        );
-        assert_eq!(
-            declared_core_permissions, actual_core_permissions,
-            "core permissions for {capability_id}"
+        let violations = capability_contract_violations(kind, &capability, &app_commands);
+        assert!(
+            violations.is_empty(),
+            "capability {capability_id} violates the window contract: {violations:?}"
         );
     }
 
@@ -262,4 +510,322 @@ fn window_kind_contract_matches_capabilities() {
             .map(|capability| (*capability).to_string())
             .collect()
     );
+}
+
+fn real_capability(file: &str) -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("capabilities")
+        .join(file);
+    serde_json::from_str(&fs::read_to_string(path).expect("read capability file"))
+        .expect("parse capability file")
+}
+
+fn kind_of(manifest: &Value, id: &str) -> Value {
+    manifest["kinds"]
+        .as_array()
+        .expect("window kinds must be an array")
+        .iter()
+        .find(|kind| kind["id"] == id)
+        .unwrap_or_else(|| panic!("window kind {id} is not declared"))
+        .clone()
+}
+
+#[test]
+fn handler_parser_ignores_comments_and_rejects_malformed_entries() {
+    // 1. 行注释与块注释里的条目不算注册
+    let commented = "generate_handler![\n commands::a::one,\n // commands::a::secret,\n /* commands::a::two, */ commands::b::three,\n]";
+    assert_eq!(
+        parse_handler_commands(commented).expect("commented fixture"),
+        vec!["one".to_string(), "three".to_string()]
+    );
+    // 2. 带属性的条目被拒绝
+    assert!(parse_handler_commands(
+        "generate_handler![\n #[cfg(debug_assertions)] commands::x::y,\n]"
+    )
+    .is_err());
+    // 3. 末尾逗号可以接受，没有末尾逗号也可以接受
+    assert_eq!(
+        parse_handler_commands("generate_handler![commands::a::one, commands::a::two,]")
+            .expect("trailing comma"),
+        vec!["one".to_string(), "two".to_string()]
+    );
+    assert_eq!(
+        parse_handler_commands("generate_handler![commands::a::one]").expect("no comma"),
+        vec!["one".to_string()]
+    );
+    // 4. 必须在 commands:: 下
+    assert!(parse_handler_commands("generate_handler![crate::other::f]").is_err());
+    // 补充：嵌套块注释、注释里含标记、缺标记、未闭合、空条目、过短路径
+    assert_eq!(
+        parse_handler_commands(
+            "generate_handler![commands::a::one, /* outer /* nested */ commands::a::hidden, */ commands::a::two]"
+        )
+        .expect("nested block comment"),
+        vec!["one".to_string(), "two".to_string()]
+    );
+    assert_eq!(
+        parse_handler_commands(
+            "// generate_handler![ commands::x::fake ]\ngenerate_handler![ commands::a::one ]"
+        )
+        .expect("marker inside a comment"),
+        vec!["one".to_string()]
+    );
+    assert!(parse_handler_commands("no marker here").is_err());
+    assert!(parse_handler_commands("generate_handler![commands::a::one").is_err());
+    assert!(
+        parse_handler_commands("generate_handler![commands::a::one,, commands::a::two]").is_err()
+    );
+    assert!(parse_handler_commands("generate_handler![]").is_err());
+    assert!(parse_handler_commands("generate_handler![commands::one]").is_err());
+    // 5. 真实 lib.rs
+    let contract: Vec<String> =
+        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    assert_eq!(
+        sorted_strings(parse_handler_commands(LIB_RS).expect("parse lib.rs")),
+        sorted_strings(contract)
+    );
+}
+
+#[test]
+fn capability_comparator_rejects_extra_plugin_and_object_permissions() {
+    let manifest: Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kind contract");
+    let app_commands: Vec<String> =
+        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let terminal_kind = kind_of(&manifest, "terminal");
+    let content_kind = kind_of(&manifest, "workspaceContent");
+    let main_kind = kind_of(&manifest, "main");
+    let terminal = real_capability("terminal-window.json");
+    let content = real_capability("workspace-content-window.json");
+    let main = real_capability("default.json");
+
+    // 基线：真实的三个 capability 没有违规
+    assert_eq!(
+        capability_contract_violations(&terminal_kind, &terminal, &app_commands),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        capability_contract_violations(&content_kind, &content, &app_commands),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        capability_contract_violations(&main_kind, &main, &app_commands),
+        Vec::<String>::new()
+    );
+
+    // 负向夹具：每一项都必须报违规，且信息包含对应标识符
+    let with_added = |base: &Value, added: Value| {
+        let mut copy = base.clone();
+        copy["permissions"]
+            .as_array_mut()
+            .expect("permissions")
+            .push(added);
+        copy
+    };
+    let cases: Vec<(&str, Value, Value, &str)> = vec![
+        (
+            "fs:default",
+            terminal_kind.clone(),
+            with_added(&terminal, json!("fs:default")),
+            "fs:default",
+        ),
+        (
+            "shell object",
+            terminal_kind.clone(),
+            with_added(
+                &terminal,
+                json!({"identifier": "shell:allow-execute", "allow": [{"name": "x"}]}),
+            ),
+            "shell:allow-execute",
+        ),
+        (
+            "missing command",
+            terminal_kind.clone(),
+            {
+                let mut copy = terminal.clone();
+                copy["permissions"]
+                    .as_array_mut()
+                    .expect("permissions")
+                    .retain(|permission| permission != "allow-write-pty-session");
+                copy
+            },
+            "write_pty_session",
+        ),
+        (
+            "extra core permission",
+            content_kind.clone(),
+            with_added(&content, json!("core:window:allow-set-focus")),
+            "core:window:allow-set-focus",
+        ),
+        (
+            "altered opener url",
+            main_kind.clone(),
+            {
+                let mut copy = main.clone();
+                for permission in copy["permissions"].as_array_mut().expect("permissions") {
+                    if permission["identifier"] == "opener:allow-open-url" {
+                        permission["allow"][0]["url"] = json!("https://example.com");
+                    }
+                }
+                copy
+            },
+            "opener:allow-open-url",
+        ),
+        (
+            "default permission set on a child window",
+            terminal_kind.clone(),
+            with_added(&terminal, json!("dialog:default")),
+            "dialog:default",
+        ),
+    ];
+    for (name, kind, capability, identifier) in cases {
+        let violations = capability_contract_violations(&kind, &capability, &app_commands);
+        assert!(!violations.is_empty(), "{name}: no violation reported");
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(identifier)),
+            "{name}: no violation mentions {identifier}: {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn content_kind_contract_covers_every_known_variant() {
+    use crate::models::workspace_layout::WorkspacePaneContentRef;
+
+    // 新增变体会让下面的 match 编译失败：必须同步 contracts/content-kinds.json、
+    // 前端 adapter 与规格。
+    fn sample(variant: &WorkspacePaneContentRef) -> Option<(&'static str, Value)> {
+        match variant {
+            WorkspacePaneContentRef::Pty { .. } => {
+                Some(("pty", json!({"kind": "pty", "slotId": "s"})))
+            }
+            WorkspacePaneContentRef::File { .. } => {
+                Some(("file", json!({"kind": "file", "documentId": "d"})))
+            }
+            WorkspacePaneContentRef::Unknown { .. } => None,
+        }
+    }
+    let variants = [
+        WorkspacePaneContentRef::Pty {
+            slot_id: "s".to_string(),
+        },
+        WorkspacePaneContentRef::File {
+            document_id: "d".to_string(),
+        },
+        WorkspacePaneContentRef::Unknown {
+            original_kind: "x".to_string(),
+            raw: Value::Null,
+        },
+    ];
+    let samples: Vec<(&'static str, Value)> = variants.iter().filter_map(sample).collect();
+    let contract: Value =
+        serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kind contract");
+    assert_eq!(
+        sorted_strings(samples.iter().map(|(kind, _)| (*kind).to_string())),
+        sorted_strings(json_strings(&contract["kinds"]))
+    );
+    for (kind, value) in &samples {
+        let parsed: WorkspacePaneContentRef =
+            serde_json::from_value(value.clone()).expect("deserialize known kind");
+        assert!(
+            !matches!(parsed, WorkspacePaneContentRef::Unknown { .. }),
+            "{kind} deserialized as Unknown"
+        );
+    }
+    let unknown: WorkspacePaneContentRef =
+        serde_json::from_value(json!({"kind": "markdownPreview", "x": 1}))
+            .expect("deserialize an unregistered kind");
+    match &unknown {
+        WorkspacePaneContentRef::Unknown { original_kind, .. } => {
+            assert_eq!(original_kind, "markdownPreview");
+        }
+        other => panic!("unregistered kind must deserialize as Unknown: {other:?}"),
+    }
+    let round_trip = serde_json::to_value(&unknown).expect("serialize unknown kind");
+    assert_eq!(round_trip["raw"]["x"], 1);
+}
+
+#[test]
+fn csp_parser_rejects_duplicate_directives() {
+    assert!(parse_csp("script-src 'self'; script-src 'none'").is_err());
+    assert!(parse_csp("script-src 'self'; style-src 'self'").is_ok());
+    let parsed = parse_csp(" default-src 'self' ;; img-src data: blob: ").expect("parse");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(
+        parsed["img-src"],
+        ["blob:", "data:"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+    );
+}
+
+#[test]
+fn production_csp_matches_exact_directive_contract() {
+    fn policy(entries: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        entries
+            .iter()
+            .map(|(name, values)| {
+                (
+                    (*name).to_string(),
+                    values.iter().map(|value| (*value).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    let config: Value = serde_json::from_str(TAURI_CONFIG_JSON).expect("parse tauri config");
+    let security = &config["app"]["security"];
+    let production =
+        parse_csp(security["csp"].as_str().expect("production CSP")).expect("parse production CSP");
+    let development = parse_csp(security["devCsp"].as_str().expect("development CSP"))
+        .expect("parse development CSP");
+
+    let expected_production = policy(&[
+        ("default-src", &["'self'"]),
+        ("script-src", &["'self'"]),
+        ("style-src", &["'self'", "'unsafe-inline'"]),
+        ("img-src", &["'self'", "data:", "blob:"]),
+        ("font-src", &["'self'", "data:"]),
+        ("worker-src", &["'self'", "blob:"]),
+        ("connect-src", &["'self'", "ipc:", "http://ipc.localhost"]),
+    ]);
+    assert_eq!(production, expected_production);
+
+    let mut expected_development = expected_production.clone();
+    expected_development
+        .get_mut("script-src")
+        .expect("script-src")
+        .insert("'unsafe-eval'".to_string());
+    let connect = expected_development
+        .get_mut("connect-src")
+        .expect("connect-src");
+    connect.insert("http://localhost:1420".to_string());
+    connect.insert("ws://localhost:1420".to_string());
+    assert_eq!(development, expected_development);
+
+    for value in production.values().flatten() {
+        assert_ne!(value, "*");
+        assert_ne!(value, "http:");
+        assert_ne!(value, "https:");
+        assert_ne!(value, "'unsafe-eval'");
+        assert!(!value.contains("localhost:1420"), "{value}");
+    }
+    assert!(security
+        .get("dangerousDisableAssetCspModification")
+        .is_none());
+
+    for overlay in [
+        include_str!("../tauri.macos.conf.json"),
+        include_str!("../tauri.windows.conf.json"),
+        include_str!("../tauri.offline.conf.json"),
+    ] {
+        let value: Value = serde_json::from_str(overlay).expect("parse config overlay");
+        assert!(
+            value["app"].get("security").is_none(),
+            "platform or offline overlays must not override app.security"
+        );
+    }
 }

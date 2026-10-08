@@ -19,6 +19,16 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
+      ],
+      "pluginPermissions": [
+        "dialog:allow-open",
+        "dialog:allow-save",
+        "clipboard-manager:allow-read-text",
+        "clipboard-manager:allow-write-text",
+        {
+          "identifier": "opener:allow-open-url",
+          "allow": [{ "url": "https://github.com/SkyJourney/cli-launchpad" }]
+        }
       ]
     },
     {
@@ -51,6 +61,10 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
+      ],
+      "pluginPermissions": [
+        "clipboard-manager:allow-read-text",
+        "clipboard-manager:allow-write-text"
       ]
     },
     {
@@ -71,7 +85,8 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
-      ]
+      ],
+      "pluginPermissions": []
     }
   ]
 }

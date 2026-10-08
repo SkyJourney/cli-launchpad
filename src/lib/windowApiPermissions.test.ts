@@ -156,6 +156,69 @@ function findMissingPermissions(
   return [...missing].sort();
 }
 
+type PermissionEntry = string | { identifier: string; [key: string]: unknown };
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function permissionIdentifier(entry: PermissionEntry): string {
+  return typeof entry === "string" ? entry : entry.identifier;
+}
+
+// 与 src-tauri/src/contracts.rs 的 capability_contract_violations 对插件权限的判定一致。
+function pluginPermissionViolations(
+  kindId: WindowKindId,
+  capability: { permissions: PermissionEntry[] },
+): string[] {
+  const violations: string[] = [];
+  const declaredEntries = windowKinds.kinds.find((kind) => kind.id === kindId)!
+    .pluginPermissions as PermissionEntry[];
+  const declared = declaredEntries.map(canonicalJson);
+  const actual: PermissionEntry[] = [];
+  for (const entry of capability.permissions) {
+    const identifier = permissionIdentifier(entry);
+    for (const forbidden of ["fs:", "shell:", "http:"]) {
+      if (identifier.startsWith(forbidden)) {
+        violations.push(`forbidden permission namespace: ${identifier}`);
+      }
+    }
+    if (
+      identifier.endsWith(":default") &&
+      !(kindId === "main" && identifier === "core:default")
+    ) {
+      violations.push(`default permission set is not allowed: ${identifier}`);
+    }
+    const isPlugin =
+      typeof entry !== "string" ||
+      !(identifier.startsWith("allow-") || identifier.startsWith("core:"));
+    if (isPlugin) actual.push(entry);
+  }
+  const actualCanonical = actual.map(canonicalJson);
+  declaredEntries.forEach((entry, index) => {
+    if (!actualCanonical.includes(declared[index])) {
+      violations.push(
+        `plugin permission missing or changed: ${permissionIdentifier(entry)}`,
+      );
+    }
+  });
+  actual.forEach((entry, index) => {
+    if (!declared.includes(actualCanonical[index])) {
+      violations.push(
+        `plugin permission not declared in contract: ${permissionIdentifier(entry)}`,
+      );
+    }
+  });
+  return violations;
+}
+
 describe("native API permissions by window kind", () => {
   it.each(windowKinds.kinds)("grants APIs used by $id", (kind) => {
     const kindId = kind.id as WindowKindId;
@@ -300,5 +363,80 @@ describe("native API permissions by window kind", () => {
     expect(projectSources["src/hooks/useThemeSync.ts"]).toContain(
       "appPreferencesMain",
     );
+  });
+
+  it.each(windowKinds.kinds)(
+    "matches the plugin permissions declared in window-kinds.json for $id",
+    (kind) => {
+      const kindId = kind.id as WindowKindId;
+
+      expect(
+        pluginPermissionViolations(
+          kindId,
+          CAPABILITIES[kindId] as { permissions: PermissionEntry[] },
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("reports undeclared, altered and forbidden plugin permissions", () => {
+    const terminal = terminalCapability as { permissions: PermissionEntry[] };
+    const main = defaultCapability as { permissions: PermissionEntry[] };
+    const withAdded = (
+      base: { permissions: PermissionEntry[] },
+      added: PermissionEntry,
+    ) => ({ permissions: [...base.permissions, added] });
+
+    expect(pluginPermissionViolations("terminal", terminal)).toEqual([]);
+    expect(pluginPermissionViolations("main", main)).toEqual([]);
+
+    expect(
+      pluginPermissionViolations("terminal", withAdded(terminal, "fs:default")),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("fs:default"),
+        "plugin permission not declared in contract: fs:default",
+      ]),
+    );
+    expect(
+      pluginPermissionViolations(
+        "terminal",
+        withAdded(terminal, {
+          identifier: "shell:allow-execute",
+          allow: [{ name: "x" }],
+        }),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "forbidden permission namespace: shell:allow-execute",
+      ]),
+    );
+    expect(
+      pluginPermissionViolations("main", {
+        permissions: main.permissions.map((entry) =>
+          typeof entry !== "string" &&
+          entry.identifier === "opener:allow-open-url"
+            ? {
+                identifier: entry.identifier,
+                allow: [{ url: "https://example.com" }],
+              }
+            : entry,
+        ),
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "plugin permission missing or changed: opener:allow-open-url",
+        "plugin permission not declared in contract: opener:allow-open-url",
+      ]),
+    );
+    expect(
+      pluginPermissionViolations("terminal", {
+        permissions: terminal.permissions.filter(
+          (entry) => entry !== "clipboard-manager:allow-read-text",
+        ),
+      }),
+    ).toEqual([
+      "plugin permission missing or changed: clipboard-manager:allow-read-text",
+    ]);
   });
 });

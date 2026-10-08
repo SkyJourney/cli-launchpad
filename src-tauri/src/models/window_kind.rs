@@ -79,6 +79,44 @@ pub fn is_detached_window_label(label: &str) -> bool {
 mod tests {
     use super::{create_window_label, is_detached_window_label, window_kind_of, WindowKind};
 
+    const WINDOW_LABEL_FIXTURES_JSON: &str =
+        include_str!("../../../contracts/window-label-fixtures.json");
+
+    #[test]
+    fn window_label_fixture_vectors_match_rust_registry() {
+        let fixtures: serde_json::Value =
+            serde_json::from_str(WINDOW_LABEL_FIXTURES_JSON).expect("parse label fixtures");
+        let accept = fixtures["accept"]
+            .as_object()
+            .expect("accept must be an object");
+        assert_eq!(accept.len(), 3, "accept must cover exactly three kinds");
+        for (key, kind) in [
+            ("main", WindowKind::Main),
+            ("terminal", WindowKind::Terminal),
+            ("workspaceContent", WindowKind::WorkspaceContent),
+        ] {
+            let labels = accept[key]
+                .as_array()
+                .expect("accept entries must be arrays");
+            assert!(
+                !labels.is_empty(),
+                "{key} needs at least one accepted label"
+            );
+            for label in labels {
+                let label = label.as_str().expect("label must be a string");
+                assert_eq!(window_kind_of(label), Some(kind), "{label:?}");
+            }
+        }
+        let rejected = fixtures["reject"]
+            .as_array()
+            .expect("reject must be an array");
+        assert!(!rejected.is_empty());
+        for label in rejected {
+            let label = label.as_str().expect("label must be a string");
+            assert_eq!(window_kind_of(label), None, "{label:?}");
+        }
+    }
+
     #[test]
     fn resolves_registered_window_labels() {
         assert_eq!(window_kind_of("main"), Some(WindowKind::Main));
