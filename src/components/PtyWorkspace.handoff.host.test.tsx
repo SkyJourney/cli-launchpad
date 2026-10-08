@@ -40,7 +40,11 @@ import {
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
-import type { WorkspaceLayoutDocument } from "../lib/tauri";
+import type {
+  WorkspaceLayoutDocument,
+  WorkspacePaneContentRef,
+} from "../lib/tauri";
+import { workspaceContentKey } from "../lib/workspaceContentKey";
 
 let host: WorkspaceHost | undefined;
 let consoleError: MockInstance<typeof console.error>;
@@ -70,6 +74,41 @@ function emittedTypesTo(label: string) {
   return tauriMock.state.emittedEvents
     .filter((event) => event.target === label)
     .map((event) => (event.payload as { type?: string }).type);
+}
+
+/** 树中包含该内容的 pane 个数。 */
+function panesContaining(
+  target: WorkspaceHost,
+  content: WorkspacePaneContentRef,
+) {
+  return listWorkspacePanes(target.ctx().tree).filter((pane) =>
+    pane.contents.some(
+      (item) => workspaceContentKey(item) === workspaceContentKey(content),
+    ),
+  ).length;
+}
+
+/** 让 coordinator 拒绝 returnReady（归属变更不成立）；其他类型转发给真实实现。 */
+function rejectReturnReady(
+  coordinator: WorkspaceContentCoordinator,
+  options: { once?: boolean } = {},
+) {
+  const original = coordinator.completeHandoff.bind(coordinator);
+  const intercept = (
+    content: WorkspacePaneContentRef,
+    type: "detachReady" | "returnReady",
+    transferId: string,
+  ) =>
+    type === "returnReady"
+      ? ({
+          outcome: "ignored",
+          state: coordinator.get(content)!,
+        } as ReturnType<WorkspaceContentCoordinator["completeHandoff"]>)
+      : original(content, type, transferId);
+  const spy = vi.spyOn(coordinator, "completeHandoff");
+  if (options.once) spy.mockImplementationOnce(intercept);
+  else spy.mockImplementation(intercept);
+  return spy;
 }
 
 describe("PTY return to the workspace", () => {
@@ -132,6 +171,39 @@ describe("PTY return to the workspace", () => {
     expect(host.errors).toEqual([]);
     expect(screen.queryByText("host crashed")).toBeNull();
     expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-failed");
+  });
+
+  it("does not commit the returned PTY into the tree when the ownership commit is rejected", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const content = { kind: "pty", slotId: slot.instanceId } as const;
+    const rejected = rejectReturnReady(coordinator);
+
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-1",
+    });
+    await flush(10);
+
+    // 失败必须来自被拦截的 returnReady，而不是更早的分支。
+    expect(rejected).toHaveBeenCalledWith(content, "returnReady", "return-1");
+    expect(panesContaining(host, content)).toBe(0);
+    expect(emittedTypesTo(windowLabel)).toContain("pty-return-failed");
+    expect(terminal.cancelHandoff).toHaveBeenCalledTimes(1);
+    expect(terminal.cancelHandoff).toHaveBeenCalledWith("return-1");
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    // 反向断言：窗口还在、没有宣告返回完成。
+    expect(tauriMock.state.windowActions).not.toContainEqual(
+      expect.objectContaining({ windowLabel, action: "destroy" }),
+    );
+    expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-complete");
+    expect(host.errors).toEqual([]);
   });
 });
 
@@ -216,6 +288,96 @@ describe("file return to the workspace", () => {
     const buffer = host!.ctx().fileBuffers[doc.id];
     expect(buffer.content).toBe("edited in window");
     expect(buffer.version).toBe(detached.initBuffer.version + 1);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("does not commit the returned file into the tree when the ownership commit is rejected", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, detached, returnPayload } =
+      await detachedFileWithTwoPanes(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const rejected = rejectReturnReady(coordinator);
+
+    await emitToMain("workspace-file-window-return-requested", returnPayload);
+    await flush();
+
+    // 失败必须来自被拦截的 returnReady，而不是更早的分支。
+    expect(rejected).toHaveBeenCalledWith(
+      content,
+      "returnReady",
+      detached.token,
+    );
+    expect(panesContaining(host!, content)).toBe(0);
+    expect(emittedTypesTo(detached.windowLabel)).toContain(
+      "workspace-file-window-return-failed",
+    );
+    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    // 反向断言：没有宣告完成、没有撤销授权、没有销毁窗口。
+    expect(emittedTypesTo(detached.windowLabel)).not.toContain(
+      "workspace-file-window-return-complete",
+    );
+    expect(invokes("revoke_content_window_file")).toHaveLength(0);
+    expect(tauriMock.state.windowActions).not.toContainEqual(
+      expect.objectContaining({
+        windowLabel: detached.windowLabel,
+        action: "destroy",
+      }),
+    );
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("allows the file return to be retried after a rejected ownership commit", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, paneA, paneB, detached, returnPayload } =
+      await detachedFileWithTwoPanes(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const rejected = rejectReturnReady(coordinator, { once: true });
+
+    await emitToMain("workspace-file-window-return-requested", returnPayload);
+    await flush();
+    expect(rejected).toHaveBeenCalledWith(
+      content,
+      "returnReady",
+      detached.token,
+    );
+    expect(panesContaining(host!, content)).toBe(0);
+    expect(emittedTypesTo(detached.windowLabel)).toContain(
+      "workspace-file-window-return-failed",
+    );
+    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(true);
+
+    // 同一份载荷（同一个 token）再发一次：这次走真实实现。
+    await emitToMain("workspace-file-window-return-requested", returnPayload);
+    await flush();
+
+    const panes = listWorkspacePanes(host!.ctx().tree);
+    expect(panes.find((pane) => pane.id === paneB)?.contents).toEqual([
+      content,
+    ]);
+    expect(
+      panes
+        .find((pane) => pane.id === paneA)
+        ?.contents.some(
+          (item) => item.kind === "file" && item.documentId === doc.id,
+        ),
+    ).toBe(false);
+    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    const types = emittedTypesTo(detached.windowLabel);
+    expect(
+      types.filter((type) => type === "workspace-file-window-return-complete"),
+    ).toHaveLength(1);
+    // 反向断言：return-failed 只在第一次被拒绝时发出。
+    expect(
+      types.filter((type) => type === "workspace-file-window-return-failed"),
+    ).toHaveLength(1);
+    const revokes = invokes("revoke_content_window_file");
+    expect(revokes).toHaveLength(1);
+    expect((revokes[0].args as { targetLabel?: string }).targetLabel).toBe(
+      detached.windowLabel,
+    );
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host!.errors).toEqual([]);
   });
 });

@@ -2579,12 +2579,7 @@ export function PtyWorkspaceProvider({
             ? { type: "activate", ref: content, paneId: existingPane.id }
             : { type: "return", ref: content, toPaneId: targetPane.id },
         );
-        commitTree(nextTree);
-        setFocusedPane(existingPane?.id ?? targetPane.id);
-        detachedByInstanceRef.current.delete(
-          workspacePtyKey(payload.instanceId),
-        );
-        useAppStore.getState().openDirectory(slot.directoryId);
+        // 先确认归属变更成立，再改树；被拒绝时抛出，由 catch 回滚终端交接并通知子窗口。
         const ownership = contentCoordinatorRef.current.completeHandoff(
           returningContent,
           "returnReady",
@@ -2593,6 +2588,12 @@ export function PtyWorkspaceProvider({
         if (ownership?.outcome !== "changed") {
           throw new Error(tRef.current("pty.detachedStateChanged"));
         }
+        commitTree(nextTree);
+        setFocusedPane(existingPane?.id ?? targetPane.id);
+        detachedByInstanceRef.current.delete(
+          workspacePtyKey(payload.instanceId),
+        );
+        useAppStore.getState().openDirectory(slot.directoryId);
         try {
           await detachedWindow.destroy();
         } catch (reason) {
@@ -3169,8 +3170,7 @@ export function PtyWorkspaceProvider({
                   ref: content,
                   toPaneId: targetPane.id,
                 });
-                commitTree(nextTree);
-                setFocusedPane(targetPane.id);
+                // 先确认归属变更成立，再改树；被拒绝时树保持原样，子窗口仍可重试。
                 const ownership = contentCoordinatorRef.current.completeHandoff(
                   { kind: "file", documentId: document.id },
                   "returnReady",
@@ -3195,6 +3195,8 @@ export function PtyWorkspaceProvider({
                   ).catch(() => undefined);
                   return;
                 }
+                commitTree(nextTree);
+                setFocusedPane(targetPane.id);
                 detachedFilesRef.current.delete(workspaceFileKey(document.id));
                 await revokeContentWindowFile(event.payload.windowLabel).catch(
                   (reason) =>
