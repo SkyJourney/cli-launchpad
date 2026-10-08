@@ -6,13 +6,14 @@ use std::{
 use rusqlite::Connection;
 use uuid::Uuid;
 
+use crate::db::workspace_layout_repo::SaveCurrentOutcome;
 use crate::db::{directory_repo, pty_session_repo, workspace_layout_repo};
 use crate::models::workspace_layout::{
     validate_preset_name, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
-    WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveResult, WorkspaceLayoutSlot,
-    WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus, WorkspacePaneContentRef,
-    WorkspaceSlotState, WorkspaceSlotStateKind, MAX_WORKSPACE_LAYOUT_PRESETS,
-    WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveRejection, WorkspaceLayoutSaveResult,
+    WorkspaceLayoutSlot, WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus,
+    WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
+    MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
@@ -77,7 +78,9 @@ pub fn save_current(
     let payload_json = serialize_layout(layout, false)?;
 
     // Do not let routine autosaves replace data that needs explicit recovery.
+    let mut observed_revision = 0;
     if let Some(current) = workspace_layout_repo::get_current(connection)? {
+        observed_revision = current.revision;
         if !is_supported_layout_version(current.schema_version) {
             return Err(AppError::msg(
                 "当前布局版本不受支持；请先显式重置工作区后再保存",
@@ -91,17 +94,37 @@ pub fn save_current(
         let _ = stored;
     }
 
-    let (saved, current_revision) = workspace_layout_repo::save_current(
+    let outcome = workspace_layout_repo::save_current(
         connection,
         i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
         revision,
         &payload_json,
         now_ms(),
     )?;
-    Ok(WorkspaceLayoutSaveResult {
-        saved,
-        revision: current_revision,
-    })
+    Ok(save_result_from_outcome(outcome, observed_revision))
+}
+
+fn save_result_from_outcome(
+    outcome: SaveCurrentOutcome,
+    observed_revision: i64,
+) -> WorkspaceLayoutSaveResult {
+    match outcome {
+        SaveCurrentOutcome::Saved { revision } => WorkspaceLayoutSaveResult {
+            saved: true,
+            revision,
+            reason: None,
+        },
+        SaveCurrentOutcome::Stale { current_revision } => WorkspaceLayoutSaveResult {
+            saved: false,
+            revision: current_revision,
+            reason: Some(WorkspaceLayoutSaveRejection::Stale),
+        },
+        SaveCurrentOutcome::Incompatible { .. } => WorkspaceLayoutSaveResult {
+            saved: false,
+            revision: observed_revision,
+            reason: Some(WorkspaceLayoutSaveRejection::Incompatible),
+        },
+    }
 }
 
 pub fn reset_current(connection: &mut Connection) -> Result<i64, AppError> {
@@ -668,7 +691,10 @@ mod tests {
     use super::*;
     use crate::db::{connection, directory_repo, pty_session_repo};
     use crate::models::tool::ToolKey;
-    use crate::models::workspace_layout::{WorkspaceSlotTitle, WorkspaceSplitDirection};
+    use crate::models::workspace_layout::{
+        legacy_payload_json, WorkspaceLayoutSaveRejection, WorkspaceSlotTitle,
+        WorkspaceSplitDirection,
+    };
     use std::collections::HashSet;
 
     fn database() -> Connection {
@@ -1391,5 +1417,163 @@ mod tests {
             .unwrap();
         assert!(plan_apply_preset(&connection, &preset.id, &layout).is_err());
         assert!(delete_preset(&connection, &preset.id).unwrap());
+    }
+
+    fn insert_state_row(
+        connection: &Connection,
+        schema_version: i64,
+        revision: i64,
+        payload: &str,
+    ) {
+        connection
+            .execute(
+                "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, ?2, ?3, 0)",
+                rusqlite::params![schema_version, revision, payload],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn legacy_schema_rows_are_saved_after_in_memory_migration_to_current_version() {
+        for version in 1..=4u32 {
+            let mut connection = database();
+            insert_state_row(
+                &connection,
+                i64::from(version),
+                3,
+                &legacy_payload_json(version),
+            );
+
+            let read = read_current(&connection).unwrap();
+            assert!(
+                matches!(read.status, WorkspaceLayoutStateStatus::Ready),
+                "v{version}: legacy rows must read as ready"
+            );
+            assert_eq!(read.schema_version, Some(5), "v{version}");
+            assert_eq!(read.revision, Some(3), "v{version}");
+            let layout = read.layout.clone().expect("ready read carries a layout");
+
+            let saved = save_current(&mut connection, 4, &layout).unwrap();
+            assert!(saved.saved, "v{version}: the first save must be accepted");
+            assert_eq!(saved.revision, 4, "v{version}");
+            assert_eq!(saved.reason, None, "v{version}");
+            assert!(
+                serde_json::to_value(&saved)
+                    .unwrap()
+                    .get("reason")
+                    .is_none(),
+                "v{version}: a successful save serializes without a reason key"
+            );
+
+            let row = workspace_layout_repo::get_current(&connection)
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.schema_version, 5, "v{version}");
+            assert_eq!(row.revision, 4, "v{version}");
+            let stored: serde_json::Value = serde_json::from_str(&row.payload_json).unwrap();
+            assert_eq!(stored["schemaVersion"], 5, "v{version}");
+
+            let reread = read_current(&connection).unwrap();
+            assert_eq!(reread.layout, Some(layout.clone()), "v{version}");
+
+            let again = save_current(&mut connection, 4, &layout).unwrap();
+            assert!(!again.saved, "v{version}: the same revision is stale");
+            assert_eq!(
+                again.reason,
+                Some(WorkspaceLayoutSaveRejection::Stale),
+                "v{version}"
+            );
+            assert_eq!(again.revision, 4, "v{version}");
+            let unchanged = workspace_layout_repo::get_current(&connection)
+                .unwrap()
+                .unwrap();
+            assert_eq!(unchanged.revision, 4, "v{version}");
+            assert_eq!(unchanged.payload_json, row.payload_json, "v{version}");
+        }
+    }
+
+    #[test]
+    fn concurrent_saves_of_one_revision_on_a_legacy_row_have_one_winner() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let first = connection::init_database(&path).unwrap();
+        insert_state_row(&first, 1, 3, &legacy_payload_json(1));
+        let layout = read_current(&first).unwrap().layout.unwrap();
+        let second = connection::open_database(&path).unwrap();
+
+        let results: Vec<WorkspaceLayoutSaveResult> = std::thread::scope(|scope| {
+            let handles: Vec<_> = [first, second]
+                .into_iter()
+                .map(|mut conn| {
+                    let layout = &layout;
+                    scope.spawn(move || save_current(&mut conn, 4, layout).unwrap())
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        let winners = results.iter().filter(|result| result.saved).count();
+        assert_eq!(winners, 1, "{results:?}");
+        let loser = results.iter().find(|result| !result.saved).unwrap();
+        assert_eq!(loser.reason, Some(WorkspaceLayoutSaveRejection::Stale));
+        let verify = connection::open_database(&path).unwrap();
+        let row = workspace_layout_repo::get_current(&verify)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.revision, 4);
+        assert_eq!(row.schema_version, 5);
+    }
+
+    #[test]
+    fn save_result_maps_outcomes_to_camel_case_dto() {
+        let saved = serde_json::to_value(save_result_from_outcome(
+            SaveCurrentOutcome::Saved { revision: 4 },
+            3,
+        ))
+        .unwrap();
+        assert_eq!(saved, serde_json::json!({"saved": true, "revision": 4}));
+
+        let stale = serde_json::to_value(save_result_from_outcome(
+            SaveCurrentOutcome::Stale {
+                current_revision: 7,
+            },
+            3,
+        ))
+        .unwrap();
+        assert_eq!(
+            stale,
+            serde_json::json!({"saved": false, "revision": 7, "reason": "stale"})
+        );
+
+        let incompatible = serde_json::to_value(save_result_from_outcome(
+            SaveCurrentOutcome::Incompatible {
+                stored_schema_version: 99,
+            },
+            3,
+        ))
+        .unwrap();
+        assert_eq!(
+            incompatible,
+            serde_json::json!({"saved": false, "revision": 3, "reason": "incompatible"})
+        );
+    }
+
+    #[test]
+    fn future_schema_row_is_never_overwritten_by_autosave() {
+        let mut connection = database();
+        insert_state_row(&connection, 99, 5, "{\"schemaVersion\":99}");
+
+        let error = save_current(&mut connection, 6, &empty_layout()).unwrap_err();
+        assert!(error.to_string().contains("不受支持"), "{error}");
+
+        let row = workspace_layout_repo::get_current(&connection)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.schema_version, 99);
+        assert_eq!(row.revision, 5);
+        assert_eq!(row.payload_json, "{\"schemaVersion\":99}");
     }
 }

@@ -119,6 +119,7 @@ import {
   restoreCurrentWorkspaceFilesAfterPreset,
   restoreWorkspaceLayoutApplyPlan,
   restoreWorkspaceRuntimeSnapshot,
+  UnsupportedWorkspaceLayoutVersionError,
   WorkspaceLayoutSaveQueue,
 } from "../lib/workspaceLayoutPersistence";
 import {
@@ -627,6 +628,11 @@ export function PtyWorkspaceProvider({
       setHydrationStatus("ready");
     } catch (reason) {
       if (requestId !== hydrationRequestRef.current) return;
+      if (reason instanceof UnsupportedWorkspaceLayoutVersionError) {
+        setHydrationError(reason.message);
+        setHydrationStatus("needsReset");
+        return;
+      }
       setHydrationError(formatAppError(reason, t));
       setHydrationStatus("loadFailed");
     }

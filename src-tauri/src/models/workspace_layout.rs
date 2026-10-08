@@ -395,11 +395,20 @@ pub enum WorkspaceSlotStateKind {
     SessionIdentityMismatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceLayoutSaveRejection {
+    Stale,
+    Incompatible,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayoutSaveResult {
     pub saved: bool,
     pub revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WorkspaceLayoutSaveRejection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -749,6 +758,119 @@ fn invalid<T>(message: &'static str) -> Result<T, WorkspaceLayoutError> {
 
 fn invalid_owned<T>(message: String) -> Result<T, WorkspaceLayoutError> {
     Err(WorkspaceLayoutError::Invalid(message))
+}
+
+/// 测试夹具：生成 `version`（1~4）对应的旧版布局 JSON 载荷，载荷内的 `schemaVersion` 等于 `version`。
+/// 变换照抄 `tests` 里四个迁移测试；其他版本号 panic。
+#[cfg(test)]
+pub(crate) fn legacy_payload_json(version: u32) -> String {
+    fn legacy_base_document() -> WorkspaceLayoutDocument {
+        let instance_id = Uuid::new_v4().to_string();
+        WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: vec![WorkspaceLayoutSlot {
+                instance_id,
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                project_name: "example".to_string(),
+                tool_key: ToolKey::Claude,
+                sequence: 1,
+                session_id: Some(Uuid::new_v4().to_string()),
+                resume_session_id: None,
+                title: WorkspaceSlotTitle::Automatic,
+            }],
+            documents: Vec::new(),
+            detached_contents: Vec::new(),
+        }
+    }
+
+    let mut document = legacy_base_document();
+    let legacy = match version {
+        1 => {
+            let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+            legacy["schemaVersion"] = serde_json::json!(1);
+            let pane = legacy["tree"].as_object_mut().unwrap();
+            pane.remove("contents");
+            pane.remove("activeContent");
+            pane.insert(
+                "sessionIds".into(),
+                serde_json::json!([document.slots[0].instance_id]),
+            );
+            pane.insert(
+                "activeSessionId".into(),
+                serde_json::json!(document.slots[0].instance_id),
+            );
+            pane.insert("documentIds".into(), serde_json::json!([]));
+            legacy
+        }
+        2 => {
+            let document_id = Uuid::new_v4().to_string();
+            document.documents.push(WorkspaceFileDocument {
+                id: document_id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: "README.md".to_string(),
+            });
+            let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+            legacy["schemaVersion"] = serde_json::json!(2);
+            let pane = legacy["tree"].as_object_mut().unwrap();
+            pane.remove("contents");
+            pane.insert(
+                "sessionIds".into(),
+                serde_json::json!([document.slots[0].instance_id]),
+            );
+            pane.insert(
+                "documentIds".into(),
+                serde_json::json!([document_id.clone()]),
+            );
+            legacy["tree"]["activeContent"] = serde_json::json!({
+                "kind": "file",
+                "documentId": document_id,
+            });
+            legacy
+        }
+        3 => {
+            document.tree = WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: Vec::new(),
+                active_content: None,
+            };
+            let slot_id = document.slots[0].instance_id.clone();
+            let mut legacy = serde_json::to_value(&document).expect("serialize v3 layout");
+            legacy["schemaVersion"] = serde_json::json!(3);
+            legacy["detachedSlotIds"] = serde_json::json!([slot_id]);
+            legacy.as_object_mut().unwrap().remove("detachedContents");
+            legacy
+        }
+        4 => {
+            let unknown_raw = serde_json::json!({
+                "kind": "markdownPreview",
+                "previewId": "preview-1",
+                "content": { "source": "README.md", "enabled": true }
+            });
+            let mut legacy = serde_json::to_value(&document).expect("serialize v4 layout");
+            legacy["schemaVersion"] = serde_json::json!(4);
+            legacy["tree"]["contents"]
+                .as_array_mut()
+                .expect("pane contents")
+                .push(unknown_raw);
+            legacy
+        }
+        _ => panic!("unsupported legacy fixture version"),
+    };
+    serde_json::to_string(&legacy).expect("serialize legacy layout")
 }
 
 #[cfg(test)]
@@ -1384,5 +1506,34 @@ mod tests {
         assert!(validate_preset_name("  ").is_err());
         assert!(validate_preset_name(&"界".repeat(65)).is_err());
         assert!(validate_preset_name("坏\n名称").is_err());
+    }
+
+    #[test]
+    fn legacy_payload_fixtures_migrate_to_current_version() {
+        for version in 1..=4u32 {
+            let json = legacy_payload_json(version);
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(value["schemaVersion"], version);
+            let migrated = WorkspaceLayoutDocument::from_json(&json)
+                .unwrap_or_else(|error| panic!("v{version} fixture must migrate: {error}"));
+            assert_eq!(migrated.schema_version, WORKSPACE_LAYOUT_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
+    fn legacy_payload_json_rejects_unsupported_versions() {
+        // 不用 #[should_panic]：它的输出行是 `test <名> - should panic ... ok`，
+        // 会被 CI 的“已执行测试”抽取（`... (ok|FAILED|ignored)` 紧跟测试名）漏掉。
+        let payload = std::panic::catch_unwind(|| legacy_payload_json(5))
+            .expect_err("version 5 must be rejected by the fixture");
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(
+            message.contains("unsupported legacy fixture version"),
+            "{message}"
+        );
     }
 }

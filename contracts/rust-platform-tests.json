@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 318, "Linux": 319, "macOS": 316 },
+  "minimumPassed": { "Windows": 325, "Linux": 326, "macOS": 323 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker"
@@ -18,8 +18,11 @@
       "contracts::tool_key_contract_matches_the_rust_registry",
       "contracts::window_kind_contract_matches_capabilities",
       "contracts::window_kind_contract_matches_rust_registry",
+      "db::workspace_layout_repo::tests::save_current_distinguishes_stale_from_incompatible_schema",
       "models::tool::tests::all_lists_every_variant_exactly_once",
       "models::window_kind::tests::window_label_fixture_vectors_match_rust_registry",
+      "models::workspace_layout::tests::legacy_payload_fixtures_migrate_to_current_version",
+      "models::workspace_layout::tests::legacy_payload_json_rejects_unsupported_versions",
       "platform::file_cas::tests::cas_never_targets_a_real_file_named_like_a_deleted_alias",
       "platform::file_cas::tests::cas_retries_when_resolved_destination_is_a_deleted_alias",
       "platform::file_cas::tests::lock_current_error_names_the_requested_path",
@@ -32,7 +35,11 @@
       "platform::file_cas::tests::validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only",
       "services::install_service::tests::antigravity_update_plan_for_uses_builtin_command",
       "services::install_service::tests::claude_update_plan_for_uses_builtin_command",
-      "services::launch_service::tests::resume_validation_failure_produces_no_launch_payload"
+      "services::launch_service::tests::resume_validation_failure_produces_no_launch_payload",
+      "services::workspace_layout_service::tests::concurrent_saves_of_one_revision_on_a_legacy_row_have_one_winner",
+      "services::workspace_layout_service::tests::future_schema_row_is_never_overwritten_by_autosave",
+      "services::workspace_layout_service::tests::legacy_schema_rows_are_saved_after_in_memory_migration_to_current_version",
+      "services::workspace_layout_service::tests::save_result_maps_outcomes_to_camel_case_dto"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

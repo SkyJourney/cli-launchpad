@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWorkspaceLayoutDocument,
   isWorkspaceApplyStateCurrent,
@@ -9,6 +9,8 @@ import {
   restoreCurrentWorkspaceFilesAfterPreset,
   restoreWorkspaceLayoutApplyPlan,
   restoreWorkspaceRuntimeSnapshot,
+  UnsupportedWorkspaceLayoutVersionError,
+  WorkspaceLayoutSaveError,
   WorkspaceLayoutSaveQueue,
 } from "./workspaceLayoutPersistence";
 import {
@@ -758,4 +760,113 @@ describe("WorkspaceLayoutSaveQueue", () => {
     expect(save).toHaveBeenCalledTimes(2);
     expect(save.mock.calls[1]?.[1].slots[0].projectName).toBe("Retry");
   });
+});
+
+describe("layout save results", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rebases once on a stale rejection and then succeeds", async () => {
+    const onError = vi.fn();
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce({ saved: false, reason: "stale", revision: 7 })
+      .mockResolvedValueOnce({ saved: true, revision: 8 });
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError);
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[0]?.[0]).toBe(6);
+    expect(save.mock.calls[1]?.[0]).toBe(8);
+    expect(onError).not.toHaveBeenCalled();
+    expect(save.mock.calls.length).toBeLessThan(10);
+  });
+
+  it("stops without retrying and reports once on an incompatible schema rejection", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    let calls = 0;
+    const save = vi.fn(async () => {
+      calls += 1;
+      if (calls > 20) throw new Error("spin guard");
+      return { saved: false, reason: "incompatible", revision: 3 } as const;
+    });
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError);
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    const reported = onError.mock.calls[0]?.[0];
+    expect(reported).toBeInstanceOf(WorkspaceLayoutSaveError);
+    expect(reported.code).toBe("layout.schema_incompatible");
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError.mock.calls[1]?.[0].code).toBe("layout.schema_incompatible");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(save.mock.calls.length).toBeLessThan(10);
+  });
+
+  it("does not spin when the backend keeps rejecting without a reason", async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    let calls = 0;
+    const save = vi.fn(async () => {
+      calls += 1;
+      if (calls > 20) throw new Error("spin guard");
+      return { saved: false, revision: 5 };
+    });
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError);
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(onError).toHaveBeenCalledTimes(1);
+    const reported = onError.mock.calls[0]?.[0];
+    expect(reported.code).toBe("layout.save_rejected");
+    expect(String(reported.message)).not.toContain("spin guard");
+
+    const callsAfterFirstRound = save.mock.calls.length;
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save.mock.calls.length).toBeGreaterThan(callsAfterFirstRound);
+    expect(calls).toBeLessThan(21);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("unsupported layout versions", () => {
+  it.each([1, 2, 6])(
+    "rejects schema version %s with an explicit error",
+    (version) => {
+      const v5Doc = createDocument();
+      const migrate = () =>
+        migrateWorkspaceLayoutDocument({ ...v5Doc, schemaVersion: version });
+
+      expect(migrate).toThrow(/Unsupported workspace layout version/);
+      let thrown: unknown;
+      try {
+        migrate();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(UnsupportedWorkspaceLayoutVersionError);
+      expect((thrown as UnsupportedWorkspaceLayoutVersionError).code).toBe(
+        "layout.needs_reset",
+      );
+      expect(() =>
+        migrateWorkspaceLayoutDocument({ ...v5Doc, schemaVersion: 5 }),
+      ).not.toThrow();
+    },
+  );
 });

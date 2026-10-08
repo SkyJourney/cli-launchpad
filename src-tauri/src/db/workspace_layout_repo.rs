@@ -10,6 +10,13 @@ pub struct WorkspaceLayoutRow {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveCurrentOutcome {
+    Saved { revision: i64 },
+    Stale { current_revision: i64 },
+    Incompatible { stored_schema_version: i64 },
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceLayoutPresetRow {
     pub summary: WorkspaceLayoutPresetSummary,
@@ -35,13 +42,17 @@ pub fn get_current(connection: &Connection) -> rusqlite::Result<Option<Workspace
 
 /// Persist only a newer client revision. A delayed autosave cannot replace a
 /// layout that was already written by a later UI update.
+///
+/// CAS 只比较 revision：列 `schema_version` 是 payload 版本的只读镜像，成功保存时
+/// 与 payload 一起写成当前版本，所以 0.3.0 升级用户（列值 1~4）的第一次保存也会成功。
+/// 存储版本高于当前支持（或小于 1）时返回 `Incompatible`，且不修改该行。
 pub fn save_current(
     connection: &mut Connection,
     schema_version: i64,
     revision: i64,
     payload_json: &str,
     updated_at_ms: i64,
-) -> rusqlite::Result<(bool, i64)> {
+) -> rusqlite::Result<SaveCurrentOutcome> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let current: Option<(i64, i64)> = transaction
         .query_row(
@@ -52,18 +63,28 @@ pub fn save_current(
         .optional()?;
 
     if let Some((stored_schema, stored_revision)) = current {
-        if stored_schema != schema_version || revision <= stored_revision {
+        if stored_schema < 1 || stored_schema > schema_version {
             transaction.commit()?;
-            return Ok((false, stored_revision));
+            return Ok(SaveCurrentOutcome::Incompatible {
+                stored_schema_version: stored_schema,
+            });
+        }
+        if revision <= stored_revision {
+            transaction.commit()?;
+            return Ok(SaveCurrentOutcome::Stale {
+                current_revision: stored_revision,
+            });
         }
         transaction.execute(
-            "update workspace_state set schema_version = ?1, revision = ?2, payload_json = ?3, updated_at_ms = ?4 where id = 1 and schema_version = ?1 and revision < ?2",
+            "update workspace_state set schema_version = ?1, revision = ?2, payload_json = ?3, updated_at_ms = ?4 where id = 1 and revision < ?2",
             params![schema_version, revision, payload_json, updated_at_ms],
         )?;
     } else {
         if revision <= 0 {
             transaction.commit()?;
-            return Ok((false, 0));
+            return Ok(SaveCurrentOutcome::Stale {
+                current_revision: 0,
+            });
         }
         transaction.execute(
             "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, ?2, ?3, ?4)",
@@ -72,7 +93,7 @@ pub fn save_current(
     }
 
     transaction.commit()?;
-    Ok((true, revision))
+    Ok(SaveCurrentOutcome::Saved { revision })
 }
 
 /// Explicit user reset is the only operation allowed to replace a current
@@ -243,15 +264,17 @@ mod tests {
         let json = layout_json();
         assert_eq!(
             save_current(&mut connection, 1, 1, &json, 10).unwrap(),
-            (true, 1)
+            SaveCurrentOutcome::Saved { revision: 1 }
         );
         assert_eq!(
             save_current(&mut connection, 1, 3, &json, 30).unwrap(),
-            (true, 3)
+            SaveCurrentOutcome::Saved { revision: 3 }
         );
         assert_eq!(
             save_current(&mut connection, 1, 2, &json, 20).unwrap(),
-            (false, 3)
+            SaveCurrentOutcome::Stale {
+                current_revision: 3
+            }
         );
         assert_eq!(get_current(&connection).unwrap().unwrap().revision, 3);
         assert_eq!(reset_current(&mut connection, 1, &json, 40).unwrap(), 4);
@@ -283,5 +306,97 @@ mod tests {
         assert!(update_preset(&connection, &id, 1, &json, 30).unwrap());
         assert!(delete_preset(&connection, &id).unwrap());
         assert!(!delete_preset(&connection, &id).unwrap());
+    }
+
+    fn insert_row(connection: &Connection, schema_version: i64, revision: i64, payload: &str) {
+        connection
+            .execute(
+                "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, ?2, ?3, 0)",
+                params![schema_version, revision, payload],
+            )
+            .unwrap();
+    }
+
+    fn stored_row(connection: &Connection) -> (i64, i64, String) {
+        let row = get_current(connection).unwrap().unwrap();
+        (row.schema_version, row.revision, row.payload_json)
+    }
+
+    #[test]
+    fn save_current_distinguishes_stale_from_incompatible_schema() {
+        let json = layout_json();
+
+        // 1) 0.3.0 升级用户：列值 1 的行，保存 revision 4 必须成功并把列同步写成 5。
+        let mut connection = database();
+        insert_row(&connection, 1, 3, "{\"legacy\":true}");
+        assert_eq!(
+            save_current(&mut connection, 5, 4, &json, 0).unwrap(),
+            SaveCurrentOutcome::Saved { revision: 4 }
+        );
+        assert_eq!(stored_row(&connection), (5, 4, json.clone()));
+
+        // 2) revision 落后或相等：Stale，行不变。
+        let mut connection = database();
+        insert_row(&connection, 5, 4, &json);
+        for revision in [4, 2] {
+            assert_eq!(
+                save_current(&mut connection, 5, revision, &json, 0).unwrap(),
+                SaveCurrentOutcome::Stale {
+                    current_revision: 4
+                }
+            );
+        }
+        assert_eq!(stored_row(&connection), (5, 4, json.clone()));
+
+        // 3) 存储版本高于当前支持：Incompatible，且绝不覆盖未来版本数据。
+        let mut connection = database();
+        insert_row(&connection, 99, 3, "{\"future\":true}");
+        assert_eq!(
+            save_current(&mut connection, 5, 4, &json, 0).unwrap(),
+            SaveCurrentOutcome::Incompatible {
+                stored_schema_version: 99
+            }
+        );
+        assert_eq!(
+            stored_row(&connection),
+            (99, 3, "{\"future\":true}".to_string())
+        );
+
+        // 4) 没有行：revision <= 0 为 Stale{0}，revision 1 为 Saved。
+        let mut connection = database();
+        for revision in [0, -1] {
+            assert_eq!(
+                save_current(&mut connection, 5, revision, &json, 0).unwrap(),
+                SaveCurrentOutcome::Stale {
+                    current_revision: 0
+                }
+            );
+        }
+        assert!(get_current(&connection).unwrap().is_none());
+        assert_eq!(
+            save_current(&mut connection, 5, 1, &json, 0).unwrap(),
+            SaveCurrentOutcome::Saved { revision: 1 }
+        );
+
+        // 5) 列值小于 1 的行：Incompatible。表上有 check (schema_version > 0)，
+        //    所以用 ignore_check_constraints 构造这个防御分支的输入。
+        let mut connection = database();
+        connection
+            .pragma_update(None, "ignore_check_constraints", "ON")
+            .unwrap();
+        insert_row(&connection, 0, 7, "{\"broken\":true}");
+        connection
+            .pragma_update(None, "ignore_check_constraints", "OFF")
+            .unwrap();
+        assert_eq!(
+            save_current(&mut connection, 5, 9, &json, 0).unwrap(),
+            SaveCurrentOutcome::Incompatible {
+                stored_schema_version: 0
+            }
+        );
+        assert_eq!(
+            stored_row(&connection),
+            (0, 7, "{\"broken\":true}".to_string())
+        );
     }
 }

@@ -21,6 +21,31 @@ import { workspaceContentKey } from "./workspaceContentKey";
 
 export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
 
+export type WorkspaceLayoutSaveErrorCode =
+  | "layout.save_rejected"
+  | "layout.schema_incompatible";
+
+export class WorkspaceLayoutSaveError extends Error {
+  constructor(
+    readonly code: WorkspaceLayoutSaveErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkspaceLayoutSaveError";
+  }
+}
+
+export class UnsupportedWorkspaceLayoutVersionError extends Error {
+  readonly code = "layout.needs_reset";
+
+  constructor(version: unknown) {
+    super(`Unsupported workspace layout version: ${String(version)}`);
+    this.name = "UnsupportedWorkspaceLayoutVersionError";
+  }
+}
+
+const MAX_ABNORMAL_SAVE_REJECTIONS = 3;
+
 export interface WorkspaceRuntimeSnapshot {
   tree: WorkspaceNode;
   focusedPaneId: string;
@@ -406,9 +431,7 @@ export function migrateWorkspaceLayoutDocument(
     value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
   }
   if (value.schemaVersion !== WORKSPACE_LAYOUT_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported workspace layout version: ${String(value.schemaVersion)}`,
-    );
+    throw new UnsupportedWorkspaceLayoutVersionError(value.schemaVersion);
   }
   if (value.detachedContents === undefined) value.detachedContents = [];
   const document = value as unknown as WorkspaceLayoutDocument;
@@ -499,6 +522,7 @@ export class WorkspaceLayoutSaveQueue {
   private revision: number;
   private pending: WorkspaceLayoutDocument | null = null;
   private draining: Promise<void> | null = null;
+  private abnormalRejections = 0;
 
   constructor(
     initialRevision: number,
@@ -549,20 +573,51 @@ export class WorkspaceLayoutSaveQueue {
         );
         this.revision = Math.max(this.revision, result.revision);
         if (result.saved) {
+          this.abnormalRejections = 0;
           try {
             this.onSaved();
           } catch {
             // A UI status callback must not interfere with the save queue.
           }
+        } else if (result.reason === "incompatible") {
+          // 存储的布局版本高于当前应用支持：重试没有意义，只上报一次。
+          this.abnormalRejections = 0;
+          this.report(
+            new WorkspaceLayoutSaveError(
+              "layout.schema_incompatible",
+              "当前工作区布局由更高版本的应用写入，当前版本无法保存",
+            ),
+          );
+        } else if (result.revision >= revision) {
+          // 真实落后：以后端返回的 revision 为基准重试。
+          this.abnormalRejections = 0;
+          if (!this.pending) this.pending = document;
+        } else {
+          // 后端说它的 revision 比我们发送的还小却拒绝了（N16 的症状）：限次重试。
+          this.abnormalRejections += 1;
+          if (this.abnormalRejections >= MAX_ABNORMAL_SAVE_REJECTIONS) {
+            this.abnormalRejections = 0;
+            this.report(
+              new WorkspaceLayoutSaveError(
+                "layout.save_rejected",
+                "工作区布局保存被后端连续拒绝，已停止重试",
+              ),
+            );
+          } else if (!this.pending) {
+            this.pending = document;
+          }
         }
-        if (!result.saved && !this.pending) this.pending = document;
       } catch (error) {
-        try {
-          this.onError(error);
-        } catch {
-          // Error reporting must not stop workspace interaction or later saves.
-        }
+        this.report(error);
       }
+    }
+  }
+
+  private report(error: unknown): void {
+    try {
+      this.onError(error);
+    } catch {
+      // Error reporting must not stop workspace interaction or later saves.
     }
   }
 }

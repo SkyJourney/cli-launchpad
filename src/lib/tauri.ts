@@ -85,10 +85,9 @@ export interface WorkspaceLayoutStateRead {
   slotStates: WorkspaceSlotState[];
 }
 
-export interface WorkspaceLayoutSaveResult {
-  saved: boolean;
-  revision: number;
-}
+export type WorkspaceLayoutSaveResult =
+  | { saved: true; revision: number }
+  | { saved: false; reason?: "stale" | "incompatible"; revision: number };
 
 export interface WorkspaceLayoutPresetSummary {
   id: string;
