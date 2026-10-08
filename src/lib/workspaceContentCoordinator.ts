@@ -1,5 +1,6 @@
 import type { WorkspacePaneContentRef } from "./tauri";
 import { workspaceContentKey } from "./workspaceContentKey";
+import { isWindowOwned } from "./workspaceOwnershipProjection";
 import {
   createWorkspaceContentLifecycle,
   transitionWorkspaceContentLifecycle,
@@ -72,15 +73,7 @@ export class WorkspaceContentCoordinator {
 
   listWindowOwned(): WorkspacePaneContentRef[] {
     return [...this.states.values()]
-      .filter((state) => {
-        if (state.phase === "detaching" || state.phase === "returning") {
-          return true;
-        }
-        return (
-          (state.phase === "detached" || state.phase === "closing") &&
-          state.owner.kind === "window"
-        );
-      })
+      .filter((state) => isWindowOwned(state))
       .map((state) => ({ ...state.content }));
   }
 

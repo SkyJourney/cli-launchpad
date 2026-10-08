@@ -20,6 +20,7 @@ import {
 import { workspaceContentKey } from "./workspaceContentKey";
 
 export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
+export { listPersistedDetachedContents } from "./workspaceOwnershipProjection";
 
 export type WorkspaceLayoutSaveErrorCode =
   | "layout.save_rejected"

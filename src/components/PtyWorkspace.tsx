@@ -121,7 +121,13 @@ import {
   restoreWorkspaceRuntimeSnapshot,
   UnsupportedWorkspaceLayoutVersionError,
   WorkspaceLayoutSaveQueue,
+  listPersistedDetachedContents,
 } from "../lib/workspaceLayoutPersistence";
+import {
+  isHandoffActive,
+  isWindowOwned,
+  ownerWindowOf,
+} from "../lib/workspaceOwnershipProjection";
 import {
   createWorkspaceFileBuffer,
   completeWorkspaceFileSave,
@@ -366,6 +372,8 @@ export function PtyWorkspaceProvider({
   coordinator?: WorkspaceContentCoordinator;
 }) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  tRef.current = t;
   const { data: directories } = useDirectories();
   const [hydrationStatus, setHydrationStatus] =
     useState<PtyWorkspaceHydrationStatus>("loading");
@@ -522,25 +530,28 @@ export function PtyWorkspaceProvider({
       const queue = saveQueueRef.current;
       if (!queue) return;
 
-      const persistedSlots: WorkspaceLayoutSlot[] = slotsRef.current.map(
-        (slot) => toWorkspaceLayoutSlot(slot, directories ?? []),
-      );
-      queue.enqueue(
-        createWorkspaceLayoutDocument({
-          tree: treeOverride ?? treeRef.current,
-          focusedPaneId: focusedPaneIdRef.current,
-          slots: persistedSlots,
-          documents: fileDocumentsRef.current,
-          detachedContents: contentCoordinatorRef.current
-            .listInPhases("detached")
-            .filter(
-              (content) =>
-                !listWorkspacePanes(treeOverride ?? treeRef.current).some(
-                  (pane) => hasWorkspaceContent(pane, content),
-                ),
+      const snapshotTree = treeOverride ?? treeRef.current;
+      // 快照构造不得把异常抛进 effect：根部没有错误边界，抛出会卸载整个主窗口。
+      try {
+        const persistedSlots: WorkspaceLayoutSlot[] = slotsRef.current.map(
+          (slot) => toWorkspaceLayoutSlot(slot, directories ?? []),
+        );
+        queue.enqueue(
+          createWorkspaceLayoutDocument({
+            tree: snapshotTree,
+            focusedPaneId: focusedPaneIdRef.current,
+            slots: persistedSlots,
+            documents: fileDocumentsRef.current,
+            detachedContents: listPersistedDetachedContents(
+              contentCoordinatorRef.current.listWindowOwned(),
+              snapshotTree,
             ),
-        }),
-      );
+          }),
+        );
+      } catch (reason) {
+        setLayoutSaveError(formatAppError(reason, tRef.current));
+        console.error("[workspace.layout_snapshot_invalid]", reason);
+      }
     },
     [directories],
   );
@@ -732,10 +743,7 @@ export function PtyWorkspaceProvider({
   const applyWorkspaceLayoutPreset = useCallback(
     async (presetId: string) => {
       if (hydrationStatusRef.current !== "ready") return;
-      const protectedContents = contentCoordinatorRef.current.listInPhases(
-        "detached",
-        "detaching",
-      );
+      const protectedContents = contentCoordinatorRef.current.listWindowOwned();
       const expectedState = {
         tree: treeRef.current,
         slots: slotsRef.current,
@@ -763,11 +771,9 @@ export function PtyWorkspaceProvider({
           toWorkspaceLayoutSlot(slot, directories ?? []),
         ),
         documents: fileDocumentsRef.current,
-        detachedContents: detachedContents.filter(
-          (content) =>
-            !listWorkspacePanes(activeTree).some((pane) =>
-              hasWorkspaceContent(pane, content),
-            ),
+        detachedContents: listPersistedDetachedContents(
+          contentCoordinatorRef.current.listWindowOwned(),
+          activeTree,
         ),
       });
       const plan = await planApplyWorkspaceLayoutPreset(presetId, activeLayout);
@@ -776,10 +782,7 @@ export function PtyWorkspaceProvider({
           tree: treeRef.current,
           slots: slotsRef.current,
           focusedPaneId: focusedPaneIdRef.current,
-          detachedContents: contentCoordinatorRef.current.listInPhases(
-            "detached",
-            "detaching",
-          ),
+          detachedContents: contentCoordinatorRef.current.listWindowOwned(),
         })
       ) {
         throw new Error(t("pty.layoutChangedDuringApply"));
@@ -1072,10 +1075,9 @@ export function PtyWorkspaceProvider({
   const editFile = useCallback((documentId: string, content: string) => {
     if (
       backupRestoreInProgressRef.current ||
-      isWorkspaceContentHandoffActive(contentCoordinatorRef.current, {
-        kind: "file",
-        documentId,
-      })
+      isHandoffActive(
+        contentCoordinatorRef.current.get({ kind: "file", documentId }),
+      )
     ) {
       return;
     }
@@ -1151,10 +1153,9 @@ export function PtyWorkspaceProvider({
       fileOperationFlightsRef.current.save(documentId, async () => {
         if (
           backupRestoreInProgressRef.current ||
-          isWorkspaceContentHandoffActive(contentCoordinatorRef.current, {
-            kind: "file",
-            documentId,
-          })
+          isHandoffActive(
+            contentCoordinatorRef.current.get({ kind: "file", documentId }),
+          )
         ) {
           return;
         }
@@ -1273,7 +1274,7 @@ export function PtyWorkspaceProvider({
       const content = { kind: "file", documentId } as const;
       if (
         detachedFilesRef.current.has(workspaceFileKey(documentId)) ||
-        isWorkspaceContentWindowOwned(contentCoordinatorRef.current, content)
+        isWindowOwned(contentCoordinatorRef.current.get(content))
       ) {
         return;
       }
@@ -1504,10 +1505,7 @@ export function PtyWorkspaceProvider({
           );
           if (
             !slot ||
-            isWorkspaceContentWindowOwned(
-              contentCoordinatorRef.current,
-              content,
-            )
+            isWindowOwned(contentCoordinatorRef.current.get(content))
           ) {
             continue;
           }
@@ -1559,14 +1557,8 @@ export function PtyWorkspaceProvider({
         );
         if (
           !document ||
-          isWorkspaceContentWindowOwned(
-            contentCoordinatorRef.current,
-            content,
-          ) ||
-          isWorkspaceContentHandoffActive(
-            contentCoordinatorRef.current,
-            content,
-          )
+          isWindowOwned(contentCoordinatorRef.current.get(content)) ||
+          isHandoffActive(contentCoordinatorRef.current.get(content))
         ) {
           continue;
         }
@@ -2405,16 +2397,7 @@ export function PtyWorkspaceProvider({
       const currentOwnership =
         contentCoordinatorRef.current.get(returningContent);
       const knownWindowLabel =
-        currentOwnership?.phase === "detached"
-          ? currentOwnership.owner.kind === "window"
-            ? currentOwnership.owner.windowLabel
-            : null
-          : currentOwnership?.phase === "returning"
-            ? currentOwnership.source.windowLabel
-            : currentOwnership?.phase === "closing" &&
-                currentOwnership.owner.kind === "window"
-              ? currentOwnership.owner.windowLabel
-              : null;
+        ownerWindowOf(currentOwnership)?.windowLabel ?? null;
       if (knownWindowLabel && knownWindowLabel !== payload.windowLabel) {
         fail(t("pty.detachedSessionMissing"));
         return;
@@ -3333,10 +3316,7 @@ export function PtyWorkspaceProvider({
 
   const getCurrentPresetLayout = useCallback(() => {
     let presetTree = treeRef.current;
-    const protectedContents = contentCoordinatorRef.current.listInPhases(
-      "detached",
-      "detaching",
-    );
+    const protectedContents = contentCoordinatorRef.current.listWindowOwned();
     for (const content of protectedContents) {
       presetTree = executeWorkspaceCommand(presetTree, {
         type: "detach",
@@ -3386,27 +3366,12 @@ export function PtyWorkspaceProvider({
       const state = contentCoordinatorRef.current.get(content);
       const key = workspaceFileKey(content.documentId);
       if (!detachedFilesRef.current.has(key) || !state) continue;
-      const windowLabel =
-        state.phase === "detached"
-          ? state.owner.kind === "window"
-            ? state.owner.windowLabel
-            : undefined
-          : state.phase === "returning"
-            ? state.source.windowLabel
-            : state.phase === "closing" && state.owner.kind === "window"
-              ? state.owner.windowLabel
-              : undefined;
-      const windowToken =
-        state.phase === "detached" || state.phase === "returning"
-          ? state.windowToken
-          : state.phase === "closing"
-            ? state.windowToken
-            : undefined;
-      if (windowLabel && windowToken) {
+      const owner = ownerWindowOf(state);
+      if (owner && owner.windowToken) {
         managedWindows.set(content.documentId, {
           documentId: content.documentId,
-          token: windowToken,
-          windowLabel,
+          token: owner.windowToken,
+          windowLabel: owner.windowLabel,
         });
       }
     }
@@ -5438,30 +5403,6 @@ function beginWorkspaceSessionDrag(
   event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
   event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, legacyPayload);
   event.dataTransfer.setData("text/plain", payload);
-}
-
-function isWorkspaceContentHandoffActive(
-  coordinator: WorkspaceContentCoordinator,
-  content: WorkspacePaneContentRef,
-): boolean {
-  const phase = coordinator.get(content)?.phase;
-  return phase === "detaching" || phase === "returning";
-}
-
-function isWorkspaceContentWindowOwned(
-  coordinator: WorkspaceContentCoordinator,
-  content: WorkspacePaneContentRef,
-): boolean {
-  const state = coordinator.get(content);
-  if (!state) return false;
-  if (
-    state.phase === "detaching" ||
-    state.phase === "detached" ||
-    state.phase === "returning"
-  ) {
-    return true;
-  }
-  return state.phase === "closing" && state.owner.kind === "window";
 }
 
 function workspacePtyKey(slotId: string): string {

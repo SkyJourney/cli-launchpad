@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createWorkspaceLayoutDocument,
   isWorkspaceApplyStateCurrent,
+  listPersistedDetachedContents,
   markWorkspaceSlotsRestored,
   migrateWorkspaceLayoutDocument,
   removeEndedWorkspaceSlots,
@@ -16,9 +17,11 @@ import {
 import {
   addSessionToWorkspacePane,
   addWorkspaceFileToPane,
+  createWorkspacePane,
   listWorkspacePanes,
   setWorkspaceSplitRatio,
 } from "./ptyWorkspaceLayout";
+import { WorkspaceContentCoordinator } from "./workspaceContentCoordinator";
 import type {
   WorkspaceLayoutApplyPlan,
   WorkspaceLayoutDocument,
@@ -869,4 +872,91 @@ describe("unsupported layout versions", () => {
       ).not.toThrow();
     },
   );
+});
+
+describe("persisted detached contents", () => {
+  const pty = { kind: "pty", slotId: "s1" } as const;
+  const paneOwner = {
+    kind: "pane",
+    windowLabel: "main",
+    paneId: "p1",
+  } as const;
+  const windowOwner = { kind: "window", windowLabel: "terminal-x" } as const;
+
+  function returningCoordinator() {
+    const coordinator = new WorkspaceContentCoordinator();
+    coordinator.beginDetach(pty, paneOwner, windowOwner, "t1");
+    coordinator.completeHandoff(pty, "detachReady", "t1");
+    coordinator.beginReturn(pty, "t2", "main", "p1");
+    return coordinator;
+  }
+
+  it("keeps returning and window-closing contents outside the tree as detached", () => {
+    const coordinator = returningCoordinator();
+    const tree = createWorkspacePane("p1");
+
+    expect(
+      listPersistedDetachedContents(coordinator.listWindowOwned(), tree),
+    ).toEqual([pty]);
+
+    // 反向：detaching 阶段的内容仍在源 pane 的树里，不能再进 detachedContents。
+    const s2 = { kind: "pty", slotId: "s2" } as const;
+    coordinator.beginDetach(s2, paneOwner, windowOwner, "t3");
+    const treeWithS2 = addSessionToWorkspacePane(tree, "p1", "s2");
+    const result = listPersistedDetachedContents(
+      coordinator.listWindowOwned(),
+      treeWithS2,
+    );
+    expect(result).toEqual([pty]);
+    expect(result).toHaveLength(1);
+  });
+
+  it("omits window-owned contents that are already in the tree", () => {
+    const coordinator = returningCoordinator();
+    const tree = addSessionToWorkspacePane(
+      createWorkspacePane("p1"),
+      "p1",
+      "s1",
+    );
+
+    expect(
+      listPersistedDetachedContents(coordinator.listWindowOwned(), tree),
+    ).toEqual([]);
+  });
+
+  it("lets createWorkspaceLayoutDocument accept a returning PTY snapshot", () => {
+    const coordinator = returningCoordinator();
+    const tree = createWorkspacePane("p1");
+    const slot = {
+      instanceId: "s1",
+      directoryId: 1,
+      directoryPath: "C:/project",
+      projectName: "Project",
+      toolKey: "claude",
+      sequence: 1,
+      sessionId: "session-1",
+      resumeSessionId: null,
+      title: { kind: "automatic" },
+    } as const;
+    const snapshot = {
+      tree,
+      focusedPaneId: "p1",
+      slots: [slot],
+      documents: [],
+    };
+
+    const document = createWorkspaceLayoutDocument({
+      ...snapshot,
+      detachedContents: listPersistedDetachedContents(
+        coordinator.listWindowOwned(),
+        tree,
+      ),
+    });
+
+    expect(document.detachedContents).toHaveLength(1);
+    // 反向：不带 detachedContents 时同一调用抛 unowned，证明修复的必要性。
+    expect(() =>
+      createWorkspaceLayoutDocument({ ...snapshot, detachedContents: [] }),
+    ).toThrow(/unowned content or focus/);
+  });
 });
