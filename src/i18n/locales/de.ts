@@ -206,6 +206,9 @@ export const de = {
     returnFailed: "Rückkehr zum Arbeitsbereich fehlgeschlagen: {{error}}",
     returnTimedOut:
       "Der Hauptarbeitsbereich hat nicht rechtzeitig geantwortet.",
+    returnUnknownError: "Unbekannter Fehler",
+    returnExpired: "Die Rückkehranfrage ist abgelaufen.",
+    returnRequestFailed: "Die Rückkehranfrage ist fehlgeschlagen.",
     detachedDefaultTitle: "CLI-Terminal",
     detachedMoveUnavailable:
       "Dieses Terminal kann nicht in ein separates Fenster verschoben werden.",

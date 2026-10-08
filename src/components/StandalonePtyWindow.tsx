@@ -125,18 +125,23 @@ export function StandalonePtyWindow({
           void rollbackWorkspaceContentHandoff(
             driverContext,
             handoffPayload,
-            new Error(t("pty.returnTimedOut")),
+            new Error(translationRef.current("pty.returnTimedOut")),
           ).catch(() => undefined);
         }
         void reconcileWindowStatus().then((handled) => {
           if (returnAttemptRef.current !== timeoutAttempt || handled) return;
-          setError(t("pty.returnFailed", { error: t("pty.returnTimedOut") }));
+          setError(
+            translationRef.current("pty.returnFailed", {
+              error: translationRef.current("pty.returnTimedOut"),
+            }),
+          );
           returnInProgressRef.current = false;
           setReturning(false);
         });
       }, RETURN_HANDOFF_TIMEOUT_MS);
       try {
-        if (!terminal) throw new Error(t("pty.terminalNotReady"));
+        if (!terminal)
+          throw new Error(translationRef.current("pty.terminalNotReady"));
         const currentWindow = getCurrentWindow();
         driverContext = {
           content: { kind: "pty", slotId: instanceId },
@@ -168,7 +173,7 @@ export function StandalonePtyWindow({
           await rollbackWorkspaceContentHandoff(
             driverContext,
             prepared.payload,
-            new Error("返回请求已过期"),
+            new Error(translationRef.current("pty.returnExpired")),
           ).catch(() => undefined);
           return;
         }
@@ -183,7 +188,7 @@ export function StandalonePtyWindow({
           await rollbackWorkspaceContentHandoff(
             driverContext,
             prepared.payload,
-            new Error("返回请求已过期"),
+            new Error(translationRef.current("pty.returnExpired")),
           ).catch(() => undefined);
         }
       } catch (reason) {
@@ -202,12 +207,16 @@ export function StandalonePtyWindow({
           returnTimeoutRef.current = null;
         }
         returnAttemptRef.current += 1;
-        setError(t("pty.returnFailed", { error: formatAppError(reason, t) }));
+        setError(
+          translationRef.current("pty.returnFailed", {
+            error: formatAppError(reason, translationRef.current),
+          }),
+        );
         returnInProgressRef.current = false;
         setReturning(false);
       }
     },
-    [instanceId, reconcileWindowStatus, sessionId, sourcePaneId, t],
+    [instanceId, reconcileWindowStatus, sessionId, sourcePaneId],
   );
   const requestReturnRef = useRef(requestReturn);
   requestReturnRef.current = requestReturn;
@@ -342,7 +351,9 @@ export function StandalonePtyWindow({
             returnAttemptRef.current += 1;
             setError(
               translationRef.current("pty.returnFailed", {
-                error: event.payload.message ?? "Unknown error",
+                error:
+                  event.payload.message ??
+                  translationRef.current("pty.returnUnknownError"),
               }),
             );
             if (returnTimeoutRef.current !== null) {
@@ -356,7 +367,10 @@ export function StandalonePtyWindow({
               void rollbackWorkspaceContentHandoff(
                 context,
                 returnHandoffPayloadRef.current,
-                new Error(event.payload.message ?? "返回请求失败"),
+                new Error(
+                  event.payload.message ??
+                    translationRef.current("pty.returnRequestFailed"),
+                ),
               ).catch(() => undefined);
             }
             returnHandoffContextRef.current = null;
@@ -444,12 +458,12 @@ export function StandalonePtyWindow({
             closeAfterTransferRef.current();
             return;
           }
-          setError(formatAppError(reason, t));
+          setError(formatAppError(reason, translationRef.current));
           await emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
             instanceId,
             sessionId,
             windowLabel: currentWindow.label,
-            message: formatAppError(reason, t),
+            message: formatAppError(reason, translationRef.current),
           }).catch(() => undefined);
           await currentWindow.destroy().catch(() => undefined);
         }

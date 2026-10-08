@@ -203,6 +203,9 @@ export const fr = {
     returningToWorkspace: "Retour à l’espace de travail…",
     returnFailed: "Impossible de revenir à l’espace de travail : {{error}}",
     returnTimedOut: "L’espace de travail principal n’a pas répondu à temps.",
+    returnUnknownError: "Erreur inconnue",
+    returnExpired: "La demande de retour a expiré.",
+    returnRequestFailed: "La demande de retour a échoué.",
     detachedDefaultTitle: "Terminal CLI",
     detachedMoveUnavailable:
       "Ce terminal ne peut pas être déplacé dans une fenêtre séparée.",

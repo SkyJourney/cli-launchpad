@@ -193,6 +193,9 @@ export const ko = {
     returningToWorkspace: "작업 공간으로 이동 중…",
     returnFailed: "작업 공간으로 돌아가지 못했습니다: {{error}}",
     returnTimedOut: "기본 작업 공간이 제때 응답하지 않았습니다.",
+    returnUnknownError: "알 수 없는 오류",
+    returnExpired: "돌아가기 요청이 만료되었습니다.",
+    returnRequestFailed: "돌아가기 요청에 실패했습니다.",
     detachedDefaultTitle: "CLI 터미널",
     detachedMoveUnavailable: "이 터미널은 별도 창으로 이동할 수 없습니다.",
     detachedMoveNotRunning:

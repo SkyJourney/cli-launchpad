@@ -203,6 +203,9 @@ export const ja = {
     returningToWorkspace: "ワークスペースに戻しています…",
     returnFailed: "ワークスペースに戻れませんでした: {{error}}",
     returnTimedOut: "メインワークスペースから時間内に応答がありませんでした。",
+    returnUnknownError: "不明なエラー",
+    returnExpired: "戻る要求の有効期限が切れました。",
+    returnRequestFailed: "戻る要求に失敗しました。",
     detachedDefaultTitle: "CLI ターミナル",
     detachedMoveUnavailable: "このターミナルは別ウィンドウに移動できません。",
     detachedMoveNotRunning:

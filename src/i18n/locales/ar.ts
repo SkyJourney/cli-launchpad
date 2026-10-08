@@ -189,6 +189,9 @@ export const ar = {
     returningToWorkspace: "جارٍ النقل إلى مساحة العمل…",
     returnFailed: "تعذرت العودة إلى مساحة العمل: {{error}}",
     returnTimedOut: "لم تستجب مساحة العمل الرئيسية في الوقت المحدد.",
+    returnUnknownError: "خطأ غير معروف",
+    returnExpired: "انتهت صلاحية طلب العودة.",
+    returnRequestFailed: "فشل طلب العودة.",
     detachedDefaultTitle: "طرفية CLI",
     detachedMoveUnavailable: "لا يمكن نقل هذه الطرفية إلى نافذة منفصلة.",
     detachedMoveNotRunning:

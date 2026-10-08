@@ -197,6 +197,9 @@ export const ru = {
     returningToWorkspace: "Перемещение в рабочее пространство…",
     returnFailed: "Не удалось вернуться в рабочее пространство: {{error}}",
     returnTimedOut: "Главное рабочее пространство не ответило вовремя.",
+    returnUnknownError: "Неизвестная ошибка",
+    returnExpired: "Срок действия запроса на возврат истёк.",
+    returnRequestFailed: "Не удалось выполнить запрос на возврат.",
     detachedDefaultTitle: "Терминал CLI",
     detachedMoveUnavailable:
       "Этот терминал нельзя переместить в отдельное окно.",

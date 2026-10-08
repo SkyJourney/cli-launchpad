@@ -203,6 +203,9 @@ export const pt = {
     returningToWorkspace: "Movendo de volta ao espaço de trabalho…",
     returnFailed: "Não foi possível voltar ao espaço de trabalho: {{error}}",
     returnTimedOut: "O espaço de trabalho principal não respondeu a tempo.",
+    returnUnknownError: "Erro desconhecido",
+    returnExpired: "A solicitação de retorno expirou.",
+    returnRequestFailed: "A solicitação de retorno falhou.",
     detachedDefaultTitle: "Terminal da CLI",
     detachedMoveUnavailable:
       "Este terminal não pode ser movido para uma janela separada.",

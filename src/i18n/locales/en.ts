@@ -189,6 +189,9 @@ export const en = {
     returningToWorkspace: "Moving back to workspace…",
     returnFailed: "Could not return to workspace: {{error}}",
     returnTimedOut: "The main workspace did not respond in time.",
+    returnUnknownError: "Unknown error",
+    returnExpired: "The return request has expired.",
+    returnRequestFailed: "The return request failed.",
     detachedDefaultTitle: "CLI terminal",
     detachedMoveUnavailable:
       "This terminal cannot be moved to a separate window.",
