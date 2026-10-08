@@ -833,6 +833,18 @@ export function PtyWorkspaceProvider({
       restoredTree = restoredFiles.tree;
       const nextDocuments = restoredFiles.documents;
 
+      // 必须在上面的状态一致性检查之后登记，否则检查失败时 coordinator 已被污染。
+      for (const pane of listWorkspacePanes(restoredTree)) {
+        for (const content of pane.contents) {
+          if (content.kind === "unknown") continue;
+          contentCoordinatorRef.current.ensureAttached(content, {
+            kind: "pane",
+            windowLabel: "main",
+            paneId: pane.id,
+          });
+        }
+      }
+
       slotsRef.current = restoredSlots;
       treeRef.current = restoredTree;
       focusedPaneIdRef.current = restored.focusedPaneId;
@@ -983,6 +995,10 @@ export function PtyWorkspaceProvider({
           listWorkspacePanes(treeRef.current)[0];
         focusedPaneIdRef.current = pane.id;
         setFocusedPaneId(pane.id);
+        contentCoordinatorRef.current.ensureAttached(
+          { kind: "file", documentId: document.id },
+          { kind: "pane", windowLabel: "main", paneId: pane.id },
+        );
         commitTree(
           hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
             ? executeWorkspaceCommand(treeRef.current, {
@@ -1275,10 +1291,7 @@ export function PtyWorkspaceProvider({
   const detachFile = useCallback(
     async (documentId: string) => {
       const content = { kind: "file", documentId } as const;
-      if (
-        detachedFilesRef.current.has(workspaceFileKey(documentId)) ||
-        isWindowOwned(contentCoordinatorRef.current.get(content))
-      ) {
+      if (isWindowOwned(contentCoordinatorRef.current.get(content))) {
         return;
       }
       const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
@@ -1771,6 +1784,10 @@ export function PtyWorkspaceProvider({
       const targetPane =
         findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
         panes[0];
+      contentCoordinatorRef.current.ensureAttached(
+        { kind: "pty", slotId: slot.instanceId },
+        { kind: "pane", windowLabel: "main", paneId: targetPane.id },
+      );
       commitTree(
         addSessionToWorkspacePane(
           treeRef.current,
@@ -1939,13 +1956,11 @@ export function PtyWorkspaceProvider({
 
   const isManagedDetachedDrag = useCallback(
     (instanceId: string, windowLabel: string) => {
-      const key = workspacePtyKey(instanceId);
       const ownership = contentCoordinatorRef.current.get({
         kind: "pty",
         slotId: instanceId,
       });
       return (
-        detachedByInstanceRef.current.has(key) &&
         ownership?.phase === "detached" &&
         ownership.owner.kind === "window" &&
         ownership.owner.windowLabel === windowLabel
@@ -1955,13 +1970,11 @@ export function PtyWorkspaceProvider({
   );
   const isManagedDetachedFileDrag = useCallback(
     (documentId: string, windowLabel: string) => {
-      const key = workspaceFileKey(documentId);
       const ownership = contentCoordinatorRef.current.get({
         kind: "file",
         documentId,
       });
       return (
-        detachedFilesRef.current.has(key) &&
         ownership?.phase === "detached" &&
         ownership.owner.kind === "window" &&
         ownership.owner.windowLabel === windowLabel
@@ -2088,7 +2101,12 @@ export function PtyWorkspaceProvider({
       if (
         !slot ||
         !sessionId ||
-        detachedByInstanceRef.current.has(workspacePtyKey(instanceId))
+        isWindowOwned(
+          contentCoordinatorRef.current.get({
+            kind: "pty",
+            slotId: instanceId,
+          }),
+        )
       ) {
         throw new Error(tRef.current("pty.detachedMoveUnavailable"));
       }
@@ -2675,9 +2693,6 @@ export function PtyWorkspaceProvider({
             (candidate) => candidate.instanceId === event.payload.instanceId,
           );
           if (
-            detachedByInstanceRef.current.has(
-              workspacePtyKey(event.payload.instanceId),
-            ) &&
             slot?.sessionId === event.payload.sessionId &&
             (((owner?.phase === "detached" || owner?.phase === "closing") &&
               owner.owner.kind === "window" &&
@@ -2905,10 +2920,8 @@ export function PtyWorkspaceProvider({
                 kind: "file",
                 documentId: event.payload.documentId,
               } as const;
-              const key = workspaceFileKey(content.documentId);
               const owner = contentCoordinatorRef.current.get(content);
               if (
-                !detachedFilesRef.current.has(key) ||
                 !event.payload.fileBuffer ||
                 owner?.phase !== "detached" ||
                 owner.owner.kind !== "window" ||
@@ -3385,8 +3398,7 @@ export function PtyWorkspaceProvider({
     for (const content of contentCoordinatorRef.current.listWindowOwned()) {
       if (content.kind !== "file") continue;
       const state = contentCoordinatorRef.current.get(content);
-      const key = workspaceFileKey(content.documentId);
-      if (!detachedFilesRef.current.has(key) || !state) continue;
+      if (!state) continue;
       const owner = ownerWindowOf(state);
       if (owner && owner.windowToken) {
         managedWindows.set(content.documentId, {

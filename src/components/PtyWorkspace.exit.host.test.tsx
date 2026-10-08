@@ -17,6 +17,8 @@ vi.mock(
 
 import { tauriMock } from "../test/tauriMock";
 import { resetFakeTerminals } from "../test/host/hostMocks";
+import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
+import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 import {
   detachFileToWindow,
   emitToMain,
@@ -113,6 +115,45 @@ describe("exit impacts for detached files", () => {
 
     expect(result.dirtyFiles).toHaveLength(1);
     expect(host.ctx().fileBuffers[doc.id].content).toBe("x");
+    expect(host.errors).toEqual([]);
+  });
+
+  it("asks to flush every window-owned file even when the window handle table is missing it", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const paneId = listWorkspacePanes(host.ctx().tree)[0].id;
+    const windowLabel =
+      "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+    // 不经过 detachFileToWindow：coordinator 认为文件在窗口里，但窗口句柄表里没有该窗口。
+    await act(async () => {
+      coordinator.reconcileDetached(
+        { kind: "file", documentId: doc.id },
+        { kind: "pane", windowLabel: "main", paneId },
+        { kind: "window", windowLabel },
+        "tok-x",
+      );
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    const pending = host.ctx().collectExitImpacts(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    const impacts = await pending;
+
+    expect(impacts.dirtyFiles.map((file) => file.documentId)).toEqual([doc.id]);
+    expect(
+      tauriMock.state.emittedEvents.some(
+        (event) =>
+          event.target === windowLabel &&
+          event.eventName === "workspace-content-window-event" &&
+          (event.payload as { type?: string }).type ===
+            "workspace-file-window-flush-requested",
+      ),
+    ).toBe(true);
+    // 反向断言：句柄表缺失不能让这个文件被静默跳过。
+    expect(impacts.dirtyFiles).not.toEqual([]);
     expect(host.errors).toEqual([]);
   });
 });
