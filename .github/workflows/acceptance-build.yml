@@ -79,9 +79,29 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm tauri build --features acceptance-hooks ${{ matrix.bundle_args }}
 
+      # 用 release.yml 里的守卫脚本原文扫这个带验收标记的二进制，必须被拦下（退出码 1
+      # 且输出标记提示）。这既自检守卫文字，也在三个平台上验证守卫依赖的 find/grep 可用。
+      - name: Self-test the release guard against the acceptance binary
+        run: |
+          awk '/- name: Assert release binary has no acceptance marker/{f=1;next} f&&/run: \|/{g=1;next} g&&/^          /{sub(/^          /,"");print;next} g{exit}' .github/workflows/release.yml > "$RUNNER_TEMP/release-guard.sh"
+          test -s "$RUNNER_TEMP/release-guard.sh"
+          set +e
+          bash "$RUNNER_TEMP/release-guard.sh" 2> "$RUNNER_TEMP/release-guard.err"
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/release-guard.err"
+          test "$code" -eq 1
+          grep -q "release binary contains the acceptance marker" "$RUNNER_TEMP/release-guard.err"
+
       - name: Upload acceptance artifacts
         uses: actions/upload-artifact@v7
         with:
           name: acceptance-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
           retention-days: 7

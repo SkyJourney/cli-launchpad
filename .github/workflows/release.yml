@@ -177,6 +177,9 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.id, 'macos-') && '-' || '' }}
+          # 与 ci.yml 的 Build frontend 一致：beforeBuildCommand 的 vite build 在默认堆上
+          # 会在 macOS runner 溢出（验收构建实测两次 exit 134）。
+          NODE_OPTIONS: --max-old-space-size=4096
         with:
           tauriScript: pnpm tauri
           args: ${{ matrix.build_args }}
