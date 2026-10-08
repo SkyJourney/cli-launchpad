@@ -115,4 +115,41 @@ describe("WorkspaceContentView", () => {
       consoleError.mockRestore();
     }
   });
+
+  it.each([undefined, null])(
+    "shows the localized generic description when an adapter throws %s",
+    (thrown) => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      unregisterAdapters.push(
+        registerWorkspaceContentAdapter({
+          id: "test.throwing-nullish-content",
+          apiVersion: 2,
+          kind: "pty",
+          render: () => {
+            throw thrown;
+          },
+          presentation: () => ({
+            title: "Terminal",
+            icon: null,
+            closeLabelKey: "close",
+          }),
+          labels,
+          projectContextOf: () => null,
+        }),
+      );
+
+      try {
+        renderContent({ kind: "pty", slotId: "terminal-1" });
+        const alert = screen.getByRole("alert").textContent ?? "";
+        expect(alert).toContain("workspaceContent.unsupportedDescription");
+        // 反向断言：不得把写死的英文兜底文案带进界面。
+        expect(alert).not.toContain("Unknown error");
+        expect(alert).not.toContain("workspaceContent.unsupportedError");
+      } finally {
+        consoleError.mockRestore();
+      }
+    },
+  );
 });

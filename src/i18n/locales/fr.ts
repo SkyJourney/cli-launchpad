@@ -107,7 +107,7 @@ export const fr = {
     terminating: "Fermeture en cours…",
   },
   appCrash: {
-    title: "Une erreur inattendue s'est produite",
+    title: "Une erreur inattendue s’est produite",
     description:
       "CLI Launchpad a rencontré une erreur inattendue dans cette fenêtre. Le rechargement redémarre la fenêtre ; les modifications non enregistrées peuvent être perdues.",
     reload: "Recharger la fenêtre",

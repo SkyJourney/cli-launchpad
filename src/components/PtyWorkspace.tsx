@@ -531,7 +531,8 @@ export function PtyWorkspaceProvider({
       if (!queue) return;
 
       const snapshotTree = treeOverride ?? treeRef.current;
-      // 快照构造不得把异常抛进 effect：根部没有错误边界，抛出会卸载整个主窗口。
+      // 快照构造不得把异常抛进 effect：根边界只能兜底成重载提示（丢失未保存缓冲），
+      // 所以这里降级为一次可自愈的保存错误，下一次状态变化会重新保存。
       try {
         const persistedSlots: WorkspaceLayoutSlot[] = slotsRef.current.map(
           (slot) => toWorkspaceLayoutSlot(slot, directories ?? []),

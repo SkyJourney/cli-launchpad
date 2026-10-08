@@ -121,8 +121,9 @@ class WorkspaceContentErrorBoundary extends Component<
   state = { hasError: false, errorMessage: "" };
 
   static getDerivedStateFromError(error: unknown) {
+    // 空值不带文案：占位组件在 error 为空时会显示已本地化的通用描述。
     const message =
-      error instanceof Error ? error.message : String(error ?? "Unknown error");
+      error instanceof Error ? error.message : String(error ?? "");
     return { hasError: true, errorMessage: message.slice(0, 200) };
   }
 

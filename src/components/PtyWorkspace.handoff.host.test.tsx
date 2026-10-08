@@ -46,6 +46,9 @@ import type {
 } from "../lib/tauri";
 import { workspaceContentKey } from "../lib/workspaceContentKey";
 
+// 在 spy 安装之前取得真实实现，供“只吞掉预期日志、其余照常输出”的用例转发。
+const realConsoleError = console.error.bind(console);
+
 let host: WorkspaceHost | undefined;
 let consoleError: MockInstance<typeof console.error>;
 beforeEach(() => {
@@ -109,6 +112,31 @@ function rejectReturnReady(
   if (options.once) spy.mockImplementationOnce(intercept);
   else spy.mockImplementation(intercept);
   return spy;
+}
+
+/** 与 Rust 的 plan 一致：预设只替换树，窗口占有的槽位、文档与 detachedContents 原样带回。 */
+function stubPresetPlan(target: WorkspaceHost) {
+  target.backend.handlers.set(
+    "plan_apply_workspace_layout_preset",
+    (args: { activeLayout: WorkspaceLayoutDocument }) => ({
+      slotStates: args.activeLayout.slots.map((item) => ({
+        instanceId: item.instanceId,
+        state: "running",
+        currentProjectName: item.projectName,
+      })),
+      layout: {
+        ...args.activeLayout,
+        focusedPaneId: "p-empty",
+        tree: {
+          kind: "pane",
+          id: "p-empty",
+          paneNumber: 1,
+          contents: [],
+          activeContent: null,
+        },
+      },
+    }),
+  );
 }
 
 describe("PTY return to the workspace", () => {
@@ -390,28 +418,7 @@ describe("named layouts while a PTY is returning", () => {
     const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
     const attach = deferred<{ sessionId: string; state: string }>();
     terminal.attachHandoff.mockImplementationOnce(() => attach.promise);
-    // 与 Rust 的 plan 一致：预设只替换树，窗口占有的槽位与 detachedContents 原样带回。
-    host.backend.handlers.set(
-      "plan_apply_workspace_layout_preset",
-      (args: { activeLayout: WorkspaceLayoutDocument }) => ({
-        slotStates: args.activeLayout.slots.map((item) => ({
-          instanceId: item.instanceId,
-          state: "running",
-          currentProjectName: item.projectName,
-        })),
-        layout: {
-          ...args.activeLayout,
-          focusedPaneId: "p-empty",
-          tree: {
-            kind: "pane",
-            id: "p-empty",
-            paneNumber: 1,
-            contents: [],
-            activeContent: null,
-          },
-        },
-      }),
-    );
+    stubPresetPlan(host);
     host.backend.handlers.set("create_workspace_layout_preset", () => ({
       id: "n",
       name: "n",
@@ -457,5 +464,98 @@ describe("named layouts while a PTY is returning", () => {
       kind: "pty",
       slotId: slot.instanceId,
     });
+  });
+});
+
+describe("named layouts while a file is detached to a window", () => {
+  it("keeps the detached file and its buffer when a named layout is applied", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host, "a.txt");
+    const content = { kind: "file", documentId: doc.id } as const;
+    await detachFileToWindow(host, doc.id);
+    stubPresetPlan(host);
+    const bufferBefore = host.ctx().fileBuffers[doc.id];
+    expect(bufferBefore).toBeDefined();
+
+    const applied = host.ctx().applyWorkspaceLayoutPreset("p");
+    await act(async () => {
+      await applied;
+    });
+    await flush();
+
+    await expect(applied).resolves.toBeUndefined();
+    // 预设只替换树；窗口占有的文件仍属于窗口，缓冲与文档都不能丢。
+    expect(panesContaining(host, content)).toBe(0);
+    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().fileDocuments.map((item) => item.id)).toContain(doc.id);
+    expect(host.ctx().fileBuffers[doc.id]).toEqual(bufferBefore);
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+    const planCalls = invokes("plan_apply_workspace_layout_preset");
+    const activeLayout = (
+      planCalls[0].args as { activeLayout: WorkspaceLayoutDocument }
+    ).activeLayout;
+    expect(activeLayout.detachedContents).toContainEqual(content);
+  });
+});
+
+describe("layout snapshot failures", () => {
+  it("keeps the workspace mounted and recovers when a snapshot cannot be built", async () => {
+    // 预期内的诊断日志：保留调用记录但不打印；其他 console.error 照常输出。
+    consoleError.mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[workspace.layout_snapshot_invalid]") return;
+      realConsoleError(...args);
+    });
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    await detachPtyToWindow(host, slot.instanceId);
+    await flush(10);
+    // 让窗口占有列表多出一个没有槽位的内容，使快照构造抛 unowned 错误。
+    const listWindowOwned = coordinator.listWindowOwned.bind(coordinator);
+    const ghost = { kind: "pty", slotId: "ghost" } as const;
+    const spy = vi
+      .spyOn(coordinator, "listWindowOwned")
+      .mockImplementation(() => [...listWindowOwned(), ghost]);
+    const savedBefore = host.backend.saved.length;
+    const paneId = listWorkspacePanes(host.ctx().tree)[0].id;
+
+    await act(async () => {
+      host!.ctx().focusPane(paneId);
+      host!.ctx().splitPane(paneId, "horizontal");
+    });
+    await flush(10);
+
+    const invalid = consoleError.mock.calls.filter(
+      ([message]) => message === "[workspace.layout_snapshot_invalid]",
+    );
+    expect(invalid.length).toBeGreaterThanOrEqual(1);
+    expect(host.ctx().layoutSaveError).not.toBeNull();
+    // 非法快照不会被保存，窗口也没有卸载。
+    expect(host.backend.saved).toHaveLength(savedBefore);
+    expect(host.errors).toEqual([]);
+    expect(screen.queryByText("host crashed")).toBeNull();
+    // 这是预期内的诊断日志，清掉后 afterEach 的“从未发生”断言才对其他情形有效。
+    consoleError.mockClear();
+
+    spy.mockRestore();
+    const secondPaneId = listWorkspacePanes(host.ctx().tree)[0].id;
+    await act(async () => {
+      host!.ctx().focusPane(secondPaneId);
+      host!.ctx().splitPane(secondPaneId, "vertical");
+    });
+    await flush(10);
+
+    // 下一次状态变化自愈：保存恢复，错误提示消失。
+    expect(host.backend.saved.length).toBeGreaterThan(savedBefore);
+    expect(host.ctx().layoutSaveError).toBeNull();
+    expect(
+      listWorkspacePanes(
+        host.backend.saved[host.backend.saved.length - 1].layout.tree,
+      ),
+    ).toHaveLength(3);
+    expect(host.errors).toEqual([]);
   });
 });
