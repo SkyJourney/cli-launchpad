@@ -98,6 +98,12 @@ export const ar = {
     confirmDiscard: "تجاهل التغييرات والخروج",
     terminating: "جارٍ الخروج…",
   },
+  appCrash: {
+    title: "حدث خطأ غير متوقع",
+    description:
+      "واجه CLI Launchpad خطأً غير متوقع في هذه النافذة. تؤدي إعادة التحميل إلى إعادة تشغيل النافذة، وقد تُفقد التعديلات غير المحفوظة.",
+    reload: "إعادة تحميل النافذة",
+  },
   windowChrome: {
     titlebar: "شريط عنوان نافذة التطبيق",
     minimize: "تصغير",

@@ -106,6 +106,12 @@ export const pt = {
     confirmDiscard: "Descartar alterações e sair",
     terminating: "Saindo…",
   },
+  appCrash: {
+    title: "Ocorreu um erro inesperado",
+    description:
+      "O CLI Launchpad encontrou um erro inesperado nesta janela. Recarregar reinicia a janela; edições não salvas podem ser perdidas.",
+    reload: "Recarregar janela",
+  },
   windowChrome: {
     titlebar: "Barra de título da janela do aplicativo",
     minimize: "Minimizar",

@@ -108,6 +108,12 @@ export const de = {
     confirmDiscard: "Änderungen verwerfen und schließen",
     terminating: "Wird beendet…",
   },
+  appCrash: {
+    title: "Ein unerwarteter Fehler ist aufgetreten",
+    description:
+      "CLI Launchpad ist in diesem Fenster auf einen unerwarteten Fehler gestoßen. Beim Neuladen wird das Fenster neu gestartet; nicht gespeicherte Änderungen gehen möglicherweise verloren.",
+    reload: "Fenster neu laden",
+  },
   windowChrome: {
     titlebar: "Titelleiste des Anwendungsfensters",
     minimize: "Minimieren",

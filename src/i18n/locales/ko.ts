@@ -100,6 +100,12 @@ export const ko = {
     confirmDiscard: "변경 사항을 버리고 종료",
     terminating: "종료 중…",
   },
+  appCrash: {
+    title: "예기치 않은 오류가 발생했습니다",
+    description:
+      "이 창에서 CLI Launchpad에 예기치 않은 오류가 발생했습니다. 다시 로드하면 창이 다시 시작되며 저장하지 않은 편집 내용은 사라질 수 있습니다.",
+    reload: "창 다시 로드",
+  },
   windowChrome: {
     titlebar: "애플리케이션 창 제목 표시줄",
     minimize: "최소화",

@@ -95,6 +95,12 @@ export const en = {
     confirmDiscard: "Discard changes and quit",
     terminating: "Quitting…",
   },
+  appCrash: {
+    title: "Something went wrong",
+    description:
+      "CLI Launchpad hit an unexpected error in this window. Reloading restarts the window; edits that were not saved may be lost.",
+    reload: "Reload window",
+  },
   windowChrome: {
     titlebar: "Application window title bar",
     minimize: "Minimize",

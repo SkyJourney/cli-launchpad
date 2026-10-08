@@ -87,6 +87,12 @@ export const zh = {
     confirmDiscard: "放弃更改并退出",
     terminating: "正在退出…",
   },
+  appCrash: {
+    title: "出现了意外错误",
+    description:
+      "CLI Launchpad 在此窗口中遇到意外错误。重新加载会重启该窗口，尚未保存的编辑内容可能会丢失。",
+    reload: "重新加载窗口",
+  },
   windowChrome: {
     titlebar: "应用窗口标题栏",
     minimize: "最小化",

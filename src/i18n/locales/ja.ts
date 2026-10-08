@@ -106,6 +106,12 @@ export const ja = {
     confirmDiscard: "変更を破棄して終了",
     terminating: "終了しています…",
   },
+  appCrash: {
+    title: "予期しないエラーが発生しました",
+    description:
+      "このウィンドウで CLI Launchpad に予期しないエラーが発生しました。再読み込みするとウィンドウが再起動され、保存していない編集内容は失われる可能性があります。",
+    reload: "ウィンドウを再読み込み",
+  },
   windowChrome: {
     titlebar: "アプリケーションのタイトルバー",
     minimize: "最小化",

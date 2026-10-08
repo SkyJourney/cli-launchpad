@@ -4561,3 +4561,27 @@ h1 {
     justify-content: flex-start;
   }
 }
+
+.app-crash {
+  align-items: center;
+  background: var(--color-canvas);
+  color: var(--text-body-color);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  text-align: center;
+}
+
+.app-crash h1 {
+  font-size: var(--font-size-body);
+  margin: 0;
+}
+
+.app-crash p {
+  color: var(--text-secondary-color);
+  margin: 0;
+  max-width: 480px;
+}

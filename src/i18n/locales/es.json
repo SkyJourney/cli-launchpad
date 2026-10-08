@@ -87,6 +87,11 @@
     "confirmDiscard": "Descartar cambios y salir",
     "terminating": "Saliendo..."
   },
+  "appCrash": {
+    "title": "Se produjo un error inesperado",
+    "description": "CLI Launchpad encontró un error inesperado en esta ventana. Al recargar, la ventana se reinicia; es posible que se pierdan las ediciones sin guardar.",
+    "reload": "Recargar ventana"
+  },
   "windowChrome": {
     "titlebar": "Barra de título de la ventana de la aplicación",
     "minimize": "Minimizar",
