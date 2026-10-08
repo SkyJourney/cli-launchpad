@@ -1,8 +1,17 @@
 /// <reference types="vite/client" />
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { en } from "../i18n/locales/en";
-import type { LatestVersion, ProjectFileOpenResult } from "./tauri";
+import type {
+  LatestVersion,
+  ProjectFileOpenResult,
+  WorkspaceLayoutDocument,
+  WorkspaceLayoutSaveResult,
+} from "./tauri";
 import { createWorkspaceFileBuffer } from "./workspaceFileBuffer";
+import {
+  createWorkspaceLayoutDocument,
+  WorkspaceLayoutSaveQueue,
+} from "./workspaceLayoutPersistence";
 
 interface FixtureFile {
   schema: number;
@@ -151,5 +160,74 @@ describe("IPC DTO golden fixtures", () => {
         /"[a-z0-9]+_[a-z0-9_]+"\s*:/,
       );
     }
+  });
+
+  it("drives the layout save queue from the Rust-serialized save results", async () => {
+    const result = (name: string) =>
+      fixtureCase(
+        "workspace-layout-save-result.json",
+        name,
+      ) as unknown as WorkspaceLayoutSaveResult;
+    const document: WorkspaceLayoutDocument = createWorkspaceLayoutDocument({
+      tree: {
+        kind: "pane",
+        id: "pane-1",
+        paneNumber: 1,
+        contents: [],
+        activeContent: null,
+      },
+      focusedPaneId: "pane-1",
+      slots: [],
+      documents: [],
+      detachedContents: [],
+    });
+
+    // reason 只能是前端联合类型里声明的两个取值（或缺省）。
+    for (const { value } of fixtureFile("workspace-layout-save-result.json")
+      .cases) {
+      expect([undefined, "stale", "incompatible"]).toContain(value.reason);
+    }
+    expect(result("saved").saved).toBe(true);
+    expect("reason" in result("saved")).toBe(false);
+
+    // saved：只触发 onSaved，不报错。
+    const onSaved = vi.fn();
+    const onError = vi.fn();
+    const savedQueue = new WorkspaceLayoutSaveQueue(
+      2,
+      vi.fn(async () => result("saved")),
+      onError,
+      onSaved,
+    );
+    savedQueue.enqueue(document);
+    await savedQueue.flush();
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+
+    // stale：以返回的 revision 为基准再试一次，随后成功。
+    const staleSave = vi
+      .fn()
+      .mockResolvedValueOnce(result("stale"))
+      .mockResolvedValueOnce(result("saved"));
+    const staleQueue = new WorkspaceLayoutSaveQueue(2, staleSave, onError);
+    staleQueue.enqueue(document);
+    await staleQueue.flush();
+    expect(staleSave).toHaveBeenCalledTimes(2);
+    expect(staleSave.mock.calls[0]?.[0]).toBe(3);
+    expect(staleSave.mock.calls[1]?.[0]).toBe(result("stale").revision + 1);
+    expect(onError).not.toHaveBeenCalled();
+
+    // incompatible：不重试，上报一次 layout.schema_incompatible。
+    const incompatibleSave = vi.fn(async () => result("incompatible"));
+    const incompatibleQueue = new WorkspaceLayoutSaveQueue(
+      2,
+      incompatibleSave,
+      onError,
+    );
+    incompatibleQueue.enqueue(document);
+    await incompatibleQueue.flush();
+    expect(incompatibleSave).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0].code).toBe("layout.schema_incompatible");
   });
 });

@@ -22,7 +22,7 @@ use crate::models::workspace_layout::{
     WorkspaceFileDocument, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
     WorkspaceLayoutSaveRejection, WorkspaceLayoutSaveResult, WorkspaceLayoutSlot,
     WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus, WorkspacePaneContentRef,
-    WorkspaceSlotState, WorkspaceSlotStateKind, WorkspaceSlotTitle,
+    WorkspaceSlotState, WorkspaceSlotStateKind, WorkspaceSlotTitle, WorkspaceSplitDirection,
 };
 use crate::services::file_service::{
     ProjectDirectoryListing, ProjectFileEntry, ProjectFileKind, ProjectFileOpenResult,
@@ -875,6 +875,63 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             session_entry_count: 2,
             newest_entry_at_ms: Some(TIMESTAMP_MS),
         },
+    );
+    sample(
+        &mut cases,
+        name,
+        "statsEmpty",
+        CacheStats {
+            size_bytes: 0,
+            entry_count: 0,
+            session_entry_count: 0,
+            newest_entry_at_ms: None,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: None,
+        type_name: name,
+        cases,
+    });
+
+    // WorkspaceLayoutNode（Pane 与 Split 两种变体）
+    let mut cases = Vec::new();
+    let name = "WorkspaceLayoutNode";
+    let pane = |id: &str, pane_number: u32| WorkspaceLayoutNode::Pane {
+        id: id.to_string(),
+        pane_number,
+        contents: vec![WorkspacePaneContentRef::Pty {
+            slot_id: SLOT_ID.to_string(),
+        }],
+        active_content: None,
+    };
+    sample(&mut cases, name, "pane", pane("pane-1", 1));
+    sample(
+        &mut cases,
+        name,
+        "split",
+        WorkspaceLayoutNode::Split {
+            id: "split-1".to_string(),
+            direction: WorkspaceSplitDirection::Horizontal,
+            ratio: 0.5,
+            first: Box::new(pane("pane-1", 1)),
+            second: Box::new(pane("pane-2", 2)),
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: None,
+        type_name: name,
+        cases,
+    });
+
+    // WorkspaceSlotTitle
+    let mut cases = Vec::new();
+    let name = "WorkspaceSlotTitle";
+    sample(&mut cases, name, "automatic", WorkspaceSlotTitle::Automatic);
+    sample(
+        &mut cases,
+        name,
+        "custom",
+        WorkspaceSlotTitle::Custom("Review".to_string()),
     );
     all.push(DtoSamples {
         fixture_file: None,

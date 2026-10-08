@@ -173,7 +173,7 @@ function permissionIdentifier(entry: PermissionEntry): string {
   return typeof entry === "string" ? entry : entry.identifier;
 }
 
-// 与 src-tauri/src/contracts.rs 的 capability_contract_violations 对插件权限的判定一致。
+// 与 src-tauri/src/contracts/mod.rs 的 capability_contract_violations 对插件权限的判定一致。
 function pluginPermissionViolations(
   kindId: WindowKindId,
   capability: { permissions: PermissionEntry[] },

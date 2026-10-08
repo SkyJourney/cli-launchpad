@@ -113,12 +113,10 @@ fn scan_item(
     }
     let name = text(masked, name_start, name_end);
 
-    // 名称之后第一个 `{`、`;`、`(`：不是 `{` 的（元组结构体、单元结构体）跳过。
-    let mut cursor = name_end;
-    while cursor < masked.len() && !matches!(masked[cursor], '{' | ';' | '(') {
-        cursor += 1;
-    }
-    if masked.get(cursor) != Some(&'{') {
+    // 名称之后（跳过泛型参数与 where 子句）第一个 `{`、`;`、`(`：不是 `{` 的
+    // （元组结构体、单元结构体）跳过。
+    let (cursor, is_brace) = find_body_start(masked, name_end);
+    if !is_brace {
         return cursor;
     }
     let Some(close) = matching(masked, cursor, '{', '}') else {
@@ -173,6 +171,56 @@ fn scan_item(
         }
     }
     close + 1
+}
+
+/// 从类型名之后找条目体的起点：泛型参数 `<...>`（含 `->`）整体跳过，`where` 子句里的圆括号
+/// （如 `F: Fn(u8) -> u8`）也整体跳过；遇到 `{` 返回（位置, true），遇到 `;` 或 where 之前的 `(`
+/// （元组结构体、单元结构体）返回（位置, false）。
+fn find_body_start(masked: &[char], from: usize) -> (usize, bool) {
+    let mut index = from;
+    let mut in_where = false;
+    while index < masked.len() {
+        let current = masked[index];
+        if current == '<' {
+            index = skip_generics(masked, index);
+        } else if is_ident_start(current) {
+            let end = ident_end(masked, index);
+            if text(masked, index, end) == "where" {
+                in_where = true;
+            }
+            index = end;
+        } else if current == '(' && in_where {
+            index = matching(masked, index, '(', ')').map_or(masked.len(), |close| close + 1);
+        } else if matches!(current, '{') {
+            return (index, true);
+        } else if matches!(current, ';' | '(') {
+            return (index, false);
+        } else {
+            index += 1;
+        }
+    }
+    (masked.len(), false)
+}
+
+/// `masked[start]` 是 `<`：返回与之配对的 `>` 之后的位置（`->`、`=>` 里的 `>` 不计）。
+fn skip_generics(masked: &[char], start: usize) -> usize {
+    let mut depth = 0i32;
+    let mut index = start;
+    while index < masked.len() {
+        match masked[index] {
+            '<' => depth += 1,
+            '>' if index > start && matches!(masked[index - 1], '-' | '=') => {}
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return index + 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    masked.len()
 }
 
 /// `[start, end)` 内含 `_` 且没有字段级 `rename`/`skip`/`flatten` 的字段名。
@@ -314,6 +362,14 @@ fn has_assignment(attrs: &str, key: &str, value: &str) -> bool {
                     let expected: Vec<char> = format!("\"{value}\"").chars().collect();
                     if chars.get(quote..quote + expected.len()) == Some(&expected[..]) {
                         return true;
+                    }
+                } else if chars.get(equals) == Some(&'(') {
+                    // `rename_all(serialize = "camelCase", deserialize = "camelCase")` 写法。
+                    if let Some(close) = matching(&chars, equals, '(', ')') {
+                        let inner: String = chars[equals + 1..close].iter().collect();
+                        if has_assignment(&inner, "serialize", value) {
+                            return true;
+                        }
                     }
                 }
             }

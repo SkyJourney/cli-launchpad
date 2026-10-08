@@ -101,9 +101,37 @@ fn strip_rust_comments(source: &str) -> String {
     output
 }
 
+/// `strip_rust_comments` 只处理普通字符串：源码里出现 `'"'` 字符字面量或原始字符串时，
+/// 字符串状态机会错位，所以扫描前先拒绝这两种写法（而不是静默得到错误结果）。
+fn reject_unsupported_literals(source: &str) -> Result<(), String> {
+    if source.contains("'\"'") {
+        return Err("source contains a '\"' character literal".to_string());
+    }
+    let chars: Vec<char> = source.chars().collect();
+    for (index, character) in chars.iter().enumerate() {
+        if *character != 'r'
+            || (index > 0 && (chars[index - 1].is_alphanumeric() || chars[index - 1] == '_'))
+        {
+            continue;
+        }
+        let mut cursor = index + 1;
+        while chars.get(cursor) == Some(&'#') {
+            cursor += 1;
+        }
+        if chars.get(cursor) == Some(&'"') {
+            return Err("source contains a raw string literal".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn parse_handler_commands(source: &str) -> Result<Vec<String>, String> {
+    reject_unsupported_literals(source)?;
     let stripped = strip_rust_comments(source);
     let marker = "generate_handler![";
+    if stripped.matches(marker).count() > 1 {
+        return Err("multiple generate_handler! markers found".to_string());
+    }
     let start = stripped
         .find(marker)
         .ok_or_else(|| "generate_handler! marker not found".to_string())?
@@ -151,12 +179,42 @@ fn parse_handler_commands(source: &str) -> Result<Vec<String>, String> {
 }
 
 fn tauri_command_functions(source: &str) -> Result<Vec<String>, String> {
+    reject_unsupported_literals(source)?;
     let stripped = strip_rust_comments(source);
-    let marker = "#[tauri::command]";
+    // 同时识别 `#[tauri::command]` 与带参数的 `#[tauri::command(rename_all = "snake_case")]`。
+    let marker = "#[tauri::command";
     let mut names = Vec::new();
     let mut rest = stripped.as_str();
     while let Some(position) = rest.find(marker) {
         rest = &rest[position + marker.len()..];
+        if let Some(after) = rest.strip_prefix(']') {
+            rest = after;
+        } else if rest.starts_with('(') {
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, character) in rest.char_indices() {
+                match character {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(offset);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let close =
+                close.ok_or_else(|| "unterminated #[tauri::command(...)] arguments".to_string())?;
+            let after = rest[close + 1..].trim_start();
+            rest = after
+                .strip_prefix(']')
+                .ok_or_else(|| "expected ] after #[tauri::command(...)]".to_string())?;
+        } else {
+            // 例如 `#[tauri::command_x]`：不是命令属性。
+            continue;
+        }
         let mut tail = rest.trim_start();
         while tail.starts_with("#[") {
             let close = tail
@@ -1075,6 +1133,7 @@ fn ipc_dto_variants_serialize_with_camel_case_field_names() {
                 "/latestVersion",
             ],
         ),
+        ("CacheStats", "stats", "statsEmpty", &["/newestEntryAtMs"]),
         (
             "WorkspaceLayoutStateRead",
             "readyFull",
@@ -1165,4 +1224,121 @@ fn golden_fixtures_match_serialized_dtos() {
         })
         .collect();
     assert_eq!(found, expected_files, "目录里的 fixture 与映射表不一致");
+}
+
+#[test]
+fn handler_and_command_scanners_reject_unsupported_shapes() {
+    // 带参数的命令属性同样被识别。
+    assert_eq!(
+        tauri_command_functions(
+            "#[tauri::command(rename_all = \"snake_case\")]
+pub async fn first() {}
+#[tauri::command]
+#[allow(unused)]
+pub fn second() {}"
+        )
+        .expect("parameterized attribute"),
+        vec!["first".to_string(), "second".to_string()]
+    );
+    // 注释里的命令属性不算，名字相近的属性不是命令属性。
+    assert_eq!(
+        tauri_command_functions(
+            "// #[tauri::command]
+// pub fn hidden() {}
+#[tauri::command_x]
+pub fn other() {}
+#[tauri::command]
+pub fn real() {}"
+        )
+        .expect("comments and lookalikes"),
+        vec!["real".to_string()]
+    );
+    // 参数未闭合、属性后不是 pub fn，都必须报错而不是静默跳过。
+    assert!(tauri_command_functions(
+        "#[tauri::command(rename_all = \"x\"
+pub fn a() {}"
+    )
+    .is_err());
+    assert!(tauri_command_functions(
+        "#[tauri::command]
+fn private() {}"
+    )
+    .is_err());
+
+    // 重复的 generate_handler! 标记必须报错（只看第一个会漏掉后面的注册）。
+    assert!(parse_handler_commands(
+        "generate_handler![commands::a::one]
+generate_handler![commands::a::two]"
+    )
+    .is_err());
+
+    // 字符串扫描器的前提被破坏时（字符字面量 '"'、原始字符串）必须报错。
+    assert!(parse_handler_commands(
+        "const Q: char = '\"';
+generate_handler![commands::a::one]"
+    )
+    .is_err());
+    assert!(parse_handler_commands(
+        "const S: &str = r#\"x\"#;
+generate_handler![commands::a::one]"
+    )
+    .is_err());
+    assert!(tauri_command_functions(
+        "const Q: char = '\"';
+#[tauri::command]
+pub fn a() {}"
+    )
+    .is_err());
+    // 普通字符串、以 r 结尾的单词紧跟引号都不是原始字符串。
+    assert!(reject_unsupported_literals("let error = \"for\";").is_ok());
+}
+
+#[test]
+fn serde_lint_handles_generics_where_clauses_and_rename_all_forms() {
+    use serde_lint::scan_serialize_items;
+
+    // 泛型 + where 子句（含 Fn(u8) -> u8）的结构体不能被当成元组结构体漏掉。
+    let generic_struct = r#"#[derive(Serialize)]
+struct S<F> where F: Fn(u8) -> u8 { a_b: F }"#;
+    let found = scan_serialize_items(generic_struct, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "S");
+
+    // 泛型枚举的结构体变体同样要检查。
+    let generic_enum = "#[derive(Serialize)]
+enum E<T> { A { a_b: T } }";
+    let found = scan_serialize_items(generic_enum, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "E::A");
+
+    // 带 where 的元组结构体被跳过，并且后面的条目仍然被扫描到。
+    let tuple_then_struct = r#"#[derive(Serialize)]
+struct T<X>(X) where X: Clone;
+#[derive(Serialize)]
+struct S { a_b: u8 }"#;
+    let found = scan_serialize_items(tuple_then_struct, "fixture.rs");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].item, "S");
+
+    // rename_all(serialize = "camelCase") 的写法与 rename_all = "camelCase" 等价。
+    let nested_form = r#"#[derive(Serialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+struct S { a_b: u8 }"#;
+    assert_eq!(scan_serialize_items(nested_form, "fixture.rs"), Vec::new());
+
+    // 变体级 rename_all 豁免该变体的字段。
+    let variant_level = r#"#[derive(Serialize)]
+enum E { #[serde(rename_all = "camelCase")] A { a_b: u8 } }"#;
+    assert_eq!(
+        scan_serialize_items(variant_level, "fixture.rs"),
+        Vec::new()
+    );
+
+    // skip_serializing_if 不会豁免（字段仍会被序列化）；skip 会。
+    let skip_if = r#"#[derive(Serialize)]
+struct S { #[serde(skip_serializing_if = "Option::is_none")] a_b: Option<u8> }"#;
+    assert_eq!(scan_serialize_items(skip_if, "fixture.rs").len(), 1);
+    let skipped = r#"#[derive(Serialize)]
+struct S { #[serde(skip)] a_b: u8 }"#;
+    assert_eq!(scan_serialize_items(skipped, "fixture.rs"), Vec::new());
 }
