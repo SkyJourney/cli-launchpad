@@ -82,6 +82,8 @@ export const zh = {
     title: "退出 CLI Launchpad？",
     description:
       "还有 {{count}} 个内置终端会话正在运行。退出将结束这些会话及其子进程。",
+    executionTasks:
+      "还有 {{count}} 个安装或更新任务正在运行。退出将中断这些任务。",
     confirm: "结束会话并退出",
     unsavedDescription: "还有 {{count}} 个文件包含未保存的更改：",
     confirmDiscard: "放弃更改并退出",

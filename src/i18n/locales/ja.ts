@@ -101,6 +101,8 @@ export const ja = {
     title: "CLI Launchpad を終了しますか？",
     description:
       "{{count}} 個の埋め込みターミナルセッションが実行中です。終了すると、これらのセッションと子プロセスも終了します。",
+    executionTasks:
+      "インストールまたは更新のタスクが {{count}} 件実行中です。終了すると、これらのタスクは中断されます。",
     confirm: "セッションを終了してアプリを閉じる",
     unsavedDescription: "未保存の変更があるファイル：{{count}} 件",
     confirmDiscard: "変更を破棄して終了",

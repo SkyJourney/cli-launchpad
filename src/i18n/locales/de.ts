@@ -102,6 +102,8 @@ export const de = {
     title: "CLI Launchpad beenden?",
     description:
       "{{count}} eingebettete Terminalsitzungen laufen noch. Beim Beenden werden diese Sitzungen und ihre Kindprozesse beendet.",
+    executionTasks:
+      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Beim Beenden werden sie abgebrochen.",
     confirm: "Sitzungen beenden und schließen",
     unsavedDescription:
       "{{count}} Datei(en) enthalten ungespeicherte Änderungen:",

@@ -95,6 +95,8 @@ export const ko = {
     title: "CLI Launchpad를 종료할까요?",
     description:
       "내장 터미널 세션 {{count}}개가 아직 실행 중입니다. 종료하면 해당 세션과 하위 프로세스가 종료됩니다.",
+    executionTasks:
+      "설치 또는 업데이트 작업 {{count}}개가 아직 실행 중입니다. 종료하면 이 작업이 중단됩니다.",
     confirm: "세션 종료 후 앱 닫기",
     unsavedDescription: "저장되지 않은 변경 사항이 있는 파일 {{count}}개:",
     confirmDiscard: "변경 사항을 버리고 종료",

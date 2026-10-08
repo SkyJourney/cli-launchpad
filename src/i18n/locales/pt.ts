@@ -101,6 +101,8 @@ export const pt = {
     title: "Sair do CLI Launchpad?",
     description:
       "Ao sair, as sessões de terminal incorporado que estiverem em execução ({{count}}) serão encerradas junto com seus processos filhos.",
+    executionTasks:
+      "{{count}} tarefa(s) de instalação ou atualização ainda estão em execução. Ao sair, elas serão interrompidas.",
     confirm: "Encerrar sessões e sair",
     unsavedDescription: "{{count}} arquivo(s) têm alterações não salvas:",
     confirmDiscard: "Descartar alterações e sair",

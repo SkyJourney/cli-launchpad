@@ -67,7 +67,7 @@ import { confirmAppExit } from "./lib/tauri";
 import {
   collectAppExitImpacts,
   shouldExitWithoutPrompt,
-  type AppExitImpacts,
+  type AppExitRequest,
 } from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
@@ -123,6 +123,8 @@ export function App() {
 
 function AppContent() {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  tRef.current = t;
   useWindowLevelBehaviors();
   const { collectExitImpacts, fileDocuments, fileBuffers, detachedFileIds } =
     usePtyWorkspace();
@@ -143,7 +145,7 @@ function AppContent() {
   const scrollPositions = useRef<Partial<Record<ViewName, number>>>({});
   const validatedDirectoryState = useRef(false);
   const { data: directories } = useDirectories();
-  const [exitRequest, setExitRequest] = useState<AppExitImpacts | null>(null);
+  const [exitRequest, setExitRequest] = useState<AppExitRequest | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
   useExecutionTaskEvents();
@@ -151,31 +153,51 @@ function AppContent() {
   useLayoutEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<{ ptyCount: number }>("app-exit-requested", (event) => {
-      setExitError(null);
-      void collectExitImpacts(event.payload.ptyCount)
-        .then(async (impacts) => {
-          if (shouldExitWithoutPrompt(impacts)) {
-            setExitPending(true);
-            await confirmAppExit();
-            return;
-          }
-          setExitRequest(impacts);
-        })
-        .catch((error) => {
-          console.error("Unable to collect application exit impacts", error);
-          const current = exitStateRef.current;
-          setExitRequest(
-            collectAppExitImpacts({
-              ptyCount: event.payload.ptyCount,
-              documents: current.fileDocuments,
-              buffers: current.fileBuffers,
-              uncertainDocumentIds: current.detachedFileIds,
-            }),
-          );
-          setExitError(formatAppError(error, t));
-        });
-    })
+    void listen<{ ptyCount: number; executionTaskCount?: number }>(
+      "app-exit-requested",
+      (event) => {
+        setExitError(null);
+        const executionTaskCount = Math.max(
+          0,
+          event.payload.executionTaskCount ?? 0,
+        );
+        void collectExitImpacts(event.payload.ptyCount)
+          .then(async (collected) => {
+            const impacts: AppExitRequest = {
+              ...collected,
+              executionTaskCount,
+            };
+            if (shouldExitWithoutPrompt(impacts)) {
+              setExitPending(true);
+              try {
+                await confirmAppExit();
+              } catch (error) {
+                // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
+                // 不能停在“终止中”让两个按钮都被禁用。
+                setExitPending(false);
+                setExitRequest(impacts);
+                setExitError(formatAppError(error, tRef.current));
+              }
+              return;
+            }
+            setExitRequest(impacts);
+          })
+          .catch((error) => {
+            console.error("Unable to collect application exit impacts", error);
+            const current = exitStateRef.current;
+            setExitRequest({
+              ...collectAppExitImpacts({
+                ptyCount: event.payload.ptyCount,
+                documents: current.fileDocuments,
+                buffers: current.fileBuffers,
+                uncertainDocumentIds: current.detachedFileIds,
+              }),
+              executionTaskCount,
+            });
+            setExitError(formatAppError(error, tRef.current));
+          });
+      },
+    )
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
@@ -338,6 +360,13 @@ function AppContent() {
             <h2>{t("appExit.title")}</h2>
             {exitRequest.ptyCount > 0 && (
               <p>{t("appExit.description", { count: exitRequest.ptyCount })}</p>
+            )}
+            {exitRequest.executionTaskCount > 0 && (
+              <p>
+                {t("appExit.executionTasks", {
+                  count: exitRequest.executionTaskCount,
+                })}
+              </p>
             )}
             {exitRequest.dirtyFiles.length > 0 && (
               <>

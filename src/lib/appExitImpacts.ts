@@ -6,8 +6,19 @@ export interface AppExitImpacts {
   dirtyFiles: Array<{ documentId: string; relativePath: string }>;
 }
 
-export function shouldExitWithoutPrompt(impacts: AppExitImpacts): boolean {
-  return impacts.ptyCount === 0 && impacts.dirtyFiles.length === 0;
+/** 退出对话框使用的请求：在退出影响之上附带 Rust 计算的活动执行任务数。 */
+export interface AppExitRequest extends AppExitImpacts {
+  executionTaskCount: number;
+}
+
+export function shouldExitWithoutPrompt(
+  impacts: AppExitImpacts & { executionTaskCount?: number },
+): boolean {
+  return (
+    impacts.ptyCount === 0 &&
+    impacts.dirtyFiles.length === 0 &&
+    (impacts.executionTaskCount ?? 0) === 0
+  );
 }
 
 export function collectAppExitImpacts(args: {

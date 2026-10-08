@@ -100,6 +100,8 @@ export const fr = {
     title: "Quitter CLI Launchpad ?",
     description:
       "{{count}} session(s) de terminal intégrées sont toujours en cours. Quitter mettra fin à ces sessions et à leurs processus enfants.",
+    executionTasks:
+      "{{count}} tâche(s) d'installation ou de mise à jour sont encore en cours. Quitter les interrompra.",
     confirm: "Terminer les sessions et quitter",
     unsavedDescription:
       "{{count}} fichier(s) contiennent des modifications non enregistrées :",

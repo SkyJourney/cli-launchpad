@@ -90,6 +90,8 @@ export const en = {
     title: "Quit CLI Launchpad?",
     description:
       "{{count}} embedded terminal session(s) are still running. Quitting will end these sessions and their child processes.",
+    executionTasks:
+      "{{count}} install or update task(s) are still running. Quitting will stop them.",
     confirm: "End sessions and quit",
     unsavedDescription: "{{count}} file(s) have unsaved changes:",
     confirmDiscard: "Discard changes and quit",
