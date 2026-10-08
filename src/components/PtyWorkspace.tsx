@@ -517,7 +517,7 @@ export function PtyWorkspaceProvider({
       new WorkspaceLayoutSaveQueue(
         revision,
         saveWorkspaceLayout,
-        (reason) => setLayoutSaveError(formatAppError(reason, t)),
+        (reason) => setLayoutSaveError(formatAppError(reason, tRef.current)),
         () => setLayoutSaveError(null),
       ),
     [],
@@ -578,7 +578,7 @@ export function PtyWorkspaceProvider({
 
       if (read.status.status === "ready") {
         if (!read.layout) {
-          throw new Error(t("pty.layoutDataMissing"));
+          throw new Error(tRef.current("pty.layoutDataMissing"));
         }
         const restored = rehomeDetachedWorkspaceContents(
           restoreWorkspaceRuntimeSnapshot(read.layout),
@@ -614,7 +614,7 @@ export function PtyWorkspaceProvider({
               "detachCancelled",
               pending.token,
             );
-            pending.reject(new Error(t("pty.detachedStateChanged")));
+            pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
             void pending.window.destroy().catch(() => undefined);
           },
         );
@@ -626,7 +626,7 @@ export function PtyWorkspaceProvider({
               "detachCancelled",
               pending.token,
             );
-            pending.reject(new Error(t("pty.detachedStateChanged")));
+            pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
             void pending.window.destroy().catch(() => undefined);
           },
         );
@@ -644,10 +644,10 @@ export function PtyWorkspaceProvider({
         setHydrationStatus("needsReset");
         return;
       }
-      setHydrationError(formatAppError(reason, t));
+      setHydrationError(formatAppError(reason, tRef.current));
       setHydrationStatus("loadFailed");
     }
-  }, [createSaveQueue, t]);
+  }, [createSaveQueue]);
 
   useEffect(() => {
     void hydrateWorkspace();
@@ -733,7 +733,7 @@ export function PtyWorkspaceProvider({
       setLayoutSaveError(null);
       setHydrationStatus("ready");
     } catch (reason) {
-      setLayoutResetError(formatAppError(reason, t));
+      setLayoutResetError(formatAppError(reason, tRef.current));
       throw reason;
     } finally {
       setLayoutResetPending(false);
@@ -785,7 +785,7 @@ export function PtyWorkspaceProvider({
           detachedContents: contentCoordinatorRef.current.listWindowOwned(),
         })
       ) {
-        throw new Error(t("pty.layoutChangedDuringApply"));
+        throw new Error(tRef.current("pty.layoutChangedDuringApply"));
       }
       const restored = restoreWorkspaceLayoutApplyPlan(plan);
       const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
@@ -841,7 +841,7 @@ export function PtyWorkspaceProvider({
       setTree(restoredTree);
       setFocusedPaneId(restored.focusedPaneId);
     },
-    [directories, t],
+    [directories],
   );
 
   const commitTree = useCallback((next: WorkspaceNode) => {
@@ -1139,13 +1139,13 @@ export function PtyWorkspaceProvider({
               fileBuffersRef.current = next;
               setFileBuffers(next);
             }
-            toast.error(t("workspaceFiles.projectIdentityChanged"));
+            toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
           }
-          toast.error(formatAppError(reason, t));
+          toast.error(formatAppError(reason, tRef.current));
         }
       }),
-    [t],
+    [],
   );
 
   const saveFile = useCallback(
@@ -1224,9 +1224,9 @@ export function PtyWorkspaceProvider({
             };
             fileBuffersRef.current = next;
             setFileBuffers(next);
-            toast.error(t("workspaceFiles.saveConflict"), {
+            toast.error(tRef.current("workspaceFiles.saveConflict"), {
               action: {
-                label: t("workspaceFiles.reload"),
+                label: tRef.current("workspaceFiles.reload"),
                 onClick: () => void reloadFile(documentId),
               },
             });
@@ -1241,7 +1241,9 @@ export function PtyWorkspaceProvider({
           fileBuffersRef.current = next;
           setFileBuffers(next);
           if (result.warning === "permissionsNotRestored") {
-            toast.warning(t("workspaceFiles.permissionsNotRestored"));
+            toast.warning(
+              tRef.current("workspaceFiles.permissionsNotRestored"),
+            );
           }
         } catch (reason) {
           if (saveCommitDisposition() === "discard-result") return;
@@ -1254,7 +1256,7 @@ export function PtyWorkspaceProvider({
             };
             fileBuffersRef.current = next;
             setFileBuffers(next);
-            toast.error(t("workspaceFiles.projectIdentityChanged"));
+            toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
           }
           const next = {
@@ -1263,10 +1265,10 @@ export function PtyWorkspaceProvider({
           };
           fileBuffersRef.current = next;
           setFileBuffers(next);
-          toast.error(formatAppError(reason, t));
+          toast.error(formatAppError(reason, tRef.current));
         }
       }),
-    [reloadFile, t],
+    [reloadFile],
   );
 
   const detachFile = useCallback(
@@ -1281,7 +1283,8 @@ export function PtyWorkspaceProvider({
       const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
         hasWorkspaceContent(pane, content),
       );
-      if (!sourcePane) throw new Error(t("workspaceFiles.loadingFile"));
+      if (!sourcePane)
+        throw new Error(tRef.current("workspaceFiles.loadingFile"));
       const token = crypto.randomUUID();
       const windowLabel = createWindowLabel("workspaceContent");
       let grantedWindowLabel: string | undefined;
@@ -1294,7 +1297,7 @@ export function PtyWorkspaceProvider({
           token,
         );
         if (lifecycle?.outcome !== "changed") {
-          throw new Error(t("pty.detachedMoveUnavailable"));
+          throw new Error(tRef.current("pty.detachedMoveUnavailable"));
         }
         lifecycleStarted = true;
         grantedWindowLabel = windowLabel;
@@ -1305,7 +1308,7 @@ export function PtyWorkspaceProvider({
           (document) => document.id === documentId,
         );
         if (!fileDocument || !fileBuffer || fileBuffer.saving) {
-          throw new Error(t("workspaceFiles.loadingFile"));
+          throw new Error(tRef.current("workspaceFiles.loadingFile"));
         }
         await grantContentWindowFile(
           windowLabel,
@@ -1334,14 +1337,14 @@ export function PtyWorkspaceProvider({
               windowLabel,
             );
             if (!pending) return;
-            reject(new Error(formatAppError(reason, t)));
+            reject(new Error(formatAppError(reason, tRef.current)));
           };
           const cleanupCreationErrorListener = retainAsyncUnlisten(
             () =>
               child.once("tauri://error", (event) => {
                 failCreation(
                   event.payload == null
-                    ? t("pty.detachedCreateFailed")
+                    ? tRef.current("pty.detachedCreateFailed")
                     : event.payload,
                 );
               }),
@@ -1353,7 +1356,7 @@ export function PtyWorkspaceProvider({
             timeoutMs: WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
             onTimeout: () => {
               void child.destroy().catch(() => undefined);
-              reject(new Error(t("pty.detachedStartTimedOut")));
+              reject(new Error(tRef.current("pty.detachedStartTimedOut")));
             },
             record: {
               documentId,
@@ -1388,7 +1391,7 @@ export function PtyWorkspaceProvider({
         throw reason;
       }
     },
-    [loadFile, t],
+    [loadFile],
   );
 
   const registerPortalTarget = useCallback(
@@ -1724,13 +1727,15 @@ export function PtyWorkspaceProvider({
         (outcome) => outcome.result === "cancelled",
       ).length;
       if (pendingCount > 0) {
-        toast.info(t("pty.closePending", { count: pendingCount }));
+        toast.info(tRef.current("pty.closePending", { count: pendingCount }));
       }
       if (failedCount > 0) {
-        toast.error(t("pty.closeFailedMany", { count: failedCount }));
+        toast.error(
+          tRef.current("pty.closeFailedMany", { count: failedCount }),
+        );
       }
     },
-    [commitTree, confirmCloseImpacts, directories, removeSlot, t],
+    [commitTree, confirmCloseImpacts, directories, removeSlot],
   );
 
   const launchSession = useCallback(
@@ -1738,7 +1743,7 @@ export function PtyWorkspaceProvider({
       if (backupRestoreInProgressRef.current) return;
       const directory = directories?.find((entry) => entry.id === directoryId);
       if (!directory) {
-        toast.error(t("pty.projectUnavailable"));
+        toast.error(tRef.current("pty.projectUnavailable"));
         return;
       }
       const currentSlots = slotsRef.current;
@@ -1774,7 +1779,7 @@ export function PtyWorkspaceProvider({
       );
       setFocusedPane(targetPane.id);
     },
-    [commitTree, directories, setFocusedPane, t],
+    [commitTree, directories, setFocusedPane],
   );
 
   const activateSession = useCallback(
@@ -2004,14 +2009,14 @@ export function PtyWorkspaceProvider({
           await rollbackWorkspaceContentHandoff(
             pending.handoffContext,
             pending.handoffPayload,
-            new Error(t("pty.detachedStateChanged")),
+            new Error(tRef.current("pty.detachedStateChanged")),
           ).catch(() => undefined);
           takePendingWorkspaceContentWindow(
             pendingDetachedRef.current,
             workspacePtyKey(pending.instanceId),
             pending.windowLabel,
           );
-          pending.reject(new Error(t("pty.detachedStateChanged")));
+          pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
           return;
         }
         const promoted = takePendingWorkspaceContentWindow(
@@ -2052,7 +2057,7 @@ export function PtyWorkspaceProvider({
           "detachFailed",
           pending.token,
         );
-        pending.reject(new Error(t("pty.detachedStartFailed")));
+        pending.reject(new Error(tRef.current("pty.detachedStartFailed")));
         removeSlot(pending.instanceId);
         return;
       }
@@ -2060,7 +2065,7 @@ export function PtyWorkspaceProvider({
       await rollbackWorkspaceContentHandoff(
         pending.handoffContext,
         pending.handoffPayload,
-        new Error(t("pty.detachedStartTimedOut")),
+        new Error(tRef.current("pty.detachedStartTimedOut")),
       ).catch(() => undefined);
       contentCoordinatorRef.current.failHandoff(
         { kind: "pty", slotId: pending.instanceId },
@@ -2068,9 +2073,9 @@ export function PtyWorkspaceProvider({
         pending.token,
       );
       void pending.window.destroy().catch(() => undefined);
-      pending.reject(new Error(t("pty.detachedStartTimedOut")));
+      pending.reject(new Error(tRef.current("pty.detachedStartTimedOut")));
     },
-    [commitTree, removeSlot, setFocusedPane, t],
+    [commitTree, removeSlot, setFocusedPane],
   );
 
   const detachSession = useCallback(
@@ -2084,20 +2089,21 @@ export function PtyWorkspaceProvider({
         !sessionId ||
         detachedByInstanceRef.current.has(workspacePtyKey(instanceId))
       ) {
-        throw new Error(t("pty.detachedMoveUnavailable"));
+        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
       }
       const currentSession = useAppStore.getState().ptySessionsById[sessionId];
       if (currentSession?.state !== "running") {
-        throw new Error(t("pty.detachedMoveNotRunning"));
+        throw new Error(tRef.current("pty.detachedMoveNotRunning"));
       }
       const terminal = terminalRefs.current.get(instanceId);
-      if (!terminal) throw new Error(t("pty.terminalNotReady"));
+      if (!terminal) throw new Error(tRef.current("pty.terminalNotReady"));
 
       const windowLabel = createWindowLabel("terminal");
       const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
         hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
       );
-      if (!sourcePane) throw new Error(t("pty.detachedMoveUnavailable"));
+      if (!sourcePane)
+        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
       const content = { kind: "pty", slotId: instanceId } as const;
       const source = {
         kind: "pane",
@@ -2110,7 +2116,7 @@ export function PtyWorkspaceProvider({
         source,
       );
       if (ownerState.phase !== "attached") {
-        throw new Error(t("pty.terminating"));
+        throw new Error(tRef.current("pty.terminating"));
       }
       let driverContext: WorkspaceContentHandoffHookContext<"pty"> = {
         content,
@@ -2140,9 +2146,9 @@ export function PtyWorkspaceProvider({
         await rollbackWorkspaceContentHandoff(
           driverContext,
           prepared.payload,
-          new Error(t("pty.detachedMoveUnavailable")),
+          new Error(tRef.current("pty.detachedMoveUnavailable")),
         ).catch(() => undefined);
-        throw new Error(t("pty.detachedMoveUnavailable"));
+        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
       }
       const detachedRecord = { instanceId, sessionId, windowLabel };
       const title = presentWorkspaceContent(
@@ -2173,14 +2179,14 @@ export function PtyWorkspaceProvider({
               windowLabel,
             );
             if (!pending) return;
-            reject(new Error(formatAppError(reason, t)));
+            reject(new Error(formatAppError(reason, tRef.current)));
           };
           const cleanupCreationErrorListener = retainAsyncUnlisten(
             () =>
               child.once("tauri://error", (event) => {
                 failCreation(
                   event.payload == null
-                    ? t("pty.detachedCreateFailed")
+                    ? tRef.current("pty.detachedCreateFailed")
                     : event.payload,
                 );
               }),
@@ -2219,7 +2225,7 @@ export function PtyWorkspaceProvider({
         throw reason;
       }
     },
-    [directories, reconcileTimedOutDetach, t, terminalRefs],
+    [directories, reconcileTimedOutDetach, terminalRefs],
   );
 
   const handleDetachedReady = useCallback(
@@ -2239,14 +2245,14 @@ export function PtyWorkspaceProvider({
         void rollbackWorkspaceContentHandoff(
           pending.handoffContext,
           pending.handoffPayload,
-          new Error(t("pty.detachedStateChanged")),
+          new Error(tRef.current("pty.detachedStateChanged")),
         ).catch(() => undefined);
         takePendingWorkspaceContentWindow(
           pendingDetachedRef.current,
           workspacePtyKey(payload.instanceId),
           pending.windowLabel,
         );
-        pending.reject(new Error(t("pty.detachedStateChanged")));
+        pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
         void pending.window.destroy().catch(() => undefined);
         return;
       }
@@ -2268,7 +2274,7 @@ export function PtyWorkspaceProvider({
       }
       pending.resolve();
     },
-    [commitTree, setFocusedPane, t],
+    [commitTree, setFocusedPane],
   );
 
   const handleDetachedFailed = useCallback(
@@ -2280,7 +2286,7 @@ export function PtyWorkspaceProvider({
       void rollbackWorkspaceContentHandoff(
         pending.handoffContext,
         pending.handoffPayload,
-        new Error(payload.message || t("pty.detachedStartFailed")),
+        new Error(payload.message || tRef.current("pty.detachedStartFailed")),
       ).catch(() => undefined);
       contentCoordinatorRef.current.failHandoff(
         { kind: "pty", slotId: payload.instanceId },
@@ -2293,11 +2299,11 @@ export function PtyWorkspaceProvider({
         pending.windowLabel,
       );
       pending.reject(
-        new Error(payload.message || t("pty.detachedStartFailed")),
+        new Error(payload.message || tRef.current("pty.detachedStartFailed")),
       );
       void pending.window.destroy().catch(() => undefined);
     },
-    [t],
+    [],
   );
 
   const handlePtySessionOwnerLost = useCallback(
@@ -2323,7 +2329,7 @@ export function PtyWorkspaceProvider({
               pendingDetachedRef.current,
               workspacePtyKey(slot.instanceId),
             );
-            pending?.reject(new Error(t("pty.detachedStartFailed")));
+            pending?.reject(new Error(tRef.current("pty.detachedStartFailed")));
             removeSlot(slot.instanceId);
             return;
           }
@@ -2349,7 +2355,7 @@ export function PtyWorkspaceProvider({
           pendingDetachedRef.current,
           workspacePtyKey(slot.instanceId),
         );
-        pending?.reject(new Error(t("pty.detachedStartTimedOut")));
+        pending?.reject(new Error(tRef.current("pty.detachedStartTimedOut")));
         const detached = detachedByInstanceRef.current.get(
           workspacePtyKey(slot.instanceId),
         );
@@ -2374,7 +2380,7 @@ export function PtyWorkspaceProvider({
 
       await attemptReattach(0);
     },
-    [commitTree, removeSlot, setFocusedPane, t, terminalRefs],
+    [commitTree, removeSlot, setFocusedPane, terminalRefs],
   );
 
   const handlePtyReturnRequest = useCallback(
@@ -2399,14 +2405,14 @@ export function PtyWorkspaceProvider({
       const knownWindowLabel =
         ownerWindowOf(currentOwnership)?.windowLabel ?? null;
       if (knownWindowLabel && knownWindowLabel !== payload.windowLabel) {
-        fail(t("pty.detachedSessionMissing"));
+        fail(tRef.current("pty.detachedSessionMissing"));
         return;
       }
       if (
         !knownWindowLabel &&
         windowKindOf(payload.windowLabel) !== "terminal"
       ) {
-        fail(t("pty.detachedSessionMissing"));
+        fail(tRef.current("pty.detachedSessionMissing"));
         return;
       }
       let detachedWindow = detachedByInstanceRef.current.get(key);
@@ -2417,18 +2423,22 @@ export function PtyWorkspaceProvider({
             WebviewWindow.getByLabel(payload.windowLabel),
           ]);
           if (windowStatus !== "ownedByAnotherWindow" || !detachedWindow) {
-            fail(t("pty.detachedStateChanged"));
+            fail(tRef.current("pty.detachedStateChanged"));
             return;
           }
           detachedByInstanceRef.current.set(key, detachedWindow);
         } catch (reason) {
-          fail(t("pty.returnFailed", { error: formatAppError(reason, t) }));
+          fail(
+            tRef.current("pty.returnFailed", {
+              error: formatAppError(reason, tRef.current),
+            }),
+          );
           return;
         }
       }
       detachedWindow ??= detachedByInstanceRef.current.get(key);
       if (!detachedWindow) {
-        fail(t("pty.detachedStateChanged"));
+        fail(tRef.current("pty.detachedStateChanged"));
         return;
       }
       if (
@@ -2464,7 +2474,7 @@ export function PtyWorkspaceProvider({
         payload.targetPaneId,
       );
       if (returning?.outcome !== "changed") {
-        fail(t("pty.detachedStateChanged"));
+        fail(tRef.current("pty.detachedStateChanged"));
         return;
       }
       const failPendingReturn = (message: string) => {
@@ -2506,11 +2516,11 @@ export function PtyWorkspaceProvider({
         }
         if (waitAbortController.signal.aborted) return;
         if (!slot || !terminal || hydrationStatusRef.current !== "ready") {
-          failPendingReturn(t("pty.workspaceRestoring"));
+          failPendingReturn(tRef.current("pty.workspaceRestoring"));
           return;
         }
         if (slot.sessionId !== payload.sessionId) {
-          failPendingReturn(t("pty.detachedSessionMissing"));
+          failPendingReturn(tRef.current("pty.detachedSessionMissing"));
           return;
         }
         const currentTree = treeRef.current;
@@ -2520,7 +2530,7 @@ export function PtyWorkspaceProvider({
           findWorkspacePane(currentTree, focusedPaneIdRef.current) ||
           listWorkspacePanes(currentTree)[0];
         if (!targetPane) {
-          failPendingReturn(t("pty.workspaceRestoring"));
+          failPendingReturn(tRef.current("pty.workspaceRestoring"));
           return;
         }
         returnDriverContext = {
@@ -2554,7 +2564,7 @@ export function PtyWorkspaceProvider({
           activeReturn?.phase !== "returning" ||
           activeReturn.transferId !== payload.token
         ) {
-          throw new Error(t("pty.detachedStateChanged"));
+          throw new Error(tRef.current("pty.detachedStateChanged"));
         }
         const existingPane = listWorkspacePanes(currentTree).find((pane) =>
           hasWorkspaceContent(pane, {
@@ -2581,7 +2591,7 @@ export function PtyWorkspaceProvider({
           payload.token,
         );
         if (ownership?.outcome !== "changed") {
-          throw new Error(t("pty.detachedStateChanged"));
+          throw new Error(tRef.current("pty.detachedStateChanged"));
         }
         try {
           await detachedWindow.destroy();
@@ -2604,10 +2614,10 @@ export function PtyWorkspaceProvider({
             reason,
           ).catch(() => undefined);
         }
-        failPendingReturn(formatAppError(reason, t));
+        failPendingReturn(formatAppError(reason, tRef.current));
       }
     },
-    [commitTree, setFocusedPane, t, terminalRefs],
+    [commitTree, setFocusedPane, terminalRefs],
   );
 
   useEffect(() => {
@@ -2635,7 +2645,7 @@ export function PtyWorkspaceProvider({
             void rollbackWorkspaceContentHandoff(
               pending.handoffContext,
               pending.handoffPayload,
-              new Error(t("pty.detachedExitedBeforeReady")),
+              new Error(tRef.current("pty.detachedExitedBeforeReady")),
             ).catch(() => undefined);
             contentCoordinatorRef.current.failHandoff(
               { kind: "pty", slotId: event.payload.instanceId },
@@ -2647,7 +2657,9 @@ export function PtyWorkspaceProvider({
               workspacePtyKey(event.payload.instanceId),
               pending.windowLabel,
             );
-            pending.reject(new Error(t("pty.detachedExitedBeforeReady")));
+            pending.reject(
+              new Error(tRef.current("pty.detachedExitedBeforeReady")),
+            );
             void pending.window.destroy().catch(() => undefined);
             removeSlot(event.payload.instanceId);
             return;
@@ -2692,7 +2704,6 @@ export function PtyWorkspaceProvider({
     handlePtyReturnRequest,
     handlePtySessionOwnerLost,
     removeSlot,
-    t,
   ]);
 
   useEffect(() => {
@@ -2737,7 +2748,9 @@ export function PtyWorkspaceProvider({
                       );
                       const buffer = fileBuffersRef.current[pending.documentId];
                       if (!document || !buffer) {
-                        throw new Error(t("workspaceFiles.loadingFile"));
+                        throw new Error(
+                          tRef.current("workspaceFiles.loadingFile"),
+                        );
                       }
                       return { document, buffer };
                     },
@@ -2768,7 +2781,7 @@ export function PtyWorkspaceProvider({
                   workspaceFileKey(pending.documentId),
                   pending.windowLabel,
                 );
-                pending.reject(new Error(formatAppError(reason, t)));
+                pending.reject(new Error(formatAppError(reason, tRef.current)));
                 void pending.window.destroy().catch(() => undefined);
                 return;
               }
@@ -2811,7 +2824,7 @@ export function PtyWorkspaceProvider({
                   void rollbackWorkspaceContentHandoff(
                     pending.handoffContext,
                     pending.handoffPayload,
-                    new Error(t("pty.detachedStateChanged")),
+                    new Error(tRef.current("pty.detachedStateChanged")),
                   ).catch(() => undefined);
                 }
                 takePendingWorkspaceContentWindow(
@@ -2819,7 +2832,9 @@ export function PtyWorkspaceProvider({
                   workspaceFileKey(pending.documentId),
                   pending.windowLabel,
                 );
-                pending.reject(new Error(t("pty.detachedStateChanged")));
+                pending.reject(
+                  new Error(tRef.current("pty.detachedStateChanged")),
+                );
                 void pending.window.destroy().catch(() => undefined);
                 return;
               }
@@ -2857,7 +2872,8 @@ export function PtyWorkspaceProvider({
                   pending.handoffContext,
                   pending.handoffPayload,
                   new Error(
-                    event.payload.message ?? t("pty.detachedStartFailed"),
+                    event.payload.message ??
+                      tRef.current("pty.detachedStartFailed"),
                   ),
                 ).catch(() => undefined);
               }
@@ -2873,7 +2889,8 @@ export function PtyWorkspaceProvider({
               );
               pending.reject(
                 new Error(
-                  event.payload.message ?? t("pty.detachedStartFailed"),
+                  event.payload.message ??
+                    tRef.current("pty.detachedStartFailed"),
                 ),
               );
               void pending.window.destroy().catch(() => undefined);
@@ -2937,8 +2954,8 @@ export function PtyWorkspaceProvider({
                   {
                     documentId: event.payload.documentId,
                     token: event.payload.token,
-                    message: t("pty.returnFailed", {
-                      error: t("pty.workspaceRestoring"),
+                    message: tRef.current("pty.returnFailed", {
+                      error: tRef.current("pty.workspaceRestoring"),
                     }),
                   },
                 ).catch(() => undefined);
@@ -2970,8 +2987,8 @@ export function PtyWorkspaceProvider({
                   {
                     documentId: event.payload.documentId,
                     token: event.payload.token,
-                    message: t("pty.returnFailed", {
-                      error: t("pty.workspaceRestoring"),
+                    message: tRef.current("pty.returnFailed", {
+                      error: tRef.current("pty.workspaceRestoring"),
                     }),
                   },
                 ).catch(() => undefined);
@@ -2997,8 +3014,8 @@ export function PtyWorkspaceProvider({
                     {
                       documentId: event.payload.documentId,
                       token: event.payload.token,
-                      message: t("pty.returnFailed", {
-                        error: t("pty.detachedStateChanged"),
+                      message: tRef.current("pty.returnFailed", {
+                        error: tRef.current("pty.detachedStateChanged"),
                       }),
                     },
                   ).catch(() => undefined);
@@ -3044,8 +3061,8 @@ export function PtyWorkspaceProvider({
                   {
                     documentId: event.payload.documentId,
                     token: event.payload.token,
-                    message: t("pty.returnFailed", {
-                      error: t("pty.detachedStateChanged"),
+                    message: tRef.current("pty.returnFailed", {
+                      error: tRef.current("pty.detachedStateChanged"),
                     }),
                   },
                 ).catch(() => undefined);
@@ -3065,8 +3082,8 @@ export function PtyWorkspaceProvider({
                   {
                     documentId: event.payload.documentId,
                     token: event.payload.token,
-                    message: t("pty.returnFailed", {
-                      error: t("pty.detachedStateChanged"),
+                    message: tRef.current("pty.returnFailed", {
+                      error: tRef.current("pty.detachedStateChanged"),
                     }),
                   },
                 ).catch(() => undefined);
@@ -3102,7 +3119,8 @@ export function PtyWorkspaceProvider({
                   treeRef.current,
                   focusedPaneIdRef.current,
                 );
-                if (!targetPane) throw new Error(t("pty.workspaceRestoring"));
+                if (!targetPane)
+                  throw new Error(tRef.current("pty.workspaceRestoring"));
                 fileReturnDriverContext = {
                   content,
                   source: {
@@ -3144,7 +3162,7 @@ export function PtyWorkspaceProvider({
                   activeReturn?.phase !== "returning" ||
                   activeReturn.transferId !== event.payload.token
                 ) {
-                  throw new Error(t("pty.detachedStateChanged"));
+                  throw new Error(tRef.current("pty.detachedStateChanged"));
                 }
                 const nextTree = executeWorkspaceCommand(treeRef.current, {
                   type: "return",
@@ -3170,8 +3188,8 @@ export function PtyWorkspaceProvider({
                     {
                       documentId: document.id,
                       token: event.payload.token,
-                      message: t("pty.returnFailed", {
-                        error: t("pty.detachedStateChanged"),
+                      message: tRef.current("pty.returnFailed", {
+                        error: tRef.current("pty.detachedStateChanged"),
                       }),
                     },
                   ).catch(() => undefined);
@@ -3212,8 +3230,8 @@ export function PtyWorkspaceProvider({
                   {
                     documentId: event.payload.documentId,
                     token: event.payload.token,
-                    message: t("pty.returnFailed", {
-                      error: formatAppError(reason, t),
+                    message: tRef.current("pty.returnFailed", {
+                      error: formatAppError(reason, tRef.current),
                     }),
                   },
                 ).catch(() => undefined);
@@ -3235,7 +3253,7 @@ export function PtyWorkspaceProvider({
       disposed = true;
       unlisten();
     };
-  }, [commitTree, setFocusedPane, t]);
+  }, [commitTree, setFocusedPane]);
 
   const closeEmptyPane = useCallback(
     (paneId: string) => {

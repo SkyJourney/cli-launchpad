@@ -50,6 +50,8 @@ export function StandaloneWorkspaceFileWindow({
   sourcePaneId: string;
 }) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  tRef.current = t;
   const [fileDocument, setFileDocument] = useState<WorkspaceFileDocument>();
   const [fileBuffer, setFileBuffer] = useState<WorkspaceFileBuffer>();
   const [returning, setReturning] = useState(false);
@@ -120,14 +122,14 @@ export function StandaloneWorkspaceFileWindow({
       } catch (reason) {
         returningRef.current = false;
         setReturning(false);
-        setError(formatAppError(reason, t));
+        setError(formatAppError(reason, tRef.current));
         return;
       }
       const buffer = currentBufferRef.current;
       if (!buffer || buffer.saving) {
         returningRef.current = false;
         setReturning(false);
-        setError(t("workspaceFiles.loadingFile"));
+        setError(tRef.current("workspaceFiles.loadingFile"));
         return;
       }
       if (returnTimeoutRef.current !== null) {
@@ -137,7 +139,11 @@ export function StandaloneWorkspaceFileWindow({
         returnTimeoutRef.current = null;
         returningRef.current = false;
         setReturning(false);
-        setError(t("pty.returnFailed", { error: t("pty.returnTimedOut") }));
+        setError(
+          tRef.current("pty.returnFailed", {
+            error: tRef.current("pty.returnTimedOut"),
+          }),
+        );
       }, WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS);
       await emitWorkspaceContentWindowEvent(
         "main",
@@ -157,10 +163,10 @@ export function StandaloneWorkspaceFileWindow({
         }
         returningRef.current = false;
         setReturning(false);
-        setError(formatAppError(reason, t));
+        setError(formatAppError(reason, tRef.current));
       });
     },
-    [documentId, fileDocument, t, token],
+    [documentId, fileDocument, token],
   );
   const requestReturnRef = useRef(requestReturn);
   requestReturnRef.current = requestReturn;
@@ -193,14 +199,16 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               markWorkspaceFileSaveConflict(current, submitted),
             );
-            setError(t("workspaceFiles.saveConflict"));
+            setError(tRef.current("workspaceFiles.saveConflict"));
             return;
           }
           updateFileBuffer((current) =>
             completeWorkspaceFileSave(current, submitted, saved),
           );
           if (saved.warning === "permissionsNotRestored") {
-            setSaveWarning(t("workspaceFiles.permissionsNotRestored"));
+            setSaveWarning(
+              tRef.current("workspaceFiles.permissionsNotRestored"),
+            );
           }
         } catch (reason) {
           if (currentBufferRef.current?.epoch !== submitted.epoch) return;
@@ -208,16 +216,16 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            setError(t("workspaceFiles.projectIdentityChanged"));
+            setError(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
           }
           updateFileBuffer((current) =>
             failWorkspaceFileSave(current, submitted),
           );
-          setError(formatAppError(reason, t));
+          setError(formatAppError(reason, tRef.current));
         }
       }),
-    [documentId, fileDocument, t, updateFileBuffer],
+    [documentId, fileDocument, updateFileBuffer],
   );
 
   const reloadFile = useCallback(
@@ -247,13 +255,13 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            setError(t("workspaceFiles.projectIdentityChanged"));
+            setError(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
           }
-          setError(formatAppError(reason, t));
+          setError(formatAppError(reason, tRef.current));
         }
       }),
-    [documentId, fileDocument, t, updateFileBuffer],
+    [documentId, fileDocument, updateFileBuffer],
   );
 
   useEffect(() => {
@@ -309,7 +317,7 @@ export function StandaloneWorkspaceFileWindow({
                     buffer: message.fileBuffer,
                   });
                 } catch (reason) {
-                  setError(formatAppError(reason, t));
+                  setError(formatAppError(reason, tRef.current));
                   await emitWorkspaceContentWindowEvent(
                     "main",
                     "workspace-file-window-attach-failed",
@@ -317,7 +325,7 @@ export function StandaloneWorkspaceFileWindow({
                       documentId,
                       token,
                       windowLabel: currentWindow.label,
-                      message: formatAppError(reason, t),
+                      message: formatAppError(reason, tRef.current),
                     },
                   );
                   return;
@@ -395,8 +403,8 @@ export function StandaloneWorkspaceFileWindow({
                 setReturning(false);
                 setError(
                   event.payload.message ??
-                    t("pty.returnFailed", {
-                      error: t("pty.workspaceRestoring"),
+                    tRef.current("pty.returnFailed", {
+                      error: tRef.current("pty.workspaceRestoring"),
                     }),
                 );
               },
@@ -425,7 +433,7 @@ export function StandaloneWorkspaceFileWindow({
       });
     };
     void setup().catch((reason) => {
-      if (!disposed) setError(formatAppError(reason, t));
+      if (!disposed) setError(formatAppError(reason, tRef.current));
     });
     return () => {
       disposed = true;
@@ -435,7 +443,7 @@ export function StandaloneWorkspaceFileWindow({
         window.clearTimeout(returnTimeoutRef.current);
       }
     };
-  }, [documentId, sourcePaneId, t, token]);
+  }, [documentId, sourcePaneId, token]);
 
   const title = fileDocument?.relativePath ?? t("workspaceFiles.loadingFile");
   return (
