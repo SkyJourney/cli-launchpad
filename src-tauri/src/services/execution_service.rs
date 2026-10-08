@@ -78,6 +78,14 @@ impl Drop for ActiveTaskGuard {
 }
 
 impl ExecutionTaskManager {
+    /// 当前活动的执行任务数（退出请求载荷使用）。只在读取长度期间持锁。
+    pub fn active_count(&self) -> usize {
+        self.active
+            .lock()
+            .map(|active| active.by_tool.len())
+            .unwrap_or(0)
+    }
+
     pub fn start(&self, app: &AppHandle, plan: InstallPlan) -> Result<ExecutionTask, AppError> {
         let mut active = self
             .active
@@ -602,6 +610,50 @@ mod tests {
             id: id.to_string(),
             cancel: Some(cancel),
         }
+    }
+
+    #[test]
+    fn active_count_reports_registered_tasks() {
+        let manager = ExecutionTaskManager::default();
+        assert_eq!(manager.active_count(), 0);
+
+        manager.active.lock().unwrap().insert(
+            ToolKey::Claude,
+            ActiveTask {
+                id: "t1".into(),
+                cancel: None,
+            },
+        );
+        manager.active.lock().unwrap().insert(
+            ToolKey::Codex,
+            ActiveTask {
+                id: "t2".into(),
+                cancel: None,
+            },
+        );
+        assert_eq!(manager.active_count(), 2);
+
+        manager.active.lock().unwrap().remove_by_id("t1");
+        assert_eq!(manager.active_count(), 1);
+        manager.active.lock().unwrap().remove_by_id("t2");
+        assert_eq!(manager.active_count(), 0);
+
+        // 反向断言：同一工具重复登记按工具去重，总数不增加。
+        manager.active.lock().unwrap().insert(
+            ToolKey::Claude,
+            ActiveTask {
+                id: "a".into(),
+                cancel: None,
+            },
+        );
+        manager.active.lock().unwrap().insert(
+            ToolKey::Claude,
+            ActiveTask {
+                id: "b".into(),
+                cancel: None,
+            },
+        );
+        assert_eq!(manager.active_count(), 1);
     }
 
     #[test]

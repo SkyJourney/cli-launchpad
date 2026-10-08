@@ -1,9 +1,10 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 336, "Linux": 337, "macOS": 334 },
+  "minimumPassed": { "Windows": 343, "Linux": 344, "macOS": 341 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
-    "platform::file_cas::tests::cross_process_cas_worker"
+    "platform::file_cas::tests::cross_process_cas_worker",
+    "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions"
   ],
   "required": {
     "all": [
@@ -50,7 +51,14 @@
       "app_menu::tests::custom_quit_menu_item_requests_gated_exit",
       "app_menu::tests::macos_app_menu_entries_replace_predefined_quit",
       "app_menu::tests::predefined_entries_are_all_constructible_names",
-      "app_menu::tests::custom_menu_ids_are_unique_and_not_tray_ids"
+      "app_menu::tests::custom_menu_ids_are_unique_and_not_tray_ids",
+      "services::app_lifecycle::tests::exit_request_decision_matrix",
+      "services::app_lifecycle::tests::main_close_request_decisions",
+      "services::app_lifecycle::tests::destroyed_file_window_revokes_only_its_grant",
+      "services::app_lifecycle::tests::destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions",
+      "services::app_lifecycle::tests::lib_rs_delegates_exit_and_window_events_to_decision_functions",
+      "services::app_lifecycle::tests::exit_decision_function_does_not_terminate_anything",
+      "services::execution_service::tests::active_count_reports_registered_tasks"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

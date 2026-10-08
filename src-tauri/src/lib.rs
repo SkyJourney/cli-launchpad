@@ -307,31 +307,23 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 let label = window.label();
-                if crate::models::window_kind::window_kind_of(label)
-                    == Some(crate::models::window_kind::WindowKind::WorkspaceContent)
-                {
-                    let grants = window
-                        .state::<services::content_window_grants::ContentWindowGrantRegistry>();
-                    if let Err(error) = grants.revoke(label) {
-                        log::warn!("unable to revoke file window grant label={label}: {error}");
+                let grants =
+                    window.state::<services::content_window_grants::ContentWindowGrantRegistry>();
+                let sessions = window.state::<services::pty_session_service::PtySessionManager>();
+                match services::app_lifecycle::cleanup_destroyed_window(label, &grants, &sessions) {
+                    Ok(cleanup) => {
+                        for session_id in cleanup.owner_lost_session_ids {
+                            let _ = window.app_handle().emit_to(
+                                "main",
+                                "pty-session-owner-lost",
+                                serde_json::json!({ "sessionId": session_id }),
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("unable to clean up destroyed window label={label}: {error}");
                     }
                 }
-                if crate::models::window_kind::window_kind_of(label)
-                    == Some(crate::models::window_kind::WindowKind::Terminal)
-                {
-                    let sessions =
-                        window.state::<services::pty_session_service::PtySessionManager>();
-                    for session_id in sessions.reclaim_window(label) {
-                        let _ = window.app_handle().emit_to(
-                            "main",
-                            "pty-session-owner-lost",
-                            serde_json::json!({ "sessionId": session_id }),
-                        );
-                    }
-                }
-            }
-            if window.label() != "main" {
-                return;
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let close_behavior = window
@@ -340,12 +332,17 @@ pub fn run() {
                     .lock()
                     .map(|behavior| *behavior)
                     .unwrap_or_default();
-                if close_behavior == CloseBehavior::MinimizeToTray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else {
-                    api.prevent_close();
-                    window.app_handle().exit(0);
+                match services::app_lifecycle::decide_close_request(window.label(), close_behavior)
+                {
+                    services::app_lifecycle::MainCloseDecision::NotMainWindow => {}
+                    services::app_lifecycle::MainCloseDecision::HideToTray => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    services::app_lifecycle::MainCloseDecision::RequestAppExit => {
+                        api.prevent_close();
+                        window.app_handle().exit(0);
+                    }
                 }
             }
         })
@@ -368,23 +365,40 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let exit_gate = app.state::<services::app_lifecycle::AppExitGate>();
-            if exit_gate.consume_authorization() {
-                return;
-            }
-            let sessions = app.state::<services::pty_session_service::PtySessionManager>();
-            let active_count = sessions.active_count();
-            if let Some(window) = app.get_webview_window("main") {
-                api.prevent_exit();
-                show_main_window(&window);
-                let _ = app.emit_to(
-                    "main",
-                    "app-exit-requested",
-                    serde_json::json!({
-                        "ptyCount": active_count,
-                    }),
-                );
-            } else if active_count > 0 {
-                api.prevent_exit();
+            let pty_count = app
+                .state::<services::pty_session_service::PtySessionManager>()
+                .active_count();
+            let execution_task_count = app
+                .state::<services::execution_service::ExecutionTaskManager>()
+                .active_count();
+            let main_window = app.get_webview_window("main");
+            match services::app_lifecycle::decide_exit_request(
+                &exit_gate,
+                pty_count,
+                execution_task_count,
+                main_window.is_some(),
+            ) {
+                services::app_lifecycle::ExitRequestDecision::AllowExit => {}
+                services::app_lifecycle::ExitRequestDecision::PreventAndAskMain {
+                    pty_count,
+                    execution_task_count,
+                } => {
+                    api.prevent_exit();
+                    if let Some(window) = &main_window {
+                        show_main_window(window);
+                    }
+                    let _ = app.emit_to(
+                        "main",
+                        "app-exit-requested",
+                        serde_json::json!({
+                            "ptyCount": pty_count,
+                            "executionTaskCount": execution_task_count,
+                        }),
+                    );
+                }
+                services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {
+                    api.prevent_exit();
+                }
             }
         }
         #[cfg(target_os = "macos")]
