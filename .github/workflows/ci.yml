@@ -111,11 +111,17 @@ jobs:
       - name: Check Rust compilation
         id: rust_check
         if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+        env:
+          # 警告视为错误：cfg 分支遗漏、未使用代码等要在 CI 里暴露并修掉，而不是静默累积。
+          # --all-targets 让测试代码也受同样约束（cargo test 步骤本身不加 -D warnings）。
+          RUSTFLAGS: -D warnings
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked
 
       - name: Check Rust compilation with the acceptance feature
         if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' && runner.os == 'Linux' }}
-        run: cargo check --manifest-path src-tauri/Cargo.toml --features acceptance-hooks --locked
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --features acceptance-hooks --locked
 
       - name: List Rust tests
         if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
