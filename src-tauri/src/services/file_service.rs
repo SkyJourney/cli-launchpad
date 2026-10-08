@@ -971,14 +971,16 @@ mod tests {
                 .iter()
                 .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Saved { .. })))
                 .count(),
-            1
+            1,
+            "必须恰好一个 Saved，实际结果：{results:?}"
         );
         assert_eq!(
             results
                 .iter()
                 .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Conflict)))
                 .count(),
-            1
+            1,
+            "必须恰好一个 Conflict，实际结果：{results:?}"
         );
         assert!(matches!(
             fs::read_to_string(file).unwrap().as_str(),

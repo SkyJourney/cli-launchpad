@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 349, "Linux": 350, "macOS": 347 },
+  "minimumPassed": { "Windows": 350, "Linux": 350, "macOS": 347 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -97,7 +97,8 @@
       "services::install_service::tests::grok_install_uses_fixed_official_windows_script_and_preview",
       "services::install_service::tests::powershell_argument_escapes_single_quotes",
       "services::session_service::tests::file_uri_matches_windows_path_and_decodes_spaces",
-      "services::session_service::tests::paths_match_ignores_separators_and_case"
+      "services::session_service::tests::paths_match_ignores_separators_and_case",
+      "platform::execution_process::windows::tests::tree_worker_waits_for_the_dedicated_job_before_spawning"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",

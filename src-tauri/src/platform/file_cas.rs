@@ -1876,9 +1876,11 @@ mod tests {
             !names.iter().any(|name| name == "note.txt (deleted)"),
             "不应出现别名文件：{names:?}"
         );
+        // 走锁超时路径的耗时必然 >= LOCK_TIMEOUT，所以分界就是 LOCK_TIMEOUT 本身；
+        // 更紧的上限（曾用 1 秒）在整套测试高负载时会误报（实测 1.015 秒）。
         assert!(
-            elapsed < Duration::from_secs(1),
-            "耗时 {elapsed:?}，不得走 2 秒锁超时"
+            elapsed < LOCK_TIMEOUT,
+            "耗时 {elapsed:?}，不得走 {LOCK_TIMEOUT:?} 锁超时"
         );
     }
 

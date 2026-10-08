@@ -68,6 +68,7 @@ pub(crate) mod tree_worker {
 
     const MODE: &str = "CLP_TREE_WORKER_MODE";
     const PID_FILE: &str = "CLP_TREE_WORKER_PID_FILE";
+    const PARENT_PID: &str = "CLP_TREE_WORKER_PARENT_PID";
     const SLEEP: Duration = Duration::from_secs(120);
 
     /// 测试二进制调用工人所需的参数；调用方再附加 [`envs`]。
@@ -78,32 +79,74 @@ pub(crate) mod tree_worker {
         "--nocapture",
     ];
 
-    pub(crate) fn envs(pid_file: &Path) -> [(&'static str, std::ffi::OsString); 2] {
+    pub(crate) fn envs(pid_file: &Path) -> [(&'static str, std::ffi::OsString); 3] {
         [
             (MODE, "parent".into()),
             (PID_FILE, pid_file.as_os_str().to_owned()),
+            // 工人据此判断“自己所在的 Job 是不是只属于被测对象”。
+            (PARENT_PID, std::process::id().to_string().into()),
         ]
     }
 
-    /// 本进程是否已在带 `KILL_ON_JOB_CLOSE` 的 Job 里。`hJob` 传 NULL 表示“调用进程所在的 Job”。
-    /// 未被任何 Job 约束时查询失败，返回 false。
-    fn in_kill_on_close_job() -> bool {
+    /// 本进程最内层 Job 的 (LimitFlags, 成员 pid 列表)；未被任何 Job 约束时为 None。
+    /// `hJob` 传 NULL 表示“调用进程所在的（最内层）Job”。
+    fn job_state() -> Option<(u32, Vec<u32>)> {
         use windows_sys::Win32::System::JobObjects::{
-            JobObjectExtendedLimitInformation, QueryInformationJobObject,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         };
+        // 与 JOBOBJECT_BASIC_PROCESS_ID_LIST 同布局，但 ProcessIdList 预留 64 个槽位。
+        #[repr(C)]
+        struct ProcessIdList {
+            assigned: u32,
+            listed: u32,
+            ids: [usize; 64],
+        }
         unsafe {
-            let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            let queried = QueryInformationJobObject(
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            let limits_queried = QueryInformationJobObject(
                 std::ptr::null_mut(),
                 JobObjectExtendedLimitInformation,
-                &mut information as *mut _ as *mut _,
+                &mut limits as *mut _ as *mut _,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                 std::ptr::null_mut(),
             );
-            queried != 0
-                && information.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                    != 0
+            let mut list: ProcessIdList = std::mem::zeroed();
+            // 成员多于 64 个时返回 ERROR_MORE_DATA 但前 64 个仍会填入，这里只关心有没有父进程。
+            let list_queried = QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JobObjectBasicProcessIdList,
+                &mut list as *mut _ as *mut _,
+                std::mem::size_of::<ProcessIdList>() as u32,
+                std::ptr::null_mut(),
+            );
+            (limits_queried != 0 && (list_queried != 0 || list.listed > 0)).then(|| {
+                (
+                    limits.BasicLimitInformation.LimitFlags,
+                    list.ids[..list.listed as usize]
+                        .iter()
+                        .map(|id| *id as u32)
+                        .collect(),
+                )
+            })
+        }
+    }
+
+    /// 本进程是否已被放进“专属”的 Job：带 `KILL_ON_JOB_CLOSE`，成员里有自己、没有父进程。
+    ///
+    /// 只看 `KILL_ON_JOB_CLOSE` 不够：`cargo test` 自己就会把测试进程放进带该标志的外层
+    /// Job（实测 flags=0x2000），那样门一开始就为真，形同虚设。外层 Job 一定含有父进程
+    /// （测试进程），而被 `ProcessTree::attach` 放进新建嵌套 Job 的工人，其 Job 里只有它自己
+    /// （以及 CREATE_NO_WINDOW 带来的控制台宿主），不含父进程。
+    fn in_dedicated_kill_on_close_job(parent_pid: u32) -> bool {
+        use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        match job_state() {
+            Some((flags, members)) => {
+                flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
+                    && members.contains(&std::process::id())
+                    && !members.contains(&parent_pid)
+            }
+            None => false,
         }
     }
 
@@ -116,11 +159,16 @@ pub(crate) mod tree_worker {
         match mode.as_str() {
             "sleeper" => std::thread::sleep(SLEEP),
             "parent" => {
-                // 父进程被 spawn 出来之后才会被 attach 到 Job；先等进入 Job 再派生孙进程，
+                // 父进程被 spawn 出来之后才会被 attach 到专属 Job；先等进入专属 Job 再派生孙进程，
                 // 孙进程才一定继承 Job，不会逃逸。
+                let parent_pid: u32 = std::env::var(PARENT_PID).unwrap().parse().unwrap();
                 let deadline = Instant::now() + Duration::from_secs(30);
-                while !in_kill_on_close_job() {
-                    assert!(Instant::now() < deadline, "工人 30 秒内未被放进 Job");
+                while !in_dedicated_kill_on_close_job(parent_pid) {
+                    assert!(
+                        Instant::now() < deadline,
+                        "工人 30 秒内未被放进专属 Job（flags, 活动进程数）：{:?}",
+                        job_state()
+                    );
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 let pid_file = std::path::PathBuf::from(std::env::var(PID_FILE).unwrap());
@@ -331,6 +379,49 @@ mod windows {
 
             tree.terminate().expect("terminate job");
             let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+            super::super::assert_windows_process_terminates(pid, Duration::from_secs(3));
+        }
+
+        #[test]
+        fn tree_worker_waits_for_the_dedicated_job_before_spawning() {
+            let directory = tempfile::tempdir().unwrap();
+            let pid_file = directory.path().join("pid.txt");
+            let mut worker = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(super::super::tree_worker::ARGS)
+                .envs(super::super::tree_worker::envs(&pid_file))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn tree worker");
+
+            // 未 attach：工人（即使身处 cargo 的外层 Job 里）也不能派生孙进程。
+            // 1.5 秒远大于测试二进制 60 毫秒左右的自启动时间。
+            thread::sleep(Duration::from_millis(1500));
+            assert!(
+                !pid_file.exists(),
+                "工人在被放进专属 Job 之前就派生了孙进程"
+            );
+
+            // attach 之后：工人必须放行并写出孙进程 pid。
+            let tree = ProcessTree::new().expect("create job object");
+            tree.attach_std(&worker).expect("attach worker to job");
+            let started = Instant::now();
+            let pid = loop {
+                if let Some(pid) = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok())
+                {
+                    break pid;
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(45),
+                    "attach 之后工人 45 秒内仍未派生孙进程"
+                );
+                thread::sleep(Duration::from_millis(50));
+            };
+
+            tree.terminate().expect("terminate job");
+            let _ = worker.wait();
             super::super::assert_windows_process_terminates(pid, Duration::from_secs(3));
         }
 
