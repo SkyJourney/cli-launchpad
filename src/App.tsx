@@ -157,10 +157,12 @@ function AppContent() {
       "app-exit-requested",
       (event) => {
         setExitError(null);
-        const executionTaskCount = Math.max(
-          0,
-          event.payload.executionTaskCount ?? 0,
-        );
+        // 载荷来自后端，但非有限数（null、字符串、NaN）不能卡出一个空对话框。
+        const reportedTasks = event.payload.executionTaskCount;
+        const executionTaskCount =
+          typeof reportedTasks === "number" && Number.isFinite(reportedTasks)
+            ? Math.max(0, reportedTasks)
+            : 0;
         void collectExitImpacts(event.payload.ptyCount)
           .then(async (collected) => {
             const impacts: AppExitRequest = {

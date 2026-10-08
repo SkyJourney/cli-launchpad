@@ -512,7 +512,9 @@ mod tests {
     fn tray_creation_failure_is_logged_and_does_not_abort_startup() {
         let created = std::cell::Cell::new(0);
 
-        let tray = setup_tray_or_degrade(|| {
+        // 显式类型：函数必须直接返回 TrayAvailability 而不是 Result，调用方没有 ? 可用，
+        // setup 的后续步骤因此一定会继续执行（改成 Result 会编译失败）。
+        let tray: TrayAvailability = setup_tray_or_degrade(|| {
             created.set(created.get() + 1);
             Err(tauri::Error::Anyhow(anyhow::anyhow!("no tray host")))
         });
@@ -524,11 +526,6 @@ mod tests {
             }
             other => panic!("expected the tray to degrade, got {other:?}"),
         }
-        // 函数返回的是 TrayAvailability 而不是 Result，调用方没有 ? 可用，
-        // setup 的后续步骤因此一定会继续执行。
-        let after_degrade = std::cell::Cell::new(false);
-        after_degrade.set(true);
-        assert!(after_degrade.get());
         assert_eq!(
             setup_tray_or_degrade(|| Ok(())),
             TrayAvailability::Available

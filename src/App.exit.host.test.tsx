@@ -197,6 +197,19 @@ describe("application exit precheck", () => {
     expect(invokes("terminate_pty_session")).toHaveLength(0);
   });
 
+  it("treats a non-finite executionTaskCount payload as zero tasks", async () => {
+    await mountExitApp({ dirty: false });
+
+    // JSON 里的 NaN 会变成 null，其他非数字值也可能出现；都不能卡出一个空对话框。
+    await requestExit({
+      ptyCount: 0,
+      executionTaskCount: "oops" as unknown as number,
+    });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+  });
+
   it("replaces a pending dialog when exit is requested again", async () => {
     await mountExitApp({ dirty: true });
 
