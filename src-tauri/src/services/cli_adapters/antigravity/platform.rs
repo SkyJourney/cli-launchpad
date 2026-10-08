@@ -1,17 +1,27 @@
+use std::path::Path;
+
 use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
 
 pub(super) fn build_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
     match kind {
-        InstallKind::Update => crate::services::install_service::simple_plan(
-            ToolKey::Antigravity,
-            kind,
-            "agy",
-            &["update"],
-            "Antigravity CLI 内置更新命令",
-        ),
+        InstallKind::Update => {
+            let program = crate::services::install_service::resolve_program("agy")?;
+            update_plan_for(Path::new(&program))
+        }
         InstallKind::Install => install_plan(kind),
     }
+}
+
+/// 以已解析的 agy 可执行文件路径构造内置更新计划（纯函数）。
+pub(crate) fn update_plan_for(resolved: &Path) -> anyhow::Result<InstallPlan> {
+    Ok(crate::services::install_service::simple_plan_at(
+        ToolKey::Antigravity,
+        InstallKind::Update,
+        resolved.display().to_string(),
+        &["update"],
+        "Antigravity CLI 内置更新命令",
+    ))
 }
 
 #[cfg(windows)]

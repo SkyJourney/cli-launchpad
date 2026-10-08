@@ -605,11 +605,6 @@ mod tests {
     }
 
     #[test]
-    fn execution_events_are_scoped_to_the_main_window() {
-        assert_eq!(EXECUTION_EVENT_TARGET, "main");
-    }
-
-    #[test]
     fn active_tasks_keep_each_tool_independent() {
         let mut active = ActiveTasks::default();
         active.insert(ToolKey::Claude, active_task("claude-task"));

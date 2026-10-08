@@ -31,23 +31,38 @@ pub(crate) fn native_install_context(path: &Path) -> Option<(PathBuf, PathBuf)> 
 
 pub(super) fn build_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
     match kind {
-        InstallKind::Update => crate::services::install_service::simple_plan(
-            ToolKey::Claude,
-            kind,
-            "claude",
-            &["update"],
-            "Claude Code 内置更新命令",
-        ),
+        InstallKind::Update => {
+            let program = crate::services::install_service::resolve_program("claude")?;
+            update_plan_for(Path::new(&program))
+        }
         InstallKind::Install => install_plan(kind),
     }
 }
 
-#[cfg(windows)]
-fn install_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
-    crate::services::install_service::simple_plan(
+/// 以已解析的 claude 可执行文件路径构造内置更新计划（纯函数）。
+pub(crate) fn update_plan_for(resolved: &Path) -> anyhow::Result<InstallPlan> {
+    Ok(crate::services::install_service::simple_plan_at(
         ToolKey::Claude,
-        kind,
-        "winget",
+        InstallKind::Update,
+        resolved.display().to_string(),
+        &["update"],
+        "Claude Code 内置更新命令",
+    ))
+}
+
+#[cfg(windows)]
+fn install_plan(_kind: InstallKind) -> anyhow::Result<InstallPlan> {
+    let winget = crate::services::install_service::resolve_program("winget")?;
+    install_plan_for(Path::new(&winget))
+}
+
+/// 以已解析的 winget 路径构造 Claude Code 官方安装计划（纯函数）。
+#[cfg(windows)]
+pub(crate) fn install_plan_for(winget: &Path) -> anyhow::Result<InstallPlan> {
+    Ok(crate::services::install_service::simple_plan_at(
+        ToolKey::Claude,
+        InstallKind::Install,
+        winget.display().to_string(),
         &[
             "install",
             "--id",
@@ -57,7 +72,7 @@ fn install_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
             "--accept-source-agreements",
         ],
         "winget 官方包 Anthropic.ClaudeCode",
-    )
+    ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

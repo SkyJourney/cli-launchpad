@@ -413,6 +413,33 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(3));
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_timeout_kills_grandchild_processes() {
+        // run_bounded 是 spawn 之后才 attach，理论上存在逃逸窗口（N8，由后续目标处理）；
+        // 这里验证的是正常路径：超时必须结束整棵 Job 内的进程树。
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("pid.txt");
+        let script = format!(
+            "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 60' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 60",
+            pid_file.display().to_string().replace('\'', "''")
+        );
+
+        let error = run_bounded(shell_command(&script), Duration::from_secs(5), 64)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        let pid = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("孙进程未在超时前启动，提高超时值"));
+        crate::platform::execution_process::assert_windows_process_terminates(
+            pid,
+            Duration::from_secs(3),
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn timeout_kills_descendants_that_ignore_terminate_after_root_exits() {

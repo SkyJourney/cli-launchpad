@@ -1,9 +1,12 @@
+use std::future::Future;
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 
 use crate::db::{directory_repo, tool_repo};
 use crate::models::tool::ToolKey;
-use crate::services::cli_adapters;
+use crate::services::cli_adapters::{self, CliAdapter};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CliLaunchPayload {
@@ -26,24 +29,44 @@ pub(crate) fn resolve_launch_directory(
     Ok(directory.path)
 }
 
-pub(crate) async fn resolve_payload_at_directory(
+pub(crate) async fn resolve_payload_with_resolver<F, Fut>(
     directory: String,
     tool_key: ToolKey,
     resume_session_id: Option<&str>,
-) -> Result<CliLaunchPayload> {
-    let adapter = cli_adapters::get(tool_key);
-    let executable = cli_adapters::installed_path_async(adapter)
-        .await
-        .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))?;
+    resolve: F,
+) -> Result<CliLaunchPayload>
+where
+    F: FnOnce(&'static dyn CliAdapter) -> Fut,
+    Fut: Future<Output = Option<PathBuf>>,
+{
+    // 先校验恢复参数（快速失败），再解析可执行文件：参数无效时不做任何机器探测。
     let tool_args = match resume_session_id {
         Some(session_id) => cli_adapters::resume_args(tool_key, session_id)?,
         None => Vec::new(),
     };
+    let adapter = cli_adapters::get(tool_key);
+    let executable = resolve(adapter)
+        .await
+        .ok_or_else(|| anyhow!("未检测到 {}，请先在设置中安装后再启动", tool_key.as_str()))?;
     Ok(CliLaunchPayload {
         directory,
         tool_executable: executable.display().to_string(),
         tool_args,
     })
+}
+
+pub(crate) async fn resolve_payload_at_directory(
+    directory: String,
+    tool_key: ToolKey,
+    resume_session_id: Option<&str>,
+) -> Result<CliLaunchPayload> {
+    resolve_payload_with_resolver(
+        directory,
+        tool_key,
+        resume_session_id,
+        cli_adapters::installed_path_async,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -53,32 +76,13 @@ fn apply_resume(payload: &mut CliLaunchPayload, tool_key: ToolKey, session_id: &
 }
 
 #[cfg(test)]
-fn resolve_payload_with(
-    connection: &Connection,
-    directory_id: i64,
-    tool_key: ToolKey,
-    resolve_executable: impl FnOnce(ToolKey) -> Result<String>,
-) -> Result<CliLaunchPayload> {
-    let directory = directory_repo::get(connection, directory_id)?
-        .ok_or_else(|| anyhow!("directory {directory_id} not found"))?;
-    crate::services::directory_service::validate_path(&directory.path)?;
-    if !tool_repo::exists(connection, tool_key)? {
-        return Err(anyhow!("tool {} is not configured", tool_key.as_str()));
-    }
-
-    Ok(CliLaunchPayload {
-        directory: directory.path,
-        tool_executable: resolve_executable(tool_key)?,
-        tool_args: Vec::new(),
-    })
-}
-
-#[cfg(test)]
 mod tests {
-    use super::{apply_resume, resolve_payload_with, CliLaunchPayload};
+    use super::{
+        apply_resume, resolve_launch_directory, resolve_payload_with_resolver, CliLaunchPayload,
+    };
 
-    #[test]
-    fn normal_payload_ignores_legacy_project_arguments() {
+    #[tokio::test]
+    async fn normal_payload_ignores_legacy_project_arguments() {
         use rusqlite::Connection;
 
         use crate::db::{connection, directory_repo};
@@ -97,6 +101,7 @@ mod tests {
             None,
         )
         .unwrap();
+        // directory_tool_args 在目标 078 的迁移 0015 中删除；届时 078 负责去掉这段插入并断言该表已不存在（RS-T26）。
         connection
             .execute(
                 "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', '--ignored-project')",
@@ -104,12 +109,90 @@ mod tests {
             )
             .unwrap();
 
-        let payload = resolve_payload_with(&connection, record.id, ToolKey::Claude, |_| {
-            Ok("claude".to_string())
-        })
+        let directory_path =
+            resolve_launch_directory(&connection, record.id, ToolKey::Claude).unwrap();
+        let payload = resolve_payload_with_resolver(
+            directory_path.clone(),
+            ToolKey::Claude,
+            None,
+            |_adapter| async { Some(std::path::PathBuf::from("claude")) },
+        )
+        .await
         .unwrap();
 
         assert!(payload.tool_args.is_empty());
+        assert_eq!(payload.tool_executable, "claude");
+        assert_eq!(payload.directory, directory_path);
+    }
+
+    #[tokio::test]
+    async fn resume_validation_failure_produces_no_launch_payload() {
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use crate::models::tool::ToolKey;
+
+        const VALID_UUID: &str = "123e4567-e89b-42d3-a456-426614174000";
+
+        for invalid in ["../evil", "-x"] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&calls);
+            let error = resolve_payload_with_resolver(
+                "project".to_string(),
+                ToolKey::Claude,
+                Some(invalid),
+                move |_adapter| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    async { Some(PathBuf::from("/opt/cli")) }
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("会话 ID 格式无效"),
+                "{invalid}: {error}"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "{invalid}: 解析器不应被调用"
+            );
+        }
+
+        let missing = resolve_payload_with_resolver(
+            "project".to_string(),
+            ToolKey::Claude,
+            Some(VALID_UUID),
+            |_adapter| async { None },
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.to_string().contains("未检测到"), "{missing}");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let payload = resolve_payload_with_resolver(
+            "project".to_string(),
+            ToolKey::Claude,
+            Some(VALID_UUID),
+            move |_adapter| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async { Some(PathBuf::from("/opt/cli")) }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            payload.tool_args,
+            vec!["--resume".to_string(), VALID_UUID.to_string()]
+        );
+        assert_eq!(
+            payload.tool_executable,
+            PathBuf::from("/opt/cli").display().to_string()
+        );
+        assert_eq!(payload.directory, "project");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 313, "Linux": 316, "macOS": 313 },
+  "minimumPassed": { "Windows": 318, "Linux": 319, "macOS": 316 },
   "allowedIgnored": [
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker"
@@ -29,13 +29,17 @@
       "platform::file_cas::tests::validate_resolved_destination_accepts_an_existing_file_with_the_requested_name",
       "platform::file_cas::tests::validate_resolved_destination_rejects_a_missing_resolved_path",
       "platform::file_cas::tests::validate_resolved_destination_rejects_an_existing_decoy_with_a_different_name",
-      "platform::file_cas::tests::validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only"
+      "platform::file_cas::tests::validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only",
+      "services::install_service::tests::antigravity_update_plan_for_uses_builtin_command",
+      "services::install_service::tests::claude_update_plan_for_uses_builtin_command",
+      "services::launch_service::tests::resume_validation_failure_produces_no_launch_payload"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
       "models::workspace_layout::tests::workspace_layout_rejects_windows_ads_and_reserved_file_names",
       "platform::detect::tests::known_windows_install_dirs_include_user_local_bin",
       "platform::execution_process::windows::tests::failed_job_attachment_terminates_pty_process",
+      "platform::execution_process::windows::tests::job_object_terminate_kills_grandchild_processes",
       "platform::execution_process::windows::tests::job_object_terminates_attached_process",
       "platform::execution_process::windows::tests::job_object_terminates_pty_process",
       "platform::file_cas::tests::lock_current_retries_a_temporary_missing_path",
@@ -47,11 +51,13 @@
       "platform::path_identity::tests::windows_paths_ignore_case_and_separator_style",
       "platform::path_rules::tests::windows_rejects_ads_reserved_names_and_trailing_dots",
       "platform::process::tests::windows_script_extensions_select_native_hosts",
+      "platform::process::tests::windows_timeout_kills_grandchild_processes",
       "platform::windows_environment::tests::appends_registered_entries_missing_from_isolated_path",
       "platform::windows_environment::tests::deduplicates_case_and_trailing_separators",
       "services::cli_adapters::hermes::platform::windows_managed_install_tests::managed_source_update_requires_default_bin_and_git_checkout",
       "services::file_service::tests::retained_project_handle_prevents_root_directory_replacement",
       "services::install_service::tests::antigravity_uses_official_installer",
+      "services::install_service::tests::claude_install_plan_for_uses_winget_official_package",
       "services::install_service::tests::claude_install_uses_winget_official_package",
       "services::install_service::tests::codex_install_uses_official_windows_installer",
       "services::install_service::tests::codex_update_uses_builtin_command_under_windows_powershell_5_1",
@@ -85,6 +91,7 @@
       "services::file_service::tests::retained_project_capability_survives_root_path_replacement",
       "services::file_service::tests::text_file_save_preserves_existing_permissions",
       "services::file_service::tests::unix_lists_and_opens_colon_backslash_and_unicode_file_names",
+      "services::install_service::tests::codex_unix_update_plan_for_uses_builtin_command",
       "services::install_service::tests::codex_update_uses_builtin_command",
       "services::session_service::tests::file_uri_matches_unix_path_and_preserves_case"
     ],

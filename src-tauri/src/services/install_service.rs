@@ -19,14 +19,23 @@ pub(crate) fn simple_plan(
     source: &str,
 ) -> Result<InstallPlan> {
     let program = resolve_program(program_name)?;
+    Ok(simple_plan_at(tool_key, kind, program, args, source))
+}
+
+/// 以已解析的可执行文件路径构造计划：纯函数，不探测机器环境。
+pub(crate) fn simple_plan_at(
+    tool_key: ToolKey,
+    kind: InstallKind,
+    program: String,
+    args: &[&str],
+    source: &str,
+) -> InstallPlan {
     let args = args
         .iter()
         .map(|arg| (*arg).to_string())
         .collect::<Vec<_>>();
     let preview = format!("{program} {}", args.join(" "));
-    Ok(resolved_plan(
-        tool_key, kind, program, args, source, preview,
-    ))
+    resolved_plan(tool_key, kind, program, args, source, preview)
 }
 
 pub(crate) fn resolved_plan(
@@ -75,6 +84,7 @@ pub(crate) fn build_command(plan: &InstallPlan) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn changed_install_plan_is_rejected_before_execution() {
@@ -96,16 +106,31 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn claude_install_uses_winget_official_package() {
-        if let Ok(plan) = plan(ToolKey::Claude, InstallKind::Install) {
-            assert!(plan.args.contains(&"Anthropic.ClaudeCode".to_string()));
-            assert!(plan.preview.contains("install"));
+        // 走真实的 plan()（含可执行文件解析）：winget 存在时断言计划，不存在时断言精确的缺失错误。
+        match plan(ToolKey::Claude, InstallKind::Install) {
+            Ok(plan) => {
+                assert!(plan.args.contains(&"Anthropic.ClaudeCode".to_string()));
+                assert!(plan.preview.contains("install"));
+            }
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("未找到执行安装或更新所需的程序：winget"),
+                "{error}"
+            ),
         }
     }
 
     #[test]
     fn claude_update_uses_builtin_command() {
-        if let Ok(plan) = plan(ToolKey::Claude, InstallKind::Update) {
-            assert_eq!(plan.args, vec!["update".to_string()]);
+        match plan(ToolKey::Claude, InstallKind::Update) {
+            Ok(plan) => assert_eq!(plan.args, vec!["update".to_string()]),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("未找到执行安装或更新所需的程序：claude"),
+                "{error}"
+            ),
         }
     }
 
@@ -119,8 +144,14 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn codex_update_uses_builtin_command() {
-        if let Ok(plan) = plan(ToolKey::Codex, InstallKind::Update) {
-            assert_eq!(plan.args, vec!["update".to_string()]);
+        match plan(ToolKey::Codex, InstallKind::Update) {
+            Ok(plan) => assert_eq!(plan.args, vec!["update".to_string()]),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("未找到执行安装或更新所需的程序：codex"),
+                "{error}"
+            ),
         }
     }
 
@@ -272,8 +303,73 @@ mod tests {
 
     #[test]
     fn antigravity_update_uses_builtin_command() {
-        if let Ok(plan) = plan(ToolKey::Antigravity, InstallKind::Update) {
-            assert_eq!(plan.args, vec!["update".to_string()]);
+        match plan(ToolKey::Antigravity, InstallKind::Update) {
+            Ok(plan) => assert_eq!(plan.args, vec!["update".to_string()]),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .contains("未找到执行安装或更新所需的程序：agy"),
+                "{error}"
+            ),
         }
+    }
+
+    fn fixed_tool_path(name: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(format!(r"C:\tools\{name}.exe"))
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from(format!("/opt/{name}/bin/{name}"))
+        }
+    }
+
+    fn assert_builtin_update_plan(plan: &InstallPlan, tool_key: ToolKey, path: &std::path::Path) {
+        assert_eq!(plan.tool_key, tool_key);
+        assert_eq!(plan.kind, InstallKind::Update);
+        assert_eq!(plan.args, vec!["update".to_string()]);
+        assert_eq!(plan.program, path.display().to_string());
+        assert!(!plan.preview.is_empty());
+        assert!(!plan.fingerprint.is_empty());
+        assert_eq!(plan.fingerprint, plan.calculated_fingerprint());
+    }
+
+    #[test]
+    fn claude_update_plan_for_uses_builtin_command() {
+        let path = fixed_tool_path("claude");
+        let plan = crate::services::cli_adapters::claude::platform::update_plan_for(&path).unwrap();
+        assert_builtin_update_plan(&plan, ToolKey::Claude, &path);
+    }
+
+    #[test]
+    fn antigravity_update_plan_for_uses_builtin_command() {
+        let path = fixed_tool_path("agy");
+        let plan =
+            crate::services::cli_adapters::antigravity::platform::update_plan_for(&path).unwrap();
+        assert_builtin_update_plan(&plan, ToolKey::Antigravity, &path);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_unix_update_plan_for_uses_builtin_command() {
+        let path = fixed_tool_path("codex");
+        let plan = crate::services::cli_adapters::codex::platform::update_plan_for(&path).unwrap();
+        assert_builtin_update_plan(&plan, ToolKey::Codex, &path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_install_plan_for_uses_winget_official_package() {
+        let path = fixed_tool_path("winget");
+        let plan =
+            crate::services::cli_adapters::claude::platform::install_plan_for(&path).unwrap();
+        assert_eq!(plan.tool_key, ToolKey::Claude);
+        assert_eq!(plan.kind, InstallKind::Install);
+        assert_eq!(plan.program, path.display().to_string());
+        assert!(plan.args.contains(&"Anthropic.ClaudeCode".to_string()));
+        assert!(plan.args.contains(&"--exact".to_string()));
+        assert!(plan.preview.contains("install"));
+        assert!(!plan.fingerprint.is_empty());
     }
 }

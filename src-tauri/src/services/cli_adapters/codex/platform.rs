@@ -48,14 +48,21 @@ pub(crate) fn quote_powershell_arg(value: &str) -> String {
 }
 
 #[cfg(not(windows))]
-fn update_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
-    crate::services::install_service::simple_plan(
+fn update_plan(_kind: InstallKind) -> anyhow::Result<InstallPlan> {
+    let program = crate::services::install_service::resolve_program("codex")?;
+    update_plan_for(std::path::Path::new(&program))
+}
+
+/// 以已解析的 codex 可执行文件路径构造内置更新计划（纯函数；Windows 对应 `codex_update_plan_for`）。
+#[cfg(not(windows))]
+pub(crate) fn update_plan_for(resolved: &std::path::Path) -> anyhow::Result<InstallPlan> {
+    Ok(crate::services::install_service::simple_plan_at(
         ToolKey::Codex,
-        kind,
-        "codex",
+        InstallKind::Update,
+        resolved.display().to_string(),
         &["update"],
         "Codex 内置更新命令",
-    )
+    ))
 }
 
 #[cfg(windows)]

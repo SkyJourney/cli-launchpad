@@ -18,6 +18,41 @@ pub fn attach_pty_or_terminate(
     Ok(())
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn windows_process_is_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    const STILL_ACTIVE: u32 = 259;
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0u32;
+        let queried = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        queried != 0 && exit_code == STILL_ACTIVE
+    }
+}
+
+/// 每 100 毫秒轮询，直到进程消失；超时仍存活则用 taskkill 兜底后 panic。
+#[cfg(all(test, windows))]
+pub(crate) fn assert_windows_process_terminates(pid: u32, within: std::time::Duration) {
+    let started = std::time::Instant::now();
+    while started.elapsed() < within {
+        if !windows_process_is_alive(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .output();
+    panic!("孙进程 {pid} 在 {within:?} 后仍然存活");
+}
+
 #[cfg(windows)]
 mod windows {
     use std::mem::size_of;
@@ -165,6 +200,48 @@ mod windows {
                 .expect("process should terminate before timeout")
                 .expect("wait for process");
             assert!(!status.success());
+        }
+
+        #[tokio::test]
+        async fn job_object_terminate_kills_grandchild_processes() {
+            let directory = tempfile::tempdir().unwrap();
+            let pid_file = directory.path().join("pid.txt");
+            let script = format!(
+                "$p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 60' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{}' -Value $p.Id; Start-Sleep -Seconds 60",
+                pid_file.display().to_string().replace('\'', "''")
+            );
+            let mut command = tokio::process::Command::new(crate::platform::detect::system32(
+                "WindowsPowerShell\\v1.0\\powershell.exe",
+            ));
+            command
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .creation_flags(CREATE_NO_WINDOW);
+            let mut child = command.spawn().expect("spawn grandchild launcher");
+            let tree = ProcessTree::new().expect("create job object");
+            tree.attach(&child).expect("attach process to job");
+
+            let started = Instant::now();
+            let pid = loop {
+                let parsed = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok());
+                if let Some(pid) = parsed {
+                    break pid;
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "孙进程未在 10 秒内启动，提高超时值"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            };
+            assert!(
+                super::super::windows_process_is_alive(pid),
+                "孙进程启动后必须存活"
+            );
+
+            tree.terminate().expect("terminate job");
+            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+            super::super::assert_windows_process_terminates(pid, Duration::from_secs(3));
         }
 
         #[test]

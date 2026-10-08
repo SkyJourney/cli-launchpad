@@ -1160,7 +1160,15 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
         #[cfg(windows)]
-        if std::os::windows::fs::symlink_dir(outside.path(), root.path().join("escape")).is_err() {
+        if let Err(error) =
+            std::os::windows::fs::symlink_dir(outside.path(), root.path().join("escape"))
+        {
+            if std::env::var_os("CI").is_some() {
+                panic!("CI 必须能创建符号链接: {error}");
+            }
+            eprintln!(
+                "SKIPPED: refuses_symbolic_link_escape 无法创建符号链接（{error}）：本机没有开发者模式或管理员权限"
+            );
             return;
         }
 
