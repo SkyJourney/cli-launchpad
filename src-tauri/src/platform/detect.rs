@@ -4,6 +4,7 @@ const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Resolve a trusted Windows system binary to its full `System32` path so we do
 /// not rely on PATH/CWD for system tools. Falls back to the bare name.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn system32(relative: &str) -> String {
     if let Ok(root) = std::env::var("SystemRoot") {
         let path = std::path::Path::new(&root).join("System32").join(relative);

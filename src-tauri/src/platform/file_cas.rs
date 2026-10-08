@@ -144,6 +144,8 @@ impl FileCasAdapter for NativeFileCasAdapter {
         Ok(file)
     }
 
+    // locked_target 只在 Windows 的提交路径里使用。
+    #[cfg_attr(not(windows), allow(unused_variables))]
     fn commit(
         &self,
         directory: &Dir,

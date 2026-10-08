@@ -12,6 +12,7 @@ use tokio::process::Command;
 use super::detect;
 use super::execution_process::ProcessTree;
 
+#[cfg_attr(not(windows), allow(dead_code))]
 const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const OUTPUT_DRAIN_GRACE: Duration = Duration::from_millis(250);
 
@@ -32,6 +33,8 @@ where
         .into_iter()
         .map(|argument| argument.as_ref().to_os_string())
         .collect::<Vec<_>>();
+    // 只有 Windows 分支会在 match 之后继续修改 command。
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = match windows_script_kind(program) {
         #[cfg(windows)]
         ScriptKind::Command => {
@@ -75,6 +78,8 @@ where
         .into_iter()
         .map(|argument| argument.as_ref().to_os_string())
         .collect::<Vec<_>>();
+    // 只有 Windows 分支会在 match 之后继续修改 command。
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = match windows_script_kind(program) {
         #[cfg(windows)]
         ScriptKind::Command => {
