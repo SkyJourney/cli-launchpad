@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup } from "@testing-library/react";
+import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -215,6 +215,60 @@ describe("detached window loss", () => {
 
     expect(fileOccurrences(host, doc.id)).toBe(1);
     expect(savedLayouts(host).length).toBe(savesAfterFirst);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+  });
+
+  it("ignores a lost event while the file is still detaching and leaves recovery to the start timeout", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const content = { kind: "file", documentId: doc.id } as const;
+    vi.useFakeTimers({
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "Date",
+      ],
+    });
+    let rejection: unknown;
+    await act(async () => {
+      void host!
+        .ctx()
+        .detachFile(doc.id)
+        .catch((reason: unknown) => {
+          rejection = reason;
+        });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const windowLabel =
+      tauriMock.state.createdWindows[tauriMock.state.createdWindows.length - 1]
+        .label;
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+
+    // 窗口在握手完成前崩溃：020 的回收只处理 detached，这里必须被忽略。
+    tauriMock.destroyWindow(windowLabel);
+    await emitBackendEvent(LOST_EVENT, { windowLabel });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+    expect(fileOccurrences(host, doc.id)).toBe(1);
+    expect(rejection).toBeUndefined();
+
+    // 兜底：启动超时把文件回滚到 pane，没有永久停在 detaching。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain("pty.detachedStartTimedOut");
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(fileOccurrences(host, doc.id)).toBe(1);
+    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
   });
