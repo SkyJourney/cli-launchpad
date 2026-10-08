@@ -74,6 +74,9 @@ jobs:
       - name: Build with acceptance hooks
         env:
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          # 与 ci.yml 的 Build frontend 一致：beforeBuildCommand 的 vite build 在
+          # macOS runner 上默认堆会溢出（实测两次 exit 134）。
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm tauri build --features acceptance-hooks ${{ matrix.bundle_args }}
 
       - name: Upload acceptance artifacts
