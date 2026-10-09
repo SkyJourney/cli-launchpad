@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 361, "Linux": 361, "macOS": 358 },
+  "minimumPassed": { "Windows": 363, "Linux": 364, "macOS": 361 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -76,7 +76,9 @@
       "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions",
       "services::pty_session_service::tests::window_status_report_includes_owner_label",
       "services::pty_session_service::tests::finalized_handoff_rejects_source_cancel_in_manager",
-      "services::pty_session_service::tests::handoff_state_machine_rejects_illegal_transitions"
+      "services::pty_session_service::tests::handoff_state_machine_rejects_illegal_transitions",
+      "services::cli_adapters::codex::app_server::tests::timed_out_request_terminates_the_whole_server_process_tree",
+      "services::cli_adapters::codex::app_server::tests::tree_guard_drop_without_an_attached_process_is_harmless"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -138,7 +140,8 @@
       "services::file_service::tests::unix_lists_and_opens_colon_backslash_and_unicode_file_names",
       "services::install_service::tests::codex_unix_update_plan_for_uses_builtin_command",
       "services::install_service::tests::codex_update_uses_builtin_command",
-      "services::session_service::tests::file_uri_matches_unix_path_and_preserves_case"
+      "services::session_service::tests::file_uri_matches_unix_path_and_preserves_case",
+      "services::cli_adapters::codex::app_server::tests::successful_request_terminates_the_server_process_tree"
     ],
     "Linux": [
       "platform::file_cas::tests::resolve_cas_destination_never_returns_a_deleted_alias_under_concurrent_replacement",

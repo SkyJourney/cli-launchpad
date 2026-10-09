@@ -578,6 +578,8 @@ workspace URI。Claude 标题优先级为 `summary`、`firstPrompt`、首条用�
 `source=cli`，按 `git_repo_root`/`cwd` 匹配项目；只提取长度受限的列表预览，不读取其他来源、Profile 或全文 FTS。
 读取故障会明确返回错误而不是伪装为空列表；恢复或修改别名前会再次验证 session 仍归属于当前目录。
 
+Codex 的 App Server 读取使用短生命周期的 `codex app-server --stdio` 进程，由 `ProcessTree` 管理（Windows 为 Job，Unix 为进程组）；`AppServerTreeGuard` 在请求正常结束、出错或外层超时丢弃 future 时终止整棵进程树，覆盖 `.cmd` shim 外壳与脚本派生的后台进程。已知限制：Unix 的 `ProcessTree` 本身没有 `Drop`（由后续生命周期整改补上）；spawn 与 attach 之间存在极小的窗口（与 `run_bounded` 相同）。
+
 路径身份比较遵守平台语义：Windows 规范化分隔符并忽略大小写；macOS 对存在
 路径优先使用 `canonicalize` 后比较，不将路径统一转为小写，对暂时不存在的路径
 只做 POSIX 分隔符与尾部分隔符的词法规范化。CLI 状态缓存中的可执行路径比较
