@@ -100,7 +100,13 @@ import {
   registerPendingWorkspaceContentWindow,
   retainAsyncUnlisten,
   takePendingWorkspaceContentWindow,
+  type WorkspaceContentWindowRecord,
 } from "../lib/workspaceContentWindowRegistry";
+import {
+  advancePendingWindowStage,
+  initialPendingStage,
+  type PendingWindowStage,
+} from "../lib/workspaceContentPendingStage";
 import {
   getPtySessionWindowStatus,
   getWorkspaceLayout,
@@ -224,18 +230,26 @@ interface DetachedWindowRecord {
   windowLabel: string;
 }
 
-interface PendingDetachedWindow extends DetachedWindowRecord {
+interface PendingContentWindow<
+  K extends "pty" | "file",
+> extends WorkspaceContentWindowRecord {
+  kind: K;
+  stage: PendingWindowStage;
   token: string;
+  window: WebviewWindow;
   resolve: () => void;
   reject: (reason: Error) => void;
-  timer: number;
-  cleanup?: () => void;
-  window: WebviewWindow;
-  handoffContext: WorkspaceContentHandoffHookContext<"pty">;
-  handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
-  /** 对账时 owner 查询已连续失败的次数；随 tracked 展开复制。 */
-  ownerQueryRetries?: number;
+  handoffContext?: WorkspaceContentHandoffHookContext<K>;
+  handoffPayload?: WorkspaceContentHandoffPayloadByKind[K];
 }
+
+type PendingDetachedWindow = PendingContentWindow<"pty"> &
+  DetachedWindowRecord & {
+    handoffContext: WorkspaceContentHandoffHookContext<"pty">;
+    handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
+    /** 对账时 owner 查询已连续失败的次数；随 tracked 展开复制。 */
+    ownerQueryRetries?: number;
+  };
 
 interface DetachedWindowReadyEvent extends DetachedWindowRecord {}
 
@@ -252,19 +266,9 @@ interface PtyReturnRequestEvent extends DetachedWindowRecord {
   targetPaneId?: string;
 }
 
-interface PendingWorkspaceFileWindow {
+interface PendingWorkspaceFileWindow extends PendingContentWindow<"file"> {
   documentId: string;
-  token: string;
-  windowLabel: string;
   sourcePaneId?: string;
-  window: WebviewWindow;
-  timer: number;
-  cleanup?: () => void;
-  resolve: () => void;
-  reject: (reason: Error) => void;
-  attached: boolean;
-  handoffContext?: WorkspaceContentHandoffHookContext<"file">;
-  handoffPayload?: WorkspaceContentHandoffPayloadByKind["file"];
 }
 
 type ResolvedPaneContent =
@@ -1431,7 +1435,8 @@ export function PtyWorkspaceProvider({
               cleanup: cleanupCreationErrorListener,
               resolve,
               reject,
-              attached: false,
+              kind: "file",
+              stage: initialPendingStage("file"),
             },
           });
         });
@@ -2076,6 +2081,7 @@ export function PtyWorkspaceProvider({
       }
 
       if (effectiveAction === "accept-detached-owner") {
+        if (!advancePendingWindowStage(tracked, "attachedAck")) return;
         const ownership = contentCoordinatorRef.current.completeHandoff(
           { kind: "pty", slotId: pending.instanceId },
           "detachReady",
@@ -2286,6 +2292,8 @@ export function PtyWorkspaceProvider({
             },
             record: {
               ...detachedRecord,
+              kind: "pty",
+              stage: initialPendingStage("pty"),
               token: handoff.token,
               resolve,
               reject,
@@ -2321,6 +2329,7 @@ export function PtyWorkspaceProvider({
       if (!pending || !matchesDetachedWindow(pending, payload)) {
         return;
       }
+      if (!advancePendingWindowStage(pending, "attachedAck")) return;
       const ownership = contentCoordinatorRef.current.completeHandoff(
         { kind: "pty", slotId: payload.instanceId },
         "detachReady",
@@ -2956,6 +2965,12 @@ export function PtyWorkspaceProvider({
                   ) {
                     return;
                   }
+                  if (!advancePendingWindowStage(pending, "windowReady")) {
+                    console.warn(
+                      `Ignoring duplicate or late workspace-file-window-ready for ${pending.documentId} (stage ${pending.stage}).`,
+                    );
+                    return;
+                  }
                   const content = {
                     kind: "file",
                     documentId: pending.documentId,
@@ -3024,6 +3039,7 @@ export function PtyWorkspaceProvider({
                     void pending.window.destroy().catch(() => undefined);
                     return;
                   }
+                  if (!advancePendingWindowStage(pending, "initSent")) return;
                   await emitWorkspaceContentWindowEvent(
                     pending.windowLabel,
                     "workspace-file-window-init",
@@ -3053,9 +3069,8 @@ export function PtyWorkspaceProvider({
                   ) {
                     return;
                   }
-                  // init 尚未发出（ready 处理器还没有为该 pending 准备好 handoffPayload）时，
-                  // 任何 attached 都是乱序或伪造的，忽略它。
-                  if (pending.handoffPayload === undefined) {
+                  // 只有 init 已发出（阶段为 initSent）的 pending 才接受 attached。
+                  if (!advancePendingWindowStage(pending, "attachedAck")) {
                     return;
                   }
                   const content = {
@@ -3087,7 +3102,6 @@ export function PtyWorkspaceProvider({
                     void pending.window.destroy().catch(() => undefined);
                     return;
                   }
-                  pending.attached = true;
                   promotePendingWorkspaceContentWindow({
                     pending: pendingDetachedFilesRef.current,
                     detached: detachedFilesRef.current,

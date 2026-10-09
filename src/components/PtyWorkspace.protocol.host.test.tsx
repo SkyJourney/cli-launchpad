@@ -33,10 +33,15 @@ import {
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WORKSPACE_CONTENT_WINDOW_EVENT } from "../lib/workspaceContentWindowProtocol";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
+import { getWorkspaceContentAdapter } from "./workspaceContentAdapterRegistry";
 import type { WorkspacePaneContentRef } from "../lib/tauri";
 
 let host: WorkspaceHost | undefined;
+/** 文件适配器 prepareHandoff 的监视器；每个用例结束都恢复，避免污染共享的适配器注册表。 */
+let filePrepareSpy: { mockRestore: () => void } | undefined;
 afterEach(async () => {
+  filePrepareSpy?.mockRestore();
+  filePrepareSpy = undefined;
   host?.dispose();
   host = undefined;
   cleanup();
@@ -461,4 +466,123 @@ describe("duplicate and out-of-order handoff events", () => {
       expect(host!.errors).toEqual([]);
     },
   );
+
+  /**
+   * 手工驱动文件分离到“窗口已创建”（不能用 detachFileToWindow：它会自动发 ready 与 attached），
+   * 返回协议载荷与 init 发送计数函数。
+   */
+  async function beginManualFileDetach(
+    coordinator: WorkspaceContentCoordinator,
+  ) {
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const state = { settled: "pending" as "pending" | "resolved" | "rejected" };
+    await act(async () => {
+      void host!
+        .ctx()
+        .detachFile(doc.id)
+        .then(
+          () => {
+            state.settled = "resolved";
+          },
+          () => {
+            state.settled = "rejected";
+          },
+        );
+    });
+    await flush();
+    const { label: windowLabel, token } = lastCreatedWindow();
+    const payload = { documentId: doc.id, token, windowLabel };
+    const initEmits = () =>
+      eventsTo(windowLabel, "workspace-file-window-init").length;
+    // 重复的 ready 不得让主窗口重复 prepare（会覆盖 pending 的 handoffContext/handoffPayload，
+    // prepare 失败时还会误毁已经在进行的交接）。
+    const lifecycle = getWorkspaceContentAdapter("file").lifecycle as {
+      prepareHandoff: (...args: unknown[]) => unknown;
+    };
+    const spy = vi.spyOn(lifecycle, "prepareHandoff");
+    filePrepareSpy = spy;
+    const prepareCalls = () => spy.mock.calls.length;
+    return { doc, state, windowLabel, payload, initEmits, prepareCalls };
+  }
+
+  it("ignores a second workspace-file-window-ready after the init was sent", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, state, windowLabel, payload, initEmits, prepareCalls } =
+      await beginManualFileDetach(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+
+    await emitToMain("workspace-file-window-ready", payload);
+    await flush();
+    const afterFirst = initEmits();
+    expect(afterFirst).toBe(1);
+
+    await emitToMain("workspace-file-window-ready", payload);
+    await flush();
+
+    expect(initEmits()).toBe(1);
+    expect(prepareCalls()).toBe(1);
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+    expect(state.settled).toBe("pending");
+
+    await emitToMain("workspace-file-window-attached", payload);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(state.settled).toBe("resolved");
+    expect(occurrences(host!, content)).toBe(0);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    // 反向断言：重复的 ready 没有触发失败回滚或销毁窗口。
+    expect(
+      eventsTo(windowLabel, "workspace-file-window-attach-failed"),
+    ).toHaveLength(0);
+    expect(
+      tauriMock.state.emittedEvents.some(
+        (event) =>
+          (event.payload as { type?: string }).type ===
+          "workspace-file-window-attach-failed",
+      ),
+    ).toBe(false);
+    expect(
+      tauriMock.state.windowActions.some((entry) => entry.action === "destroy"),
+    ).toBe(false);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("ignores a duplicate workspace-file-window-ready that arrives while the first is still preparing", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, state, windowLabel, payload, initEmits, prepareCalls } =
+      await beginManualFileDetach(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+
+    // 两次 ready 在同一个 act 内同步派发（文档备选写法：emitToMain 自带 act，
+    // 会让第一次在第二次发出前完成），第二次落在第一次 await prepare 期间。
+    await dispatchTogether([
+      ["workspace-file-window-ready", payload],
+      ["workspace-file-window-ready", payload],
+    ]);
+
+    expect(initEmits()).toBe(1);
+    expect(prepareCalls()).toBe(1);
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+
+    await emitToMain("workspace-file-window-attached", payload);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(state.settled).toBe("resolved");
+    // 反向断言：没有 attach-failed，没有销毁窗口。
+    expect(
+      tauriMock.state.emittedEvents.some(
+        (event) =>
+          (event.payload as { type?: string }).type ===
+          "workspace-file-window-attach-failed",
+      ),
+    ).toBe(false);
+    expect(
+      tauriMock.state.windowActions.some(
+        (entry) =>
+          entry.windowLabel === windowLabel && entry.action === "destroy",
+      ),
+    ).toBe(false);
+    expect(host!.errors).toEqual([]);
+  });
 });
