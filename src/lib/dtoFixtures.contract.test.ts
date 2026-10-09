@@ -37,7 +37,7 @@ const EXPECTED_FIXTURES: Record<string, string> = {
   "project-file-open-result.json": "ProjectFileOpenResult",
   "project-text-file-save-result.json": "ProjectTextFileSaveResult",
   "pty-event.json": "PtyEvent",
-  "pty-session-window-status.json": "PtySessionWindowStatus",
+  "pty-session-window-status.json": "PtySessionWindowStatusReport",
   "workspace-layout-apply-plan.json": "WorkspaceLayoutApplyPlan",
   "workspace-layout-save-result.json": "WorkspaceLayoutSaveResult",
   "workspace-layout-state-read.json": "WorkspaceLayoutStateRead",

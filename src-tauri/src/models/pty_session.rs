@@ -23,6 +23,15 @@ pub enum PtySessionWindowStatus {
     OwnedByAnotherWindow,
 }
 
+/// `get_pty_session_window_status` 的返回值：状态加当前所有者窗口的标签。
+/// 会话已结束或不存在时没有所有者，标签序列化为 `null`。只序列化，不反序列化。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PtySessionWindowStatusReport {
+    pub status: PtySessionWindowStatus,
+    pub owner_window_label: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(
     rename_all = "camelCase",

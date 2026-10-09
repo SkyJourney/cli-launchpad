@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 358, "Linux": 358, "macOS": 355 },
+  "minimumPassed": { "Windows": 361, "Linux": 361, "macOS": 358 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
-    "platform::file_cas::tests::cross_process_cas_worker"
+    "platform::file_cas::tests::cross_process_cas_worker",
+    "services::pty_session_service::tests::handoff_target_equal_to_source_is_rejected"
   ],
   "required": {
     "all": [
@@ -72,7 +73,10 @@
       "services::pty_session_service::tests::reattach_requires_main_window_and_owner_lost_state",
       "services::pty_session_service::tests::owner_channel_failure_buffers_until_reattach_and_bounds_memory",
       "services::pty_session_service::tests::pty_input_ownership_size_and_backpressure_boundaries",
-      "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions"
+      "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions",
+      "services::pty_session_service::tests::window_status_report_includes_owner_label",
+      "services::pty_session_service::tests::finalized_handoff_rejects_source_cancel_in_manager",
+      "services::pty_session_service::tests::handoff_state_machine_rejects_illegal_transitions"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

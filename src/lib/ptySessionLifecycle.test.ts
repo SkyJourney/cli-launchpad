@@ -59,45 +59,97 @@ describe("PTY session handoff exit reconciliation", () => {
 
 describe("detached PTY window failure recovery", () => {
   it("closes when the local PTY has ended", () => {
-    expect(resolveDetachedWindowFailureAction("exited", "running")).toBe(
-      "close-ended",
-    );
+    expect(
+      resolveDetachedWindowFailureAction("exited", {
+        state: "running",
+        ownerLabel: "terminal-a",
+      }),
+    ).toBe("close-ended");
   });
 
   it("closes when Rust confirms that the PTY no longer exists", () => {
-    expect(resolveDetachedWindowFailureAction(null, "ended")).toBe(
-      "close-ended",
-    );
+    expect(
+      resolveDetachedWindowFailureAction(null, {
+        state: "ended",
+        ownerLabel: null,
+      }),
+    ).toBe("close-ended");
   });
 
   it("closes a stale child after another window owns the live PTY", () => {
     expect(
-      resolveDetachedWindowFailureAction(null, "ownedByAnotherWindow"),
+      resolveDetachedWindowFailureAction(null, {
+        state: "ownedByAnotherWindow",
+        ownerLabel: "terminal-b",
+      }),
     ).toBe("close-transferred");
   });
 
   it("keeps a running PTY window open when return cannot be completed", () => {
-    expect(resolveDetachedWindowFailureAction("running", "running")).toBe(
-      "keep-open",
-    );
+    expect(
+      resolveDetachedWindowFailureAction("running", {
+        state: "running",
+        ownerLabel: "main",
+      }),
+    ).toBe("keep-open");
   });
 });
 
 describe("detached PTY start timeout reconciliation", () => {
   it.each([
-    ["ownedByAnotherWindow", true, "accept-detached-owner"],
-    ["ownedByAnotherWindow", false, "cancel-source-handoff"],
-    ["running", true, "cancel-source-handoff"],
-    ["ended", true, "remove-ended-session"],
-    [null, false, "retry-owner-query"],
+    [
+      { state: "ownedByAnotherWindow", ownerLabel: "terminal-A" },
+      "terminal-A",
+      true,
+      "accept-detached-owner",
+    ],
+    [
+      { state: "ownedByAnotherWindow", ownerLabel: "terminal-B" },
+      "terminal-A",
+      true,
+      "reject-foreign-owner",
+    ],
+    [
+      { state: "ownedByAnotherWindow", ownerLabel: "terminal-A" },
+      "terminal-A",
+      false,
+      "cancel-source-handoff",
+    ],
+    [
+      { state: "running", ownerLabel: "main" },
+      "terminal-A",
+      true,
+      "cancel-source-handoff",
+    ],
+    [
+      { state: "ended", ownerLabel: null },
+      "terminal-A",
+      true,
+      "remove-ended-session",
+    ],
+    [null, "terminal-A", true, "retry-owner-query"],
   ] as const)(
-    "uses backend ownership (%s, child exists=%s)",
-    (status, childExists, expected) => {
-      expect(resolveDetachedStartTimeoutAction(status, childExists)).toBe(
-        expected,
-      );
+    "resolves %j against expected child %s (child exists=%s) to %s",
+    (status, expectedChildLabel, childExists, expected) => {
+      expect(
+        resolveDetachedStartTimeoutAction(status, {
+          expectedChildLabel,
+          childExists,
+        }),
+      ).toBe(expected);
     },
   );
+
+  it("never accepts a foreign owner even when the child window exists", () => {
+    for (const ownerLabel of ["terminal-B", "", null]) {
+      expect(
+        resolveDetachedStartTimeoutAction(
+          { state: "ownedByAnotherWindow", ownerLabel },
+          { expectedChildLabel: "terminal-A", childExists: true },
+        ),
+      ).not.toBe("accept-detached-owner");
+    }
+  });
 });
 
 describe("detached PTY event identity", () => {

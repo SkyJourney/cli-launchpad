@@ -168,7 +168,7 @@ export function installBackend(backend: HostBackend) {
       case "confirm_app_exit":
         return undefined;
       case "get_pty_session_window_status":
-        return "running";
+        return { status: "running", ownerWindowLabel: "main" };
       case "list_workspace_layout_presets":
       case "detect_cli_status":
       case "list_execution_tasks":

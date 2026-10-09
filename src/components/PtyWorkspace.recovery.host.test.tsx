@@ -24,6 +24,7 @@ import {
   emitToMain,
   flush,
   invokes,
+  launchPty,
   mountWorkspace,
   openFile,
   savedLayouts,
@@ -271,5 +272,235 @@ describe("detached window loss", () => {
     expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
+  });
+});
+
+function ptyOccurrences(target: WorkspaceHost, instanceId: string) {
+  return listWorkspacePanes(target.ctx().tree)
+    .flatMap((pane) => pane.contents)
+    .filter(
+      (content) => content.kind === "pty" && content.slotId === instanceId,
+    ).length;
+}
+
+const FAKE_TIMERS = [
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+  "Date",
+] as const;
+
+/** 子窗口的 label：子窗口在 detachSession 之后才创建，所以总是惰性读取。 */
+function lastChildLabel() {
+  const created = tauriMock.state.createdWindows;
+  return created[created.length - 1].label;
+}
+
+function destroyedChild(label: string) {
+  return tauriMock.state.windowActions.some(
+    (action) => action.windowLabel === label && action.action === "destroy",
+  );
+}
+
+/** 以 Rust 的原始 DTO 形态设置状态查询的返回值（不是映射后的 { state, ownerLabel }）。 */
+function reportStatus(
+  target: WorkspaceHost,
+  report: () => { status: string; ownerWindowLabel: string | null },
+) {
+  target.backend.handlers.set("get_pty_session_window_status", report);
+}
+
+/** fake timers 下开始一次分离：子窗口永远不发 ready，等待 15 秒超时对账。 */
+async function startUnacknowledgedDetach(
+  target: WorkspaceHost,
+  instanceId: string,
+) {
+  vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+  const outcome: {
+    settled: "pending" | "resolved" | "rejected";
+    rejection: unknown;
+  } = { settled: "pending", rejection: undefined };
+  await act(async () => {
+    void target
+      .ctx()
+      .detachSession(instanceId)
+      .then(
+        () => {
+          outcome.settled = "resolved";
+        },
+        (reason: unknown) => {
+          outcome.settled = "rejected";
+          outcome.rejection = reason;
+        },
+      );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  return outcome;
+}
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
+describe("PTY detach timeout reconciliation", () => {
+  it("does not accept a detach when Rust reports a foreign owner", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
+    const child = lastChildLabel();
+    reportStatus(host, () => ({
+      status: "ownedByAnotherWindow",
+      ownerWindowLabel: "terminal-8e783338-f464-4b10-b15e-b534748c6241",
+    }));
+
+    await advance(15_000);
+
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(destroyedChild(child)).toBe(true);
+    expect(outcome.rejection).toBeInstanceOf(Error);
+    expect((outcome.rejection as Error).message).toContain(
+      "pty.detachedStateChanged",
+    );
+    expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+    expect(
+      coordinator.get({ kind: "pty", slotId: slot.instanceId })?.phase,
+    ).toBe("attached");
+    // 反向断言：没有走 accept 分支（槽位没有离开树），宿主没有报错。
+    expect(host.errors).toEqual([]);
+  });
+
+  it.each(["ownedByAnotherWindow", "running", "ended"] as const)(
+    "reconciles a timed-out detach when Rust reports %s",
+    async (reported) => {
+      const coordinator = new WorkspaceContentCoordinator();
+      host = await mountWorkspace({ coordinator });
+      const { slot, terminal } = await launchPty(host);
+      const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
+      const child = lastChildLabel();
+      reportStatus(host, () =>
+        reported === "ownedByAnotherWindow"
+          ? { status: reported, ownerWindowLabel: lastChildLabel() }
+          : reported === "running"
+            ? { status: reported, ownerWindowLabel: "main" }
+            : { status: reported, ownerWindowLabel: null },
+      );
+
+      await advance(15_000);
+
+      if (reported === "ownedByAnotherWindow") {
+        expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+        expect(ptyOccurrences(host, slot.instanceId)).toBe(0);
+        expect(outcome.settled).toBe("resolved");
+      } else if (reported === "running") {
+        // 规格写的是“恰好 1 次”，但 reconcileTimedOutDetach 的回退路径与
+        // detachSession 的 catch 各回滚一次（既有的重复回滚，Rust 侧幂等）。
+        // 用户 2026-10-09 批准放宽为“至少 1 次且令牌全部相同”，缺陷登记给 m6-026。
+        const cancelTokens = terminal.cancelHandoff.mock.calls.map(
+          (call) => call[0],
+        );
+        expect(cancelTokens.length).toBeGreaterThanOrEqual(1);
+        expect(new Set(cancelTokens).size).toBe(1);
+        expect(cancelTokens[0]).toMatch(/^handoff-/);
+        expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+        expect(destroyedChild(child)).toBe(true);
+        expect((outcome.rejection as Error).message).toContain(
+          "pty.detachedStartTimedOut",
+        );
+        // 反向断言：不得出现“窗口被接受为 detached”。
+        expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+      } else {
+        expect(host.ctx().slots).toEqual([]);
+        expect(destroyedChild(child)).toBe(true);
+        expect((outcome.rejection as Error).message).toContain(
+          "pty.detachedStartFailed",
+        );
+      }
+      expect(host.errors).toEqual([]);
+    },
+  );
+
+  // 配对的普通用例：只断言“当前成立、修复后依然成立”的事实，
+  // 避免下面的 it.fails 因为用例自身的构造问题抛错而被误判为通过。
+  it("keeps querying the owner every second while the status query fails", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
+    reportStatus(host, () => {
+      throw new Error("status unavailable");
+    });
+    const before = invokes("get_pty_session_window_status").length;
+
+    await advance(18_000);
+
+    expect(
+      invokes("get_pty_session_window_status").length - before,
+    ).toBeGreaterThanOrEqual(3);
+    expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+    expect(
+      coordinator.get({ kind: "pty", slotId: slot.instanceId })?.phase,
+    ).toBe("detaching");
+    expect(outcome.settled).toBe("pending");
+    expect(host.errors).toEqual([]);
+  });
+
+  // 待 m6-026：对账重试上限
+  it.fails(
+    "gives up reconciling after the retry limit and rolls the detach back",
+    async () => {
+      const coordinator = new WorkspaceContentCoordinator();
+      host = await mountWorkspace({ coordinator });
+      const { slot, terminal } = await launchPty(host);
+      const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
+      const child = lastChildLabel();
+      reportStatus(host, () => {
+        throw new Error("status unavailable");
+      });
+
+      await advance(25_000);
+
+      expect(destroyedChild(child)).toBe(true);
+      expect(terminal.cancelHandoff).toHaveBeenCalled();
+      expect(outcome.rejection).toBeInstanceOf(Error);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+    },
+  );
+
+  it("stops reconciling after unmount", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    await startUnacknowledgedDetach(host, slot.instanceId);
+    reportStatus(host, () => {
+      throw new Error("status unavailable");
+    });
+    await advance(16_000);
+    // 反向断言：卸载之前对账确实在查询（否则下面的“不再增加”是空转）。
+    expect(invokes("get_pty_session_window_status").length).toBeGreaterThan(0);
+
+    const hostErrors = host.errors;
+    host.dispose();
+    host = undefined;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    const atDispose = invokes("get_pty_session_window_status").length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(invokes("get_pty_session_window_status").length).toBe(atDispose);
+    expect(hostErrors).toEqual([]);
   });
 });

@@ -2008,7 +2008,10 @@ export function PtyWorkspaceProvider({
         WebviewWindow.getByLabel(pending.windowLabel).catch(() => null),
       ]);
       if (pendingDetachedRef.current.get(key) !== tracked) return;
-      const action = resolveDetachedStartTimeoutAction(status, Boolean(child));
+      const action = resolveDetachedStartTimeoutAction(status, {
+        expectedChildLabel: pending.windowLabel,
+        childExists: Boolean(child),
+      });
 
       if (action === "retry-owner-query") {
         console.warn(
@@ -2080,10 +2083,14 @@ export function PtyWorkspaceProvider({
         return;
       }
 
+      const failureMessage =
+        action === "reject-foreign-owner"
+          ? tRef.current("pty.detachedStateChanged")
+          : tRef.current("pty.detachedStartTimedOut");
       await rollbackWorkspaceContentHandoff(
         pending.handoffContext,
         pending.handoffPayload,
-        new Error(tRef.current("pty.detachedStartTimedOut")),
+        new Error(failureMessage),
       ).catch(() => undefined);
       contentCoordinatorRef.current.failHandoff(
         { kind: "pty", slotId: pending.instanceId },
@@ -2091,7 +2098,7 @@ export function PtyWorkspaceProvider({
         pending.token,
       );
       void pending.window.destroy().catch(() => undefined);
-      pending.reject(new Error(tRef.current("pty.detachedStartTimedOut")));
+      pending.reject(new Error(failureMessage));
     },
     [commitTree, removeSlot, setFocusedPane],
   );
@@ -2388,7 +2395,7 @@ export function PtyWorkspaceProvider({
           const status = await getPtySessionWindowStatus(sessionId).catch(
             () => null,
           );
-          if (status === "ended") {
+          if (status?.state === "ended") {
             const pending = takePendingWorkspaceContentWindow(
               pendingDetachedRef.current,
               workspacePtyKey(slot.instanceId),
@@ -2486,7 +2493,10 @@ export function PtyWorkspaceProvider({
             getPtySessionWindowStatus(payload.sessionId),
             WebviewWindow.getByLabel(payload.windowLabel),
           ]);
-          if (windowStatus !== "ownedByAnotherWindow" || !detachedWindow) {
+          if (
+            windowStatus.state !== "ownedByAnotherWindow" ||
+            !detachedWindow
+          ) {
             fail(tRef.current("pty.detachedStateChanged"));
             return;
           }

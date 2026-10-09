@@ -44,33 +44,41 @@ export function resolveDetachedWindowFailureAction(
   localState: PtySession["state"] | null | undefined,
   windowStatus: PtySessionWindowStatus | null | undefined,
 ): DetachedWindowFailureAction {
+  const state = windowStatus?.state;
   if (
     localState === "exited" ||
     localState === "terminated" ||
     localState === "failed" ||
-    windowStatus === "ended"
+    state === "ended"
   ) {
     return "close-ended";
   }
-  if (windowStatus === "ownedByAnotherWindow") return "close-transferred";
+  if (state === "ownedByAnotherWindow") return "close-transferred";
   return "keep-open";
 }
 
 export type DetachedStartTimeoutAction =
   | "accept-detached-owner"
   | "cancel-source-handoff"
+  | "reject-foreign-owner"
   | "remove-ended-session"
   | "retry-owner-query";
 
 export function resolveDetachedStartTimeoutAction(
   windowStatus: PtySessionWindowStatus | null | undefined,
-  detachedWindowExists: boolean,
+  child: { expectedChildLabel: string; childExists: boolean },
 ): DetachedStartTimeoutAction {
-  if (windowStatus === "ended") return "remove-ended-session";
-  if (windowStatus === "ownedByAnotherWindow" && detachedWindowExists) {
-    return "accept-detached-owner";
-  }
   if (windowStatus == null) return "retry-owner-query";
+  if (windowStatus.state === "ended") return "remove-ended-session";
+  if (windowStatus.state === "ownedByAnotherWindow") {
+    // Rust 报告的所有者必须正是刚创建的子窗口，否则是外来窗口，不能接受。
+    if (windowStatus.ownerLabel !== child.expectedChildLabel) {
+      return "reject-foreign-owner";
+    }
+    return child.childExists
+      ? "accept-detached-owner"
+      : "cancel-source-handoff";
+  }
   return "cancel-source-handoff";
 }
 

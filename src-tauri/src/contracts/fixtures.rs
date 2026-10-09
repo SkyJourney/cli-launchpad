@@ -16,7 +16,9 @@ use crate::models::execution::{
 use crate::models::install::{
     InstallKind, InstallPlan, LatestVersion, ManagedUpdateStatus, UpdateAvailability,
 };
-use crate::models::pty_session::{PtyEvent, PtyHandoff, PtySession, PtySessionWindowStatus};
+use crate::models::pty_session::{
+    PtyEvent, PtyHandoff, PtySession, PtySessionWindowStatus, PtySessionWindowStatusReport,
+};
 use crate::models::tool::ToolKey;
 use crate::models::workspace_layout::{
     WorkspaceFileDocument, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
@@ -492,16 +494,36 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         cases,
     });
 
-    // PtySessionWindowStatus
+    // PtySessionWindowStatusReport：get_pty_session_window_status 的返回值（m6-025 起带所有者标签）。
+    // 只有 Serialize，没有 Deserialize，所以用 sample_serialize_only。
     let mut cases = Vec::new();
-    let name = "PtySessionWindowStatus";
-    sample(&mut cases, name, "running", PtySessionWindowStatus::Running);
-    sample(&mut cases, name, "ended", PtySessionWindowStatus::Ended);
-    sample(
+    let name = "PtySessionWindowStatusReport";
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "running",
+        PtySessionWindowStatusReport {
+            status: PtySessionWindowStatus::Running,
+            owner_window_label: Some("main".to_string()),
+        },
+    );
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "ended",
+        PtySessionWindowStatusReport {
+            status: PtySessionWindowStatus::Ended,
+            owner_window_label: None,
+        },
+    );
+    sample_serialize_only(
         &mut cases,
         name,
         "ownedByAnotherWindow",
-        PtySessionWindowStatus::OwnedByAnotherWindow,
+        PtySessionWindowStatusReport {
+            status: PtySessionWindowStatus::OwnedByAnotherWindow,
+            owner_window_label: Some("terminal-11111111-1111-4111-8111-111111111111".to_string()),
+        },
     );
     all.push(DtoSamples {
         fixture_file: Some("pty-session-window-status.json"),

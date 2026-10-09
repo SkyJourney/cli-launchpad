@@ -194,10 +194,39 @@ export interface PtySession {
   exitCode: number | null;
 }
 
-export type PtySessionWindowStatus =
+export type PtySessionWindowState =
   | "running"
   | "ended"
   | "ownedByAnotherWindow";
+
+export interface PtySessionWindowStatus {
+  state: PtySessionWindowState;
+  ownerLabel: string | null;
+}
+
+/** Rust 序列化的原始 DTO（`PtySessionWindowStatusReport`，camelCase）。 */
+export interface PtySessionWindowStatusDto {
+  status: PtySessionWindowState;
+  ownerWindowLabel: string | null;
+}
+
+/**
+ * DTO 到前端类型的唯一映射点；未知状态直接抛错，不静默容忍。
+ * 用 const 箭头函数而不是 export function：appCommands.contract.test.ts 把 tauri.ts
+ * 里每个 export function 都当作 invoke 封装来解析，纯映射函数不能写成那种形态。
+ */
+export const toPtySessionWindowStatus = (
+  dto: PtySessionWindowStatusDto,
+): PtySessionWindowStatus => {
+  if (
+    dto.status !== "running" &&
+    dto.status !== "ended" &&
+    dto.status !== "ownedByAnotherWindow"
+  ) {
+    throw new Error(`Unknown PTY window status: ${String(dto.status)}`);
+  }
+  return { state: dto.status, ownerLabel: dto.ownerWindowLabel ?? null };
+};
 
 export interface PtySizeUpdate {
   cols: number;
@@ -687,10 +716,12 @@ export function cancelPtyHandoff(sessionId: string, token: string) {
   return invoke<void>("cancel_pty_handoff", { sessionId, token });
 }
 
-export function getPtySessionWindowStatus(sessionId: string) {
-  return invoke<PtySessionWindowStatus>("get_pty_session_window_status", {
-    sessionId,
-  });
+export async function getPtySessionWindowStatus(sessionId: string) {
+  return toPtySessionWindowStatus(
+    await invoke<PtySessionWindowStatusDto>("get_pty_session_window_status", {
+      sessionId,
+    }),
+  );
 }
 
 export function reattachPtySession(

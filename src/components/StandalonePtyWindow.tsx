@@ -292,9 +292,9 @@ export function StandalonePtyWindow({
     if (!readyRef.current && terminalState !== "running") {
       void getPtySessionWindowStatus(sessionId)
         .then((status) => {
-          if (status === "ended") {
+          if (status.state === "ended") {
             closeAfterExitRef.current();
-          } else if (status === "ownedByAnotherWindow") {
+          } else if (status.state === "ownedByAnotherWindow") {
             emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
               instanceId,
               sessionId,

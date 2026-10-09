@@ -3,7 +3,7 @@ use tauri::{ipc::Channel, State, WebviewWindow};
 use crate::{
     models::{
         pty_session::{
-            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatusReport,
             PtySizeUpdate, PtyTerminalSnapshot,
         },
         tool::ToolKey,
@@ -173,7 +173,7 @@ pub fn get_pty_session_window_status(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
-) -> Result<PtySessionWindowStatus, AppError> {
+) -> Result<PtySessionWindowStatusReport, AppError> {
     if !matches!(
         crate::models::window_kind::window_kind_of(window.label()),
         Some(
@@ -183,7 +183,7 @@ pub fn get_pty_session_window_status(
     ) {
         return Err(AppError::msg("当前窗口不允许查询终端所有权状态"));
     }
-    state.window_status(&session_id, window.label())
+    state.window_status_report(&session_id, window.label())
 }
 
 #[tauri::command]

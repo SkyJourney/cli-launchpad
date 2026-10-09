@@ -334,7 +334,12 @@ describe("child window ACL at runtime", () => {
     async (kind) => {
       const { label, allowed } = KINDS[kind];
       tauriMock.setCurrentWindowLabel(label);
-      tauriMock.setInvokeHandler(() => undefined);
+      // 状态查询经 toPtySessionWindowStatus 映射，必须返回 Rust 的原始 DTO。
+      tauriMock.setInvokeHandler((command) =>
+        command === "get_pty_session_window_status"
+          ? { status: "running", ownerWindowLabel: label }
+          : undefined,
+      );
 
       for (const command of allowed) {
         await expect(CALLS[command]()).resolves.not.toThrow();
