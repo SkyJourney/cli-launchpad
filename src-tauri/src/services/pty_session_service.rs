@@ -61,6 +61,10 @@ fn enqueue_pty_input(sender: &SyncSender<Vec<u8>>, data: &[u8]) -> Result<(), Ap
     }
 }
 
+fn pty_input_channel() -> (SyncSender<Vec<u8>>, Receiver<Vec<u8>>) {
+    mpsc::sync_channel(PTY_INPUT_QUEUE_CAPACITY)
+}
+
 fn start_pty_input_writer(
     mut writer: Box<dyn Write + Send>,
     receiver: Receiver<Vec<u8>>,
@@ -647,7 +651,7 @@ impl PtySessionManager {
             }
         };
         let session_id = Uuid::new_v4().to_string();
-        let (writer_sender, writer_receiver) = mpsc::sync_channel(PTY_INPUT_QUEUE_CAPACITY);
+        let (writer_sender, writer_receiver) = pty_input_channel();
         if let Err(error) = start_pty_input_writer(writer, writer_receiver, session_id.clone()) {
             stop_spawned_child(&process_tree, &mut child);
             return Err(error)
@@ -1633,6 +1637,135 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+/// 测试用的 `ChildKiller`：只记录 `kill` 被调用的次数，不触碰任何进程。
+#[cfg(test)]
+#[derive(Debug)]
+struct FakeKiller(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl ChildKiller for FakeKiller {
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(FakeKiller(Arc::clone(&self.0)))
+    }
+}
+
+/// 把发往通道的 JSON 事件记录下来的通道替身。
+#[cfg(test)]
+pub(crate) fn recording_channel() -> (Channel<PtyEvent>, Arc<Mutex<Vec<serde_json::Value>>>) {
+    let sink: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&sink);
+    let channel = Channel::new(move |body| {
+        if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+            writer
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&json).unwrap());
+        }
+        Ok(())
+    });
+    (channel, sink)
+}
+
+/// 每次发送都失败的通道替身，用来模拟所有者窗口已销毁。
+#[cfg(test)]
+pub(crate) fn failing_channel() -> Channel<PtyEvent> {
+    Channel::new(|_| Err(tauri::Error::Anyhow(anyhow!("closed"))))
+}
+
+/// `insert_test_session` 的返回值。不暴露私有的 `ManagedSession`（会触发
+/// `private_interfaces` 警告）：同模块的测试用 `PtySessionManager::get` 取会话。
+#[cfg(test)]
+pub(crate) struct TestSession {
+    pub session_id: String,
+    pub input: Receiver<Vec<u8>>,
+    pub kills: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TestRoute {
+    pub window_label: String,
+    pub owner_lost: bool,
+    pub has_channel: bool,
+    pub buffered_events: usize,
+}
+
+#[cfg(test)]
+impl PtySessionManager {
+    /// 不启动子进程、不启动输入写线程，直接把一个带通道的会话放进会话表。
+    pub(crate) fn insert_test_session(
+        &self,
+        owner_label: &str,
+        channel: Option<Channel<PtyEvent>>,
+    ) -> TestSession {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty must succeed for PTY manager tests");
+        drop(pair.slave);
+        let kills = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (writer, input) = pty_input_channel();
+        let session_id = Uuid::new_v4().to_string();
+        let session = Arc::new(ManagedSession {
+            session_id: session_id.clone(),
+            directory_id: 1,
+            tool_key: ToolKey::Claude,
+            working_directory: "C:/project".to_string(),
+            started_at_ms: 0,
+            master: Mutex::new(pair.master),
+            last_size: Mutex::new((80, 24)),
+            writer,
+            killer: Mutex::new(Box::new(FakeKiller(Arc::clone(&kills)))),
+            process_tree: Mutex::new(None),
+            flow: Arc::new(OutputFlow::new()),
+            event_route: Mutex::new(EventRoute {
+                window_label: owner_label.to_string(),
+                channel,
+                mirror: None,
+                owner_lost: false,
+                buffered_events: VecDeque::new(),
+                buffered_bytes: 0,
+            }),
+            pending_handoff: Mutex::new(None),
+            first_output_logged: AtomicBool::new(false),
+            output_chunks: AtomicU64::new(0),
+            output_bytes: AtomicU64::new(0),
+            acknowledgement_calls: AtomicU64::new(0),
+            last_acknowledged_sequence: AtomicU64::new(0),
+            termination_requested: AtomicBool::new(false),
+        });
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), session);
+        TestSession {
+            session_id,
+            input,
+            kills,
+        }
+    }
+
+    pub(crate) fn test_route(&self, session_id: &str) -> TestRoute {
+        let session = self.get(session_id).expect("test session must exist");
+        let route = session.event_route.lock().unwrap();
+        TestRoute {
+            window_label: route.window_label.clone(),
+            owner_lost: route.owner_lost,
+            has_channel: route.channel.is_some(),
+            buffered_events: route.buffered_events.len(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1954,5 +2087,479 @@ mod tests {
         let value = serde_json::to_value(error).unwrap();
 
         assert_eq!(value["code"], "pty_input_backpressure");
+    }
+
+    // ---- manager 级测试（m6-024）：全部通过 insert_test_session 构造真实会话，
+    // 不启动子进程、不启动输入写线程、不使用 sleep。
+
+    const T1: &str = "terminal-11111111-1111-4111-8111-111111111111";
+    const T2: &str = "terminal-22222222-2222-4222-8222-222222222222";
+    const T3: &str = "terminal-33333333-3333-4333-8333-333333333333";
+    const T4: &str = "terminal-44444444-4444-4444-8444-444444444444";
+    const T5: &str = "terminal-55555555-5555-4555-8555-555555555555";
+    const T6: &str = "terminal-66666666-6666-4666-8666-666666666666";
+
+    fn output(session_id: &str, sequence: u64, data: &str) -> PtyEvent {
+        PtyEvent::Output {
+            session_id: session_id.to_string(),
+            sequence,
+            data_base64: data.to_string(),
+        }
+    }
+
+    fn snapshot() -> PtyTerminalSnapshot {
+        PtyTerminalSnapshot {
+            data: "screen".to_string(),
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    fn size() -> PtySizeUpdate {
+        PtySizeUpdate {
+            cols: 80,
+            rows: 24,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+
+    fn error_text(error: &AppError) -> String {
+        error.to_string()
+    }
+
+    type Records = Arc<Mutex<Vec<serde_json::Value>>>;
+
+    fn records(sink: &Records) -> Vec<serde_json::Value> {
+        sink.lock().unwrap().clone()
+    }
+
+    fn count_of(records: &[serde_json::Value], event_type: &str) -> usize {
+        records
+            .iter()
+            .filter(|record| record["type"] == event_type)
+            .count()
+    }
+
+    /// 所有者 T1 的会话：预留 4 个输出序号，T1 被销毁后（失主）缓冲三条输出和一条失败事件。
+    /// 返回会话 id、会话对象和旧所有者通道 A 的记录。
+    fn owner_lost_session_with_buffer(
+        manager: &PtySessionManager,
+    ) -> (String, Arc<ManagedSession>, Records) {
+        let (channel_a, sink_a) = recording_channel();
+        let ts = manager.insert_test_session(T1, Some(channel_a));
+        let session = manager.get(&ts.session_id).unwrap();
+        for expected in 1..=4u64 {
+            assert_eq!(session.flow.reserve(1), Some(expected));
+        }
+        assert_eq!(manager.reclaim_window(T1), vec![ts.session_id.clone()]);
+        for event in [
+            output(&ts.session_id, 2, "b2"),
+            output(&ts.session_id, 3, "b3"),
+            output(&ts.session_id, 4, "b4"),
+            PtyEvent::Failed {
+                session_id: ts.session_id.clone(),
+                message: "x".to_string(),
+            },
+        ] {
+            session.send_event(event).unwrap();
+        }
+        (ts.session_id, session, sink_a)
+    }
+
+    fn is_paused(session: &ManagedSession) -> bool {
+        session.flow.state.lock().unwrap().paused
+    }
+
+    #[test]
+    fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
+        let manager = PtySessionManager::default();
+
+        // S1：所有者 T1，有未确认的输出。
+        let (channel_1, sink_1) = recording_channel();
+        let ts1 = manager.insert_test_session(T1, Some(channel_1));
+        let s1 = ts1.session_id.clone();
+        let session_1 = manager.get(&s1).unwrap();
+        session_1.flow.reserve(10).unwrap();
+
+        // S2：所有者 main，交接目标是 T2，已经 complete 但尚未 finalize。
+        let (channel_2, _sink_2) = recording_channel();
+        let ts2 = manager.insert_test_session("main", Some(channel_2));
+        let s2 = ts2.session_id.clone();
+        let session_2 = manager.get(&s2).unwrap();
+        let handoff = manager.begin_handoff(&s2, "main").unwrap();
+        manager
+            .stage_handoff_snapshot(&s2, "main", &handoff.token, handoff.sequence, snapshot())
+            .unwrap();
+        let (target_channel, _target_sink) = recording_channel();
+        manager
+            .complete_handoff(&s2, T2, &handoff.token, target_channel)
+            .unwrap();
+        assert!(session_2.flow.is_paused_at(handoff.sequence));
+
+        // S3：所有者 T3，镜像窗口是 main。
+        let (channel_3, _sink_3) = recording_channel();
+        let ts3 = manager.insert_test_session(T3, Some(channel_3));
+        let s3 = ts3.session_id.clone();
+        let session_3 = manager.get(&s3).unwrap();
+        let (mirror_3, _mirror_sink_3) = recording_channel();
+        session_3.event_route.lock().unwrap().mirror = Some(("main".to_string(), mirror_3));
+
+        // S4：所有者 T4，镜像窗口是 T5。
+        let (channel_4, _sink_4) = recording_channel();
+        let ts4 = manager.insert_test_session(T4, Some(channel_4));
+        let s4 = ts4.session_id.clone();
+        let session_4 = manager.get(&s4).unwrap();
+        let (mirror_4, _mirror_sink_4) = recording_channel();
+        session_4.event_route.lock().unwrap().mirror = Some((T5.to_string(), mirror_4));
+
+        // 失主路径：所有者窗口被销毁，会话被回收给 main 并无限期暂停输出。
+        assert_eq!(manager.reclaim_window(T1), vec![s1.clone()]);
+        {
+            let state = session_1.flow.state.lock().unwrap();
+            assert!(state.paused);
+            assert!(state.pause_deadline.is_none());
+        }
+        assert_eq!(
+            manager.test_route(&s1),
+            TestRoute {
+                window_label: "main".into(),
+                owner_lost: true,
+                has_channel: false,
+                buffered_events: 0,
+            }
+        );
+        // 反向断言：回收只是改路由，不会终止进程，也不会向旧通道补发事件。
+        assert_eq!(ts1.kills.load(Ordering::SeqCst), 0);
+        assert!(records(&sink_1).is_empty());
+
+        // 交接目标窗被销毁：待决交接被清除，输出恢复，所有者仍是 main。
+        assert_eq!(manager.reclaim_window(T2), Vec::<String>::new());
+        assert!(session_2.pending_handoff.lock().unwrap().is_none());
+        assert!(!session_2.flow.is_paused_at(handoff.sequence));
+        assert!(!is_paused(&session_2));
+        assert_eq!(manager.test_route(&s2).window_label, "main");
+
+        // 镜像窗是 main：main 永远不会被回收，镜像保持。
+        assert_eq!(manager.reclaim_window("main"), Vec::<String>::new());
+        assert!(session_3.event_route.lock().unwrap().mirror.is_some());
+
+        // 镜像窗 T5 被销毁：只清掉镜像，所有者 T4 不变。
+        assert_eq!(manager.reclaim_window(T5), Vec::<String>::new());
+        assert!(session_4.event_route.lock().unwrap().mirror.is_none());
+        assert_eq!(manager.test_route(&s4).window_label, T4);
+
+        // 无关标签：任何路由都不变。
+        let before: Vec<TestRoute> = [&s1, &s2, &s3, &s4]
+            .iter()
+            .map(|id| manager.test_route(id))
+            .collect();
+        assert_eq!(manager.reclaim_window(T6), Vec::<String>::new());
+        let after: Vec<TestRoute> = [&s1, &s2, &s3, &s4]
+            .iter()
+            .map(|id| manager.test_route(id))
+            .collect();
+        assert_eq!(before, after);
+        assert!(session_3.event_route.lock().unwrap().mirror.is_some());
+        assert!(session_4.event_route.lock().unwrap().mirror.is_none());
+    }
+
+    #[test]
+    fn reattach_replays_only_buffered_events_after_snapshot_sequence() {
+        let manager = PtySessionManager::default();
+        let (s1, session, sink_a) = owner_lost_session_with_buffer(&manager);
+        let (channel_b, sink_b) = recording_channel();
+
+        let metadata = manager
+            .reattach(&s1, "main", channel_b, snapshot(), 3, size())
+            .unwrap();
+
+        let received = records(&sink_b);
+        assert_eq!(received.len(), 3);
+        assert_eq!(received[0]["type"], "snapshot");
+        assert_eq!(received[0]["sequence"], 3);
+        assert_eq!(received[1]["type"], "output");
+        assert_eq!(received[1]["sequence"], 4);
+        assert_eq!(received[2]["type"], "failed");
+        // 反向断言：快照序号及之前的输出不会被重放。
+        assert!(!received.iter().any(|record| {
+            record["type"] == "output" && (record["sequence"] == 2 || record["sequence"] == 3)
+        }));
+        assert_eq!(
+            manager.test_route(&s1),
+            TestRoute {
+                window_label: "main".into(),
+                owner_lost: false,
+                has_channel: true,
+                buffered_events: 0,
+            }
+        );
+        {
+            let route = session.event_route.lock().unwrap();
+            assert_eq!(route.buffered_bytes, 0);
+            assert!(route.mirror.is_none());
+        }
+        assert!(!is_paused(&session));
+        assert_eq!(metadata.session_id, s1);
+        // 反向断言：失主之后的事件没有发往旧通道。
+        assert!(records(&sink_a).is_empty());
+    }
+
+    #[test]
+    fn repeated_reattach_is_rejected_without_replacing_the_live_channel() {
+        let manager = PtySessionManager::default();
+        let (s1, session, _sink_a) = owner_lost_session_with_buffer(&manager);
+        let (channel_b, sink_b) = recording_channel();
+        manager
+            .reattach(&s1, "main", channel_b, snapshot(), 3, size())
+            .unwrap();
+        let (channel_c, sink_c) = recording_channel();
+
+        let error = manager
+            .reattach(&s1, "main", channel_c, snapshot(), 4, size())
+            .unwrap_err();
+
+        assert!(
+            error_text(&error).contains("不处于可重新接管状态"),
+            "{}",
+            error_text(&error)
+        );
+        assert!(records(&sink_c).is_empty());
+        session.send_event(output(&s1, 5, "b5")).unwrap();
+        let received = records(&sink_b);
+        let last = received.last().unwrap();
+        assert_eq!(last["type"], "output");
+        assert_eq!(last["sequence"], 5);
+        assert!(records(&sink_c).is_empty());
+        assert!(!is_paused(&session));
+        // 反向断言：第二次 reattach 没有给 B 补发新的快照。
+        assert_eq!(count_of(&received, "snapshot"), 1);
+    }
+
+    #[test]
+    fn reattach_requires_main_window_and_owner_lost_state() {
+        // 每个子场景用独立的 manager：reclaim_window(T1) 会回收该 manager 里
+        // 所有以 T1 为所有者的会话，共用 manager 会让子场景互相影响。
+
+        // 子场景 1：非 main 窗口不能接管。
+        let manager_1 = PtySessionManager::default();
+        let (channel_1, _sink_1) = recording_channel();
+        let ts1 = manager_1.insert_test_session(T1, Some(channel_1));
+        let s1 = ts1.session_id.clone();
+        manager_1.get(&s1).unwrap().flow.reserve(1).unwrap();
+        assert_eq!(manager_1.reclaim_window(T1), vec![s1.clone()]);
+        let (new_1, new_sink_1) = recording_channel();
+        let error = manager_1
+            .reattach(&s1, T1, new_1, snapshot(), 1, size())
+            .unwrap_err();
+        assert!(
+            error_text(&error).contains("只有主窗口可以重新接管终端"),
+            "{}",
+            error_text(&error)
+        );
+        assert!(manager_1.test_route(&s1).owner_lost);
+
+        // 子场景 2：所有者没有失主，不能接管。
+        let manager_2 = PtySessionManager::default();
+        let (channel_2, _sink_2) = recording_channel();
+        let ts2 = manager_2.insert_test_session(T1, Some(channel_2));
+        let s2 = ts2.session_id.clone();
+        let (new_2, new_sink_2) = recording_channel();
+        let error = manager_2
+            .reattach(&s2, "main", new_2, snapshot(), 0, size())
+            .unwrap_err();
+        assert!(
+            error_text(&error).contains("不处于可重新接管状态"),
+            "{}",
+            error_text(&error)
+        );
+        assert_eq!(manager_2.test_route(&s2).window_label, T1);
+
+        // 子场景 3：快照尺寸非法，失主状态与缓冲保持不变。
+        let manager_3 = PtySessionManager::default();
+        let (channel_3, _sink_3) = recording_channel();
+        let ts3 = manager_3.insert_test_session(T1, Some(channel_3));
+        let s3 = ts3.session_id.clone();
+        let session_3 = manager_3.get(&s3).unwrap();
+        session_3.flow.reserve(1).unwrap();
+        assert_eq!(manager_3.reclaim_window(T1), vec![s3.clone()]);
+        session_3.send_event(output(&s3, 1, "z")).unwrap();
+        let (new_3, new_sink_3) = recording_channel();
+        let invalid_snapshot = PtyTerminalSnapshot {
+            cols: 0,
+            ..snapshot()
+        };
+        let error = manager_3
+            .reattach(&s3, "main", new_3, invalid_snapshot, 1, size())
+            .unwrap_err();
+        assert!(
+            error_text(&error).contains("PTY 尺寸必须至少为 1 列和 1 行"),
+            "{}",
+            error_text(&error)
+        );
+        let route_3 = manager_3.test_route(&s3);
+        assert!(route_3.owner_lost);
+        assert_eq!(route_3.buffered_events, 1);
+
+        // 子场景 4：序号超过已预留的最大序号，路由未变，缓冲没有被清空。
+        let manager_4 = PtySessionManager::default();
+        let (channel_4, _sink_4) = recording_channel();
+        let ts4 = manager_4.insert_test_session(T1, Some(channel_4));
+        let s4 = ts4.session_id.clone();
+        let session_4 = manager_4.get(&s4).unwrap();
+        session_4.flow.reserve(1).unwrap();
+        assert_eq!(manager_4.reclaim_window(T1), vec![s4.clone()]);
+        session_4.send_event(output(&s4, 1, "z")).unwrap();
+        let (new_4, new_sink_4) = recording_channel();
+        let error = manager_4
+            .reattach(&s4, "main", new_4, snapshot(), 99, size())
+            .unwrap_err();
+        assert!(
+            error_text(&error).contains("输出确认序号超出已发送范围"),
+            "{}",
+            error_text(&error)
+        );
+        assert_eq!(
+            manager_4.test_route(&s4),
+            TestRoute {
+                window_label: "main".into(),
+                owner_lost: true,
+                has_channel: false,
+                buffered_events: 1,
+            }
+        );
+
+        // 反向断言：失败的 reattach 不得向新通道发送任何事件。
+        for sink in [&new_sink_1, &new_sink_2, &new_sink_3, &new_sink_4] {
+            assert!(records(sink).is_empty());
+        }
+    }
+
+    #[test]
+    fn owner_channel_failure_buffers_until_reattach_and_bounds_memory() {
+        let manager = PtySessionManager::default();
+
+        // 子场景 1：所有者通道失效，输出被缓冲并无限期暂停；标签保持 T1。
+        let ts1 = manager.insert_test_session(T1, Some(failing_channel()));
+        let s1 = ts1.session_id.clone();
+        let session_1 = manager.get(&s1).unwrap();
+        session_1
+            .send_event(output(&s1, 1, &"a".repeat(10)))
+            .unwrap();
+        assert_eq!(
+            manager.test_route(&s1),
+            TestRoute {
+                window_label: T1.into(),
+                owner_lost: true,
+                has_channel: false,
+                buffered_events: 1,
+            }
+        );
+        {
+            let state = session_1.flow.state.lock().unwrap();
+            assert!(state.paused);
+            assert!(state.pause_deadline.is_none());
+        }
+
+        // 子场景 2：缓冲超过上限的输出被拒绝，已缓冲字节数不超过上限。
+        let error = session_1
+            .send_event(output(&s1, 2, &"x".repeat(MAX_OWNER_LOST_BUFFER_BYTES)))
+            .unwrap_err();
+        assert!(error.contains("输出缓冲区已满"), "{error}");
+        assert!(
+            session_1.event_route.lock().unwrap().buffered_bytes <= MAX_OWNER_LOST_BUFFER_BYTES
+        );
+
+        // 子场景 3：退出事件不受输出上限限制，仍被缓冲。
+        session_1
+            .send_event(PtyEvent::Exited {
+                session_id: s1.clone(),
+                state: "exited".to_string(),
+                exit_code: Some(0),
+            })
+            .unwrap();
+        assert!(matches!(
+            session_1.event_route.lock().unwrap().buffered_events.back(),
+            Some(PtyEvent::Exited { .. })
+        ));
+
+        // 子场景 4：所有者是 main 时通道失效直接报错，不触发失主暂停。
+        let ts4 = manager.insert_test_session("main", Some(failing_channel()));
+        let s4 = ts4.session_id.clone();
+        let session_4 = manager.get(&s4).unwrap();
+        let error = session_4.send_event(output(&s4, 1, "a")).unwrap_err();
+        assert!(error.contains("输出通道不可用"), "{error}");
+        assert!(!manager.test_route(&s4).owner_lost);
+        assert!(!is_paused(&session_4));
+
+        // 子场景 5：通道正常时事件同时发往所有者通道和 main 镜像。
+        let (channel_a, sink_a) = recording_channel();
+        let ts5 = manager.insert_test_session(T1, Some(channel_a));
+        let s5 = ts5.session_id.clone();
+        let session_5 = manager.get(&s5).unwrap();
+        let (mirror, sink_m) = recording_channel();
+        session_5.event_route.lock().unwrap().mirror = Some(("main".to_string(), mirror));
+        session_5.send_event(output(&s5, 1, "a")).unwrap();
+        assert_eq!(records(&sink_a).len(), 1);
+        assert_eq!(records(&sink_m).len(), 1);
+    }
+
+    #[test]
+    fn pty_input_ownership_size_and_backpressure_boundaries() {
+        let manager = PtySessionManager::default();
+        let (channel, _sink) = recording_channel();
+        let TestSession {
+            session_id: s,
+            input,
+            ..
+        } = manager.insert_test_session(T1, Some(channel));
+        let code = |error: &AppError| serde_json::to_value(error).unwrap()["code"].clone();
+
+        // 1. 非所有者不能写入，队列保持为空。
+        let error = manager.write(&s, "main", b"x").unwrap_err();
+        assert!(
+            error_text(&error).contains("另一个窗口控制"),
+            "{}",
+            error_text(&error)
+        );
+        assert_eq!(input.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        // 2. 恰好等于上限的输入被接受。
+        manager
+            .write(&s, T1, &vec![0u8; MAX_PTY_INPUT_BYTES])
+            .unwrap();
+        assert_eq!(input.try_recv().unwrap().len(), MAX_PTY_INPUT_BYTES);
+
+        // 3. 超过上限一个字节就被背压拒绝，且没有入队。
+        let error = manager
+            .write(&s, T1, &vec![0u8; MAX_PTY_INPUT_BYTES + 1])
+            .unwrap_err();
+        assert_eq!(code(&error), "pty_input_backpressure");
+        assert_eq!(input.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        // 4. 后端按字节计数而不是按字符：21846 个汉字 = 65538 字节，被拒绝。
+        //    前端因此必须按字节分片（m6-036）。
+        let wide = "你".repeat(21846);
+        assert_eq!(wide.len(), 65538);
+        let error = manager.write(&s, T1, wide.as_bytes()).unwrap_err();
+        assert_eq!(code(&error), "pty_input_backpressure");
+        assert_eq!(input.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        // 5. 队列容量为 32：第 33 次写入被背压拒绝，读空后恰为 32 条。
+        for _ in 0..PTY_INPUT_QUEUE_CAPACITY {
+            manager.write(&s, T1, b"y").unwrap();
+        }
+        let error = manager.write(&s, T1, b"y").unwrap_err();
+        assert_eq!(code(&error), "pty_input_backpressure");
+        let mut drained = 0;
+        while input.try_recv().is_ok() {
+            drained += 1;
+        }
+        assert_eq!(drained, PTY_INPUT_QUEUE_CAPACITY);
+
+        // 6. 写线程退出（接收端被丢弃）之后返回 unavailable。
+        drop(input);
+        let error = manager.write(&s, T1, b"z").unwrap_err();
+        assert_eq!(code(&error), "pty_input_unavailable");
     }
 }

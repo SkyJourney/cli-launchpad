@@ -166,7 +166,7 @@ mod tests {
     use crate::services::content_window_grants::{
         ContentWindowFileGrant, ContentWindowGrantRegistry,
     };
-    use crate::services::pty_session_service::PtySessionManager;
+    use crate::services::pty_session_service::{recording_channel, PtySessionManager, TestRoute};
 
     const FILE_L1: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
     const FILE_L2: &str = "workspace-content-9f1b6a52-3c47-4d5e-8a1b-2c3d4e5f6a7b";
@@ -400,20 +400,52 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "待 m6-024 的 SEAM-04"]
     fn destroyed_terminal_owner_window_returns_owner_lost_sessions() {
-        // 完整规格（来自测试规格 RS-T10），由 m6-024 在 SEAM-04（测试用 PTY 会话构造）
-        // 落地后补全并删除 #[ignore]：
-        // 前置：T1、T2 是两个合法的 terminal-<uuid>；会话 S1 所有者 T1，S2 所有者 T2，
-        //   S3 所有者 main，各带一个 recording_channel()。
-        // 步骤与断言：
-        // 1. cleanup_destroyed_window(T1, …) 返回 owner_lost_session_ids == [S1.id]、
-        //    file_grant_revoked == false；
-        // 2. S1 的路由 window_label == "main"、owner_lost == true、channel.is_none()；
-        // 3. S2、S3 的路由不变；
-        // 4. 对 main 调用返回空列表；
-        // 5. 对非法标签 terminal-invalid 调用返回空列表且不 panic。
-        todo!("由 m6-024 在 SEAM-04 落地后补全并删除 #[ignore]")
+        let registry = ContentWindowGrantRegistry::default();
+        let sessions = PtySessionManager::default();
+        let (channel_1, _sink_1) = recording_channel();
+        let (channel_2, _sink_2) = recording_channel();
+        let (channel_3, _sink_3) = recording_channel();
+        let s1 = sessions
+            .insert_test_session(TERM_T1, Some(channel_1))
+            .session_id;
+        let s2 = sessions
+            .insert_test_session(TERM_T2, Some(channel_2))
+            .session_id;
+        let s3 = sessions
+            .insert_test_session("main", Some(channel_3))
+            .session_id;
+        let route = |window_label: &str, owner_lost: bool, has_channel: bool| TestRoute {
+            window_label: window_label.to_string(),
+            owner_lost,
+            has_channel,
+            buffered_events: 0,
+        };
+
+        // 1. 终端窗 T1 被销毁：返回它拥有的会话，不涉及文件授权。
+        let cleanup = cleanup_destroyed_window(TERM_T1, &registry, &sessions).unwrap();
+        assert_eq!(cleanup.owner_lost_session_ids, vec![s1.clone()]);
+        assert!(!cleanup.file_grant_revoked);
+
+        // 2. S1 被回收给 main 并标记失主，通道被撤掉。
+        assert_eq!(sessions.test_route(&s1), route("main", true, false));
+
+        // 3. 其他窗口的会话不受影响。
+        assert_eq!(sessions.test_route(&s2), route(TERM_T2, false, true));
+        assert_eq!(sessions.test_route(&s3), route("main", false, true));
+
+        // 4. main 被销毁不回收任何会话。
+        let cleanup = cleanup_destroyed_window("main", &registry, &sessions).unwrap();
+        assert!(cleanup.owner_lost_session_ids.is_empty());
+
+        // 5. 非法标签返回空结果且不 panic。
+        let cleanup = cleanup_destroyed_window("terminal-invalid", &registry, &sessions).unwrap();
+        assert!(cleanup.owner_lost_session_ids.is_empty());
+        assert!(!cleanup.file_grant_revoked);
+
+        // 反向断言：第 4、5 步之后 S2、S3 的路由仍与第 3 步一致。
+        assert_eq!(sessions.test_route(&s2), route(TERM_T2, false, true));
+        assert_eq!(sessions.test_route(&s3), route("main", false, true));
     }
 
     #[test]

@@ -1,11 +1,10 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 351, "Linux": 351, "macOS": 348 },
+  "minimumPassed": { "Windows": 358, "Linux": 358, "macOS": 355 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
-    "platform::file_cas::tests::cross_process_cas_worker",
-    "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions"
+    "platform::file_cas::tests::cross_process_cas_worker"
   ],
   "required": {
     "all": [
@@ -66,7 +65,14 @@
       "services::app_lifecycle::tests::tray_creation_failure_is_logged_and_does_not_abort_startup",
       "services::app_lifecycle::tests::exit_request_still_goes_through_the_exit_gate_when_tray_is_unavailable",
       "contracts::acceptance_hooks_feature_is_opt_in_and_gated",
-      "contracts::acceptance_marker_scanner_flags_ungated_occurrences"
+      "contracts::acceptance_marker_scanner_flags_ungated_occurrences",
+      "services::pty_session_service::tests::reclaim_window_pauses_output_and_clears_pending_handoffs",
+      "services::pty_session_service::tests::reattach_replays_only_buffered_events_after_snapshot_sequence",
+      "services::pty_session_service::tests::repeated_reattach_is_rejected_without_replacing_the_live_channel",
+      "services::pty_session_service::tests::reattach_requires_main_window_and_owner_lost_state",
+      "services::pty_session_service::tests::owner_channel_failure_buffers_until_reattach_and_bounds_memory",
+      "services::pty_session_service::tests::pty_input_ownership_size_and_backpressure_boundaries",
+      "services::app_lifecycle::tests::destroyed_terminal_owner_window_returns_owner_lost_sessions"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
