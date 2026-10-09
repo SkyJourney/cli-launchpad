@@ -46,7 +46,12 @@ import {
   isClipboardTextUnavailable,
 } from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
-import { formatAppError, getAppErrorCode } from "../lib/appErrors";
+import { formatAppError } from "../lib/appErrors";
+import {
+  createPtyInputWriter,
+  isPtyInputBackpressure,
+  type PtyInputWriter,
+} from "../lib/ptyInputWriter";
 import { getTerminalKeyIntent } from "../lib/windowChrome";
 import { getThemeDefinition, type ThemeId } from "../lib/themes";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
@@ -77,7 +82,7 @@ function ptyInputErrorMessage(
   backpressureMessage: string,
   t: TFunction,
 ) {
-  return getAppErrorCode(reason) === "pty_input_backpressure"
+  return isPtyInputBackpressure(reason)
     ? backpressureMessage
     : formatAppError(reason, t);
 }
@@ -108,6 +113,8 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     const fitRef = useRef<FitAddon | null>(null);
     const serializeRef = useRef<SerializeAddon | null>(null);
     const sessionRef = useRef<PtySession | null>(null);
+    const tRef = useRef(t);
+    const inputWriterRef = useRef<PtyInputWriter | null>(null);
     const interactiveRef = useRef(interactive);
     const paneInteractiveRef = useRef(interactive);
     const visibleRef = useRef(visible);
@@ -146,6 +153,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     paneInteractiveRef.current = interactive;
     visibleRef.current = visible;
     onFocusRef.current = onFocus;
+    tRef.current = t;
 
     onSessionChangeRef.current = onSessionChange;
 
@@ -250,14 +258,24 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       observer.observe(host);
       sendSize();
 
+      const inputWriter = createPtyInputWriter({
+        getSessionId: () => sessionRef.current?.sessionId ?? null,
+        write: writePtySession,
+        onError: (reason) =>
+          setError(
+            ptyInputErrorMessage(
+              reason,
+              tRef.current("pty.inputBackpressure"),
+              tRef.current,
+            ),
+          ),
+      });
+      inputWriterRef.current = inputWriter;
+
       const input = terminal.onData((data) => {
         const active = sessionRef.current;
         if (interactiveRef.current && active?.state === "running") {
-          void writePtySession(active.sessionId, data).catch((reason) =>
-            setError(
-              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-            ),
-          );
+          void inputWriter.push(data);
         } else if (startingRef.current) {
           // ConPTY can ask xterm for its cursor position before create_pty_session
           // resolves. Preserve xterm's reply until the new session id is known.
@@ -308,20 +326,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             keyIntent.windowsAltV
           ) {
             event.preventDefault();
-            void writePtySession(active.sessionId, "\u001bv").catch((reason) =>
-              setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-              ),
-            );
+            void inputWriter.push("\u001bv");
             return false;
           }
           if (pasteBehavior.controlV === "control-v" && keyIntent.controlV) {
             event.preventDefault();
-            void writePtySession(active.sessionId, "\u0016").catch((reason) =>
-              setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-              ),
-            );
+            void inputWriter.push("\u0016");
             return false;
           }
           if (pasteBehavior.controlV === "clipboard" && keyIntent.controlV) {
@@ -337,6 +347,8 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         scheduleSendSizeRef.current = null;
         observer.disconnect();
         input.dispose();
+        inputWriter.dispose();
+        inputWriterRef.current = null;
         terminal.dispose();
         terminalRef.current = null;
         fitRef.current = null;
@@ -508,8 +520,13 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             const resolvedSession = applyPendingPtyExit(created, earlyExit);
             updateSession(resolvedSession);
             if (startupInput && !earlyExit && created.state === "running") {
-              await writePtySession(created.sessionId, startupInput);
-              reportFrontendStageOnce(created.sessionId, "startupInputFlushed");
+              const flushed = await inputWriterRef.current?.push(startupInput);
+              if (flushed) {
+                reportFrontendStageOnce(
+                  created.sessionId,
+                  "startupInputFlushed",
+                );
+              }
             }
           } catch (reason) {
             pendingInputRef.current = [];
