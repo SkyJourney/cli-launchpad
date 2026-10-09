@@ -17,6 +17,8 @@ import {
   type WorkspaceSlotState,
   type WorkspaceSlotStateKind,
 } from "./tauri";
+import { abortableDelay } from "./abortableDelay";
+import { exponentialDelay } from "./retryPolicy";
 import { workspaceContentKey } from "./workspaceContentKey";
 
 export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
@@ -519,11 +521,27 @@ export function validateWorkspaceLayoutDocument(
   }
 }
 
+export interface WorkspaceLayoutSaveQueueOptions {
+  /** 异常拒绝之后、重新发送之前的等待；测试注入立即返回的实现。 */
+  delay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
+}
+
+/** 第 1 次异常拒绝后等 250 ms，第 2 次等 500 ms（第 3 次直接停止，不等待）。 */
+const ABNORMAL_REJECTION_BACKOFF = exponentialDelay({
+  baseMs: 250,
+  capMs: 4000,
+});
+
 export class WorkspaceLayoutSaveQueue {
   private revision: number;
   private pending: WorkspaceLayoutDocument | null = null;
   private draining: Promise<void> | null = null;
   private abnormalRejections = 0;
+  private readonly abort = new AbortController();
+  private readonly delay: (
+    delayMs: number,
+    signal: AbortSignal,
+  ) => Promise<void>;
 
   constructor(
     initialRevision: number,
@@ -533,8 +551,15 @@ export class WorkspaceLayoutSaveQueue {
     ) => Promise<WorkspaceLayoutSaveResult>,
     private readonly onError: (error: unknown) => void,
     private readonly onSaved: () => void = () => undefined,
+    options: WorkspaceLayoutSaveQueueOptions = {},
   ) {
     this.revision = Math.max(0, initialRevision);
+    this.delay = options.delay ?? abortableDelay;
+  }
+
+  /** 中止正在进行的退避等待；之后的退避立即返回，异常拒绝仍受 3 次上限约束。 */
+  dispose(): void {
+    this.abort.abort();
   }
 
   enqueue(document: WorkspaceLayoutDocument): void {
@@ -604,8 +629,12 @@ export class WorkspaceLayoutSaveQueue {
                 "工作区布局保存被后端连续拒绝，已停止重试",
               ),
             );
-          } else if (!this.pending) {
-            this.pending = document;
+          } else {
+            if (!this.pending) this.pending = document;
+            await this.delay(
+              ABNORMAL_REJECTION_BACKOFF(this.abnormalRejections - 1),
+              this.abort.signal,
+            );
           }
         }
       } catch (error) {

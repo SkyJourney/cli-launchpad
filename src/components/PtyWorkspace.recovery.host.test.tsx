@@ -16,10 +16,11 @@ vi.mock(
 );
 
 import { tauriMock } from "../test/tauriMock";
-import { resetFakeTerminals } from "../test/host/hostMocks";
+import { resetFakeTerminals, toastSpy } from "../test/host/hostMocks";
 import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
 import {
   detachFileToWindow,
+  detachPtyToWindow,
   emitBackendEvent,
   emitToMain,
   flush,
@@ -31,6 +32,7 @@ import {
   type WorkspaceHost,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
+import { PTY_OWNER_LOST_MAX_ATTEMPTS } from "../lib/ptyOwnerLostRecovery";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 
 let host: WorkspaceHost | undefined;
@@ -428,8 +430,7 @@ describe("PTY detach timeout reconciliation", () => {
     },
   );
 
-  // 配对的普通用例：只断言“当前成立、修复后依然成立”的事实，
-  // 避免下面的 it.fails 因为用例自身的构造问题抛错而被误判为通过。
+  // 配对的普通用例：只断言上限之内的重试行为，与下面的“放弃并回滚”用例互补。
   it("keeps querying the owner every second while the status query fails", async () => {
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator });
@@ -453,28 +454,24 @@ describe("PTY detach timeout reconciliation", () => {
     expect(host.errors).toEqual([]);
   });
 
-  // 待 m6-026：对账重试上限
-  it.fails(
-    "gives up reconciling after the retry limit and rolls the detach back",
-    async () => {
-      const coordinator = new WorkspaceContentCoordinator();
-      host = await mountWorkspace({ coordinator });
-      const { slot, terminal } = await launchPty(host);
-      const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
-      const child = lastChildLabel();
-      reportStatus(host, () => {
-        throw new Error("status unavailable");
-      });
+  it("gives up reconciling after the retry limit and rolls the detach back", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+    const outcome = await startUnacknowledgedDetach(host, slot.instanceId);
+    const child = lastChildLabel();
+    reportStatus(host, () => {
+      throw new Error("status unavailable");
+    });
 
-      await advance(25_000);
+    await advance(25_000);
 
-      expect(destroyedChild(child)).toBe(true);
-      expect(terminal.cancelHandoff).toHaveBeenCalled();
-      expect(outcome.rejection).toBeInstanceOf(Error);
-      expect(vi.getTimerCount()).toBe(0);
-      expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
-    },
-  );
+    expect(destroyedChild(child)).toBe(true);
+    expect(terminal.cancelHandoff).toHaveBeenCalled();
+    expect(outcome.rejection).toBeInstanceOf(Error);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+  });
 
   it("stops reconciling after unmount", async () => {
     const coordinator = new WorkspaceContentCoordinator();
@@ -502,5 +499,242 @@ describe("PTY detach timeout reconciliation", () => {
 
     expect(invokes("get_pty_session_window_status").length).toBe(atDispose);
     expect(hostErrors).toEqual([]);
+  });
+});
+
+const OWNER_LOST_EVENT = "pty-session-owner-lost";
+const FOREIGN_TERMINAL = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+
+/** 挂载工作区，启动一个 PTY 并分离到子窗口；返回槽位、假终端和子窗口 label。 */
+async function detachedPtyHost(
+  status: { status: string; ownerWindowLabel: string | null },
+  options: { listenerRetryDelaysMs?: readonly number[]; strict?: boolean } = {},
+) {
+  const coordinator = new WorkspaceContentCoordinator();
+  host = await mountWorkspace({ coordinator, ...options });
+  const { slot, terminal } = await launchPty(host);
+  const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+  host.backend.handlers.set("get_pty_session_window_status", () => status);
+  return { coordinator, slot, terminal, windowLabel };
+}
+
+describe("PTY owner-lost recovery", () => {
+  it("retries reattach a bounded number of times and reports failure once", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost({
+      status: "running",
+      ownerWindowLabel: "main",
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(terminal.reattachLostSession.mock.calls.length).toBe(
+      PTY_OWNER_LOST_MAX_ATTEMPTS,
+    );
+    expect(toastSpy.error).toHaveBeenCalledTimes(1);
+    expect(String(toastSpy.error.mock.calls[0][0])).toContain(
+      "pty.ownerLostRecoveryFailed",
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("still retries a bounded number of times after StrictMode remounts the provider", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost(
+      { status: "running", ownerWindowLabel: "main" },
+      { strict: true },
+    );
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    // 生命周期控制器若在严格模式的二次挂载后仍处于中止状态，这里会是 0 次。
+    expect(terminal.reattachLostSession.mock.calls.length).toBe(
+      PTY_OWNER_LOST_MAX_ATTEMPTS,
+    );
+    expect(toastSpy.error).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops scheduling retries after the workspace unmounts", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost({
+      status: "running",
+      ownerWindowLabel: "main",
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const callsBeforeDispose = terminal.reattachLostSession.mock.calls.length;
+    host!.dispose();
+    host = undefined;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(terminal.reattachLostSession.mock.calls.length).toBe(
+      callsBeforeDispose,
+    );
+    expect(toastSpy.error).not.toHaveBeenCalled();
+  });
+
+  it("returns the reclaimed PTY to the focused pane after a successful reattach", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal, windowLabel } = await detachedPtyHost({
+      status: "running",
+      ownerWindowLabel: "main",
+    });
+    terminal.reattachLostSession.mockResolvedValue(undefined);
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await flush();
+
+    const focused = listWorkspacePanes(host!.ctx().tree).find(
+      (pane) => pane.id === host!.ctx().focusedPaneId,
+    );
+    expect(focused?.contents).toContainEqual({
+      kind: "pty",
+      slotId: slot.instanceId,
+    });
+    expect(host!.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(
+      tauriMock.state.windowActions.some(
+        (action) =>
+          action.windowLabel === windowLabel && action.action === "destroy",
+      ),
+    ).toBe(true);
+    expect(terminal.reattachLostSession).toHaveBeenCalledTimes(1);
+    expect(terminal.reattachLostSession).toHaveBeenCalledWith(slot.sessionId);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(toastSpy.error).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second owner-lost event while a recovery loop is running", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost({
+      status: "running",
+      ownerWindowLabel: "main",
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await act(async () => {
+      tauriMock.emitEvent(
+        OWNER_LOST_EVENT,
+        { sessionId: slot.sessionId },
+        "main",
+      );
+      tauriMock.emitEvent(
+        OWNER_LOST_EVENT,
+        { sessionId: slot.sessionId },
+        "main",
+      );
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(terminal.reattachLostSession).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(terminal.reattachLostSession).toHaveBeenCalledTimes(
+      PTY_OWNER_LOST_MAX_ATTEMPTS,
+    );
+    expect(toastSpy.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops retrying when another window now owns the session", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost({
+      status: "ownedByAnotherWindow",
+      ownerWindowLabel: FOREIGN_TERMINAL,
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(terminal.reattachLostSession).toHaveBeenCalledTimes(1);
+    expect(toastSpy.error).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    // 反向断言：别的窗口持有时不得移除槽位。
+    expect(
+      host!
+        .ctx()
+        .slots.some((candidate) => candidate.instanceId === slot.instanceId),
+    ).toBe(true);
+  });
+
+  it("removes the slot and stops when the session already ended", async () => {
+    toastSpy.error.mockClear();
+    const { slot, terminal } = await detachedPtyHost({
+      status: "ended",
+      ownerWindowLabel: null,
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("gone"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(
+      host!
+        .ctx()
+        .slots.some((candidate) => candidate.instanceId === slot.instanceId),
+    ).toBe(false);
+    expect(terminal.reattachLostSession).toHaveBeenCalledTimes(1);
+    expect(toastSpy.error).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("workspace listener isolation", () => {
+  it("keeps PTY handoff listeners when the owner-lost listener fails to register and surfaces the failure", async () => {
+    toastSpy.error.mockClear();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      tauriMock.failNextListen(
+        OWNER_LOST_EVENT,
+        new Error("event.listen not allowed"),
+      );
+    }
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator, listenerRetryDelaysMs: [0, 0] });
+    const { slot } = await launchPty(host);
+
+    const { detachPromise } = await detachPtyToWindow(host, slot.instanceId);
+    await detachPromise;
+
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(toastSpy.error).toHaveBeenCalledTimes(1);
+    const message = String(toastSpy.error.mock.calls[0][0]);
+    expect(message).toContain("pty.listenerSetupFailed");
+    expect(message).toContain(OWNER_LOST_EVENT);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
   });
 });

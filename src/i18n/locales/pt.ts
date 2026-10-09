@@ -219,6 +219,10 @@ export const pt = {
       "Não foi possível criar a janela de terminal separada.",
     detachedStartFailed:
       "Não foi possível iniciar a janela de terminal separada.",
+    listenerSetupFailed:
+      "Não foi possível registrar alguns canais de comunicação entre janelas ({{events}}). As janelas separadas podem não responder; reinicie o aplicativo se o problema persistir.",
+    ownerLostRecoveryFailed:
+      "Não foi possível reconectar a sessão do terminal depois que a janela foi fechada. Feche este terminal e inicie-o novamente.",
     detachedStateChanged: "O estado da janela separada mudou. Tente novamente.",
     detachedSessionMissing:
       "Esta sessão de terminal não foi encontrada no espaço de trabalho principal.",

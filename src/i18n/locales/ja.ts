@@ -215,6 +215,10 @@ export const ja = {
     detachedStartTimedOut: "別ウィンドウの起動がタイムアウトしました。",
     detachedCreateFailed: "別のターミナルウィンドウを作成できませんでした。",
     detachedStartFailed: "別のターミナルウィンドウを起動できませんでした。",
+    listenerSetupFailed:
+      "一部のウィンドウ間通信チャネルを登録できませんでした（{{events}}）。別ウィンドウが応答しない場合があります。問題が続く場合はアプリを再起動してください。",
+    ownerLostRecoveryFailed:
+      "ウィンドウが閉じられた後、ターミナルセッションに再接続できませんでした。このターミナルを閉じて、もう一度起動してください。",
     detachedStateChanged:
       "別ウィンドウの状態が変更されました。もう一度お試しください。",
     detachedSessionMissing:

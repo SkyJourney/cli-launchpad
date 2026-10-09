@@ -211,3 +211,31 @@ describe("StandaloneWorkspaceFileWindow", () => {
     );
   });
 });
+
+describe("StandaloneWorkspaceFileWindow listener setup", () => {
+  it("reports attach failure to the main window when listener registration fails", async () => {
+    tauriMock.failNextListen(
+      "workspace-content-window-event",
+      new Error("denied"),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    windowHandle = await mountFileWindow();
+
+    await flush();
+
+    const failed = emittedEnvelopes(
+      "workspace-file-window-attach-failed",
+    ).filter((event) => event.target === "main");
+    expect(failed).toHaveLength(1);
+    const inner = (failed[0].payload as { payload: { message?: string } })
+      .payload;
+    expect(typeof inner.message).toBe("string");
+    expect(inner.message).toContain("denied");
+    expect(screen.getByText(/denied/)).toBeTruthy();
+    // 反向断言：监听都没注册成功，不得发出 ready。
+    expect(emittedEnvelopes("workspace-file-window-ready")).toHaveLength(0);
+    windowHandle.dispose();
+    windowHandle = undefined;
+    expect(tauriMock.state.eventListeners).toHaveLength(0);
+  });
+});

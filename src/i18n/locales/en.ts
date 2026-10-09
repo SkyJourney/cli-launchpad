@@ -202,6 +202,10 @@ export const en = {
     detachedStartTimedOut: "Starting the separate terminal window timed out.",
     detachedCreateFailed: "Could not create the separate terminal window.",
     detachedStartFailed: "Could not start the separate terminal window.",
+    listenerSetupFailed:
+      "Some window communication channels could not be registered ({{events}}). Separate windows may not respond; restart the app if this persists.",
+    ownerLostRecoveryFailed:
+      "Could not reconnect the terminal session after its window closed. Close this terminal and start it again.",
     detachedStateChanged:
       "The separate terminal window state changed. Please try again.",
     detachedSessionMissing:

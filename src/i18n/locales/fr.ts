@@ -218,6 +218,10 @@ export const fr = {
     detachedCreateFailed: "Impossible de créer la fenêtre de terminal séparée.",
     detachedStartFailed:
       "Impossible de démarrer la fenêtre de terminal séparée.",
+    listenerSetupFailed:
+      "Certains canaux de communication entre fenêtres n'ont pas pu être enregistrés ({{events}}). Les fenêtres séparées peuvent ne pas répondre ; redémarrez l'application si le problème persiste.",
+    ownerLostRecoveryFailed:
+      "Impossible de reconnecter la session du terminal après la fermeture de sa fenêtre. Fermez ce terminal et relancez-le.",
     detachedStateChanged:
       "L’état de la fenêtre séparée a changé. Veuillez réessayer.",
     detachedSessionMissing:

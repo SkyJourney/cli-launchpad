@@ -38,6 +38,7 @@ import {
   WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
+import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { completeWorkspaceFileWindowSetup } from "../lib/workspaceFileWindowSetup";
 
 export function StandaloneWorkspaceFileWindow({
@@ -271,7 +272,7 @@ export function StandaloneWorkspaceFileWindow({
       const currentWindow = getCurrentWindow();
       await completeWorkspaceFileWindowSetup({
         registerListeners: () =>
-          Promise.all([
+          registerAllOrCleanup([
             listenWorkspaceContentWindowEvent(
               "workspace-file-window-init",
               async (event) => {
@@ -433,7 +434,21 @@ export function StandaloneWorkspaceFileWindow({
       });
     };
     void setup().catch((reason) => {
-      if (!disposed) setError(formatAppError(reason, tRef.current));
+      if (disposed) return;
+      const message = formatAppError(reason, tRef.current);
+      setError(message);
+      void emitWorkspaceContentWindowEvent(
+        "main",
+        "workspace-file-window-attach-failed",
+        {
+          documentId,
+          token,
+          windowLabel: getCurrentWindow().label,
+          message,
+        },
+      ).catch((emitError) =>
+        console.warn("Unable to report file window setup failure", emitError),
+      );
     });
     return () => {
       disposed = true;

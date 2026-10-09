@@ -222,6 +222,10 @@ export const de = {
       "Separates Terminalfenster konnte nicht erstellt werden.",
     detachedStartFailed:
       "Separates Terminalfenster konnte nicht gestartet werden.",
+    listenerSetupFailed:
+      "Einige Fensterkommunikationskanäle konnten nicht registriert werden ({{events}}). Separate Fenster reagieren möglicherweise nicht; starten Sie die App neu, falls das Problem bestehen bleibt.",
+    ownerLostRecoveryFailed:
+      "Die Terminalsitzung konnte nach dem Schließen ihres Fensters nicht wieder verbunden werden. Schließen Sie dieses Terminal und starten Sie es neu.",
     detachedStateChanged:
       "Der Status des separaten Terminalfensters hat sich geändert. Bitte versuche es erneut.",
     detachedSessionMissing:

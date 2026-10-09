@@ -177,6 +177,8 @@
     "detachedStartTimedOut": "Se ha agotado el tiempo de espera de inicio de la ventana de terminal separada.",
     "detachedCreateFailed": "No se ha podido crear la ventana de terminal separada.",
     "detachedStartFailed": "No se ha podido iniciar la ventana de terminal separada.",
+    "listenerSetupFailed": "No se pudieron registrar algunos canales de comunicación entre ventanas ({{events}}). Es posible que las ventanas separadas no respondan; reinicie la aplicación si el problema persiste.",
+    "ownerLostRecoveryFailed": "No se pudo volver a conectar la sesión de terminal tras cerrarse su ventana. Cierre este terminal y vuelva a iniciarlo.",
     "detachedStateChanged": "El estado de la ventana del terminal separado ha cambiado. Inténtalo de nuevo.",
     "detachedSessionMissing": "No se ha podido encontrar esta sesión de terminal en el área de trabajo principal.",
     "workspaceRestoring": "El área de trabajo principal sigue restaurando terminales. Inténtalo de nuevo en breve.",

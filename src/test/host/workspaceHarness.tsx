@@ -299,6 +299,8 @@ export interface MountWorkspaceOptions {
   adapters?: "builtin" | WorkspaceContentAdapter[];
   coordinator?: WorkspaceContentCoordinator;
   strict?: boolean;
+  /** 主窗口监听逐项重试的延迟序列（测试注入零延迟，避免真实等待）。 */
+  listenerRetryDelaysMs?: readonly number[];
 }
 
 export interface WorkspaceHost {
@@ -335,7 +337,10 @@ export async function mountWorkspace(
   const tree = (
     <QueryClientProvider client={queryClient}>
       <CapturingBoundary errors={errors}>
-        <PtyWorkspaceProvider coordinator={options.coordinator}>
+        <PtyWorkspaceProvider
+          coordinator={options.coordinator}
+          listenerRetryDelaysMs={options.listenerRetryDelaysMs}
+        >
           <Probe onValue={(value) => (context.current = value)} />
           <PtyWorkspaceRegion />
         </PtyWorkspaceProvider>

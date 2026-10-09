@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PtySession, ToolKey } from "../lib/tauri";
 import { formatAppError } from "../lib/appErrors";
+import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
 import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
@@ -320,7 +321,7 @@ export function StandalonePtyWindow({
     const setup = async () => {
       const currentWindow = getCurrentWindow();
       try {
-        const registeredListeners = await Promise.all([
+        const registeredListeners = await registerAllOrCleanup([
           listenWorkspaceContentWindowEvent("pty-return-complete", (event) => {
             if (
               event.payload.instanceId !== instanceId ||

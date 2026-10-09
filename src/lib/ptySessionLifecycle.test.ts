@@ -3,6 +3,8 @@ import {
   applyPendingPtyExit,
   canTerminatePtySession,
   matchesDetachedWindow,
+  nextOwnerQueryStep,
+  PTY_OWNER_QUERY_MAX_RETRIES,
   resolveDetachedStartTimeoutAction,
   resolveDetachedWindowFailureAction,
 } from "./ptySessionLifecycle";
@@ -185,5 +187,19 @@ describe("detached PTY event identity", () => {
 
   it("rejects events when the owner has no pending or detached record", () => {
     expect(matchesDetachedWindow(undefined, identity)).toBe(false);
+  });
+});
+
+describe("detached PTY owner query retry limit", () => {
+  it("retries ten times and then gives up", () => {
+    expect(PTY_OWNER_QUERY_MAX_RETRIES).toBe(10);
+    for (let retriesSoFar = 0; retriesSoFar < 10; retriesSoFar += 1) {
+      expect(nextOwnerQueryStep(retriesSoFar)).toEqual({
+        kind: "retry",
+        retries: retriesSoFar + 1,
+      });
+    }
+    expect(nextOwnerQueryStep(10)).toEqual({ kind: "give-up" });
+    expect(nextOwnerQueryStep(11)).toEqual({ kind: "give-up" });
   });
 });

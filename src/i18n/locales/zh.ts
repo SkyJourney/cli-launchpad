@@ -181,6 +181,10 @@ export const zh = {
     detachedStartTimedOut: "启动独立终端窗口超时。",
     detachedCreateFailed: "无法创建独立终端窗口。",
     detachedStartFailed: "无法启动独立终端窗口。",
+    listenerSetupFailed:
+      "部分窗口通信通道注册失败（{{events}}）。独立窗口可能无响应；若问题持续，请重启应用。",
+    ownerLostRecoveryFailed:
+      "独立窗口关闭后无法重新连接终端会话。请关闭该终端并重新启动。",
     detachedStateChanged: "独立终端窗口状态已变化，请重试。",
     detachedSessionMissing: "主工作区中找不到这个终端会话。",
     workspaceRestoring: "主工作区仍在恢复终端，请稍后重试。",

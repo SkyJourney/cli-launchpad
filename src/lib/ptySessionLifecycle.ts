@@ -88,3 +88,18 @@ export function canTerminatePtySession(
 ): boolean {
   return state === "running" && !handoffInProgress;
 }
+
+/** 超时对账里“无法确认所有者”时的最大重试次数与间隔。 */
+export const PTY_OWNER_QUERY_MAX_RETRIES = 10;
+export const PTY_OWNER_QUERY_RETRY_DELAY_MS = 1_000;
+
+export type OwnerQueryStep =
+  | { kind: "retry"; retries: number }
+  | { kind: "give-up" };
+
+/** retriesSoFar 是已经安排过的重试次数；小于上限继续重试，否则放弃。 */
+export function nextOwnerQueryStep(retriesSoFar: number): OwnerQueryStep {
+  return retriesSoFar < PTY_OWNER_QUERY_MAX_RETRIES
+    ? { kind: "retry", retries: retriesSoFar + 1 }
+    : { kind: "give-up" };
+}

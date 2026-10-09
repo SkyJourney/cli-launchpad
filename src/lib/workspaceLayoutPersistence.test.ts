@@ -827,7 +827,9 @@ describe("layout save results", () => {
       if (calls > 20) throw new Error("spin guard");
       return { saved: false, revision: 5 };
     });
-    const queue = new WorkspaceLayoutSaveQueue(5, save, onError);
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError, undefined, {
+      delay: async () => undefined,
+    });
 
     queue.enqueue(createDocument());
     await queue.flush();
@@ -958,5 +960,73 @@ describe("persisted detached contents", () => {
     expect(() =>
       createWorkspaceLayoutDocument({ ...snapshot, detachedContents: [] }),
     ).toThrow(/unowned content or focus/);
+  });
+});
+
+describe("layout save backoff", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("waits 250 ms and then 500 ms between abnormal rejections", async () => {
+    const delays: number[] = [];
+    const save = vi.fn(async () => ({ saved: false as const, revision: 5 }));
+    const onError = vi.fn();
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError, undefined, {
+      delay: async (delayMs) => {
+        delays.push(delayMs);
+      },
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(delays).toEqual([250, 500]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as { code?: string }).code).toBe(
+      "layout.save_rejected",
+    );
+  });
+
+  it("does not wait when the backend is genuinely ahead", async () => {
+    const delays: number[] = [];
+    const revisions: number[] = [];
+    const save = vi.fn(async (revision: number) => {
+      revisions.push(revision);
+      return revisions.length === 1
+        ? { saved: false as const, reason: "stale" as const, revision: 12 }
+        : { saved: true as const, revision };
+    });
+    const queue = new WorkspaceLayoutSaveQueue(2, save, vi.fn(), undefined, {
+      delay: async (delayMs) => {
+        delays.push(delayMs);
+      },
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(revisions).toEqual([3, 13]);
+    expect(delays).toEqual([]);
+  });
+
+  it("aborts a pending backoff wait when the queue is disposed", async () => {
+    vi.useFakeTimers();
+    const save = vi.fn(async () => ({ saved: false as const, revision: 5 }));
+    const onError = vi.fn();
+    const queue = new WorkspaceLayoutSaveQueue(5, save, onError);
+
+    queue.enqueue(createDocument());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    queue.dispose();
+    await queue.flush();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 });
