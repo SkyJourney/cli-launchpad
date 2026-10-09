@@ -332,11 +332,13 @@ mod tests {
             !pidfile_text.contains('\''),
             "pid 文件路径不能含单引号：{pidfile_text}"
         );
+        // 脚本必须先等后台进程把 pid 写进文件，再回应协议消息：否则请求一结束进程组就被
+        // 终止，后台进程可能还没来得及写文件（macOS CI 上出现过“后台进程未启动”）。
         let script = write_script(
             directory.path(),
             "fake-codex",
             &format!(
-                "#!/bin/sh\nsh -c 'echo $$ > \"{pidfile_text}\"; exec sleep 60' &\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"id\":0'*) echo '{{\"id\":0,\"result\":{{}}}}' ;;\n    *'\"id\":1'*) echo '{{\"id\":1,\"result\":{{\"data\":[]}}}}' ;;\n  esac\ndone\n"
+                "#!/bin/sh\nsh -c 'echo $$ > \"{pidfile_text}\"; exec sleep 60' &\nwhile [ ! -s \"{pidfile_text}\" ]; do sleep 0.1; done\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"id\":0'*) echo '{{\"id\":0,\"result\":{{}}}}' ;;\n    *'\"id\":1'*) echo '{{\"id\":1,\"result\":{{\"data\":[]}}}}' ;;\n  esac\ndone\n"
             ),
         );
 
