@@ -73,17 +73,20 @@ export function useExecutionTaskEvents() {
         "execution-task-updated",
         (event) => {
           const task = event.payload;
-          const knownTask =
+          // list 与 detail 两份缓存各自可能滞后（list 会被轮询刷新），任一方为终态即视为已结束。
+          const knownStatuses = [
             queryClient
               .getQueryData<ExecutionTask[]>(qk.executionTasks())
-              ?.find((entry) => entry.id === task.id) ??
+              ?.find((entry) => entry.id === task.id)?.status,
             queryClient.getQueryData<ExecutionTaskDetail>(
               qk.executionTask(task.id),
-            )?.task;
+            )?.task.status,
+          ];
           if (
-            knownTask &&
-            !isExecutionActive(knownTask.status) &&
-            isExecutionActive(task.status)
+            isExecutionActive(task.status) &&
+            knownStatuses.some(
+              (status) => status !== undefined && !isExecutionActive(status),
+            )
           ) {
             // A late "running" update must not bring a finished task back to life.
             return;

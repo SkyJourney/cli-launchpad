@@ -178,6 +178,27 @@ describe("useExecutionTaskEvents", () => {
     expect(toastSpy.error).not.toHaveBeenCalled();
   });
 
+  it("does not revive a task whose list entry is stale while its detail is already terminal", async () => {
+    const { queryClient } = setup();
+    await settle();
+    // list 轮询结果滞后（仍为 running），detail 已经由终态事件写入 succeeded。
+    queryClient.setQueryData<ExecutionTask[]>(qk.executionTasks(), [BASE]);
+    queryClient.setQueryData<ExecutionTaskDetail>(qk.executionTask("t1"), {
+      task: { ...BASE, status: "succeeded", finishedAtMs: 2, exitCode: 0 },
+      logs: [],
+    });
+
+    await emitTask({ ...BASE, status: "running" });
+
+    expect(
+      queryClient.getQueryData<ExecutionTaskDetail>(qk.executionTask("t1"))
+        ?.task.status,
+    ).toBe("succeeded");
+    // 反向断言：被丢弃的活动态更新不会触发任何提示或探测。
+    expect(toastSpy.success).not.toHaveBeenCalled();
+    expect(detectCalls()).toHaveLength(0);
+  });
+
   it("dedupes log chunks by sequence and keeps them ordered", async () => {
     const { queryClient } = setup();
     await settle();
