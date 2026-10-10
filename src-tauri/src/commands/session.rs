@@ -3,7 +3,7 @@ use tauri::State;
 use crate::db::session_alias_repo;
 use crate::models::session::{SessionPage, SessionSearchIndexRefresh, SessionSearchResults};
 use crate::models::tool::ToolKey;
-use crate::services::session_service;
+use crate::services::session_service::{self, RestoreGeneration};
 use crate::{AppError, CacheDb, Db};
 
 #[tauri::command]
@@ -62,11 +62,17 @@ pub async fn search_sessions(
 pub async fn refresh_session_search_index(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
+    generation: State<'_, RestoreGeneration>,
     directory_id: i64,
 ) -> Result<SessionSearchIndexRefresh, AppError> {
-    let path = state
+    let generation = generation.inner().clone();
+    let capture = generation.clone();
+    let (path, captured) = state
         .call("session.index_path", move |conn| {
-            Ok(session_service::directory_path(conn, directory_id)?)
+            Ok((
+                session_service::directory_path(conn, directory_id)?,
+                capture.current(),
+            ))
         })
         .await?;
     let sources = session_service::refresh_search_index(&path).await?;
@@ -80,11 +86,14 @@ pub async fn refresh_session_search_index(
     }
     cache
         .call("session.index_refresh", move |connection| {
-            Ok(crate::db::session_search_repo::refresh(
+            session_service::write_search_index_if_current(
                 connection,
+                &generation,
+                captured,
                 directory_id,
                 &sources,
-            )?)
+            )?
+            .into_result()
         })
         .await
 }
@@ -142,5 +151,33 @@ async fn ensure_session_belongs(
         Ok(())
     } else {
         Err(AppError::msg("该会话不属于当前项目目录，已拒绝修改别名"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn refresh_command_is_wired_through_the_restore_generation_guard() {
+        let production = include_str!("session.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(
+            production.contains("RestoreGeneration"),
+            "refresh_session_search_index must take the managed generation"
+        );
+        assert!(
+            production.contains("write_search_index_if_current("),
+            "the command must write the cache through write_search_index_if_current"
+        );
+        assert!(
+            !production.contains("session_search_repo::refresh("),
+            "the command must not bypass the generation guard with a direct cache write"
+        );
+        assert_eq!(
+            production.matches(".current()").count(),
+            1,
+            "the generation is read once, inside the database closure that reads the path"
+        );
     }
 }

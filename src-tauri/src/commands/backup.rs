@@ -2,6 +2,7 @@ use tauri::{Emitter, State};
 
 use crate::models::backup::{BackupManifest, BackupReason};
 use crate::services::app_lifecycle::AppLifecycle;
+use crate::services::session_service::RestoreGeneration;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
     update_close_behavior_state, with_connection, AppError, CacheDb, CloseBehaviorState, Db,
@@ -52,6 +53,7 @@ pub async fn restore_backup(
     cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     lifecycle: State<'_, AppLifecycle>,
+    generation: State<'_, RestoreGeneration>,
     paths: State<'_, StoragePaths>,
     app: tauri::AppHandle,
     backup_id: String,
@@ -59,12 +61,19 @@ pub async fn restore_backup(
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let lifecycle = lifecycle.inner().clone();
+    let generation = generation.inner().clone();
     let paths = paths.inner().clone();
     let app = app.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let notifier = TauriRestoreNotifier(app);
         backup_service::restore_with_runtime_invalidation(
-            &db, &cache, &lifecycle, &paths, &backup_id, &notifier,
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup_id,
+            &notifier,
+            &generation,
         )
     })
     .await
@@ -75,4 +84,32 @@ pub async fn restore_backup(
     }
     update_close_behavior_state(&close_behavior_state, outcome.close_behavior)?;
     Ok(outcome.manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn restore_command_passes_the_managed_generation_to_the_restore_orchestration() {
+        let production = include_str!("backup.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(
+            production.contains("State<'_, RestoreGeneration>"),
+            "restore_backup must receive the managed RestoreGeneration"
+        );
+        assert!(
+            production.contains("restore_with_runtime_invalidation("),
+            "restore_backup must call the restore orchestration"
+        );
+        let lib = include_str!("../lib.rs");
+        assert!(
+            lib.contains("RestoreGeneration::default()"),
+            "the generation must be registered as managed state"
+        );
+        assert!(
+            !production.contains("generation.advance()"),
+            "the generation is advanced inside the service, never by the command"
+        );
+    }
 }

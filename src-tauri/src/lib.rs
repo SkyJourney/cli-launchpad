@@ -229,6 +229,7 @@ pub fn run() {
             ));
             app.manage(execution_tasks);
             app.manage(pty_sessions);
+            app.manage(services::session_service::RestoreGeneration::default());
             app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));

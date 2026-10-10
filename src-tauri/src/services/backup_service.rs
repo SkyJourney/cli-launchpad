@@ -149,6 +149,7 @@ pub fn restore_with_runtime_invalidation(
     paths: &StoragePaths,
     backup_id: &str,
     notifier: &dyn RestoreNotifier,
+    generation: &crate::services::session_service::RestoreGeneration,
 ) -> Result<RestoreOutcome, AppError> {
     // Admission comes before the database lock and is held until this function returns,
     // so the replacement, cache invalidation and notification are all covered.
@@ -158,6 +159,9 @@ pub fn restore_with_runtime_invalidation(
         ))?;
     let (manifest, close_behavior) = crate::with_connection(db, |connection| {
         let manifest = restore(connection, paths, backup_id)?;
+        // The business database has been replaced: any index refresh that captured an
+        // older generation must not write to the cache any more (SEAM-20).
+        generation.advance();
         // 数据库已经替换：读取失败不能再以 Err 返回（前端会误判为未恢复），
         // 记录后使用默认关闭行为。
         let close_behavior = match crate::db::app_setting_repo::get_close_behavior(connection) {
@@ -296,6 +300,7 @@ mod tests {
     use crate::models::session::{SessionSearchIndexDocument, SessionSearchIndexSource};
     use crate::models::tool::ToolKey;
     use crate::services::cache_service;
+    use crate::services::session_service::RestoreGeneration;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
@@ -700,6 +705,7 @@ mod tests {
                 &paths,
                 &backup.id,
                 &notifier,
+                &RestoreGeneration::default(),
             )
             .unwrap();
             assert!(outcome.cache_warning.is_some());
@@ -720,6 +726,7 @@ mod tests {
                 &paths,
                 &backup.id,
                 &notifier,
+                &RestoreGeneration::default(),
             )
             .unwrap();
             assert!(outcome.cache_warning.is_none());
@@ -745,6 +752,7 @@ mod tests {
                 &paths,
                 "missing-backup",
                 &notifier,
+                &RestoreGeneration::default(),
             );
             assert!(result.is_err());
             assert_eq!(notifier.calls(), 0);
@@ -802,6 +810,7 @@ mod tests {
             &paths,
             &backup.id,
             &notifier,
+            &RestoreGeneration::default(),
         )
         .unwrap();
         {
@@ -837,7 +846,13 @@ mod tests {
 
         // 第一步：有会话正在启动，恢复必须失败且不通知、不替换数据库。
         let error = match restore_with_runtime_invalidation(
-            &db, &cache, &lifecycle, &paths, &backup.id, &notifier,
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
         ) {
             Ok(_) => panic!("restore must fail while a session is starting"),
             Err(error) => error,
@@ -857,8 +872,16 @@ mod tests {
 
         // 第二步：守卫释放后恢复成功并通知一次。
         drop(starting);
-        restore_with_runtime_invalidation(&db, &cache, &lifecycle, &paths, &backup.id, &notifier)
-            .unwrap();
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+        )
+        .unwrap();
         assert_eq!(notifier.calls(), 1);
 
         // 第三步：恢复结束后守卫已释放。
@@ -878,6 +901,7 @@ mod tests {
             &paths,
             &backup.id,
             &notifier,
+            &RestoreGeneration::default(),
         )
         .unwrap();
         assert_eq!(notifier.calls(), 1);
@@ -895,8 +919,16 @@ mod tests {
             lifecycle: lifecycle.clone(),
             observed: Default::default(),
         };
-        restore_with_runtime_invalidation(&db, &cache, &lifecycle, &paths, &backup.id, &notifier)
-            .unwrap();
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+        )
+        .unwrap();
         assert_eq!(
             notifier.observed.lock().unwrap().as_deref(),
             Some("backup_restore_in_progress"),
@@ -906,5 +938,188 @@ mod tests {
         assert!(lifecycle
             .admit(crate::services::app_lifecycle::Operation::PtyStart)
             .is_ok());
+    }
+
+    use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+    fn index_sources(session_id: &str) -> Vec<SessionSearchIndexSource> {
+        vec![SessionSearchIndexSource {
+            tool_key: ToolKey::Claude,
+            documents: Some(vec![SessionSearchIndexDocument {
+                tool_key: ToolKey::Claude,
+                session_id: session_id.to_string(),
+                title: "query title".to_string(),
+                last_active_ms: Some(1),
+                fields: vec!["query title".to_string()],
+            }]),
+            incomplete: false,
+        }]
+    }
+
+    fn indexed_session_ids(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare("select session_id from session_search_documents where directory_id = 1 order by session_id")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn restore_advances_the_generation_and_discards_an_in_flight_index_refresh() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let notifier = RecordingNotifier::ok();
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+        )
+        .unwrap();
+        assert_eq!(generation.current(), g0 + 1);
+        {
+            let connection = cache.0.lock().unwrap();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+            assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        }
+        let connection = cache.0.lock().unwrap();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("stale"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+        assert_eq!(indexed_session_ids(&connection), vec!["stale".to_string()]);
+        assert_eq!(notifier.calls(), 1);
+    }
+
+    #[test]
+    fn failed_restore_does_not_advance_the_generation_and_keeps_an_in_flight_refresh_valid() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let notifier = RecordingNotifier::ok();
+        let lifecycle = test_lifecycle();
+
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            "missing-backup",
+            &notifier,
+            &generation,
+        );
+        assert!(result.is_err());
+        assert_eq!(generation.current(), g0);
+        assert_eq!(notifier.calls(), 0);
+        {
+            let connection = cache.0.lock().unwrap();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("valid"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+            assert_eq!(indexed_session_ids(&connection), vec!["valid".to_string()]);
+        }
+
+        let starting = lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .unwrap();
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+        );
+        assert!(result.is_err());
+        assert_eq!(generation.current(), g0);
+        drop(starting);
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+        )
+        .unwrap();
+        assert_eq!(generation.current(), g0 + 1);
+    }
+
+    #[test]
+    fn generation_advances_even_when_cache_cleanup_fails() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        cache
+            .0
+            .lock()
+            .unwrap()
+            .execute("drop table cache_entries", [])
+            .unwrap();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let notifier = RecordingNotifier::ok();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+        )
+        .unwrap();
+        assert!(outcome.cache_warning.is_some());
+        assert_eq!(generation.current(), g0 + 1);
+        {
+            let connection = cache.0.lock().unwrap();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+        }
+        let connection = cache.0.lock().unwrap();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
     }
 }

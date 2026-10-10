@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -11,11 +12,12 @@ use serde_json::Value;
 
 use crate::db::directory_repo;
 use crate::models::session::{
-    SessionInfo, SessionPage, SessionSearchIndexDocument, SessionSearchIndexSource,
-    SessionSearchResults,
+    SessionInfo, SessionPage, SessionSearchIndexDocument, SessionSearchIndexRefresh,
+    SessionSearchIndexSource, SessionSearchResults,
 };
 use crate::models::tool::ToolKey;
 use crate::platform::path_identity;
+use crate::AppError;
 
 pub(crate) const TITLE_MAX_CHARS: usize = 100;
 const MAX_PAGE_SIZE: usize = 50;
@@ -106,6 +108,55 @@ async fn context_for_tool_blocking(
     )
     .await
     .map_err(|error| anyhow!(error.to_string()))
+}
+
+/// Bumped once per backup restore, while the business database lock is held,
+/// after the database file content has been replaced.
+#[derive(Clone, Debug, Default)]
+pub struct RestoreGeneration(Arc<AtomicU64>);
+
+impl RestoreGeneration {
+    pub fn current(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Returns the new generation.
+    pub fn advance(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+}
+
+#[derive(Debug)]
+pub enum IndexWriteOutcome {
+    Written(SessionSearchIndexRefresh),
+    Discarded,
+}
+
+impl IndexWriteOutcome {
+    pub fn into_result(self) -> Result<SessionSearchIndexRefresh, AppError> {
+        match self {
+            IndexWriteOutcome::Written(refresh) => Ok(refresh),
+            IndexWriteOutcome::Discarded => {
+                Err(AppError::msg("备份已恢复，已丢弃恢复前开始的会话索引刷新"))
+            }
+        }
+    }
+}
+
+/// The caller must hold the cache connection lock for the whole call, so that the
+/// comparison and the write cannot interleave with the restore's cache cleanup.
+pub fn write_search_index_if_current(
+    connection: &Connection,
+    generation: &RestoreGeneration,
+    expected: u64,
+    directory_id: i64,
+    sources: &[SessionSearchIndexSource],
+) -> Result<IndexWriteOutcome> {
+    if generation.current() != expected {
+        return Ok(IndexWriteOutcome::Discarded);
+    }
+    let refresh = crate::db::session_search_repo::refresh(connection, directory_id, sources)?;
+    Ok(IndexWriteOutcome::Written(refresh))
 }
 
 pub async fn list_sessions(
@@ -1160,5 +1211,241 @@ mod tests {
         assert!(source.documents.is_none());
         assert_eq!(source.tool_key, ToolKey::Claude);
         assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    use std::sync::Mutex;
+
+    use crate::db::cache_connection::init_ephemeral_cache;
+
+    fn index_sources(session_id: &str) -> Vec<SessionSearchIndexSource> {
+        vec![SessionSearchIndexSource {
+            tool_key: ToolKey::Claude,
+            documents: Some(vec![SessionSearchIndexDocument {
+                tool_key: ToolKey::Claude,
+                session_id: session_id.to_string(),
+                title: "query title".to_string(),
+                last_active_ms: Some(1),
+                fields: vec!["query title".to_string()],
+            }]),
+            incomplete: false,
+        }]
+    }
+
+    fn indexed_session_ids(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare("select session_id from session_search_documents where directory_id = 1 order by session_id")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect()
+    }
+
+    fn run_with_timeout<R: Send + 'static>(
+        seconds: u64,
+        f: impl FnOnce() -> R + Send + 'static,
+    ) -> R {
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(f());
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(seconds)) {
+            Ok(value) => value,
+            Err(RecvTimeoutError::Timeout) => panic!("操作在 {seconds} 秒内没有完成（可能死锁）"),
+            Err(RecvTimeoutError::Disconnected) => panic!("工作线程 panic"),
+        }
+    }
+
+    #[test]
+    fn index_refresh_started_before_restore_is_discarded_after_restore() {
+        let connection = init_ephemeral_cache().unwrap();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        generation.advance(); // simulated restore
+
+        let outcome =
+            write_search_index_if_current(&connection, &generation, g0, 1, &index_sources("stale"))
+                .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+        assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        // The source status row must not have been written either.
+        let search =
+            crate::db::session_search_repo::search(&connection, 1, "query", &HashMap::new())
+                .unwrap();
+        assert!(search.items.is_empty());
+        assert_eq!(search.incomplete_tools, Vec::<ToolKey>::new());
+
+        // Reverse: the same write with the current generation is applied.
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        let IndexWriteOutcome::Written(refresh) = outcome else {
+            panic!("a refresh with the current generation must be written");
+        };
+        assert_eq!(refresh.indexed_sessions, 1);
+        assert_eq!(indexed_session_ids(&connection), vec!["fresh".to_string()]);
+    }
+
+    #[test]
+    fn refresh_that_captured_its_generation_before_a_restore_is_discarded_even_after_the_index_was_cleared(
+    ) {
+        let (captured_tx, captured_rx) = std::sync::mpsc::channel::<u64>();
+        let (restored_tx, restored_rx) = std::sync::mpsc::channel::<()>();
+        let cache = crate::CacheDb(Arc::new(Mutex::new(init_ephemeral_cache().unwrap())));
+        let generation = RestoreGeneration::default();
+
+        let refresh_cache = cache.clone();
+        let refresh_generation = generation.clone();
+        let refresh = std::thread::spawn(move || {
+            let captured = refresh_generation.current();
+            captured_tx.send(captured).unwrap();
+            restored_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the restore did not finish");
+            let connection = refresh_cache.0.lock().unwrap();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &refresh_generation,
+                captured,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            matches!(outcome, IndexWriteOutcome::Discarded)
+        });
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the refresh did not capture a generation");
+        assert_eq!(captured, 0);
+        // Same order as the restore orchestration: advance first, clear the cache afterwards.
+        generation.advance();
+        {
+            let connection = cache.0.lock().unwrap();
+            crate::db::cache_repo::clear_session_search(&connection).unwrap();
+        }
+        restored_tx.send(()).unwrap();
+
+        assert!(
+            refresh.join().unwrap(),
+            "the refresh that started before the restore must be discarded"
+        );
+        {
+            let connection = cache.0.lock().unwrap();
+            assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        }
+
+        // Reverse: a refresh that captures the new generation writes normally.
+        let connection = cache.0.lock().unwrap();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+        assert_eq!(indexed_session_ids(&connection), vec!["fresh".to_string()]);
+    }
+
+    #[test]
+    fn concurrent_refreshes_and_restores_never_leave_stale_documents() {
+        let (final_generation, remaining) = run_with_timeout(30, || {
+            let cache = crate::CacheDb(Arc::new(Mutex::new(init_ephemeral_cache().unwrap())));
+            let generation = RestoreGeneration::default();
+            std::thread::scope(|scope| {
+                for _ in 0..3 {
+                    let cache = cache.clone();
+                    let generation = generation.clone();
+                    scope.spawn(move || {
+                        for _ in 0..100 {
+                            // Capture first, as the command does; write later under the cache lock.
+                            let captured = generation.current();
+                            let sources = index_sources(&format!("g{captured}"));
+                            let connection = cache.0.lock().unwrap();
+                            write_search_index_if_current(
+                                &connection,
+                                &generation,
+                                captured,
+                                1,
+                                &sources,
+                            )
+                            .unwrap();
+                        }
+                    });
+                }
+                let cache = cache.clone();
+                let generation = generation.clone();
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        generation.advance();
+                        let connection = cache.0.lock().unwrap();
+                        crate::db::cache_repo::clear_session_search(&connection).unwrap();
+                    }
+                });
+            });
+            let connection = cache.0.lock().unwrap();
+            (generation.current(), indexed_session_ids(&connection))
+        });
+
+        assert_eq!(final_generation, 100);
+        assert!(
+            remaining.len() <= 1,
+            "one source per tool keeps at most one document: {remaining:?}"
+        );
+        for tag in &remaining {
+            assert_eq!(
+                tag, "g100",
+                "a document written under an older generation survived a restore"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_generation_advances_monotonically_and_clones_share_state() {
+        let generation = RestoreGeneration::default();
+        let clone = generation.clone();
+        assert_eq!(generation.current(), 0);
+        assert_eq!(clone.advance(), 1);
+        assert_eq!(generation.current(), 1);
+        assert_eq!(generation.advance(), 2);
+        assert_eq!(clone.current(), 2);
+        assert_eq!(
+            RestoreGeneration::default().current(),
+            0,
+            "separate instances do not share state"
+        );
+    }
+
+    #[test]
+    fn discarded_outcome_maps_to_an_error_and_written_passes_through() {
+        let written = IndexWriteOutcome::Written(SessionSearchIndexRefresh {
+            incomplete_tools: vec![ToolKey::Codex],
+            indexed_sessions: 4,
+        })
+        .into_result()
+        .unwrap();
+        assert_eq!(written.indexed_sessions, 4);
+        assert_eq!(written.incomplete_tools, vec![ToolKey::Codex]);
+
+        let error = IndexWriteOutcome::Discarded.into_result().unwrap_err();
+        let message = serde_json::to_value(&error).unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains("已丢弃恢复前开始的会话索引刷新"),
+            "{message}"
+        );
     }
 }

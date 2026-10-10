@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 411, "Linux": 412, "macOS": 409 },
+  "minimumPassed": { "Windows": 421, "Linux": 422, "macOS": 419 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -128,7 +128,17 @@
       "services::window_lifecycle::tests::a_destroyed_window_releases_every_resource_exactly_once_in_order",
       "contracts::main_window_label_matches_every_tauri_config",
       "contracts::macos_window_config_repeats_the_base_window_fields",
-      "contracts::service_code_does_not_branch_on_window_label_literals"
+      "contracts::service_code_does_not_branch_on_window_label_literals",
+      "services::session_service::tests::index_refresh_started_before_restore_is_discarded_after_restore",
+      "services::session_service::tests::restore_generation_advances_monotonically_and_clones_share_state",
+      "services::session_service::tests::discarded_outcome_maps_to_an_error_and_written_passes_through",
+      "services::session_service::tests::refresh_that_captured_its_generation_before_a_restore_is_discarded_even_after_the_index_was_cleared",
+      "services::session_service::tests::concurrent_refreshes_and_restores_never_leave_stale_documents",
+      "services::backup_service::tests::restore_advances_the_generation_and_discards_an_in_flight_index_refresh",
+      "services::backup_service::tests::failed_restore_does_not_advance_the_generation_and_keeps_an_in_flight_refresh_valid",
+      "services::backup_service::tests::generation_advances_even_when_cache_cleanup_fails",
+      "commands::session::tests::refresh_command_is_wired_through_the_restore_generation_guard",
+      "commands::backup::tests::restore_command_passes_the_managed_generation_to_the_restore_orchestration"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
