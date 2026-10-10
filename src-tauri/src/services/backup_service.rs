@@ -8,7 +8,6 @@ use rusqlite::{backup::Backup, Connection, DatabaseName, OpenFlags};
 use crate::db::connection;
 use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::{BackupManifest, BackupReason};
-use crate::services::pty_session_service::PtySessionManager;
 use crate::{AppError, CacheDb, Db};
 
 use super::storage_service::StoragePaths;
@@ -146,13 +145,18 @@ pub struct RestoreOutcome {
 pub fn restore_with_runtime_invalidation(
     db: &Db,
     cache: &CacheDb,
-    sessions: &PtySessionManager,
+    lifecycle: &crate::services::app_lifecycle::AppLifecycle,
     paths: &StoragePaths,
     backup_id: &str,
     notifier: &dyn RestoreNotifier,
 ) -> Result<RestoreOutcome, AppError> {
+    // Admission comes before the database lock and is held until this function returns,
+    // so the replacement, cache invalidation and notification are all covered.
+    let _data_replace_permit =
+        lifecycle.admit(crate::services::app_lifecycle::Operation::DataReplace(
+            crate::services::app_lifecycle::DataReplaceKind::RestoreBackup,
+        ))?;
     let (manifest, close_behavior) = crate::with_connection(db, |connection| {
-        let _restore_guard = sessions.begin_backup_restore()?;
         let manifest = restore(connection, paths, backup_id)?;
         // 数据库已经替换：读取失败不能再以 Err 返回（前端会误判为未恢复），
         // 记录后使用默认关闭行为。
@@ -590,6 +594,30 @@ mod tests {
         assert!(victim.exists());
     }
 
+    /// Notifier that probes admission from inside the notification. The notification runs
+    /// after database replacement and cache invalidation but before the restore returns.
+    struct AdmissionProbeNotifier {
+        lifecycle: crate::services::app_lifecycle::AppLifecycle,
+        observed: std::sync::Mutex<Option<String>>,
+    }
+
+    impl RestoreNotifier for AdmissionProbeNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            let code = match self
+                .lifecycle
+                .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            {
+                Ok(_permit) => "admitted".to_string(),
+                Err(error) => serde_json::to_value(&error).unwrap()["code"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            };
+            *self.observed.lock().unwrap() = Some(code);
+            Ok(())
+        }
+    }
+
     struct RecordingNotifier {
         calls: std::sync::atomic::AtomicUsize,
         result: Result<(), String>,
@@ -620,6 +648,14 @@ mod tests {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.result.clone()
         }
+    }
+
+    /// 恢复测试用的生命周期：两个活动探针恒为 0，只让阶段与在途启动决定准入。
+    fn test_lifecycle() -> crate::services::app_lifecycle::AppLifecycle {
+        crate::services::app_lifecycle::AppLifecycle::with_counters(
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        )
     }
 
     /// 数据库里有目录 A（备份时）与 B（备份之后），备份的关闭行为为 Quit。
@@ -660,7 +696,7 @@ mod tests {
             let outcome = restore_with_runtime_invalidation(
                 &db,
                 &cache,
-                &PtySessionManager::default(),
+                &test_lifecycle(),
                 &paths,
                 &backup.id,
                 &notifier,
@@ -680,7 +716,7 @@ mod tests {
             let outcome = restore_with_runtime_invalidation(
                 &db,
                 &cache,
-                &PtySessionManager::default(),
+                &test_lifecycle(),
                 &paths,
                 &backup.id,
                 &notifier,
@@ -701,11 +737,11 @@ mod tests {
             let (_directory, paths, db, cache, _backup) = scenario();
             cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
             let notifier = RecordingNotifier::ok();
-            let sessions = PtySessionManager::default();
+            let lifecycle = test_lifecycle();
             let result = restore_with_runtime_invalidation(
                 &db,
                 &cache,
-                &sessions,
+                &lifecycle,
                 &paths,
                 "missing-backup",
                 &notifier,
@@ -720,7 +756,9 @@ mod tests {
             .is_some());
             assert_eq!(directory_names(&db).len(), 2);
             // 反向断言：守卫已释放，同一个 sessions 实例仍能启动会话。
-            assert!(sessions.begin_session_start().is_ok());
+            assert!(lifecycle
+                .admit(crate::services::app_lifecycle::Operation::PtyStart)
+                .is_ok());
         }
     }
 
@@ -760,7 +798,7 @@ mod tests {
         let outcome = restore_with_runtime_invalidation(
             &db,
             &cache,
-            &PtySessionManager::default(),
+            &test_lifecycle(),
             &paths,
             &backup.id,
             &notifier,
@@ -791,13 +829,15 @@ mod tests {
     fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
         let (_directory, paths, db, cache, backup) = scenario();
         cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
-        let sessions = PtySessionManager::default();
+        let lifecycle = test_lifecycle();
         let notifier = RecordingNotifier::ok();
-        let starting = sessions.begin_session_start().unwrap();
+        let starting = lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .unwrap();
 
         // 第一步：有会话正在启动，恢复必须失败且不通知、不替换数据库。
         let error = match restore_with_runtime_invalidation(
-            &db, &cache, &sessions, &paths, &backup.id, &notifier,
+            &db, &cache, &lifecycle, &paths, &backup.id, &notifier,
         ) {
             Ok(_) => panic!("restore must fail while a session is starting"),
             Err(error) => error,
@@ -817,12 +857,14 @@ mod tests {
 
         // 第二步：守卫释放后恢复成功并通知一次。
         drop(starting);
-        restore_with_runtime_invalidation(&db, &cache, &sessions, &paths, &backup.id, &notifier)
+        restore_with_runtime_invalidation(&db, &cache, &lifecycle, &paths, &backup.id, &notifier)
             .unwrap();
         assert_eq!(notifier.calls(), 1);
 
         // 第三步：恢复结束后守卫已释放。
-        assert!(sessions.begin_session_start().is_ok());
+        assert!(lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .is_ok());
     }
 
     #[test]
@@ -832,7 +874,7 @@ mod tests {
         let outcome = restore_with_runtime_invalidation(
             &db,
             &cache,
-            &PtySessionManager::default(),
+            &test_lifecycle(),
             &paths,
             &backup.id,
             &notifier,
@@ -843,5 +885,26 @@ mod tests {
         assert_eq!(directory_names(&db), vec!["A".to_string()]);
         // 反向断言：通知失败不得被伪装成缓存警告。
         assert!(outcome.cache_warning.is_none());
+    }
+
+    #[test]
+    fn restore_keeps_admission_closed_until_the_notification_is_sent() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        let lifecycle = test_lifecycle();
+        let notifier = AdmissionProbeNotifier {
+            lifecycle: lifecycle.clone(),
+            observed: Default::default(),
+        };
+        restore_with_runtime_invalidation(&db, &cache, &lifecycle, &paths, &backup.id, &notifier)
+            .unwrap();
+        assert_eq!(
+            notifier.observed.lock().unwrap().as_deref(),
+            Some("backup_restore_in_progress"),
+            "the data replace permit must still be held when the notification is sent"
+        );
+        // after the restore returns, the permit is released and admission reopens
+        assert!(lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .is_ok());
     }
 }

@@ -10,8 +10,10 @@ use crate::{
         tool::ToolKey,
     },
     services::{
-        app_lifecycle::AppExitGate, directory_service, launch_service,
-        pty_session_service::PtySessionManager, session_service,
+        app_lifecycle::{AppExitGate, AppLifecycle, Operation},
+        directory_service, launch_service,
+        pty_session_service::PtySessionManager,
+        session_service,
     },
     AppError, Db,
 };
@@ -20,6 +22,7 @@ use crate::{
 pub async fn create_pty_session(
     state: State<'_, PtySessionManager>,
     db: State<'_, Db>,
+    lifecycle: State<'_, AppLifecycle>,
     app: tauri::AppHandle,
     directory_id: i64,
     tool_key: ToolKey,
@@ -28,7 +31,6 @@ pub async fn create_pty_session(
     on_event: Channel<PtyEvent>,
     window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
-    let _start_guard = state.begin_session_start()?;
     let looked_up = db
         .call("pty.launch_lookup", move |connection| {
             Ok(launch_service::lookup_launch_directory(
@@ -58,10 +60,13 @@ pub async fn create_pty_session(
         resume_session_id.as_deref(),
     )
     .await?;
+    // The permit covers only the synchronous registration in `manager.create`.
+    let start_permit = lifecycle.admit(Operation::PtyStart)?;
     let manager = state.inner().clone();
     let database = db.inner().clone();
     let window_label = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let _start_permit = start_permit;
         manager.create(
             &database,
             &app,
@@ -222,13 +227,17 @@ pub fn reattach_pty_session(
 pub async fn confirm_app_exit(
     state: State<'_, PtySessionManager>,
     exit_gate: State<'_, AppExitGate>,
+    lifecycle: State<'_, AppLifecycle>,
     app: tauri::AppHandle,
 ) -> Result<(), AppError> {
+    // Held until the process exits: termination failure drops it and rolls the phase back.
+    let exit_permit = lifecycle.admit(Operation::Exit)?;
     let sessions = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || sessions.terminate_all())
         .await
         .map_err(|error| AppError::msg(format!("结束 PTY 会话任务异常：{error}")))??;
     exit_gate.authorize();
+    exit_permit.keep_exiting();
     app.exit(0);
     Ok(())
 }

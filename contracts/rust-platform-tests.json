@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 392, "Linux": 393, "macOS": 390 },
+  "minimumPassed": { "Windows": 401, "Linux": 402, "macOS": 399 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -107,7 +107,18 @@
       "services::workspace_layout_service::tests::staged_apply_plan_resolves_a_running_slot",
       "services::workspace_layout_service::tests::staged_layout_read_resolves_a_running_slot",
       "runtime::tests::blocking_unbounded_waits_for_a_slow_closure_and_returns_the_value",
-      "services::session_service::tests::a_failing_adapter_context_does_not_fail_the_whole_refresh"
+      "services::session_service::tests::a_failing_adapter_context_does_not_fail_the_whole_refresh",
+      "services::app_lifecycle::tests::admission_matrix_matches_the_design_table",
+      "services::app_lifecycle::tests::data_replace_is_blocked_with_the_documented_reason_and_params",
+      "services::app_lifecycle::tests::permits_release_their_effect_when_dropped",
+      "services::app_lifecycle::tests::a_kept_exit_permit_leaves_the_app_in_exiting",
+      "services::app_lifecycle::tests::exit_during_restore_or_import_is_deferred_until_the_permit_is_released",
+      "services::app_lifecycle::tests::a_second_exit_request_is_idempotent",
+      "services::app_lifecycle::tests::start_permits_are_counted_exactly_under_concurrency",
+      "services::app_lifecycle::tests::backup_restore_is_blocked_while_pty_sessions_are_registered",
+      "services::app_lifecycle::tests::backup_restore_serializes_against_session_startup",
+      "services::app_lifecycle::tests::backup_restore_guard_rejects_registered_session",
+      "services::backup_service::tests::restore_keeps_admission_closed_until_the_notification_is_sent"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

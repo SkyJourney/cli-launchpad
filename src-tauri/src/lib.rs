@@ -215,8 +215,20 @@ pub fn run() {
             }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
             app.manage(Db(Arc::new(Mutex::new(connection))));
-            app.manage(services::execution_service::ExecutionTaskManager::default());
-            app.manage(services::pty_session_service::PtySessionManager::default());
+            let execution_tasks = services::execution_service::ExecutionTaskManager::default();
+            let pty_sessions = services::pty_session_service::PtySessionManager::default();
+            app.manage(services::app_lifecycle::AppLifecycle::new(
+                {
+                    let sessions = pty_sessions.clone();
+                    move || sessions.active_count()
+                },
+                {
+                    let tasks = execution_tasks.clone();
+                    move || tasks.active_count()
+                },
+            ));
+            app.manage(execution_tasks);
+            app.manage(pty_sessions);
             app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));

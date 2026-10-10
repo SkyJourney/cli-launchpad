@@ -82,60 +82,15 @@ fn start_pty_input_writer(
         })
 }
 
-fn ensure_no_active_sessions(active_count: usize) -> Result<(), AppError> {
-    if active_count > 0 {
-        return Err(AppError::coded_with_params(
-            "pty_sessions_active",
-            format!("请先关闭所有运行中的终端会话（当前 {active_count} 个）再恢复备份"),
-            serde_json::json!({ "count": active_count }),
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Clone)]
 pub struct PtySessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
-    lifecycle_gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-#[derive(Default)]
-struct PtyLifecycleGate {
-    restore_in_progress: bool,
-    session_starts: usize,
-}
-
-pub struct PtySessionStartGuard {
-    gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-impl Drop for PtySessionStartGuard {
-    fn drop(&mut self) {
-        match self.gate.lock() {
-            Ok(mut gate) => gate.session_starts = gate.session_starts.saturating_sub(1),
-            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing session start"),
-        }
-    }
-}
-
-pub struct PtyBackupRestoreGuard {
-    gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-impl Drop for PtyBackupRestoreGuard {
-    fn drop(&mut self) {
-        match self.gate.lock() {
-            Ok(mut gate) => gate.restore_in_progress = false,
-            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing backup restore"),
-        }
-    }
 }
 
 impl Default for PtySessionManager {
     fn default() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            lifecycle_gate: Arc::new(Mutex::new(PtyLifecycleGate::default())),
         }
     }
 }
@@ -547,7 +502,6 @@ impl PtySessionManager {
         window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
-        let _start_guard = self.begin_session_start()?;
         let directory = crate::with_connection(db, |connection| {
             directory_repo::get(connection, directory_id)?
                 .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))
@@ -1274,58 +1228,6 @@ impl PtySessionManager {
             .unwrap_or(0)
     }
 
-    pub fn begin_session_start(&self) -> Result<PtySessionStartGuard, AppError> {
-        let mut gate = self
-            .lifecycle_gate
-            .lock()
-            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
-        if gate.restore_in_progress {
-            return Err(AppError::coded(
-                "backup_restore_in_progress",
-                "备份恢复正在进行，暂时不能启动终端会话",
-            ));
-        }
-        gate.session_starts = gate.session_starts.saturating_add(1);
-        drop(gate);
-        Ok(PtySessionStartGuard {
-            gate: Arc::clone(&self.lifecycle_gate),
-        })
-    }
-
-    pub fn begin_backup_restore(&self) -> Result<PtyBackupRestoreGuard, AppError> {
-        let mut gate = self
-            .lifecycle_gate
-            .lock()
-            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
-        if gate.restore_in_progress {
-            return Err(AppError::coded(
-                "backup_restore_in_progress",
-                "另一个备份恢复操作正在进行",
-            ));
-        }
-        if gate.session_starts > 0 {
-            return Err(AppError::coded_with_params(
-                "pty_session_starting",
-                format!(
-                    "有 {} 个终端会话正在启动，请稍后重试恢复备份",
-                    gate.session_starts
-                ),
-                serde_json::json!({ "count": gate.session_starts }),
-            ));
-        }
-        let active_count = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
-            .len();
-        ensure_no_active_sessions(active_count)?;
-        gate.restore_in_progress = true;
-        drop(gate);
-        Ok(PtyBackupRestoreGuard {
-            gate: Arc::clone(&self.lifecycle_gate),
-        })
-    }
-
     pub fn terminate_all(&self) -> Result<(), AppError> {
         let sessions: Vec<Arc<ManagedSession>> = self
             .sessions
@@ -1759,6 +1661,14 @@ impl PtySessionManager {
         }
     }
 
+    /// Test seam: forgets a session registered with `insert_test_session`.
+    pub(crate) fn remove_test_session(&self, session_id: &str) {
+        self.sessions
+            .lock()
+            .expect("session table lock")
+            .remove(session_id);
+    }
+
     pub(crate) fn test_route(&self, session_id: &str) -> TestRoute {
         let session = self.get(session_id).expect("test session must exist");
         let route = session.event_route.lock().unwrap();
@@ -1775,44 +1685,6 @@ impl PtySessionManager {
 mod tests {
     use super::*;
 
-    #[test]
-    fn backup_restore_is_blocked_while_pty_sessions_are_registered() {
-        assert!(ensure_no_active_sessions(0).is_ok());
-        let error = ensure_no_active_sessions(1).unwrap_err();
-        assert_eq!(
-            serde_json::to_value(&error).unwrap()["code"],
-            "pty_sessions_active"
-        );
-        assert!(error.to_string().contains("1 个"));
-    }
-
-    #[test]
-    fn backup_restore_serializes_against_session_startup() {
-        let manager = PtySessionManager::default();
-        let starting = manager.begin_session_start().unwrap();
-        let starting_error = match manager.begin_backup_restore() {
-            Ok(_) => panic!("restore must wait for a session startup"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            serde_json::to_value(&starting_error).unwrap()["code"],
-            "pty_session_starting"
-        );
-
-        drop(starting);
-        let restoring = manager.begin_backup_restore().unwrap();
-        let start_error = match manager.begin_session_start() {
-            Ok(_) => panic!("session startup must be blocked during restore"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            serde_json::to_value(&start_error).unwrap()["code"],
-            "backup_restore_in_progress"
-        );
-
-        drop(restoring);
-        assert!(manager.begin_session_start().is_ok());
-    }
     use std::sync::mpsc;
 
     #[test]

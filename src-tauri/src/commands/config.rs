@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::models::backup::BackupReason;
+use crate::services::app_lifecycle::{AppLifecycle, DataReplaceKind, Operation};
 use crate::services::config_service;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
@@ -35,13 +36,18 @@ pub async fn import_config_from_path(
     cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     storage: State<'_, StoragePaths>,
+    lifecycle: State<'_, AppLifecycle>,
     path: String,
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let storage = storage.inner().clone();
+    let lifecycle = lifecycle.inner().clone();
     let close_behavior = tauri::async_runtime::spawn_blocking(move || {
         let bundle = config_service::read_bundle_from_path(&path)?;
+        // Held until the import and its cache invalidation finish.
+        let _data_replace_permit =
+            lifecycle.admit(Operation::DataReplace(DataReplaceKind::ImportConfig))?;
         let close_behavior = with_connection(&db, |conn| {
             backup_service::create(conn, &storage, BackupReason::PreImport)?;
             match config_service::import(conn, &bundle) {

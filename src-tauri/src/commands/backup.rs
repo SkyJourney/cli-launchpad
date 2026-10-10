@@ -1,7 +1,7 @@
 use tauri::{Emitter, State};
 
 use crate::models::backup::{BackupManifest, BackupReason};
-use crate::services::pty_session_service::PtySessionManager;
+use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
     update_close_behavior_state, with_connection, AppError, CacheDb, CloseBehaviorState, Db,
@@ -51,20 +51,20 @@ pub async fn restore_backup(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
-    sessions: State<'_, PtySessionManager>,
+    lifecycle: State<'_, AppLifecycle>,
     paths: State<'_, StoragePaths>,
     app: tauri::AppHandle,
     backup_id: String,
 ) -> Result<BackupManifest, AppError> {
     let db = state.inner().clone();
     let cache = cache.inner().clone();
-    let sessions = sessions.inner().clone();
+    let lifecycle = lifecycle.inner().clone();
     let paths = paths.inner().clone();
     let app = app.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let notifier = TauriRestoreNotifier(app);
         backup_service::restore_with_runtime_invalidation(
-            &db, &cache, &sessions, &paths, &backup_id, &notifier,
+            &db, &cache, &lifecycle, &paths, &backup_id, &notifier,
         )
     })
     .await

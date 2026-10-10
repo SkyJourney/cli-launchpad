@@ -4,7 +4,11 @@ use crate::db::execution_task_repo;
 use crate::models::execution::{ExecutionTask, ExecutionTaskDetail};
 use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
-use crate::services::{execution_service::ExecutionTaskManager, install_service};
+use crate::services::{
+    app_lifecycle::{AppLifecycle, Operation},
+    execution_service::ExecutionTaskManager,
+    install_service,
+};
 use crate::{with_conn, AppError, Db};
 
 #[tauri::command]
@@ -14,6 +18,7 @@ pub async fn start_execution_task(
     tool_key: ToolKey,
     kind: InstallKind,
     expected_fingerprint: String,
+    lifecycle: State<'_, AppLifecycle>,
 ) -> Result<ExecutionTask, AppError> {
     let plan: InstallPlan =
         tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
@@ -21,6 +26,8 @@ pub async fn start_execution_task(
             .map_err(|error| AppError::msg(error.to_string()))??;
     install_service::verify_expected_fingerprint(&plan, &expected_fingerprint)
         .map_err(|_| AppError::coded("plan_changed", "安装计划已变化，请重新确认"))?;
+    // Held across the start so the admission covers the whole registration.
+    let _start_permit = lifecycle.admit(Operation::ExecStart)?;
     manager.start(&app, plan)
 }
 
