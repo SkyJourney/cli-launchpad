@@ -245,38 +245,82 @@ describe("backup restore coordination", () => {
     expect(wsHost.errors).toEqual([]);
   });
 
-  it("resumes persisting after a failed restore once the workspace rehydrates", async () => {
+  it("resumes persisting after a failed restore without reloading the workspace", async () => {
     const { host: wsHost } = await mountRestoreHost();
     await wsHost.ctx().getBackupRestoreBlockers();
     wsHost.backend.saved.length = 0;
+    const treeBeforeFailure = wsHost.ctx().tree;
 
-    // 失败回调的第一步：只 cancel，仍然冻结。
+    // 失败回调：只解除冻结，不 rehydrate，工作区内存状态保持原样。
     await act(async () => {
-      wsHost.ctx().cancelBackupRestore();
+      wsHost.ctx().resumeAfterFailedRestore();
     });
+    expect(wsHost.ctx().tree).toBe(treeBeforeFailure);
+
     const paneId = listWorkspacePanes(wsHost.ctx().tree)[0].id;
     await act(async () => {
       wsHost.ctx().splitPane(paneId, "horizontal");
     });
     await flush();
-    // 反向断言：cancel 之后、rehydrate 之前，仍不保存。
-    expect(wsHost.backend.saved.length).toBe(0);
 
-    // 失败回调的第二步：rehydrate 解冻。
+    expect(wsHost.backend.saved.length).toBeGreaterThan(0);
+    expect(() => assertWorkspaceInvariants(wsHost)).not.toThrow();
+    expect(wsHost.errors).toEqual([]);
+  });
+
+  it("persists changes made while frozen as soon as a failed restore resumes", async () => {
+    const { host: wsHost } = await mountRestoreHost();
+    await wsHost.ctx().getBackupRestoreBlockers();
+    wsHost.backend.saved.length = 0;
+
+    // 冻结期间的布局变更不落盘。
+    const paneId = listWorkspacePanes(wsHost.ctx().tree)[0].id;
     await act(async () => {
-      await wsHost.ctx().rehydrateWorkspace();
+      wsHost.ctx().splitPane(paneId, "horizontal");
     });
     await flush(10);
-    // rehydrate 的 ready 效应会保存一次：以此为基线，只断言之后的拆分确实保存。
-    const savedAfterRehydrate = wsHost.backend.saved.length;
-    const nowPaneId = listWorkspacePanes(wsHost.ctx().tree)[0].id;
+    expect(wsHost.backend.saved.length).toBe(0);
+
+    // 恢复失败解冻后，无需再次改动即应保存这些变更。
     await act(async () => {
-      wsHost.ctx().splitPane(nowPaneId, "horizontal");
+      wsHost.ctx().resumeAfterFailedRestore();
+    });
+    await flush(10);
+    expect(wsHost.backend.saved.length).toBeGreaterThan(0);
+    expect(() => assertWorkspaceInvariants(wsHost)).not.toThrow();
+    expect(wsHost.errors).toEqual([]);
+  });
+
+  it("keeps a PTY started after the blocker check visible when the restore is rejected", async () => {
+    // 复现 B09 复核的竞态：阻断检查通过后、后端拒绝恢复前，用户启动了 PTY。
+    const { host: wsHost } = await mountRestoreHost();
+    const blockers = await wsHost.ctx().getBackupRestoreBlockers();
+    expect(blockers).toEqual({
+      runningPtyCount: 0,
+      dirtyFileCount: 0,
+      detachedWindowCount: 0,
+    });
+
+    useAppStore.getState().upsertPtySession({
+      sessionId: "s-late",
+      directoryId: 1,
+      toolKey: "claude",
+      workingDirectory: "C:/project",
+      state: "running",
+      startedAtMs: 2,
+      endedAtMs: null,
+      exitCode: null,
     });
     await flush();
 
-    expect(wsHost.backend.saved.length).toBeGreaterThan(savedAfterRehydrate);
-    expect(() => assertWorkspaceInvariants(wsHost)).not.toThrow();
-    expect(wsHost.errors).toEqual([]);
+    // onError 调用的正是这个函数；SettingsView 的接线只做静态核对（见 M6 4.4.5）。
+    await act(async () => {
+      wsHost.ctx().resumeAfterFailedRestore();
+    });
+    await flush();
+
+    expect(useAppStore.getState().ptySessionsById["s-late"]?.state).toBe(
+      "running",
+    );
   });
 });

@@ -94,8 +94,11 @@ interface PendingAction {
 
 export function SettingsView() {
   const { t, i18n } = useTranslation();
-  const { getBackupRestoreBlockers, cancelBackupRestore, rehydrateWorkspace } =
-    usePtyWorkspace();
+  const {
+    getBackupRestoreBlockers,
+    cancelBackupRestore,
+    resumeAfterFailedRestore,
+  } = usePtyWorkspace();
   const queryClient = useQueryClient();
   const directories = useDirectories();
   const windowChrome = getWindowChromePolicy(navigator.userAgent);
@@ -191,13 +194,7 @@ export function SettingsView() {
       await queryClient.invalidateQueries();
     },
     onError: () => {
-      cancelBackupRestore();
-      void rehydrateWorkspace().catch((reason) =>
-        console.error(
-          "Unable to reload workspace after a failed restore",
-          reason,
-        ),
-      );
+      resumeAfterFailedRestore();
     },
   });
   const confirmBackupRestore = async () => {

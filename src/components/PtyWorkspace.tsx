@@ -378,6 +378,7 @@ interface PtyWorkspaceContextValue {
   collectExitImpacts: (ptyCount: number) => Promise<AppExitImpacts>;
   getBackupRestoreBlockers: () => Promise<WorkspaceDataRestoreBlockers>;
   cancelBackupRestore: () => void;
+  resumeAfterFailedRestore: () => void;
   rehydrateWorkspace: () => Promise<void>;
   getDirectoryRemovalBlockers: (directoryId: number) => {
     openFileCount: number;
@@ -3874,10 +3875,19 @@ export function PtyWorkspaceProvider({
   }, []);
 
   const cancelBackupRestore = useCallback(() => {
-    // 恢复请求结束（成功或失败）都不在这里解冻：恢复成功后必须等
-    // workspace-data-restored 触发 rehydrateWorkspace 才能重新允许持久化，
-    // 否则旧内存布局会覆盖刚恢复的布局（FE-NEW-04）；恢复失败时由调用方
-    // 显式执行 rehydrateWorkspace。解冻只发生在 rehydrateWorkspace。
+    // 恢复请求成功时不在这里解冻：必须等 workspace-data-restored 触发
+    // rehydrateWorkspace，否则旧内存布局会覆盖刚恢复的布局（FE-NEW-04）。
+    // 失败路径使用 resumeAfterFailedRestore。
+  }, []);
+
+  const resumeAfterFailedRestore = useCallback(() => {
+    // 只有在替换数据库之前失败（守卫拒绝、恢复前的错误）才会返回 Err，此时数据库
+    // 内容未变，内存状态仍与之一致。这里只解除持久化冻结，不重新加载工作区：
+    // rehydrate 会清空 PTY 会话表，恢复检查之后启动的运行中 PTY 会因此失去前端句柄。
+    backupRestoreInProgressRef.current = false;
+    // 冻结期间的变更只是被跳过、没有丢弃（状态保留），解冻后立即保存，
+    // 否则在下一次状态变化前它们都不会落盘。
+    persistLatestRef.current?.();
   }, []);
 
   const rehydrateWorkspace = useCallback(async () => {
@@ -3957,6 +3967,7 @@ export function PtyWorkspaceProvider({
       collectExitImpacts,
       getBackupRestoreBlockers,
       cancelBackupRestore,
+      resumeAfterFailedRestore,
       rehydrateWorkspace,
       getDirectoryRemovalBlockers,
     }),
@@ -4008,6 +4019,7 @@ export function PtyWorkspaceProvider({
       collectExitImpacts,
       getBackupRestoreBlockers,
       cancelBackupRestore,
+      resumeAfterFailedRestore,
       rehydrateWorkspace,
       getDirectoryRemovalBlockers,
     ],

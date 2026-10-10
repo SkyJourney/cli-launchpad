@@ -154,7 +154,17 @@ pub fn restore_with_runtime_invalidation(
     let (manifest, close_behavior) = crate::with_connection(db, |connection| {
         let _restore_guard = sessions.begin_backup_restore()?;
         let manifest = restore(connection, paths, backup_id)?;
-        let close_behavior = crate::db::app_setting_repo::get_close_behavior(connection)?;
+        // 数据库已经替换：读取失败不能再以 Err 返回（前端会误判为未恢复），
+        // 记录后使用默认关闭行为。
+        let close_behavior = match crate::db::app_setting_repo::get_close_behavior(connection) {
+            Ok(behavior) => behavior,
+            Err(error) => {
+                log::warn!(
+                    "backup restore: unable to read the close behavior, using the default: {error}"
+                );
+                crate::models::app_setting::CloseBehavior::default()
+            }
+        };
         Ok((manifest, close_behavior))
     })?;
     // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
