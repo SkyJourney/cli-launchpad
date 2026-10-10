@@ -2,6 +2,7 @@ use tauri::{ipc::Channel, State, WebviewWindow};
 
 use crate::{
     blocking, budgets,
+    models::window_kind::{CallerWindow, WindowKind},
     models::{
         pty_session::{
             PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatusReport,
@@ -188,19 +189,11 @@ pub fn cancel_pty_handoff(
 #[tauri::command]
 pub fn get_pty_session_window_status(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
 ) -> Result<PtySessionWindowStatusReport, AppError> {
-    if !matches!(
-        crate::models::window_kind::window_kind_of(window.label()),
-        Some(
-            crate::models::window_kind::WindowKind::Main
-                | crate::models::window_kind::WindowKind::Terminal
-        )
-    ) {
-        return Err(AppError::msg("当前窗口不允许查询终端所有权状态"));
-    }
-    state.window_status_report(&session_id, window.label())
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.window_status_report(&session_id, caller.label().as_str())
 }
 
 #[tauri::command]

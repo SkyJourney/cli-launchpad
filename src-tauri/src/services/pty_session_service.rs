@@ -17,6 +17,11 @@ use portable_pty::{
 use tauri::{ipc::Channel, AppHandle, Manager};
 use uuid::Uuid;
 
+use crate::models::window_kind::{
+    is_main_label, is_terminal_label, main_window_label, WindowKind, WindowLabel,
+};
+use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
+
 use crate::{
     db::{directory_repo, launch_history_repo, pty_session_repo},
     models::{
@@ -329,7 +334,7 @@ impl ManagedSession {
                 .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
             if let Some(channel) = route.channel.as_ref() {
                 if let Err(error) = channel.send(event.clone()) {
-                    if route.window_label.starts_with("terminal-") {
+                    if is_terminal_label(&route.window_label) {
                         route.channel = None;
                         route.owner_lost = true;
                         if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
@@ -353,7 +358,7 @@ impl ManagedSession {
                 || route
                     .mirror
                     .as_ref()
-                    .is_some_and(|(label, _)| label == "main");
+                    .is_some_and(|(label, _)| is_main_label(label));
         }
 
         if mirror_to_main {
@@ -365,7 +370,7 @@ impl ManagedSession {
                 || route
                     .mirror
                     .as_ref()
-                    .is_some_and(|(label, _)| label == "main");
+                    .is_some_and(|(label, _)| is_main_label(label));
             if mirror_allowed {
                 if let Some((_, mirror)) = route.mirror.as_ref() {
                     if mirror.send(event).is_err() {
@@ -387,7 +392,7 @@ impl ManagedSession {
                 .mirror
                 .as_ref()
                 .is_some_and(|(label, _)| label == window_label)
-            || (route.owner_lost && window_label == "main"))
+            || (route.owner_lost && is_main_label(window_label)))
     }
 
     fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
@@ -452,7 +457,7 @@ fn reclaim_event_route(route: &mut EventRoute, window_label: &str) -> bool {
         .take()
         .filter(|(label, _)| label != window_label);
     if route.window_label == window_label {
-        route.window_label = "main".to_string();
+        route.window_label = main_window_label().to_string();
         route.channel = None;
         route.owner_lost = true;
         true
@@ -917,7 +922,7 @@ impl PtySessionManager {
     }
 
     pub fn reclaim_window(&self, window_label: &str) -> Vec<String> {
-        if window_label == "main" {
+        if is_main_label(window_label) {
             return Vec::new();
         }
         let Ok(sessions) = self.sessions.lock() else {
@@ -965,7 +970,7 @@ impl PtySessionManager {
         sequence: u64,
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
-        if window_label != "main" {
+        if !is_main_label(window_label) {
             return Err(AppError::msg("只有主窗口可以重新接管终端"));
         }
         validate_handoff_snapshot(&snapshot)?;
@@ -975,7 +980,7 @@ impl PtySessionManager {
             .event_route
             .lock()
             .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if !route.owner_lost || route.window_label != "main" || route.channel.is_some() {
+        if !route.owner_lost || !is_main_label(&route.window_label) || route.channel.is_some() {
             return Err(AppError::msg("终端当前不处于可重新接管状态"));
         }
         let mut last_size = session
@@ -1180,15 +1185,18 @@ impl PtySessionManager {
             return Err(AppError::msg("终端控制权已经转移"));
         }
         route.window_label = target_window_label.to_string();
-        route.mirror = if target_window_label == "main" {
+        route.mirror = if is_main_label(target_window_label) {
             None
-        } else if transfer.source_window_label == "main" {
+        } else if is_main_label(&transfer.source_window_label) {
             route
                 .channel
                 .take()
-                .map(|source_channel| ("main".to_string(), source_channel))
+                .map(|source_channel| (main_window_label().to_string(), source_channel))
         } else {
-            route.mirror.take().filter(|(label, _)| label == "main")
+            route
+                .mirror
+                .take()
+                .filter(|(label, _)| is_main_label(label))
         };
         route.channel = Some(channel);
         route.owner_lost = false;
@@ -1678,6 +1686,18 @@ impl PtySessionManager {
             has_channel: route.channel.is_some(),
             buffered_events: route.buffered_events.len(),
         }
+    }
+}
+
+impl WindowScopedResource for PtySessionManager {
+    fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
+        if window.kind() != WindowKind::Terminal {
+            return Vec::new();
+        }
+        self.reclaim_window(window.as_str())
+            .into_iter()
+            .map(|session_id| AppEvent::PtySessionOwnerLost { session_id })
+            .collect()
     }
 }
 

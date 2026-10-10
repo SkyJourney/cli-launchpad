@@ -1,11 +1,23 @@
 import manifest from "../../contracts/window-kinds.json";
 
-type WindowKindDefinition = (typeof manifest.kinds)[number];
-
-export type WindowKind = WindowKindDefinition["id"];
+export type WindowKind = "main" | "terminal" | "workspaceContent";
+/** Every registered window kind; windowKinds.test.ts compares it with the contract. */
+export const WINDOW_KINDS: readonly WindowKind[] = [
+  "main",
+  "terminal",
+  "workspaceContent",
+];
 export type DetachedWindowKind = Exclude<WindowKind, "main">;
 
-const definitions = manifest.kinds as WindowKindDefinition[];
+interface WindowKindDefinition {
+  id: WindowKind;
+  label?: string;
+  labelPrefix?: string;
+  route?: string;
+}
+
+const definitions = manifest.kinds as unknown as WindowKindDefinition[];
+
 const detachedLabelSuffix =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

@@ -3,8 +3,9 @@ use std::sync::Mutex;
 
 use anyhow::{bail, Result};
 
-use crate::models::window_kind::{window_kind_of, WindowKind};
+use crate::models::window_kind::{window_kind_of, WindowKind, WindowLabel};
 use crate::services::project_directory::ProjectDirectory;
+use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentWindowFileGrant {
@@ -58,6 +59,20 @@ impl ContentWindowGrantRegistry {
             .map_err(|_| anyhow::anyhow!("内容窗口授权表锁中毒"))?
             .remove(label)
             .is_some())
+    }
+}
+
+impl WindowScopedResource for ContentWindowGrantRegistry {
+    fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
+        if window.kind() != WindowKind::WorkspaceContent {
+            return Vec::new();
+        }
+        if let Err(error) = self.revoke(window.as_str()) {
+            log::warn!("unable to revoke file grant for destroyed window label={window}: {error}");
+        }
+        vec![AppEvent::WorkspaceContentWindowLost {
+            window_label: window.as_str().to_string(),
+        }]
     }
 }
 

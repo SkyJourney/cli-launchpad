@@ -1,7 +1,8 @@
-use tauri::{State, WebviewWindow};
+use tauri::State;
 
 use crate::db::app_setting_repo;
 use crate::models::app_setting::CloseBehavior;
+use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::{
     update_close_behavior_state, with_conn, AppError, CloseBehaviorState, Db, TrayMenuLabelsState,
 };
@@ -27,14 +28,12 @@ pub fn set_close_behavior(
 
 #[tauri::command]
 pub fn set_tray_menu_labels(
-    window: WebviewWindow,
+    caller: CallerWindow,
     state: State<'_, TrayMenuLabelsState>,
     show: String,
     quit: String,
 ) -> Result<(), AppError> {
-    if window.label() != "main" {
-        return Err(AppError::msg("只有主窗口可以更新托盘菜单文案"));
-    }
+    caller.require(&[WindowKind::Main])?;
     if show.trim().is_empty() || quit.trim().is_empty() || show.len() > 256 || quit.len() > 256 {
         return Err(AppError::msg("托盘菜单文案无效"));
     }

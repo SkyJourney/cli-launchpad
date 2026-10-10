@@ -1564,3 +1564,124 @@ fn migrated_commands_use_the_unified_execution_helpers() {
     );
     assert!(pty.contains("lookup_launch_directory"));
 }
+
+#[test]
+fn main_window_label_matches_every_tauri_config() {
+    let main = crate::models::window_kind::main_window_label();
+    for (name, raw) in [
+        ("tauri.conf.json", include_str!("../../tauri.conf.json")),
+        (
+            "tauri.macos.conf.json",
+            include_str!("../../tauri.macos.conf.json"),
+        ),
+    ] {
+        let config: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let windows = config["app"]["windows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name} must declare app.windows"));
+        assert_eq!(windows.len(), 1, "{name} declares exactly one window");
+        assert_eq!(
+            windows[0]["label"], main,
+            "{name} must label its window explicitly with the contract main label"
+        );
+    }
+    for (name, raw) in [
+        (
+            "tauri.windows.conf.json",
+            include_str!("../../tauri.windows.conf.json"),
+        ),
+        (
+            "tauri.offline.conf.json",
+            include_str!("../../tauri.offline.conf.json"),
+        ),
+    ] {
+        let config: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert!(
+            config["app"]["windows"].is_null(),
+            "{name} must not override app.windows (arrays are replaced wholesale)"
+        );
+    }
+}
+
+#[test]
+fn macos_window_config_repeats_the_base_window_fields() {
+    let base: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    let macos: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.macos.conf.json")).unwrap();
+    let base_window = &base["app"]["windows"][0];
+    let macos_window = &macos["app"]["windows"][0];
+    for field in [
+        "label",
+        "title",
+        "width",
+        "height",
+        "minWidth",
+        "minHeight",
+        "dragDropEnabled",
+    ] {
+        assert!(
+            !base_window[field].is_null(),
+            "base window must define {field}"
+        );
+        assert_eq!(
+            macos_window[field], base_window[field],
+            "the macOS window replaces the whole array, so it must repeat {field}"
+        );
+    }
+}
+
+#[test]
+fn service_code_does_not_branch_on_window_label_literals() {
+    // Removes every `#[cfg(test)]` item (its first brace block), wherever it appears,
+    // so production code placed after a test helper is still checked.
+    fn production(source: &str) -> String {
+        let mut out = String::new();
+        let mut rest = source;
+        while let Some(at) = rest.find("#[cfg(test)]") {
+            out.push_str(&rest[..at]);
+            let item = &rest[at..];
+            let open = item.find('{').expect("cfg(test) item has a body");
+            let mut depth = 0usize;
+            let mut end = None;
+            for (i, ch) in item[open..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(open + i + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &item[end.expect("balanced braces")..];
+        }
+        out.push_str(rest);
+        out
+    }
+    for (name, source) in [
+        (
+            "pty_session_service.rs",
+            include_str!("../services/pty_session_service.rs"),
+        ),
+        (
+            "content_window_grants.rs",
+            include_str!("../services/content_window_grants.rs"),
+        ),
+    ] {
+        let source = production(source);
+        for forbidden in [
+            "\"main\"",
+            "starts_with(\"terminal-\")",
+            "starts_with(\"workspace-content-\")",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "services/{name} must not contain {forbidden}; use models::window_kind helpers"
+            );
+        }
+    }
+}

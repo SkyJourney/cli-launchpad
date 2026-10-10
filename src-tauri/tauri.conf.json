@@ -16,6 +16,7 @@
     },
     "windows": [
       {
+        "label": "main",
         "title": "CLI Launchpad",
         "width": 1360,
         "height": 860,

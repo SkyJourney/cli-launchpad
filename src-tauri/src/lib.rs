@@ -324,37 +324,20 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                let label = window.label();
-                let grants =
-                    window.state::<services::content_window_grants::ContentWindowGrantRegistry>();
-                let sessions = window.state::<services::pty_session_service::PtySessionManager>();
-                match services::app_lifecycle::cleanup_destroyed_window(label, &grants, &sessions) {
-                    Ok(cleanup) => {
-                        for session_id in cleanup.owner_lost_session_ids {
-                            let _ = window.app_handle().emit_to(
-                                "main",
-                                "pty-session-owner-lost",
-                                serde_json::json!({ "sessionId": session_id }),
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        log::warn!("unable to clean up destroyed window label={label}: {error}");
-                    }
-                }
-                // 清理失败也要通知：清理只影响授权表与会话路由，不能阻止主窗口回收文件内容。
-                if let Some(payload) =
-                    services::app_lifecycle::workspace_content_window_lost_payload(label)
-                {
-                    if let Err(error) = window.app_handle().emit_to(
-                        "main",
-                        services::app_lifecycle::WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
-                        payload,
-                    ) {
-                        log::warn!(
-                            "unable to notify main window about lost content window label={label}: {error}"
-                        );
-                    }
+                if let Ok(destroyed) = models::window_kind::WindowLabel::parse(window.label()) {
+                    let grants = window
+                        .state::<services::content_window_grants::ContentWindowGrantRegistry>();
+                    let sessions =
+                        window.state::<services::pty_session_service::PtySessionManager>();
+                    let sink = TauriEventSink(window.app_handle().clone());
+                    services::window_lifecycle::on_window_destroyed(
+                        &destroyed,
+                        &[
+                            &*grants as &dyn services::window_lifecycle::WindowScopedResource,
+                            &*sessions as &dyn services::window_lifecycle::WindowScopedResource,
+                        ],
+                        &sink,
+                    );
                 }
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -402,6 +385,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build CLI Launchpad");
     app.run(handle_run_event);
+}
+
+/// Sends window lifecycle events to the main window.
+struct TauriEventSink(tauri::AppHandle);
+
+impl services::window_lifecycle::EventSink for TauriEventSink {
+    fn emit_to_main(&self, event: &services::window_lifecycle::AppEvent) -> Result<(), String> {
+        self.0
+            .emit_to(
+                models::window_kind::main_window_label(),
+                event.name(),
+                event.payload(),
+            )
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {

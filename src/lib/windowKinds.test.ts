@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import fixtures from "../../contracts/window-label-fixtures.json";
+import manifest from "../../contracts/window-kinds.json";
 import {
   createWindowLabel,
   isDetachedWindowLabel,
+  WINDOW_KINDS,
   windowKindOf,
+  type WindowKind,
 } from "./windowKinds";
 
 describe("window kind contract", () => {
@@ -59,5 +62,20 @@ describe("window kind contract", () => {
       expect(windowKindOf(label), JSON.stringify(label)).toBeNull();
       expect(isDetachedWindowLabel(label), JSON.stringify(label)).toBe(false);
     }
+  });
+});
+
+describe("window kind type", () => {
+  it("declares exactly the kinds listed in the contract", () => {
+    expect(manifest.kinds.map((kind) => kind.id).sort()).toEqual(
+      [...WINDOW_KINDS].sort(),
+    );
+  });
+
+  it("rejects unknown kind names at compile time", () => {
+    const known: WindowKind = "terminal";
+    // @ts-expect-error "settings" is not a registered window kind
+    const unknown: WindowKind = "settings";
+    expect([known, unknown]).toHaveLength(2);
   });
 });

@@ -2,8 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::models::app_setting::CloseBehavior;
 use crate::models::window_kind::{window_kind_of, WindowKind};
-use crate::services::content_window_grants::ContentWindowGrantRegistry;
-use crate::services::pty_session_service::PtySessionManager;
 
 /// One-shot authorization for the application's final exit request.
 #[derive(Default)]
@@ -83,44 +81,6 @@ pub fn decide_close_request(
         CloseBehavior::MinimizeToTray => MainCloseDecision::HideToTray,
         CloseBehavior::Quit => MainCloseDecision::RequestAppExit,
     }
-}
-
-/// 窗口销毁后需要通知前端的清理结果。
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct DestroyedWindowCleanup {
-    pub file_grant_revoked: bool,
-    pub owner_lost_session_ids: Vec<String>,
-}
-
-/// 窗口销毁清理：内容窗只撤销自己的文件授权，终端窗回收其拥有的会话；
-/// 其他类别或非法标签返回空结果。函数不依赖应用句柄，通知前端由调用方负责。
-pub fn cleanup_destroyed_window(
-    label: &str,
-    grants: &ContentWindowGrantRegistry,
-    sessions: &PtySessionManager,
-) -> Result<DestroyedWindowCleanup, String> {
-    let mut cleanup = DestroyedWindowCleanup::default();
-    match window_kind_of(label) {
-        Some(WindowKind::WorkspaceContent) => {
-            cleanup.file_grant_revoked = grants.revoke(label).map_err(|error| error.to_string())?;
-        }
-        Some(WindowKind::Terminal) => {
-            cleanup.owner_lost_session_ids = sessions.reclaim_window(label);
-        }
-        _ => {}
-    }
-    Ok(cleanup)
-}
-
-/// 文件独立窗销毁后通知主窗口回收内容的事件名（后端到 main 的事件，不走窗口协议信封）。
-pub const WORKSPACE_CONTENT_WINDOW_LOST_EVENT: &str = "workspace-content-window-lost";
-
-/// 仅当 `label` 是合法的 `workspace-content-<uuid>` 窗口时返回事件载荷 `{"windowLabel": label}`，
-/// 其他任何 label（main、terminal-*、非法 label、空串）返回 `None`。
-/// 载荷只含窗口 label，不承载 token、路径或文件内容（广播不得携带敏感数据）。
-pub fn workspace_content_window_lost_payload(label: &str) -> Option<serde_json::Value> {
-    (window_kind_of(label) == Some(WindowKind::WorkspaceContent))
-        .then(|| serde_json::json!({ "windowLabel": label }))
 }
 
 /// Whether the system tray could be created. Held as managed state only
@@ -426,31 +386,15 @@ impl AppLifecycle {
 mod tests {
     use super::AppExitGate;
     use super::{
-        cleanup_destroyed_window, decide_close_request, decide_exit_request,
-        effective_close_behavior, setup_tray_or_degrade, workspace_content_window_lost_payload,
-        DestroyedWindowCleanup, ExitRequestDecision, MainCloseDecision, TrayAvailability,
-        WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
+        decide_close_request, decide_exit_request, effective_close_behavior, setup_tray_or_degrade,
+        ExitRequestDecision, MainCloseDecision, TrayAvailability,
     };
     use crate::models::app_setting::CloseBehavior;
-    use crate::services::content_window_grants::{
-        ContentWindowFileGrant, ContentWindowGrantRegistry,
-    };
-    use crate::services::pty_session_service::{recording_channel, PtySessionManager, TestRoute};
 
     const FILE_L1: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
-    const FILE_L2: &str = "workspace-content-9f1b6a52-3c47-4d5e-8a1b-2c3d4e5f6a7b";
     const TERM_T1: &str = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
-    const TERM_T2: &str = "terminal-9f1b6a52-3c47-4d5e-8a1b-2c3d4e5f6a7b";
     const SOURCE: &str = include_str!("app_lifecycle.rs");
     const LIB_RS: &str = include_str!("../lib.rs");
-
-    fn file_grant() -> ContentWindowFileGrant {
-        ContentWindowFileGrant {
-            directory_id: 1,
-            directory_path: "C:/project".into(),
-            relative_path: "a.txt".into(),
-        }
-    }
 
     #[test]
     fn exit_request_decision_matrix() {
@@ -557,7 +501,7 @@ mod tests {
         // 反向断言：关闭决策同样是纯函数。
         let close_start = SOURCE.find("pub fn decide_close_request").unwrap();
         let close_rest = &SOURCE[close_start..];
-        let close_end = close_rest.find("pub fn cleanup_destroyed_window").unwrap();
+        let close_end = close_rest.find("pub enum TrayAvailability").unwrap();
         let close_body = &close_rest[..close_end];
         for forbidden in ["terminate", "cancel", "emit", "exit("] {
             assert!(
@@ -609,115 +553,6 @@ mod tests {
     }
 
     #[test]
-    fn destroyed_file_window_revokes_only_its_grant() {
-        let registry = ContentWindowGrantRegistry::default();
-        registry.grant(FILE_L1, file_grant()).unwrap();
-        registry.grant(FILE_L2, file_grant()).unwrap();
-        let sessions = PtySessionManager::default();
-
-        assert_eq!(
-            cleanup_destroyed_window(FILE_L1, &registry, &sessions),
-            Ok(DestroyedWindowCleanup {
-                file_grant_revoked: true,
-                owner_lost_session_ids: vec![],
-            })
-        );
-        assert!(registry.get(FILE_L1).is_err());
-        assert!(registry.get(FILE_L2).is_ok());
-
-        // 幂等：同一窗口再次销毁不会再撤销。
-        assert!(
-            !cleanup_destroyed_window(FILE_L1, &registry, &sessions)
-                .unwrap()
-                .file_grant_revoked
-        );
-        // 反向断言：主窗与终端窗的销毁不会撤销任何文件授权。
-        for label in ["main", TERM_T1] {
-            assert_eq!(
-                cleanup_destroyed_window(label, &registry, &sessions),
-                Ok(DestroyedWindowCleanup::default())
-            );
-            assert!(registry.get(FILE_L2).is_ok());
-        }
-        // 窗口复用：撤销之后可以重新授权。
-        assert!(registry.grant(FILE_L1, file_grant()).is_ok());
-    }
-
-    #[test]
-    fn destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions() {
-        let registry = ContentWindowGrantRegistry::default();
-        let sessions = PtySessionManager::default();
-
-        for label in [TERM_T1, TERM_T2] {
-            let cleanup = cleanup_destroyed_window(label, &registry, &sessions).unwrap();
-            assert!(cleanup.owner_lost_session_ids.is_empty());
-            assert!(!cleanup.file_grant_revoked);
-        }
-        for label in [
-            "main",
-            "terminal-invalid",
-            "",
-            "workspace-content-not-a-uuid",
-        ] {
-            assert_eq!(
-                cleanup_destroyed_window(label, &registry, &sessions),
-                Ok(DestroyedWindowCleanup::default()),
-                "{label:?}"
-            );
-        }
-        assert_eq!(sessions.active_count(), 0);
-    }
-
-    #[test]
-    fn destroyed_terminal_owner_window_returns_owner_lost_sessions() {
-        let registry = ContentWindowGrantRegistry::default();
-        let sessions = PtySessionManager::default();
-        let (channel_1, _sink_1) = recording_channel();
-        let (channel_2, _sink_2) = recording_channel();
-        let (channel_3, _sink_3) = recording_channel();
-        let s1 = sessions
-            .insert_test_session(TERM_T1, Some(channel_1))
-            .session_id;
-        let s2 = sessions
-            .insert_test_session(TERM_T2, Some(channel_2))
-            .session_id;
-        let s3 = sessions
-            .insert_test_session("main", Some(channel_3))
-            .session_id;
-        let route = |window_label: &str, owner_lost: bool, has_channel: bool| TestRoute {
-            window_label: window_label.to_string(),
-            owner_lost,
-            has_channel,
-            buffered_events: 0,
-        };
-
-        // 1. 终端窗 T1 被销毁：返回它拥有的会话，不涉及文件授权。
-        let cleanup = cleanup_destroyed_window(TERM_T1, &registry, &sessions).unwrap();
-        assert_eq!(cleanup.owner_lost_session_ids, vec![s1.clone()]);
-        assert!(!cleanup.file_grant_revoked);
-
-        // 2. S1 被回收给 main 并标记失主，通道被撤掉。
-        assert_eq!(sessions.test_route(&s1), route("main", true, false));
-
-        // 3. 其他窗口的会话不受影响。
-        assert_eq!(sessions.test_route(&s2), route(TERM_T2, false, true));
-        assert_eq!(sessions.test_route(&s3), route("main", false, true));
-
-        // 4. main 被销毁不回收任何会话。
-        let cleanup = cleanup_destroyed_window("main", &registry, &sessions).unwrap();
-        assert!(cleanup.owner_lost_session_ids.is_empty());
-
-        // 5. 非法标签返回空结果且不 panic。
-        let cleanup = cleanup_destroyed_window("terminal-invalid", &registry, &sessions).unwrap();
-        assert!(cleanup.owner_lost_session_ids.is_empty());
-        assert!(!cleanup.file_grant_revoked);
-
-        // 反向断言：第 4、5 步之后 S2、S3 的路由仍与第 3 步一致。
-        assert_eq!(sessions.test_route(&s2), route(TERM_T2, false, true));
-        assert_eq!(sessions.test_route(&s3), route("main", false, true));
-    }
-
-    #[test]
     fn lib_rs_delegates_exit_and_window_events_to_decision_functions() {
         let start = LIB_RS.find("fn handle_run_event").unwrap();
         let end = LIB_RS.find("fn show_main_window").unwrap();
@@ -725,7 +560,7 @@ mod tests {
         assert!(run_event.contains("decide_exit_request("));
         assert!(!run_event.contains("consume_authorization"));
         assert!(run_event.contains("executionTaskCount"));
-        assert!(LIB_RS.contains("cleanup_destroyed_window("));
+        assert!(LIB_RS.contains("on_window_destroyed("));
         assert!(LIB_RS.contains("decide_close_request("));
         // 反向断言：旧的内联逻辑不能回来。
         assert!(!LIB_RS.contains(".reclaim_window("));
@@ -885,47 +720,6 @@ mod tests {
         gate.authorize();
         assert!(gate.consume_authorization());
         assert!(!gate.consume_authorization());
-    }
-
-    #[test]
-    fn destroyed_window_notifies_main_only_for_workspace_content_windows() {
-        assert_eq!(
-            WORKSPACE_CONTENT_WINDOW_LOST_EVENT,
-            "workspace-content-window-lost"
-        );
-        assert_eq!(
-            workspace_content_window_lost_payload(FILE_L1),
-            Some(serde_json::json!({ "windowLabel": FILE_L1 }))
-        );
-        // 反向断言：载荷不承载 token、路径等敏感数据，只有窗口 label。
-        let serialized = workspace_content_window_lost_payload(FILE_L1)
-            .unwrap()
-            .to_string();
-        assert!(!serialized.contains("token"));
-        assert!(!serialized.contains("path"));
-
-        for label in [
-            "main",
-            TERM_T1,
-            "workspace-content-invalid",
-            "workspace-content-",
-            "",
-            "MAIN",
-            "workspace-content-8e783338-f464-4b10-b15e-b534748c6241-extra",
-        ] {
-            assert_eq!(
-                workspace_content_window_lost_payload(label),
-                None,
-                "label {label:?} 不应触发通知"
-            );
-        }
-
-        // 与 window_kind_of 的大小写不敏感规则一致，载荷里的 label 原样保留。
-        let upper = "workspace-content-8E783338-F464-4B10-B15E-B534748C6241";
-        assert_eq!(
-            workspace_content_window_lost_payload(upper),
-            Some(serde_json::json!({ "windowLabel": upper }))
-        );
     }
 
     use super::{AppLifecycle, DataReplaceKind, Operation, Permit, Phase};
