@@ -250,4 +250,38 @@ describe("workspace content coordinator", () => {
     expect(coordinator.ownerEnded(second)?.state.phase).toBe("disposed");
     expect(coordinator.get(second)).toBeUndefined();
   });
+
+  it("reports a completed return only for its own transfer and forgets it on reset", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "file", documentId: "doc-1" } as const;
+    const source = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const target = {
+      kind: "window",
+      windowLabel: "workspace-content-1",
+    } as const;
+    coordinator.ensureAttached(content, source);
+    coordinator.beginDetach(content, source, target, "detach-1");
+    coordinator.completeHandoff(content, "detachReady", "detach-1");
+    coordinator.beginReturn(content, "ret-1", "main");
+
+    expect(coordinator.isReturnCompleted("ret-1")).toBe(false);
+    coordinator.completeHandoff(content, "returnReady", "ret-1");
+    expect(coordinator.isReturnCompleted("ret-1")).toBe(true);
+    expect(coordinator.isReturnCompleted("other")).toBe(false);
+
+    coordinator.reset();
+    expect(coordinator.isReturnCompleted("ret-1")).toBe(false);
+
+    // 反向：returnFailed 路径不会把 transfer 记为已完成。
+    coordinator.ensureAttached(content, source);
+    coordinator.beginDetach(content, source, target, "detach-2");
+    coordinator.completeHandoff(content, "detachReady", "detach-2");
+    coordinator.beginReturn(content, "ret-2", "main");
+    coordinator.failHandoff(content, "returnFailed", "ret-2");
+    expect(coordinator.isReturnCompleted("ret-2")).toBe(false);
+  });
 });

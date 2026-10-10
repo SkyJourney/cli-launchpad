@@ -43,8 +43,13 @@ export type WorkspaceContentCommand =
       toPaneId?: string;
     };
 
-/** Applies shared pane topology changes without branching on content kind. */
-export function executeWorkspaceCommand(
+/**
+ * Pure reducer that applies pane topology changes (activate, close, move,
+ * split, detach, return) to a workspace tree without branching on content
+ * kind. It is NOT a command executor: it never touches the coordinator,
+ * adapters or domain operations; callers decide the commit order.
+ */
+export function reduceWorkspaceTree(
   tree: WorkspaceNode,
   command: WorkspaceContentCommand,
 ): WorkspaceNode {
@@ -104,4 +109,55 @@ export function executeWorkspaceCommand(
       return placeContentExclusively(tree, destination, command.ref);
     }
   }
+}
+
+export interface WorkspaceReturnPlan {
+  nextTree: WorkspaceNode;
+  focusPaneId: string;
+}
+
+/**
+ * Decides where returning content lands in the given (latest) tree.
+ * Callers must pass `treeRef.current` read after every await of the return
+ * pipeline, then commit the coordinator and the tree without awaiting.
+ */
+export function planWorkspaceReturn(
+  tree: WorkspaceNode,
+  args: {
+    ref: WorkspacePaneContentRef;
+    requestedPaneId?: string | null;
+    focusedPaneId: string;
+    whenAlreadyInTree: "activate" | "relocate";
+  },
+): WorkspaceReturnPlan | null {
+  if (args.ref.kind === "unknown") return null;
+  const panes = listWorkspacePanes(tree);
+  const existing = panes.find((pane) => hasWorkspaceContent(pane, args.ref));
+  if (existing && args.whenAlreadyInTree === "activate") {
+    return {
+      nextTree: reduceWorkspaceTree(tree, {
+        type: "activate",
+        ref: args.ref,
+        paneId: existing.id,
+      }),
+      focusPaneId: existing.id,
+    };
+  }
+  const target =
+    (args.requestedPaneId
+      ? findWorkspacePane(tree, args.requestedPaneId)
+      : null) ??
+    existing ??
+    findWorkspacePane(tree, args.focusedPaneId) ??
+    panes[0] ??
+    null;
+  if (!target) return null;
+  return {
+    nextTree: reduceWorkspaceTree(tree, {
+      type: "return",
+      ref: args.ref,
+      toPaneId: target.id,
+    }),
+    focusPaneId: target.id,
+  };
 }

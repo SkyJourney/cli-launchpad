@@ -384,8 +384,8 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(host!.errors).toEqual([]);
   });
 
-  // 与下面的 it.fails 共用同一组并发请求，但只断言“当前确实成立”的非缺陷事实：
-  // 副作用没有重复。这样 it.fails 不会掩盖这些行为的回归，afterEach 的泄漏断言也照常生效。
+  // 与下面的并发用例共用同一组并发请求，但只断言“当前确实成立”的非缺陷事实：
+  // 副作用没有重复。这样下面的用例即使回归，这里也能单独定位，afterEach 的泄漏断言也照常生效。
   it("does not repeat return effects when file and pty return requests are duplicated", async () => {
     const coordinator = new WorkspaceContentCoordinator();
     const { terminal, fileLabel, ptyLabel, fileReturn, ptyReturn } =
@@ -417,55 +417,41 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(host!.errors).toEqual([]);
   });
 
-  // 待修复 m6-028（用户 2026-10-08 批准的偏离）：文件返回与 PTY 返回被并发处理时，
-  // 后提交的 commitTree 基于陈旧的树快照覆盖了前一个，文件从树里丢失而 coordinator 仍认为
-  // 它已 attached（I4 反向违规，并记录 [workspace.layout_snapshot_invalid]）。
-  // m6-028 修复后删除 `.fails`，本用例转为正常用例。
-  it.fails(
-    "handles a duplicate return request for the same token once",
-    async () => {
-      const coordinator = new WorkspaceContentCoordinator();
-      const {
-        doc,
-        slot,
-        terminal,
-        fileLabel,
-        ptyLabel,
-        fileReturn,
-        ptyReturn,
-      } = await detachFileAndPty(coordinator);
+  it("handles a duplicate return request for the same token once", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, slot, terminal, fileLabel, ptyLabel, fileReturn, ptyReturn } =
+      await detachFileAndPty(coordinator);
 
-      await dispatchTogether([
-        ["workspace-file-window-return-requested", fileReturn],
-        ["workspace-file-window-return-requested", fileReturn],
-        ["pty-return-requested", ptyReturn],
-        ["pty-return-requested", ptyReturn],
-      ]);
+    await dispatchTogether([
+      ["workspace-file-window-return-requested", fileReturn],
+      ["workspace-file-window-return-requested", fileReturn],
+      ["pty-return-requested", ptyReturn],
+      ["pty-return-requested", ptyReturn],
+    ]);
 
-      expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
-      expect(
-        eventsTo(fileLabel, "workspace-file-window-return-complete"),
-      ).toHaveLength(1);
-      expect(invokes("revoke_content_window_file")).toHaveLength(1);
-      expect(occurrences(host!, { kind: "file", documentId: doc.id })).toBe(1);
-      expect(occurrences(host!, { kind: "pty", slotId: slot.instanceId })).toBe(
-        1,
-      );
-      expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
-      // 反向断言：重复请求没有产生任何返回失败事件。
-      expect(
-        eventsTo(fileLabel, "workspace-file-window-return-failed"),
-      ).toHaveLength(0);
-      expect(
-        tauriMock.state.emittedEvents.some(
-          (event) =>
-            event.target === ptyLabel &&
-            (event.payload as { type?: string }).type === "pty-return-failed",
-        ),
-      ).toBe(false);
-      expect(host!.errors).toEqual([]);
-    },
-  );
+    expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
+    expect(
+      eventsTo(fileLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(1);
+    expect(invokes("revoke_content_window_file")).toHaveLength(1);
+    expect(occurrences(host!, { kind: "file", documentId: doc.id })).toBe(1);
+    expect(occurrences(host!, { kind: "pty", slotId: slot.instanceId })).toBe(
+      1,
+    );
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    // 反向断言：重复请求没有产生任何返回失败事件。
+    expect(
+      eventsTo(fileLabel, "workspace-file-window-return-failed"),
+    ).toHaveLength(0);
+    expect(
+      tauriMock.state.emittedEvents.some(
+        (event) =>
+          event.target === ptyLabel &&
+          (event.payload as { type?: string }).type === "pty-return-failed",
+      ),
+    ).toBe(false);
+    expect(host!.errors).toEqual([]);
+  });
 
   /**
    * 手工驱动文件分离到“窗口已创建”（不能用 detachFileToWindow：它会自动发 ready 与 attached），
@@ -583,6 +569,60 @@ describe("duplicate and out-of-order handoff events", () => {
           entry.windowLabel === windowLabel && entry.action === "destroy",
       ),
     ).toBe(false);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("ignores a file return request that arrives after the return completed", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, fileLabel, fileReturn } = await detachFileAndPty(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+
+    // 第一次返回完整结束之后，才发第二次相同请求（不是并发）。
+    await emitToMain("workspace-file-window-return-requested", fileReturn);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(
+      eventsTo(fileLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(1);
+    expect(invokes("revoke_content_window_file")).toHaveLength(1);
+
+    await emitToMain("workspace-file-window-return-requested", fileReturn);
+    await flush();
+
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(occurrences(host!, content)).toBe(1);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(
+      eventsTo(fileLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(1);
+    expect(invokes("revoke_content_window_file")).toHaveLength(1);
+    // 反向断言：重复请求没有产生任何返回失败事件。
+    expect(
+      eventsTo(fileLabel, "workspace-file-window-return-failed"),
+    ).toHaveLength(0);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("ignores a pty return request that arrives after the return completed", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { slot, terminal, ptyLabel, ptyReturn } =
+      await detachFileAndPty(coordinator);
+    const content = { kind: "pty", slotId: slot.instanceId } as const;
+
+    await emitToMain("pty-return-requested", ptyReturn);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
+
+    await emitToMain("pty-return-requested", ptyReturn);
+    await flush();
+
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(occurrences(host!, content)).toBe(1);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
+    // 反向断言：没有发往 PTY 窗口的 pty-return-failed。
+    expect(eventsTo(ptyLabel, "pty-return-failed")).toHaveLength(0);
     expect(host!.errors).toEqual([]);
   });
 });

@@ -191,7 +191,10 @@ import {
 } from "./WorkspaceContentView";
 import { WorkspaceContentTab } from "./WorkspaceContentTab";
 import { WorkspaceContentContextMenu } from "./WorkspaceContentContextMenu";
-import { executeWorkspaceCommand } from "../lib/workspaceContentCommand";
+import {
+  planWorkspaceReturn,
+  reduceWorkspaceTree,
+} from "../lib/workspaceContentCommand";
 import { partitionVisibleTabs } from "../lib/workspaceTabLayout";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
 import {
@@ -809,7 +812,7 @@ export function PtyWorkspaceProvider({
       const detachedContents =
         contentCoordinatorRef.current.listInPhases("detached");
       for (const content of detachedContents) {
-        activeTree = executeWorkspaceCommand(activeTree, {
+        activeTree = reduceWorkspaceTree(activeTree, {
           type: "detach",
           ref: content,
         });
@@ -1055,7 +1058,7 @@ export function PtyWorkspaceProvider({
         );
         commitTree(
           hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
-            ? executeWorkspaceCommand(treeRef.current, {
+            ? reduceWorkspaceTree(treeRef.current, {
                 type: "activate",
                 ref: { kind: "file", documentId: document.id },
                 paneId: pane.id,
@@ -1079,7 +1082,7 @@ export function PtyWorkspaceProvider({
     (paneId: string, documentId: string) => {
       const content = { kind: "file", documentId } as const;
       commitTree(
-        executeWorkspaceCommand(treeRef.current, {
+        reduceWorkspaceTree(treeRef.current, {
           type: "activate",
           ref: content,
           paneId,
@@ -1097,7 +1100,7 @@ export function PtyWorkspaceProvider({
       content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
     ) => {
       commitTree(
-        executeWorkspaceCommand(treeRef.current, {
+        reduceWorkspaceTree(treeRef.current, {
           type: "activate",
           ref: content,
           paneId,
@@ -1510,7 +1513,7 @@ export function PtyWorkspaceProvider({
       if (removedSlot?.sessionId) removePtySession(removedSlot.sessionId);
       slotsRef.current = nextSlots;
       setSlots(nextSlots);
-      const nextTree = executeWorkspaceCommand(treeRef.current, {
+      const nextTree = reduceWorkspaceTree(treeRef.current, {
         type: "close",
         refs: [content],
         origin: "window",
@@ -1699,7 +1702,7 @@ export function PtyWorkspaceProvider({
               commitTree(
                 unsupportedContents.reduce(
                   (next, content) =>
-                    executeWorkspaceCommand(next, {
+                    reduceWorkspaceTree(next, {
                       type: "close",
                       refs: [content],
                       origin,
@@ -1860,7 +1863,7 @@ export function PtyWorkspaceProvider({
       const content = { kind: "pty", slotId: instanceId } as const;
       try {
         commitTree(
-          executeWorkspaceCommand(treeRef.current, {
+          reduceWorkspaceTree(treeRef.current, {
             type: "activate",
             ref: content,
             paneId,
@@ -1911,7 +1914,7 @@ export function PtyWorkspaceProvider({
       });
       if (!canChangeWorkspaceContentPane(ownerState)) return;
       const newPaneId = crypto.randomUUID();
-      const next = executeWorkspaceCommand(treeRef.current, {
+      const next = reduceWorkspaceTree(treeRef.current, {
         type: "split",
         ref: content,
         toPaneId: newPaneId,
@@ -1973,7 +1976,7 @@ export function PtyWorkspaceProvider({
         paneId: sourcePane.id,
       });
       if (!canChangeWorkspaceContentPane(ownerState)) return;
-      const next = executeWorkspaceCommand(treeRef.current, {
+      const next = reduceWorkspaceTree(treeRef.current, {
         type: "move",
         ref: content,
         toPaneId: destinationPaneId,
@@ -2115,7 +2118,7 @@ export function PtyWorkspaceProvider({
           kind: "pty",
           slotId: pending.instanceId,
         } as const;
-        const nextTree = executeWorkspaceCommand(treeRef.current, {
+        const nextTree = reduceWorkspaceTree(treeRef.current, {
           type: "detach",
           ref: content,
         });
@@ -2358,7 +2361,7 @@ export function PtyWorkspaceProvider({
         toDetached: (record) => record.window,
       });
       const content = { kind: "pty", slotId: payload.instanceId } as const;
-      const nextTree = executeWorkspaceCommand(treeRef.current, {
+      const nextTree = reduceWorkspaceTree(treeRef.current, {
         type: "detach",
         ref: content,
       });
@@ -2543,7 +2546,7 @@ export function PtyWorkspaceProvider({
           windowLabel: "main",
           paneId: targetPane.id,
         });
-        const nextTree = executeWorkspaceCommand(
+        const nextTree = reduceWorkspaceTree(
           currentTree,
           existingPane
             ? { type: "activate", ref: content, paneId: existingPane.id }
@@ -2576,6 +2579,10 @@ export function PtyWorkspaceProvider({
         slotId: payload.instanceId,
       } as const;
       const key = workspacePtyKey(payload.instanceId);
+      // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
+      if (contentCoordinatorRef.current.isReturnCompleted(payload.token)) {
+        return;
+      }
       const currentOwnership =
         contentCoordinatorRef.current.get(returningContent);
       const knownWindowLabel =
@@ -2745,19 +2752,18 @@ export function PtyWorkspaceProvider({
         ) {
           throw new Error(tRef.current("pty.detachedStateChanged"));
         }
-        const existingPane = listWorkspacePanes(currentTree).find((pane) =>
-          hasWorkspaceContent(pane, {
-            kind: "pty",
-            slotId: payload.instanceId,
-          }),
-        );
-        const content = { kind: "pty", slotId: payload.instanceId } as const;
-        const nextTree = executeWorkspaceCommand(
-          currentTree,
-          existingPane
-            ? { type: "activate", ref: content, paneId: existingPane.id }
-            : { type: "return", ref: content, toPaneId: targetPane.id },
-        );
+        // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
+        // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
+        const recordedPaneId = activeReturn.target.paneId;
+        const plan = planWorkspaceReturn(treeRef.current, {
+          ref: returningContent,
+          requestedPaneId: recordedPaneId,
+          focusedPaneId: focusedPaneIdRef.current,
+          whenAlreadyInTree: "activate",
+        });
+        if (!plan || plan.focusPaneId !== recordedPaneId) {
+          throw new Error(tRef.current("pty.workspaceRestoring"));
+        }
         // 先确认归属变更成立，再改树；被拒绝时抛出，由 catch 回滚终端交接并通知子窗口。
         const ownership = contentCoordinatorRef.current.completeHandoff(
           returningContent,
@@ -2767,8 +2773,8 @@ export function PtyWorkspaceProvider({
         if (ownership?.outcome !== "changed") {
           throw new Error(tRef.current("pty.detachedStateChanged"));
         }
-        commitTree(nextTree);
-        setFocusedPane(existingPane?.id ?? targetPane.id);
+        commitTree(plan.nextTree);
+        setFocusedPane(plan.focusPaneId);
         detachedByInstanceRef.current.delete(
           workspacePtyKey(payload.instanceId),
         );
@@ -3110,7 +3116,7 @@ export function PtyWorkspaceProvider({
                     toDetached: (record) => record.window,
                   });
                   commitTree(
-                    executeWorkspaceCommand(treeRef.current, {
+                    reduceWorkspaceTree(treeRef.current, {
                       type: "detach",
                       ref: content,
                     }),
@@ -3233,6 +3239,14 @@ export function PtyWorkspaceProvider({
                         }),
                       },
                     ).catch(() => undefined);
+                    return;
+                  }
+                  // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
+                  if (
+                    contentCoordinatorRef.current.isReturnCompleted(
+                      event.payload.token,
+                    )
+                  ) {
                     return;
                   }
                   const content = {
@@ -3445,11 +3459,18 @@ export function PtyWorkspaceProvider({
                     ) {
                       throw new Error(tRef.current("pty.detachedStateChanged"));
                     }
-                    const nextTree = executeWorkspaceCommand(treeRef.current, {
-                      type: "return",
+                    // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
+                    // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
+                    const recordedPaneId = activeReturn.target.paneId;
+                    const plan = planWorkspaceReturn(treeRef.current, {
                       ref: content,
-                      toPaneId: targetPane.id,
+                      requestedPaneId: recordedPaneId,
+                      focusedPaneId: focusedPaneIdRef.current,
+                      whenAlreadyInTree: "relocate",
                     });
+                    if (!plan || plan.focusPaneId !== recordedPaneId) {
+                      throw new Error(tRef.current("pty.workspaceRestoring"));
+                    }
                     // 先确认归属变更成立，再改树；被拒绝时树保持原样，子窗口仍可重试。
                     const ownership =
                       contentCoordinatorRef.current.completeHandoff(
@@ -3476,8 +3497,8 @@ export function PtyWorkspaceProvider({
                       ).catch(() => undefined);
                       return;
                     }
-                    commitTree(nextTree);
-                    setFocusedPane(targetPane.id);
+                    commitTree(plan.nextTree);
+                    setFocusedPane(plan.focusPaneId);
                     detachedFilesRef.current.delete(
                       workspaceFileKey(document.id),
                     );
@@ -3624,7 +3645,7 @@ export function PtyWorkspaceProvider({
     let presetTree = treeRef.current;
     const protectedContents = contentCoordinatorRef.current.listWindowOwned();
     for (const content of protectedContents) {
-      presetTree = executeWorkspaceCommand(presetTree, {
+      presetTree = reduceWorkspaceTree(presetTree, {
         type: "detach",
         ref: content,
       });

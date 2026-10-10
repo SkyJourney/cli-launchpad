@@ -233,6 +233,53 @@ describe("PTY return to the workspace", () => {
     expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-complete");
     expect(host.errors).toEqual([]);
   });
+
+  it("keeps pane topology edits made while the PTY attach is pending", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const content = { kind: "pty", slotId: slot.instanceId } as const;
+    const attach = deferred<{ sessionId: string; state: string }>();
+    terminal.attachHandoff.mockImplementationOnce(() => attach.promise);
+
+    // 1. 请求返回，attach 保持挂起。
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-1",
+    });
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("returning");
+
+    // 2. attach 挂起期间用户拆分了 pane。
+    const paneA = listWorkspacePanes(host.ctx().tree)[0].id;
+    await act(async () => {
+      host!.ctx().focusPane(paneA);
+      host!.ctx().splitPane(paneA, "horizontal");
+    });
+    await flush();
+    const panesBefore = listWorkspacePanes(host.ctx().tree).map(
+      (pane) => pane.id,
+    );
+    expect(panesBefore).toHaveLength(2);
+
+    // 3. attach 完成：返回必须基于最新的树提交，拆分不能被旧快照覆盖。
+    attach.resolve({ sessionId: slot.sessionId!, state: "running" });
+    await flush();
+
+    expect(listWorkspacePanes(host.ctx().tree).map((pane) => pane.id)).toEqual(
+      panesBefore,
+    );
+    expect(panesContaining(host, content)).toBe(1);
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    // 反向断言：没有向窗口发出返回失败，也没有记录错误。
+    expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-failed");
+    expect(host.errors).toEqual([]);
+  });
 });
 
 describe("file return to the workspace", () => {

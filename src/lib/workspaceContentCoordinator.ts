@@ -153,6 +153,11 @@ export class WorkspaceContentCoordinator {
     );
   }
 
+  /** True once a return with this transfer id finished; used to ignore late duplicates. */
+  isReturnCompleted(transferId: string) {
+    return this.completedReturnIds.has(transferId);
+  }
+
   beginReturn(
     content: WorkspacePaneContentRef,
     transferId: string,
