@@ -1,4 +1,5 @@
 mod app_menu;
+pub mod budgets;
 mod commands;
 #[cfg(test)]
 mod contracts;
@@ -6,6 +7,7 @@ mod db;
 mod error;
 mod models;
 mod platform;
+mod runtime;
 mod services;
 
 use std::sync::{Arc, Mutex};
@@ -19,6 +21,7 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
+pub use runtime::blocking;
 
 /// Business and cache databases are distinct managed-state types so commands
 /// cannot accidentally read cache rows through the configuration connection.

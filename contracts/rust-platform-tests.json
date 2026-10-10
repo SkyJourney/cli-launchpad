@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 367, "Linux": 368, "macOS": 365 },
+  "minimumPassed": { "Windows": 380, "Linux": 381, "macOS": 378 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -82,7 +82,20 @@
       "services::backup_service::tests::restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync",
       "services::backup_service::tests::restore_invalidates_session_index_and_file_index_caches",
       "services::backup_service::tests::restore_releases_the_session_guard_and_does_not_notify_on_failure",
-      "services::backup_service::tests::restore_notification_failure_is_logged_and_does_not_fail_the_restore"
+      "services::backup_service::tests::restore_notification_failure_is_logged_and_does_not_fail_the_restore",
+      "budgets::tests::budgets_are_positive_and_bounded",
+      "runtime::tests::blocking_does_not_time_out_a_closure_that_finishes_within_the_budget",
+      "runtime::tests::blocking_maps_a_panic_to_internal_task_failed",
+      "runtime::tests::blocking_passes_closure_errors_through_unchanged",
+      "runtime::tests::blocking_reports_a_timeout_with_the_operation_and_budget",
+      "runtime::tests::blocking_runs_off_the_async_thread_and_returns_the_value",
+      "runtime::tests::cache_db_call_maps_a_poisoned_lock_to_a_coded_error",
+      "runtime::tests::cache_db_call_returns_the_value_from_a_blocking_thread",
+      "runtime::tests::db_call_maps_a_panic_to_internal_task_failed_and_poisons_later_calls",
+      "runtime::tests::db_call_maps_a_poisoned_lock_to_a_coded_error_without_running_the_closure",
+      "runtime::tests::db_call_passes_closure_errors_through_unchanged",
+      "runtime::tests::db_call_runs_on_a_blocking_thread_and_returns_the_value",
+      "runtime::tests::db_call_serializes_concurrent_callers_on_one_connection"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
