@@ -21,7 +21,7 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
-pub use runtime::blocking;
+pub use runtime::{blocking, blocking_unbounded};
 
 /// Business and cache databases are distinct managed-state types so commands
 /// cannot accidentally read cache rows through the configuration connection.

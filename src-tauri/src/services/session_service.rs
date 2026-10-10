@@ -145,12 +145,43 @@ pub(crate) struct SearchSource {
 }
 
 pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSearchIndexSource>> {
+    refresh_search_index_with(directory_path, |tool_key| {
+        context_for_tool_blocking(tool_key, SEARCH_INDEX_ADAPTER_BUDGET)
+    })
+    .await
+}
+
+async fn refresh_search_index_with<F, Fut>(
+    directory_path: &str,
+    context_for: F,
+) -> Result<Vec<SessionSearchIndexSource>>
+where
+    F: Fn(ToolKey) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::services::cli_adapters::AdapterContext>>,
+{
     let mut tasks = tokio::task::JoinSet::new();
     let mut task_tools = HashMap::new();
+    // A tool whose context cannot be built keeps its last usable index; it must not
+    // fail the refresh for the other tools.
+    let mut sources = Vec::with_capacity(ToolKey::ALL.len());
     for adapter in crate::services::cli_adapters::all() {
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
-        let context = context_for_tool_blocking(tool_key, SEARCH_INDEX_ADAPTER_BUDGET).await?;
+        let context = match context_for(tool_key).await {
+            Ok(context) => context,
+            Err(error) => {
+                log::warn!(
+                    "{} 会话索引适配器上下文不可用，保留上次可用索引：{error}",
+                    tool_key.as_str()
+                );
+                sources.push(SessionSearchIndexSource {
+                    tool_key,
+                    documents: None,
+                    incomplete: true,
+                });
+                continue;
+            }
+        };
         let budget = context.budget;
         let task = tasks.spawn(async move {
             let source = bounded_search_index_source(
@@ -164,7 +195,6 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
         task_tools.insert(task.id(), tool_key);
     }
 
-    let mut sources = Vec::with_capacity(ToolKey::ALL.len());
     while let Some(result) = tasks.join_next_with_id().await {
         match result {
             Ok((id, (expected_tool, source))) => {
@@ -487,6 +517,31 @@ pub(crate) fn truncate_chars(value: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failing_adapter_context_does_not_fail_the_whole_refresh() {
+        // Every adapter's context fails, so no scan runs: each source must keep its
+        // last usable index and be marked incomplete, and the refresh itself succeeds.
+        let sources = refresh_search_index_with("C:/project", |_| async {
+            Err(anyhow!("where.exe probe timed out"))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(sources.len(), ToolKey::ALL.len());
+        for source in &sources {
+            assert!(
+                source.documents.is_none(),
+                "{} must keep its last index",
+                source.tool_key.as_str()
+            );
+            assert!(
+                source.incomplete,
+                "{} must be marked incomplete",
+                source.tool_key.as_str()
+            );
+        }
+    }
 
     #[test]
     fn slug_matches_known_example() {

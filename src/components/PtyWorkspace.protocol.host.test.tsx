@@ -657,6 +657,8 @@ describe("duplicate and out-of-order handoff events", () => {
         (entry) => entry.windowLabel === ptyLabel && entry.action === "destroy",
       ).length;
     expect(destroysOf()).toBe(1);
+    // 反向断言：销毁成功时不发 pty-return-complete（它只是销毁失败时的兜底）。
+    expect(eventsTo(ptyLabel, "pty-return-complete")).toHaveLength(0);
 
     await emitToMain("pty-return-requested", ptyReturn);
     await flush();
@@ -667,8 +669,9 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
     // 反向断言：重复请求没有再次销毁窗口。
     expect(destroysOf()).toBe(1);
-    // 反向断言：没有发往 PTY 窗口的 pty-return-failed。
+    // 反向断言：没有发往 PTY 窗口的 pty-return-failed，也没有 pty-return-complete。
     expect(eventsTo(ptyLabel, "pty-return-failed")).toHaveLength(0);
+    expect(eventsTo(ptyLabel, "pty-return-complete")).toHaveLength(0);
     expect(host!.errors).toEqual([]);
   });
 });

@@ -7,7 +7,7 @@ use crate::services::file_service::{
     ProjectFileOpenResult, ProjectTextFileSaveResult,
 };
 use crate::services::project_directory::ProjectDirectory;
-use crate::{blocking, budgets, AppError, Db};
+use crate::{blocking, blocking_unbounded, budgets, AppError, Db};
 
 fn ensure_main_window(label: &str) -> Result<(), AppError> {
     if label == "main" {
@@ -73,7 +73,8 @@ pub async fn save_project_text_file(
     expected_revision: String,
 ) -> Result<ProjectTextFileSaveResult, AppError> {
     let root = open_project(&state, directory_id, directory_path).await?;
-    blocking("project_files.save", budgets::FILE_OPERATION, move || {
+    // Writes are unbounded: a timed-out save may still land, see `blocking_unbounded`.
+    blocking_unbounded("project_files.save", move || {
         file_service::save_text_file_in(&root, &relative_path, &content, &expected_revision)
             .map_err(AppError::from)
     })
@@ -133,19 +134,11 @@ pub async fn save_granted_text_file(
 ) -> Result<ProjectTextFileSaveResult, AppError> {
     let grant = grants.get(caller.label()).map_err(AppError::from)?;
     let root = open_project(&state, grant.directory_id, grant.directory_path.clone()).await?;
-    blocking(
-        "project_files.save_granted",
-        budgets::FILE_OPERATION,
-        move || {
-            file_service::save_text_file_in(
-                &root,
-                &grant.relative_path,
-                &content,
-                &expected_revision,
-            )
+    // Writes are unbounded: a timed-out save may still land, see `blocking_unbounded`.
+    blocking_unbounded("project_files.save_granted", move || {
+        file_service::save_text_file_in(&root, &grant.relative_path, &content, &expected_revision)
             .map_err(AppError::from)
-        },
-    )
+    })
     .await
 }
 
@@ -195,11 +188,10 @@ pub async fn remove_project_file_cas_residue(
         modified_at_ms,
         file_identity,
     };
-    blocking(
-        "project_files.remove_residue",
-        budgets::FILE_OPERATION,
-        move || file_service::remove_file_cas_residue_in(&root, &residue).map_err(AppError::from),
-    )
+    // Deletion is a write: a timed-out removal may still complete, see `blocking_unbounded`.
+    blocking_unbounded("project_files.remove_residue", move || {
+        file_service::remove_file_cas_residue_in(&root, &residue).map_err(AppError::from)
+    })
     .await
 }
 

@@ -1,6 +1,8 @@
 //! Unified execution policy for commands (main report 3B.3.5): database
 //! access goes through `Db::call` / `CacheDb::call`, other blocking work
-//! goes through `blocking(op, budget, f)`. All of them run on the blocking
+//! goes through `blocking(op, budget, f)`, and writes whose timeout would be
+//! misleading (a save that may still land) go through `blocking_unbounded`.
+//! All of them run on the blocking
 //! pool, map task failures to one error code, and never run IO on the
 //! async worker. `Db` and `CacheDb` are leaf locks: never take a manager
 //! lock while the closure runs, and never do filesystem work inside it.
@@ -90,6 +92,17 @@ pub async fn blocking<T: Send + 'static>(
             ))
         }
     }
+}
+
+/// Blocking work that must not be given a timeout: a write whose budget expires
+/// may still complete, so reporting `blocking.timeout` would describe a write
+/// that is still happening. Still runs on the blocking pool and maps panics to
+/// `internal.task_failed`. Use `blocking` for everything that can be bounded.
+pub async fn blocking_unbounded<T: Send + 'static>(
+    op: &'static str,
+    f: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    run_on_blocking_pool(op, f).await
 }
 
 #[cfg(test)]
@@ -329,5 +342,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value, "done");
+    }
+
+    #[tokio::test]
+    async fn blocking_unbounded_waits_for_a_slow_closure_and_returns_the_value() {
+        // The closure stays blocked for a while before it finishes. The entry point
+        // takes no budget, so it must return the real value, never a timeout.
+        let (release, gate) = mpsc::channel::<()>();
+        let releaser = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            release.send(()).unwrap();
+        });
+        let value = crate::blocking_unbounded("test.write", move || {
+            gate.recv().unwrap();
+            Ok("written")
+        })
+        .await
+        .unwrap();
+        releaser.await.unwrap();
+        assert_eq!(value, "written");
     }
 }

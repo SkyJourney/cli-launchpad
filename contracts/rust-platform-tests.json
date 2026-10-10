@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 390, "Linux": 391, "macOS": 388 },
+  "minimumPassed": { "Windows": 392, "Linux": 393, "macOS": 390 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -105,7 +105,9 @@
       "services::project_directory::tests::open_snapshot_rejects_a_stale_path_and_opens_a_matching_one",
       "services::workspace_layout_service::tests::slot_facts_cover_every_directory_and_session_referenced_by_a_layout",
       "services::workspace_layout_service::tests::staged_apply_plan_resolves_a_running_slot",
-      "services::workspace_layout_service::tests::staged_layout_read_resolves_a_running_slot"
+      "services::workspace_layout_service::tests::staged_layout_read_resolves_a_running_slot",
+      "runtime::tests::blocking_unbounded_waits_for_a_slow_closure_and_returns_the_value",
+      "services::session_service::tests::a_failing_adapter_context_does_not_fail_the_whole_refresh"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
