@@ -45,6 +45,8 @@ const INIT = {
 
 let windowHandle: Awaited<ReturnType<typeof mountFileWindow>> | undefined;
 afterEach(async () => {
+  errorSpy?.mockRestore();
+  errorSpy = undefined;
   windowHandle?.dispose();
   windowHandle = undefined;
   cleanup();
@@ -68,6 +70,9 @@ async function mountAttached() {
   await flush();
   return windowHandle;
 }
+
+/** 本文件用例内安装的 console.error 静音 spy；只在 afterEach 中恢复它，不影响 tauriMock 的 vi.fn。 */
+let errorSpy: { mockRestore: () => void } | undefined;
 
 describe("StandaloneWorkspaceFileWindow", () => {
   it("attaches the init payload and acknowledges attached", async () => {
@@ -218,7 +223,7 @@ describe("StandaloneWorkspaceFileWindow listener setup", () => {
       "workspace-content-window-event",
       new Error("denied"),
     );
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     windowHandle = await mountFileWindow();
 
     await flush();

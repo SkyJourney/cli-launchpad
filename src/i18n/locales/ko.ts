@@ -206,7 +206,7 @@ export const ko = {
     detachedCreateFailed: "별도 터미널 창을 만들지 못했습니다.",
     detachedStartFailed: "별도 터미널 창을 시작하지 못했습니다.",
     listenerSetupFailed:
-      "일부 창 간 통신 채널을 등록하지 못했습니다({{events}}). 별도 창이 응답하지 않을 수 있습니다. 문제가 계속되면 앱을 다시 시작하세요.",
+      "일부 창 간 통신 채널을 등록하지 못했습니다 ({{events}}). 별도 창이 응답하지 않을 수 있습니다. 문제가 계속되면 앱을 다시 시작하세요.",
     ownerLostRecoveryFailed:
       "창이 닫힌 후 터미널 세션을 다시 연결하지 못했습니다. 이 터미널을 닫고 다시 시작하세요.",
     detachedStateChanged: "별도 창 상태가 변경되었습니다. 다시 시도하세요.",

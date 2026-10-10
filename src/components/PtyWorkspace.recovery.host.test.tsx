@@ -37,6 +37,8 @@ import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator"
 
 let host: WorkspaceHost | undefined;
 afterEach(async () => {
+  errorSpy?.mockRestore();
+  errorSpy = undefined;
   host?.dispose();
   host = undefined;
   cleanup();
@@ -76,6 +78,9 @@ async function detachWithMirroredEdit(target: WorkspaceHost, path = "a.txt") {
   await flush();
   return { doc, ...detached };
 }
+
+/** 本文件用例内安装的 console.error 静音 spy；只在 afterEach 中恢复它，不影响 tauriMock 的 vi.fn。 */
+let errorSpy: { mockRestore: () => void } | undefined;
 
 describe("detached window loss", () => {
   it("rehomes a file whose standalone window was destroyed and keeps its mirrored buffer dirty", async () => {
@@ -721,7 +726,7 @@ describe("workspace listener isolation", () => {
         new Error("event.listen not allowed"),
       );
     }
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator, listenerRetryDelaysMs: [0, 0] });
     const { slot } = await launchPty(host);

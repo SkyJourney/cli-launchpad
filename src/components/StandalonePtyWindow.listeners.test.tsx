@@ -25,6 +25,8 @@ import {
 
 let windowHandle: Awaited<ReturnType<typeof mountPtyWindow>> | undefined;
 afterEach(async () => {
+  errorSpy?.mockRestore();
+  errorSpy = undefined;
   windowHandle?.dispose();
   windowHandle = undefined;
   cleanup();
@@ -42,13 +44,16 @@ function emittedEnvelopes(type: string) {
   );
 }
 
+/** 本文件用例内安装的 console.error 静音 spy；只在 afterEach 中恢复它，不影响 tauriMock 的 vi.fn。 */
+let errorSpy: { mockRestore: () => void } | undefined;
+
 describe("StandalonePtyWindow listener setup", () => {
   it("reports pty-detached-failed and leaves no listeners when listener registration fails", async () => {
     tauriMock.failNextListen(
       "workspace-content-window-event",
       new Error("denied"),
     );
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     windowHandle = await mountPtyWindow();
 
     await flush(10);
