@@ -40,11 +40,7 @@ function statusReply(state: WindowState) {
   return {
     status: state,
     ownerWindowLabel:
-      state === "ownedByAnotherWindow"
-        ? "main"
-        : state === "running"
-          ? LABEL
-          : null,
+      state === "ownedByAnotherWindow" || state === "running" ? "main" : null,
   };
 }
 
