@@ -1512,3 +1512,55 @@ fn acceptance_marker_scanner_flags_ungated_occurrences() {
         Vec::<usize>::new()
     );
 }
+
+#[test]
+fn migrated_commands_use_the_unified_execution_helpers() {
+    fn production(source: &str) -> &str {
+        source.split("#[cfg(test)]").next().unwrap()
+    }
+    let fully_migrated = [
+        ("session.rs", include_str!("../commands/session.rs")),
+        ("files.rs", include_str!("../commands/files.rs")),
+        ("cli_status.rs", include_str!("../commands/cli_status.rs")),
+        ("install.rs", include_str!("../commands/install.rs")),
+    ];
+    for (name, source) in fully_migrated {
+        let source = production(source);
+        for forbidden in [
+            "with_conn(",
+            "with_cache(",
+            "with_connection(",
+            "with_cache_connection(",
+            ".0.lock()",
+            "spawn_blocking(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "commands/{name} must not contain `{forbidden}` after the migration"
+            );
+        }
+    }
+
+    let files = production(include_str!("../commands/files.rs"));
+    assert!(files.contains("pub async fn grant_content_window_file"));
+    assert!(!files.contains("pub fn grant_content_window_file"));
+
+    let layout = production(include_str!("../commands/workspace_layout.rs"));
+    for migrated in [
+        "pub async fn get_workspace_layout",
+        "pub async fn plan_apply_workspace_layout_preset",
+        "pub async fn save_workspace_layout",
+    ] {
+        assert!(layout.contains(migrated), "missing `{migrated}`");
+    }
+    assert!(!layout.contains("pub fn get_workspace_layout"));
+    assert!(!layout.contains("pub fn plan_apply_workspace_layout_preset"));
+    assert!(!layout.contains("spawn_blocking("));
+
+    let pty = production(include_str!("../commands/pty_session.rs"));
+    assert!(
+        !pty.contains("with_conn("),
+        "create_pty_session must not use the legacy helper"
+    );
+    assert!(pty.contains("lookup_launch_directory"));
+}

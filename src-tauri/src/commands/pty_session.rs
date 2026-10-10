@@ -1,6 +1,7 @@
 use tauri::{ipc::Channel, State, WebviewWindow};
 
 use crate::{
+    blocking, budgets,
     models::{
         pty_session::{
             PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatusReport,
@@ -9,10 +10,10 @@ use crate::{
         tool::ToolKey,
     },
     services::{
-        app_lifecycle::AppExitGate, launch_service, pty_session_service::PtySessionManager,
-        session_service,
+        app_lifecycle::AppExitGate, directory_service, launch_service,
+        pty_session_service::PtySessionManager, session_service,
     },
-    with_conn, AppError, Db,
+    AppError, Db,
 };
 
 #[tauri::command]
@@ -28,13 +29,24 @@ pub async fn create_pty_session(
     window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
     let _start_guard = state.begin_session_start()?;
-    let directory = with_conn(&db, |connection| {
-        Ok(launch_service::resolve_launch_directory(
-            connection,
-            directory_id,
-            tool_key,
-        )?)
-    })?;
+    let looked_up = db
+        .call("pty.launch_lookup", move |connection| {
+            Ok(launch_service::lookup_launch_directory(
+                connection,
+                directory_id,
+                tool_key,
+            )?)
+        })
+        .await?;
+    let directory = blocking(
+        "pty.launch_validate_path",
+        budgets::PROJECT_DIRECTORY,
+        move || {
+            directory_service::validate_path(&looked_up)?;
+            Ok(looked_up)
+        },
+    )
+    .await?;
     if let Some(session_id) = resume_session_id.as_deref() {
         if !session_service::session_belongs_to_directory(tool_key, &directory, session_id).await? {
             return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));

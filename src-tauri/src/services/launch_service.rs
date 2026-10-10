@@ -15,18 +15,32 @@ pub(crate) struct CliLaunchPayload {
     pub tool_args: Vec<String>,
 }
 
-pub(crate) fn resolve_launch_directory(
+/// Database stage only. The caller validates the path outside the database lock
+/// (directory_service::validate_path).
+pub(crate) fn lookup_launch_directory(
     connection: &Connection,
     directory_id: i64,
     tool_key: ToolKey,
 ) -> Result<String> {
     let directory = directory_repo::get(connection, directory_id)?
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))?;
-    crate::services::directory_service::validate_path(&directory.path)?;
     if !tool_repo::exists(connection, tool_key)? {
         return Err(anyhow!("tool {} is not configured", tool_key.as_str()));
     }
     Ok(directory.path)
+}
+
+/// Synchronous composition of the database stage and the path check, kept for
+/// the existing tests that exercise both.
+#[cfg(test)]
+pub(crate) fn resolve_launch_directory(
+    connection: &Connection,
+    directory_id: i64,
+    tool_key: ToolKey,
+) -> Result<String> {
+    let directory = lookup_launch_directory(connection, directory_id, tool_key)?;
+    crate::services::directory_service::validate_path(&directory)?;
+    Ok(directory)
 }
 
 pub(crate) async fn resolve_payload_with_resolver<F, Fut>(
@@ -235,5 +249,57 @@ mod tests {
             apply_resume(&mut payload, tool_key, "session-1").unwrap();
             assert_eq!(payload.tool_args, expected);
         }
+    }
+
+    #[test]
+    fn lookup_launch_directory_reads_the_row_without_validating_the_path() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_str().unwrap().to_string();
+        drop(directory);
+        let record = crate::db::directory_repo::add(&connection, "ghost", &path, None).unwrap();
+
+        let looked_up = super::lookup_launch_directory(
+            &connection,
+            record.id,
+            crate::models::tool::ToolKey::Claude,
+        )
+        .unwrap();
+
+        assert_eq!(looked_up, path);
+        assert!(
+            crate::services::directory_service::validate_path(&path).is_err(),
+            "the directory was removed, so only validate_path (not the lookup) may reject it"
+        );
+    }
+
+    #[test]
+    fn lookup_launch_directory_rejects_an_unconfigured_tool() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let record = crate::db::directory_repo::add(
+            &connection,
+            "demo",
+            directory.path().to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        connection
+            .execute("delete from tools where key = 'claude'", [])
+            .unwrap();
+
+        let error = super::lookup_launch_directory(
+            &connection,
+            record.id,
+            crate::models::tool::ToolKey::Claude,
+        )
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("is not configured"),
+            "unexpected error: {error}"
+        );
     }
 }

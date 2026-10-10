@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 380, "Linux": 381, "macOS": 378 },
+  "minimumPassed": { "Windows": 390, "Linux": 391, "macOS": 388 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -95,7 +95,17 @@
       "runtime::tests::db_call_maps_a_poisoned_lock_to_a_coded_error_without_running_the_closure",
       "runtime::tests::db_call_passes_closure_errors_through_unchanged",
       "runtime::tests::db_call_runs_on_a_blocking_thread_and_returns_the_value",
-      "runtime::tests::db_call_serializes_concurrent_callers_on_one_connection"
+      "runtime::tests::db_call_serializes_concurrent_callers_on_one_connection",
+      "commands::files::tests::open_project_opens_a_matching_directory",
+      "commands::files::tests::open_project_rejects_a_stale_path_snapshot_with_the_identity_changed_code",
+      "commands::files::tests::open_project_reports_a_missing_directory_as_not_found",
+      "contracts::migrated_commands_use_the_unified_execution_helpers",
+      "services::launch_service::tests::lookup_launch_directory_reads_the_row_without_validating_the_path",
+      "services::launch_service::tests::lookup_launch_directory_rejects_an_unconfigured_tool",
+      "services::project_directory::tests::open_snapshot_rejects_a_stale_path_and_opens_a_matching_one",
+      "services::workspace_layout_service::tests::slot_facts_cover_every_directory_and_session_referenced_by_a_layout",
+      "services::workspace_layout_service::tests::staged_apply_plan_resolves_a_running_slot",
+      "services::workspace_layout_service::tests::staged_layout_read_resolves_a_running_slot"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

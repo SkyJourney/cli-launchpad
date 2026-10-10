@@ -4,14 +4,29 @@ use crate::models::workspace_layout::{
     WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutPresetSummary,
     WorkspaceLayoutSaveResult, WorkspaceLayoutStateRead,
 };
-use crate::services::workspace_layout_service;
-use crate::{with_conn, AppError, Db};
+use crate::services::workspace_layout_service::{self, LayoutReadStage};
+use crate::{blocking, budgets, with_conn, AppError, Db};
 
 #[tauri::command]
-pub fn get_workspace_layout(state: State<'_, Db>) -> Result<WorkspaceLayoutStateRead, AppError> {
-    with_conn(&state, |connection| {
-        workspace_layout_service::read_current(connection)
-    })
+pub async fn get_workspace_layout(
+    state: State<'_, Db>,
+) -> Result<WorkspaceLayoutStateRead, AppError> {
+    let stage = state
+        .call("workspace_layout.read", |connection| {
+            workspace_layout_service::read_current_stage(connection)
+        })
+        .await?;
+    match stage {
+        LayoutReadStage::Done(read) => Ok(read),
+        LayoutReadStage::Resolve(pending) => {
+            blocking(
+                "workspace_layout.resolve_slots",
+                budgets::PROJECT_DIRECTORY,
+                move || Ok(pending.finish()),
+            )
+            .await
+        }
+    }
 }
 
 #[tauri::command]
@@ -20,14 +35,11 @@ pub async fn save_workspace_layout(
     revision: i64,
     layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutSaveResult, AppError> {
-    let db = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::with_connection(&db, |connection| {
+    state
+        .call("workspace_layout.save", move |connection| {
             workspace_layout_service::save_current(connection, revision, &layout)
         })
-    })
-    .await
-    .map_err(|error| AppError::msg(format!("工作区布局保存任务异常：{error}")))?
+        .await
 }
 
 /// Explicitly replace an unreadable or unsupported workspace with the empty
@@ -91,12 +103,20 @@ pub fn delete_workspace_layout_preset(state: State<'_, Db>, id: String) -> Resul
 /// Produce the target presentation only; React applies it and performs any
 /// detached-window handoff through the existing PTY handoff commands.
 #[tauri::command]
-pub fn plan_apply_workspace_layout_preset(
+pub async fn plan_apply_workspace_layout_preset(
     state: State<'_, Db>,
     id: String,
     active_layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutApplyPlan, AppError> {
-    with_conn(&state, |connection| {
-        workspace_layout_service::plan_apply_preset(connection, &id, &active_layout)
-    })
+    let pending = state
+        .call("workspace_layout.plan_load", move |connection| {
+            workspace_layout_service::plan_apply_preset_stage(connection, &id, &active_layout)
+        })
+        .await?;
+    blocking(
+        "workspace_layout.plan_compute",
+        budgets::PROJECT_DIRECTORY,
+        move || pending.finish(),
+    )
+    .await
 }

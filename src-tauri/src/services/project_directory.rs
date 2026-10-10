@@ -5,6 +5,7 @@ use cap_std::ambient_authority;
 use cap_std::fs::Dir;
 use rusqlite::Connection;
 
+use crate::models::directory::Directory;
 use crate::{db::directory_repo, platform::path_identity, AppError};
 
 /// A retained capability to one project directory. All paths accepted by this
@@ -21,20 +22,33 @@ impl ProjectDirectory {
         Ok(Self { dir })
     }
 
-    pub fn open_for(
-        connection: &Connection,
-        directory_id: i64,
-        expected_path: &str,
-    ) -> Result<Self, AppError> {
-        let directory = directory_repo::get(connection, directory_id)?
-            .ok_or_else(|| AppError::coded("file.not_found", "项目目录不存在"))?;
-        if !path_identity::paths_equal(expected_path, &directory.path) {
+    /// Database stage: reads the directory row only. No filesystem access.
+    pub fn lookup(connection: &Connection, directory_id: i64) -> Result<Directory, AppError> {
+        directory_repo::get(connection, directory_id)?
+            .ok_or_else(|| AppError::coded("file.not_found", "项目目录不存在"))
+    }
+
+    /// Filesystem stage: compares the caller's path snapshot with the stored
+    /// path and opens the directory. Never call this while holding the database lock.
+    pub fn open_snapshot(directory_path: &str, expected_path: &str) -> Result<Self, AppError> {
+        if !path_identity::paths_equal(expected_path, directory_path) {
             return Err(AppError::coded(
                 "project_identity_changed",
                 "项目目录身份已变化，请重新选择项目后再访问文件",
             ));
         }
-        Self::open(Path::new(&directory.path)).map_err(AppError::from)
+        Self::open(Path::new(directory_path)).map_err(AppError::from)
+    }
+
+    /// Synchronous composition of both stages, kept for existing tests.
+    #[cfg(test)]
+    pub fn open_for(
+        connection: &Connection,
+        directory_id: i64,
+        expected_path: &str,
+    ) -> Result<Self, AppError> {
+        let directory = Self::lookup(connection, directory_id)?;
+        Self::open_snapshot(&directory.path, expected_path)
     }
 
     pub fn dir(&self) -> &Dir {
@@ -86,6 +100,20 @@ mod tests {
 
         assert!(ProjectDirectory::open_for(&connection, record.id, &record.path).is_ok());
         let error = match ProjectDirectory::open_for(&connection, record.id, "C:/another/project") {
+            Ok(_) => panic!("stale path identity must be rejected"),
+            Err(error) => error,
+        };
+        let serialized = serde_json::to_value(error).unwrap();
+        assert_eq!(serialized["code"], "project_identity_changed");
+    }
+
+    #[test]
+    fn open_snapshot_rejects_a_stale_path_and_opens_a_matching_one() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().display().to_string();
+
+        assert!(ProjectDirectory::open_snapshot(&path, &path).is_ok());
+        let error = match ProjectDirectory::open_snapshot(&path, "C:/another/project") {
             Ok(_) => panic!("stale path identity must be rejected"),
             Err(error) => error,
         };

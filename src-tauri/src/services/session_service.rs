@@ -90,6 +90,24 @@ pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))
 }
 
+/// Runs the synchronous adapter context lookup (executable probing) off the
+/// async runtime, within the executable probe budget.
+async fn context_for_tool_blocking(
+    tool_key: ToolKey,
+    budget: std::time::Duration,
+) -> Result<crate::services::cli_adapters::AdapterContext> {
+    crate::blocking(
+        "adapter.context",
+        crate::budgets::EXECUTABLE_PROBE,
+        move || {
+            crate::services::cli_adapters::context_for_tool(tool_key, budget)
+                .map_err(|error| crate::AppError::msg(error.to_string()))
+        },
+    )
+    .await
+    .map_err(|error| anyhow!(error.to_string()))
+}
+
 pub async fn list_sessions(
     tool_key: ToolKey,
     directory_path: &str,
@@ -100,10 +118,7 @@ pub async fn list_sessions(
     let adapter = crate::services::cli_adapters::get(tool_key);
     let directory_path = directory_path.to_string();
     let cursor = cursor.map(str::to_string);
-    let context = crate::services::cli_adapters::context_for_tool(
-        tool_key,
-        std::time::Duration::from_secs(30),
-    )?;
+    let context = context_for_tool_blocking(tool_key, std::time::Duration::from_secs(30)).await?;
     let budget = context.budget;
     tokio::spawn(async move {
         tokio::time::timeout(
@@ -135,8 +150,7 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
     for adapter in crate::services::cli_adapters::all() {
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
-        let context =
-            crate::services::cli_adapters::context_for_tool(tool_key, SEARCH_INDEX_ADAPTER_BUDGET)?;
+        let context = context_for_tool_blocking(tool_key, SEARCH_INDEX_ADAPTER_BUDGET).await?;
         let budget = context.budget;
         let task = tasks.spawn(async move {
             let source = bounded_search_index_source(

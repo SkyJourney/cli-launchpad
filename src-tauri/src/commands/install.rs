@@ -2,7 +2,7 @@ use crate::models::cli_status::{CliAvailability, CliStatus};
 use crate::models::install::{InstallKind, InstallPlan, LatestVersion, UpdateAvailability};
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_adapters, install_service};
-use crate::{with_cache, AppError, CacheDb};
+use crate::{blocking, budgets, AppError, CacheDb};
 use tauri::State;
 
 #[tauri::command]
@@ -12,11 +12,19 @@ pub async fn fetch_latest_version(
     force: Option<bool>,
 ) -> Result<LatestVersion, AppError> {
     let key = format!("latest-version:{}", tool_key.as_str());
-    let current_version = cached_current_version(&cache, tool_key)?;
+    let current_version = cached_current_version(&cache, tool_key).await?;
     if !force.unwrap_or(false) {
-        if let Some(mut cached) = with_cache(&cache, |connection| {
-            Ok(cache_service::get_fresh(connection, &key, 30 * 60 * 1000)?)
-        })? {
+        let lookup_key = key.clone();
+        if let Some(mut cached) = cache
+            .call("install.latest_fresh", move |connection| {
+                Ok(cache_service::get_fresh(
+                    connection,
+                    &lookup_key,
+                    30 * 60 * 1000,
+                )?)
+            })
+            .await?
+        {
             crate::services::version_service::apply_update_availability(
                 &mut cached,
                 current_version.as_deref(),
@@ -24,10 +32,19 @@ pub async fn fetch_latest_version(
             return Ok(cached);
         }
     }
-    let stale = with_cache(&cache, |connection| {
-        Ok(cache_service::get_any::<LatestVersion>(connection, &key)?)
-    })?;
-    let context = match cli_adapters::context_for_tool(tool_key, std::time::Duration::from_secs(30))
+    let stale_key = key.clone();
+    let stale = cache
+        .call("install.latest_stale", move |connection| {
+            Ok(cache_service::get_any::<LatestVersion>(
+                connection, &stale_key,
+            )?)
+        })
+        .await?;
+    let context = match blocking("install.context", budgets::EXECUTABLE_PROBE, move || {
+        cli_adapters::context_for_tool(tool_key, std::time::Duration::from_secs(30))
+            .map_err(AppError::from)
+    })
+    .await
     {
         Ok(context) => context,
         Err(error) => {
@@ -51,7 +68,7 @@ pub async fn fetch_latest_version(
         current_version.as_deref(),
     );
 
-    cache_successful_latest_result(&cache, &key, &fetched)?;
+    store_latest_result(&cache, key.clone(), fetched.clone()).await?;
 
     if let Some(stale) = stale {
         let has_fresh_result =
@@ -70,14 +87,16 @@ pub async fn fetch_latest_version(
     Ok(fetched)
 }
 
-fn cached_current_version(
-    cache: &State<'_, CacheDb>,
+async fn cached_current_version(
+    cache: &CacheDb,
     tool_key: ToolKey,
 ) -> Result<Option<String>, AppError> {
     let key = format!("cli-status:{}", tool_key.as_str());
-    let statuses = with_cache(cache, |connection| {
-        Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
-    })?;
+    let statuses = cache
+        .call("install.cached_current_version", move |connection| {
+            Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
+        })
+        .await?;
     Ok(current_version_from_statuses(statuses, tool_key))
 }
 
@@ -94,23 +113,28 @@ fn current_version_from_statuses(
     })
 }
 
-fn cache_successful_latest_result(
-    cache: &CacheDb,
-    key: &str,
-    fetched: &LatestVersion,
-) -> Result<(), AppError> {
+/// Whether a fetched result may replace the cached entry.
+fn latest_result_is_cacheable(fetched: &LatestVersion) -> bool {
     if fetched.from_cache || fetched.error.is_some() {
+        return false;
+    }
+    !(fetched.latest.is_none() && fetched.update_availability == UpdateAvailability::Unknown)
+}
+
+async fn store_latest_result(
+    cache: &CacheDb,
+    key: String,
+    fetched: LatestVersion,
+) -> Result<(), AppError> {
+    if !latest_result_is_cacheable(&fetched) {
         return Ok(());
     }
-    if fetched.latest.is_none() && fetched.update_availability == UpdateAvailability::Unknown {
-        return Ok(());
-    }
-    let connection = cache
-        .0
-        .lock()
-        .map_err(|_| AppError::msg("缓存数据库连接锁中毒"))?;
-    cache_service::put(&connection, key, fetched)?;
-    Ok(())
+    cache
+        .call("install.latest_store", move |connection| {
+            cache_service::put(connection, &key, &fetched)?;
+            Ok(())
+        })
+        .await
 }
 
 /// Return the structured command without executing it, for UI preview/confirm.
@@ -119,12 +143,10 @@ pub async fn get_install_plan(
     tool_key: ToolKey,
     kind: InstallKind,
 ) -> Result<InstallPlan, AppError> {
-    tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
-        .await
-        .map_err(|error| {
-            AppError::msg(format!("{} 安装计划适配器异常：{error}", tool_key.as_str()))
-        })?
-        .map_err(Into::into)
+    blocking("install.plan", budgets::INSTALL_PLAN, move || {
+        install_service::plan(tool_key, kind).map_err(AppError::from)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -145,6 +167,16 @@ mod tests {
             from_cache,
             managed_update: crate::models::install::ManagedUpdateStatus::Allowed,
         }
+    }
+
+    /// Test seam over the production store path: the cache tests below keep this
+    /// name, and the write itself runs through `store_latest_result`.
+    fn cache_successful_latest_result(
+        cache: &CacheDb,
+        key: &str,
+        fetched: &LatestVersion,
+    ) -> Result<(), AppError> {
+        tauri::async_runtime::block_on(store_latest_result(cache, key.to_string(), fetched.clone()))
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 use crate::db::workspace_layout_repo::SaveCurrentOutcome;
 use crate::db::{directory_repo, pty_session_repo, workspace_layout_repo};
+use crate::models::directory::Directory;
+use crate::models::pty_session::PtySession;
 use crate::models::workspace_layout::{
     validate_preset_name, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
     WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveRejection, WorkspaceLayoutSaveResult,
@@ -17,53 +19,87 @@ use crate::models::workspace_layout::{
 };
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
-pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead, AppError> {
+pub enum LayoutReadStage {
+    /// No slot resolution needed (missing row or needs-reset states).
+    Done(WorkspaceLayoutStateRead),
+    Resolve(PendingLayoutRead),
+}
+
+pub struct PendingLayoutRead {
+    revision: i64,
+    updated_at_ms: i64,
+    layout: WorkspaceLayoutDocument,
+    facts: SlotFacts,
+}
+
+impl PendingLayoutRead {
+    /// No database access: compares project paths (canonicalize) in memory.
+    pub fn finish(mut self) -> WorkspaceLayoutStateRead {
+        let slot_states = resolve_layout_slots_with(&self.facts, &mut self.layout);
+        WorkspaceLayoutStateRead {
+            status: WorkspaceLayoutStateStatus::Ready,
+            revision: Some(self.revision),
+            schema_version: Some(i64::from(self.layout.schema_version)),
+            updated_at_ms: Some(self.updated_at_ms),
+            layout: Some(self.layout),
+            slot_states,
+        }
+    }
+}
+
+pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, AppError> {
     let Some(row) = workspace_layout_repo::get_current(connection)? else {
-        return Ok(WorkspaceLayoutStateRead {
+        return Ok(LayoutReadStage::Done(WorkspaceLayoutStateRead {
             status: WorkspaceLayoutStateStatus::Missing,
             revision: None,
             schema_version: None,
             updated_at_ms: None,
             layout: None,
             slot_states: Vec::new(),
-        });
+        }));
     };
 
     if !is_supported_layout_version(row.schema_version) {
-        return Ok(needs_reset(
+        return Ok(LayoutReadStage::Done(needs_reset(
             row.revision,
             row.schema_version,
             row.updated_at_ms,
             format!("不支持工作区布局版本 {}", row.schema_version),
-        ));
+        )));
     }
     if source_layout_version(&row.payload_json) != Some(row.schema_version) {
-        return Ok(needs_reset(
+        return Ok(LayoutReadStage::Done(needs_reset(
             row.revision,
             row.schema_version,
             row.updated_at_ms,
             "布局 JSON 版本与数据库版本不一致".to_string(),
-        ));
+        )));
     }
-    let mut layout = match WorkspaceLayoutDocument::from_json(&row.payload_json) {
+    let layout = match WorkspaceLayoutDocument::from_json(&row.payload_json) {
         Ok(layout) => layout,
         Err(error) => {
-            return Ok(needs_reset(
+            return Ok(LayoutReadStage::Done(needs_reset(
                 row.revision,
                 row.schema_version,
                 row.updated_at_ms,
                 error.to_string(),
-            ));
+            )));
         }
     };
-    let slot_states = resolve_layout_slots(connection, &mut layout)?;
-    Ok(WorkspaceLayoutStateRead {
-        status: WorkspaceLayoutStateStatus::Ready,
-        revision: Some(row.revision),
-        schema_version: Some(i64::from(layout.schema_version)),
-        updated_at_ms: Some(row.updated_at_ms),
-        layout: Some(layout),
-        slot_states,
+    let facts = SlotFacts::load(connection, layout.slots.iter())?;
+    Ok(LayoutReadStage::Resolve(PendingLayoutRead {
+        revision: row.revision,
+        updated_at_ms: row.updated_at_ms,
+        layout,
+        facts,
+    }))
+}
+
+#[cfg(test)]
+pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead, AppError> {
+    Ok(match read_current_stage(connection)? {
+        LayoutReadStage::Done(state) => state,
+        LayoutReadStage::Resolve(pending) => pending.finish(),
     })
 }
 
@@ -202,124 +238,166 @@ pub fn delete_preset(connection: &Connection, id: &str) -> Result<bool, AppError
 
 /// Build a pure presentation plan. This deliberately writes no workspace state
 /// and never calls PTY lifecycle or handoff operations.
-pub fn plan_apply_preset(
+pub struct PendingApplyPlan {
+    preset_layout: WorkspaceLayoutDocument,
+    active_layout: WorkspaceLayoutDocument,
+    facts: SlotFacts,
+}
+
+/// Database stage: validates the active layout, loads and parses the preset,
+/// and loads the rows every involved slot refers to.
+pub fn plan_apply_preset_stage(
     connection: &Connection,
     id: &str,
     active_layout: &WorkspaceLayoutDocument,
-) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+) -> Result<PendingApplyPlan, AppError> {
     active_layout.validate().map_err(layout_error)?;
     let row = workspace_layout_repo::get_preset(connection, id)?
         .ok_or_else(|| AppError::msg("命名布局不存在"))?;
-    let mut layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
+    let preset_layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
+    let facts = SlotFacts::load(
+        connection,
+        active_layout.slots.iter().chain(preset_layout.slots.iter()),
+    )?;
+    Ok(PendingApplyPlan {
+        preset_layout,
+        active_layout: active_layout.clone(),
+        facts,
+    })
+}
 
-    let mut additions = Vec::new();
-    let mut detached_contents = Vec::new();
-    let active_detached_slot_ids: HashSet<&str> = active_layout
-        .detached_contents
-        .iter()
-        .filter_map(|content| match content {
-            WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.as_str()),
-            WorkspacePaneContentRef::File { .. } | WorkspacePaneContentRef::Unknown { .. } => None,
-        })
-        .collect();
-    let mut detached_tree_slot_ids = Vec::new();
-    for active_slot in &active_layout.slots {
-        let mut slot = active_slot.clone();
-        let state = resolve_slot(connection, &mut slot)?;
+impl PendingApplyPlan {
+    /// No database access: the original plan algorithm, resolving slots from `facts`.
+    pub fn finish(self) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+        let PendingApplyPlan {
+            preset_layout,
+            active_layout,
+            facts,
+        } = self;
+        let active_layout = &active_layout;
+        let mut layout = preset_layout;
+        let mut additions = Vec::new();
+        let mut detached_contents = Vec::new();
+        let active_detached_slot_ids: HashSet<&str> = active_layout
+            .detached_contents
+            .iter()
+            .filter_map(|content| match content {
+                WorkspacePaneContentRef::Pty { slot_id } => Some(slot_id.as_str()),
+                WorkspacePaneContentRef::File { .. } | WorkspacePaneContentRef::Unknown { .. } => {
+                    None
+                }
+            })
+            .collect();
+        let mut detached_tree_slot_ids = Vec::new();
+        for active_slot in &active_layout.slots {
+            let mut slot = active_slot.clone();
+            let state = resolve_slot_with(&facts, &mut slot);
 
-        if active_detached_slot_ids.contains(slot.instance_id.as_str()) {
-            if matches!(
-                state.state,
-                WorkspaceSlotStateKind::Ended | WorkspaceSlotStateKind::MissingSession
-            ) {
+            if active_detached_slot_ids.contains(slot.instance_id.as_str()) {
+                if matches!(
+                    state.state,
+                    WorkspaceSlotStateKind::Ended | WorkspaceSlotStateKind::MissingSession
+                ) {
+                    continue;
+                }
+
+                if let Some(target_index) = layout.slots.iter().position(|target| {
+                    target.instance_id == slot.instance_id
+                        || slot.session_id.as_ref().is_some_and(|session_id| {
+                            target.session_id.as_ref() == Some(session_id)
+                        })
+                }) {
+                    let saved_slot = layout.slots.remove(target_index);
+                    detached_tree_slot_ids.push(saved_slot.instance_id);
+                }
+
+                detached_tree_slot_ids.push(slot.instance_id.clone());
+                detached_contents.push(WorkspacePaneContentRef::Pty {
+                    slot_id: slot.instance_id.clone(),
+                });
+                layout.slots.push(slot);
                 continue;
             }
 
-            if let Some(target_index) = layout.slots.iter().position(|target| {
+            if !matches!(
+                state.state,
+                WorkspaceSlotStateKind::Running | WorkspaceSlotStateKind::Pending
+            ) {
+                continue;
+            }
+            if let Some(target) = layout.slots.iter_mut().find(|target| {
                 target.instance_id == slot.instance_id
                     || slot
                         .session_id
                         .as_ref()
                         .is_some_and(|session_id| target.session_id.as_ref() == Some(session_id))
             }) {
-                let saved_slot = layout.slots.remove(target_index);
-                detached_tree_slot_ids.push(saved_slot.instance_id);
+                // Presets may contain an old descriptor for a still-running PTY.
+                // Keep its saved position and title but trust the verified live
+                // project's CLI/session identity.
+                refresh_slot_identity(target, &slot);
+                continue;
             }
+            let source_pane = pane_identity_for_slot(&active_layout.tree, &slot.instance_id);
+            let target_pane_id = source_pane
+                .as_ref()
+                .and_then(|(pane_id, _)| {
+                    contains_pane_id(&layout.tree, pane_id).then(|| pane_id.clone())
+                })
+                .or_else(|| {
+                    source_pane
+                        .as_ref()
+                        .and_then(|(_, pane_number)| pane_id_by_number(&layout.tree, *pane_number))
+                })
+                .unwrap_or_else(|| layout.focused_pane_id.clone());
+            if !append_to_pane(&mut layout.tree, &target_pane_id, &slot.instance_id) {
+                return Err(AppError::msg("命名布局的目标窗格不存在"));
+            }
+            additions.push(slot);
+        }
 
-            detached_tree_slot_ids.push(slot.instance_id.clone());
-            detached_contents.push(WorkspacePaneContentRef::Pty {
-                slot_id: slot.instance_id.clone(),
+        if !additions.is_empty() {
+            layout.slots.extend(additions);
+        }
+
+        remove_slot_references(&mut layout.tree, &detached_tree_slot_ids);
+        layout.detached_contents = detached_contents;
+        preserve_detached_file_contents(&mut layout, active_layout);
+
+        let mut slot_states = resolve_layout_slots_with(&facts, &mut layout);
+        let ended_slot_ids: Vec<String> = slot_states
+            .iter()
+            .filter(|slot| slot.state == WorkspaceSlotStateKind::Ended)
+            .map(|slot| slot.instance_id.clone())
+            .collect();
+        if !ended_slot_ids.is_empty() {
+            remove_slot_references(&mut layout.tree, &ended_slot_ids);
+            layout
+                .slots
+                .retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
+            layout.detached_contents.retain(|content| {
+                !matches!(
+                    content,
+                    WorkspacePaneContentRef::Pty { slot_id } if ended_slot_ids.contains(slot_id)
+                )
             });
-            layout.slots.push(slot);
-            continue;
+            slot_states.retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
         }
-
-        if !matches!(
-            state.state,
-            WorkspaceSlotStateKind::Running | WorkspaceSlotStateKind::Pending
-        ) {
-            continue;
-        }
-        if let Some(target) = layout.slots.iter_mut().find(|target| {
-            target.instance_id == slot.instance_id
-                || slot
-                    .session_id
-                    .as_ref()
-                    .is_some_and(|session_id| target.session_id.as_ref() == Some(session_id))
-        }) {
-            // Presets may contain an old descriptor for a still-running PTY.
-            // Keep its saved position and title but trust the verified live
-            // project's CLI/session identity.
-            refresh_slot_identity(target, &slot);
-            continue;
-        }
-        let source_pane = pane_identity_for_slot(&active_layout.tree, &slot.instance_id);
-        let target_pane_id = source_pane
-            .as_ref()
-            .and_then(|(pane_id, _)| {
-                contains_pane_id(&layout.tree, pane_id).then(|| pane_id.clone())
-            })
-            .or_else(|| {
-                source_pane
-                    .as_ref()
-                    .and_then(|(_, pane_number)| pane_id_by_number(&layout.tree, *pane_number))
-            })
-            .unwrap_or_else(|| layout.focused_pane_id.clone());
-        if !append_to_pane(&mut layout.tree, &target_pane_id, &slot.instance_id) {
-            return Err(AppError::msg("命名布局的目标窗格不存在"));
-        }
-        additions.push(slot);
+        layout.validate().map_err(layout_error)?;
+        Ok(WorkspaceLayoutApplyPlan {
+            layout,
+            slot_states,
+        })
     }
+}
 
-    if !additions.is_empty() {
-        layout.slots.extend(additions);
-    }
-
-    remove_slot_references(&mut layout.tree, &detached_tree_slot_ids);
-    layout.detached_contents = detached_contents;
-    preserve_detached_file_contents(&mut layout, active_layout);
-
-    let mut slot_states = resolve_layout_slots(connection, &mut layout)?;
-    let ended_slot_ids: Vec<String> = slot_states
-        .iter()
-        .filter(|slot| slot.state == WorkspaceSlotStateKind::Ended)
-        .map(|slot| slot.instance_id.clone())
-        .collect();
-    if !ended_slot_ids.is_empty() {
-        remove_slot_references(&mut layout.tree, &ended_slot_ids);
-        layout
-            .slots
-            .retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
-        layout.detached_contents.retain(|content| {
-            !matches!(content, WorkspacePaneContentRef::Pty { slot_id } if ended_slot_ids.contains(slot_id))
-        });
-        slot_states.retain(|slot| !ended_slot_ids.contains(&slot.instance_id));
-    }
-    layout.validate().map_err(layout_error)?;
-    Ok(WorkspaceLayoutApplyPlan {
-        layout,
-        slot_states,
-    })
+#[cfg(test)]
+pub fn plan_apply_preset(
+    connection: &Connection,
+    id: &str,
+    active_layout: &WorkspaceLayoutDocument,
+) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+    plan_apply_preset_stage(connection, id, active_layout)?.finish()
 }
 
 pub fn empty_layout() -> WorkspaceLayoutDocument {
@@ -394,49 +472,73 @@ fn source_layout_version(payload_json: &str) -> Option<i64> {
         .as_i64()
 }
 
-fn resolve_layout_slots(
-    connection: &Connection,
+/// Directory and session rows a set of slots refers to, loaded in one
+/// database stage so slot states can be resolved afterwards without the
+/// connection (path identity comparison canonicalizes paths).
+#[derive(Debug, Default)]
+pub struct SlotFacts {
+    directories: HashMap<i64, Option<Directory>>,
+    sessions: HashMap<String, Option<PtySession>>,
+}
+
+impl SlotFacts {
+    pub fn load<'a>(
+        connection: &Connection,
+        slots: impl IntoIterator<Item = &'a WorkspaceLayoutSlot>,
+    ) -> Result<Self, AppError> {
+        let mut facts = Self::default();
+        for slot in slots {
+            if !facts.directories.contains_key(&slot.directory_id) {
+                let directory = directory_repo::get(connection, slot.directory_id)?;
+                facts.directories.insert(slot.directory_id, directory);
+            }
+            if let Some(session_id) = slot.session_id.as_deref() {
+                if !facts.sessions.contains_key(session_id) {
+                    let session = pty_session_repo::get_by_id(connection, session_id)?;
+                    facts.sessions.insert(session_id.to_string(), session);
+                }
+            }
+        }
+        Ok(facts)
+    }
+}
+
+fn resolve_layout_slots_with(
+    facts: &SlotFacts,
     layout: &mut WorkspaceLayoutDocument,
-) -> Result<Vec<WorkspaceSlotState>, AppError> {
+) -> Vec<WorkspaceSlotState> {
     layout
         .slots
         .iter_mut()
-        .map(|slot| resolve_slot(connection, slot))
+        .map(|slot| resolve_slot_with(facts, slot))
         .collect()
 }
 
-fn resolve_slot(
-    connection: &Connection,
-    slot: &mut WorkspaceLayoutSlot,
-) -> Result<WorkspaceSlotState, AppError> {
-    let Some(directory) = directory_repo::get(connection, slot.directory_id)? else {
-        return Ok(slot_state(
-            slot,
-            WorkspaceSlotStateKind::MissingProject,
-            None,
-        ));
+fn resolve_slot_with(facts: &SlotFacts, slot: &mut WorkspaceLayoutSlot) -> WorkspaceSlotState {
+    let Some(directory) = facts
+        .directories
+        .get(&slot.directory_id)
+        .and_then(Option::as_ref)
+    else {
+        return slot_state(slot, WorkspaceSlotStateKind::MissingProject, None);
     };
     if !crate::platform::path_identity::paths_equal(&directory.path, &slot.directory_path) {
-        return Ok(slot_state(
-            slot,
-            WorkspaceSlotStateKind::ProjectIdentityMismatch,
-            None,
-        ));
+        return slot_state(slot, WorkspaceSlotStateKind::ProjectIdentityMismatch, None);
     }
     slot.project_name.clone_from(&directory.name);
     let Some(session_id) = slot.session_id.as_deref() else {
-        return Ok(slot_state(
+        return slot_state(
             slot,
             WorkspaceSlotStateKind::Pending,
-            Some(directory.name),
-        ));
+            Some(directory.name.clone()),
+        );
     };
-    let Some(session) = pty_session_repo::get_by_id(connection, session_id)? else {
-        return Ok(slot_state(
+    let Some(session) = facts.sessions.get(session_id).and_then(Option::as_ref) else {
+        return slot_state(
             slot,
             WorkspaceSlotStateKind::MissingSession,
-            Some(directory.name),
-        ));
+            Some(directory.name.clone()),
+        );
     };
     if session.directory_id != slot.directory_id
         || session.tool_key != slot.tool_key
@@ -445,18 +547,36 @@ fn resolve_slot(
             &slot.directory_path,
         )
     {
-        return Ok(slot_state(
+        return slot_state(
             slot,
             WorkspaceSlotStateKind::SessionIdentityMismatch,
-            Some(directory.name),
-        ));
+            Some(directory.name.clone()),
+        );
     }
     let state = if session.state == "running" {
         WorkspaceSlotStateKind::Running
     } else {
         WorkspaceSlotStateKind::Ended
     };
-    Ok(slot_state(slot, state, Some(directory.name)))
+    slot_state(slot, state, Some(directory.name.clone()))
+}
+
+#[cfg(test)]
+fn resolve_layout_slots(
+    connection: &Connection,
+    layout: &mut WorkspaceLayoutDocument,
+) -> Result<Vec<WorkspaceSlotState>, AppError> {
+    let facts = SlotFacts::load(connection, layout.slots.iter())?;
+    Ok(resolve_layout_slots_with(&facts, layout))
+}
+
+#[cfg(test)]
+fn resolve_slot(
+    connection: &Connection,
+    slot: &mut WorkspaceLayoutSlot,
+) -> Result<WorkspaceSlotState, AppError> {
+    let facts = SlotFacts::load(connection, std::iter::once(&*slot))?;
+    Ok(resolve_slot_with(&facts, slot))
 }
 
 fn slot_state(
@@ -1575,5 +1695,116 @@ mod tests {
         assert_eq!(row.schema_version, 99);
         assert_eq!(row.revision, 5);
         assert_eq!(row.payload_json, "{\"schemaVersion\":99}");
+    }
+
+    #[test]
+    fn staged_layout_read_resolves_a_running_slot() {
+        let mut connection = database();
+        let directory =
+            directory_repo::add(&connection, "work", "C:\\Projects\\work", None).unwrap();
+        let session_id = Uuid::new_v4().to_string();
+        pty_session_repo::insert_running(
+            &connection,
+            &session_id,
+            directory.id,
+            ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .unwrap();
+        let layout = layout_with_slot(directory.id, &directory.path, "work", Some(session_id));
+        save_current(&mut connection, 1, &layout).unwrap();
+
+        let staged = match read_current_stage(&connection).unwrap() {
+            LayoutReadStage::Resolve(pending) => pending.finish(),
+            LayoutReadStage::Done(_) => panic!("a valid layout must need slot resolution"),
+        };
+
+        assert_eq!(staged.status, WorkspaceLayoutStateStatus::Ready);
+        assert!(staged.layout.is_some());
+        assert_eq!(staged.slot_states.len(), 1);
+        assert_eq!(staged.slot_states[0].state, WorkspaceSlotStateKind::Running);
+        assert_eq!(
+            staged.slot_states[0].current_project_name.as_deref(),
+            Some("work")
+        );
+        assert!(matches!(
+            read_current_stage(&database()).unwrap(),
+            LayoutReadStage::Done(_)
+        ));
+    }
+
+    #[test]
+    fn staged_apply_plan_resolves_a_running_slot() {
+        let mut connection = database();
+        let directory =
+            directory_repo::add(&connection, "work", "C:\\Projects\\work", None).unwrap();
+        let session_id = Uuid::new_v4().to_string();
+        pty_session_repo::insert_running(
+            &connection,
+            &session_id,
+            directory.id,
+            ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .unwrap();
+        let active = layout_with_slot(
+            directory.id,
+            &directory.path,
+            "work",
+            Some(session_id.clone()),
+        );
+        let preset_layout =
+            layout_with_slot(directory.id, &directory.path, "work", Some(session_id));
+        let preset = create_preset(&mut connection, "团队工作区", &preset_layout).unwrap();
+
+        let staged = plan_apply_preset_stage(&connection, &preset.id, &active)
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        assert_eq!(staged.layout.slots.len(), 1);
+        assert_eq!(staged.slot_states.len(), 1);
+        assert_eq!(staged.slot_states[0].state, WorkspaceSlotStateKind::Running);
+        assert!(
+            plan_apply_preset_stage(&connection, "missing-preset", &active).is_err(),
+            "a missing preset must fail in the database stage"
+        );
+    }
+
+    #[test]
+    fn slot_facts_cover_every_directory_and_session_referenced_by_a_layout() {
+        let connection = database();
+        let directory =
+            directory_repo::add(&connection, "work", "C:\\Projects\\work", None).unwrap();
+        let session_id = Uuid::new_v4().to_string();
+        pty_session_repo::insert_running(
+            &connection,
+            &session_id,
+            directory.id,
+            ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .unwrap();
+        let mut with_session =
+            layout_with_slot(directory.id, &directory.path, "work", Some(session_id));
+        let mut missing = layout_with_slot(9999, "C:\\Projects\\gone", "gone", None);
+        let facts = SlotFacts::load(
+            &connection,
+            with_session.slots.iter().chain(missing.slots.iter()),
+        )
+        .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            resolve_slot_with(&facts, &mut with_session.slots[0]).state,
+            WorkspaceSlotStateKind::Running
+        );
+        assert_eq!(
+            resolve_slot_with(&facts, &mut missing.slots[0]).state,
+            WorkspaceSlotStateKind::MissingProject
+        );
     }
 }
