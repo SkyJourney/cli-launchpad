@@ -236,8 +236,6 @@ pub fn delete_preset(connection: &Connection, id: &str) -> Result<bool, AppError
     Ok(workspace_layout_repo::delete_preset(connection, id)?)
 }
 
-/// Build a pure presentation plan. This deliberately writes no workspace state
-/// and never calls PTY lifecycle or handoff operations.
 pub struct PendingApplyPlan {
     preset_layout: WorkspaceLayoutDocument,
     active_layout: WorkspaceLayoutDocument,
@@ -268,6 +266,8 @@ pub fn plan_apply_preset_stage(
 
 impl PendingApplyPlan {
     /// No database access: the original plan algorithm, resolving slots from `facts`.
+    /// Build a pure presentation plan. This deliberately writes no workspace state
+    /// and never calls PTY lifecycle or handoff operations.
     pub fn finish(self) -> Result<WorkspaceLayoutApplyPlan, AppError> {
         let PendingApplyPlan {
             preset_layout,
