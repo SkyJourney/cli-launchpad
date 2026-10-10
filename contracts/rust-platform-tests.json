@@ -1,6 +1,10 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 421, "Linux": 422, "macOS": 419 },
+  "minimumPassed": {
+    "Windows": 423,
+    "Linux": 424,
+    "macOS": 421
+  },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -138,7 +142,9 @@
       "services::backup_service::tests::failed_restore_does_not_advance_the_generation_and_keeps_an_in_flight_refresh_valid",
       "services::backup_service::tests::generation_advances_even_when_cache_cleanup_fails",
       "commands::session::tests::refresh_command_is_wired_through_the_restore_generation_guard",
-      "commands::backup::tests::restore_command_passes_the_managed_generation_to_the_restore_orchestration"
+      "commands::backup::tests::restore_command_passes_the_managed_generation_to_the_restore_orchestration",
+      "services::content_window_grants::tests::release_window_still_reports_the_lost_window_when_the_grant_table_is_poisoned",
+      "models::window_kind::tests::caller_window_errors_reach_the_frontend_with_their_codes"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

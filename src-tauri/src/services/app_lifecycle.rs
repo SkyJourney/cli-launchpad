@@ -354,7 +354,7 @@ impl AppLifecycle {
         if inflight > 0 {
             return Err(AppError::coded_with_params(
                 CODE_SESSION_STARTING,
-                format!("有 {inflight} 个终端会话正在启动，请稍后重试{action}"),
+                format!("有 {inflight} 个终端会话或执行任务正在启动，请稍后重试{action}"),
                 params(inflight),
             ));
         }

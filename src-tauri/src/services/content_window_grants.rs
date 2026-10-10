@@ -117,4 +117,30 @@ mod tests {
         assert_eq!(registry.get(SECOND_LABEL).unwrap(), grant("two.md"));
         assert!(!registry.revoke(FIRST_LABEL).unwrap());
     }
+
+    #[test]
+    fn release_window_still_reports_the_lost_window_when_the_grant_table_is_poisoned() {
+        let registry = ContentWindowGrantRegistry::default();
+        registry.grant(FIRST_LABEL, grant("a.txt")).unwrap();
+        // A panic while the table lock is held poisons it, so the revocation fails.
+        let poisoning = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = registry.grants.lock().unwrap();
+            panic!("poison the grant table on purpose");
+        }));
+        assert!(poisoning.is_err());
+        assert!(
+            registry.revoke(FIRST_LABEL).is_err(),
+            "the revocation must really fail for this test to mean anything"
+        );
+
+        let window = WindowLabel::parse(FIRST_LABEL).unwrap();
+        let events = registry.release_window(&window);
+        assert_eq!(
+            events,
+            vec![AppEvent::WorkspaceContentWindowLost {
+                window_label: FIRST_LABEL.to_string(),
+            }],
+            "the main window must still learn that the content window is gone"
+        );
+    }
 }

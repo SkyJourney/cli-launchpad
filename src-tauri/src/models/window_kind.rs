@@ -343,4 +343,24 @@ mod tests {
         ));
         assert!(!is_terminal_label("main"));
     }
+
+    #[test]
+    fn caller_window_errors_reach_the_frontend_with_their_codes() {
+        use super::CallerWindow;
+        use tauri::ipc::InvokeError;
+
+        let invalid = CallerWindow::from_label("settings").err().unwrap();
+        let InvokeError(value) = InvokeError::from(invalid);
+        assert_eq!(value["code"], "window.label_invalid");
+
+        let content =
+            CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
+                .unwrap();
+        let denied = content.require(&[WindowKind::Main]).unwrap_err();
+        let InvokeError(value) = InvokeError::from(denied);
+        assert_eq!(value["code"], "window.not_allowed");
+        assert!(value["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty()));
+    }
 }
