@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup } from "@testing-library/react";
+import { emitTo } from "@tauri-apps/api/event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -491,6 +492,43 @@ describe("duplicate and out-of-order handoff events", () => {
     const prepareCalls = () => spy.mock.calls.length;
     return { doc, state, windowLabel, payload, initEmits, prepareCalls };
   }
+
+  it("rolls back at once when the init event cannot be delivered", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, state, windowLabel, payload } =
+      await beginManualFileDetach(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const originalEmitTo = vi.mocked(emitTo).getMockImplementation();
+    if (!originalEmitTo) throw new Error("emitTo mock has no implementation");
+    // 只让 init 事件的发送失败，其余事件照常转发。
+    vi.mocked(emitTo).mockImplementation(async (target, eventName, message) => {
+      if (
+        (message as { type?: string }).type === "workspace-file-window-init"
+      ) {
+        throw new Error("init could not be delivered");
+      }
+      return originalEmitTo(target, eventName, message as never);
+    });
+    try {
+      await emitToMain("workspace-file-window-ready", payload);
+      // 不推进计时器：回滚必须立即发生，而不是等 15 秒超时。
+      await flush();
+
+      expect(state.settled).toBe("rejected");
+      expect(coordinator.get(content)?.phase).not.toBe("detaching");
+      expect(occurrences(host!, content)).toBe(1);
+      expect(
+        tauriMock.state.windowActions.some(
+          (entry) =>
+            entry.windowLabel === windowLabel && entry.action === "destroy",
+        ),
+      ).toBe(true);
+      expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+      expect(host!.errors).toEqual([]);
+    } finally {
+      vi.mocked(emitTo).mockImplementation(originalEmitTo);
+    }
+  });
 
   it("ignores a second workspace-file-window-ready after the init was sent", async () => {
     const coordinator = new WorkspaceContentCoordinator();

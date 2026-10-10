@@ -3056,17 +3056,40 @@ export function PtyWorkspaceProvider({
                     return;
                   }
                   if (!advancePendingWindowStage(pending, "initSent")) return;
-                  await emitWorkspaceContentWindowEvent(
-                    pending.windowLabel,
-                    "workspace-file-window-init",
-                    {
-                      documentId: pending.documentId,
-                      token: pending.token,
-                      windowLabel: pending.windowLabel,
-                      fileDocument: prepared.payload.document,
-                      fileBuffer: prepared.payload.buffer,
-                    },
-                  );
+                  try {
+                    await emitWorkspaceContentWindowEvent(
+                      pending.windowLabel,
+                      "workspace-file-window-init",
+                      {
+                        documentId: pending.documentId,
+                        token: pending.token,
+                        windowLabel: pending.windowLabel,
+                        fileDocument: prepared.payload.document,
+                        fileBuffer: prepared.payload.buffer,
+                      },
+                    );
+                  } catch (reason) {
+                    // init 没有送达：立即回滚并结束等待，不再依赖 15 秒超时兜底。
+                    void rollbackWorkspaceContentHandoff(
+                      driverContext,
+                      prepared.payload,
+                      reason,
+                    ).catch(() => undefined);
+                    contentCoordinatorRef.current.failHandoff(
+                      content,
+                      "detachFailed",
+                      pending.token,
+                    );
+                    takePendingWorkspaceContentWindow(
+                      pendingDetachedFilesRef.current,
+                      workspaceFileKey(pending.documentId),
+                      pending.windowLabel,
+                    );
+                    pending.reject(
+                      new Error(formatAppError(reason, tRef.current)),
+                    );
+                    void pending.window.destroy().catch(() => undefined);
+                  }
                 },
               ),
           },
