@@ -73,6 +73,21 @@ export function useExecutionTaskEvents() {
         "execution-task-updated",
         (event) => {
           const task = event.payload;
+          const knownTask =
+            queryClient
+              .getQueryData<ExecutionTask[]>(qk.executionTasks())
+              ?.find((entry) => entry.id === task.id) ??
+            queryClient.getQueryData<ExecutionTaskDetail>(
+              qk.executionTask(task.id),
+            )?.task;
+          if (
+            knownTask &&
+            !isExecutionActive(knownTask.status) &&
+            isExecutionActive(task.status)
+          ) {
+            // A late "running" update must not bring a finished task back to life.
+            return;
+          }
           if (isExecutionActive(task.status)) {
             void queryClient.cancelQueries({
               queryKey: qk.latestVersion(task.toolKey),

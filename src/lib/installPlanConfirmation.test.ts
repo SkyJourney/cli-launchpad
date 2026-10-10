@@ -40,4 +40,39 @@ describe("install plan confirmation refresh", () => {
     expect(getPlan).toHaveBeenCalledWith("codex", "update");
     expect(setPending).toHaveBeenCalledWith(action);
   });
+
+  it("recognizes the coded IPC rejection shape", () => {
+    expect(
+      isInstallPlanChangedError({
+        code: "plan_changed",
+        message: "安装计划已变化",
+      }),
+    ).toBe(true);
+    expect(
+      isInstallPlanChangedError({ code: "other", message: "安装计划已变化" }),
+    ).toBe(false);
+  });
+
+  it("reopens confirmation with the refreshed plan", async () => {
+    const action = { toolKey: "codex" as const, kind: "update" as const, plan };
+    const refreshedPlan = { ...plan, fingerprint: "fp-2" };
+    const getPlan = vi.fn(async () => refreshedPlan);
+    const setPending = vi.fn();
+
+    await expect(
+      refreshInstallPlanConfirmation({
+        error: { code: "plan_changed", message: "安装计划已变化" },
+        action,
+        getPlan,
+        setPending,
+      }),
+    ).resolves.toBe(true);
+
+    expect(setPending).toHaveBeenCalledTimes(1);
+    const reopened = setPending.mock.calls[0][0];
+    expect(reopened.plan.fingerprint).toBe("fp-2");
+    expect(reopened.plan.fingerprint).not.toBe(plan.fingerprint);
+    expect(reopened.toolKey).toBe("codex");
+    expect(reopened.kind).toBe("update");
+  });
 });

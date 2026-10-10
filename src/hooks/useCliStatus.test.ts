@@ -16,6 +16,8 @@ function status(toolKey: ToolKey): CliStatus {
   };
 }
 
+// Hook wiring (the execution-task listener that refreshes CLI status after a task finishes)
+// is covered by src/hooks/useExecutionTasks.test.tsx (FE-T49).
 describe("refreshCliStatusForTool", () => {
   it("refreshes and caches only the CLI whose task completed", async () => {
     const queryClient = new QueryClient({
