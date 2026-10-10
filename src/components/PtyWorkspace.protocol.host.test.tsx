@@ -613,6 +613,12 @@ describe("duplicate and out-of-order handoff events", () => {
     await flush();
     expect(coordinator.get(content)?.phase).toBe("attached");
     expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
+    // 第一次返回已完整结束：窗口被销毁。
+    const destroysOf = () =>
+      tauriMock.state.windowActions.filter(
+        (entry) => entry.windowLabel === ptyLabel && entry.action === "destroy",
+      ).length;
+    expect(destroysOf()).toBe(1);
 
     await emitToMain("pty-return-requested", ptyReturn);
     await flush();
@@ -621,6 +627,8 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(occurrences(host!, content)).toBe(1);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(terminal.attachHandoff).toHaveBeenCalledTimes(1);
+    // 反向断言：重复请求没有再次销毁窗口。
+    expect(destroysOf()).toBe(1);
     // 反向断言：没有发往 PTY 窗口的 pty-return-failed。
     expect(eventsTo(ptyLabel, "pty-return-failed")).toHaveLength(0);
     expect(host!.errors).toEqual([]);

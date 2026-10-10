@@ -2723,11 +2723,8 @@ export function PtyWorkspaceProvider({
           return;
         }
         const currentTree = treeRef.current;
-        const targetPane =
-          (payload.targetPaneId &&
-            findWorkspacePane(currentTree, payload.targetPaneId)) ||
-          findWorkspacePane(currentTree, focusedPaneIdRef.current) ||
-          listWorkspacePanes(currentTree)[0];
+        // 与 beginReturn 时记录的目标 pane 一致，驱动上下文不再重新解析。
+        const targetPane = findWorkspacePane(currentTree, returnTargetPaneId);
         if (!targetPane) {
           failPendingReturn(tRef.current("pty.workspaceRestoring"));
           return;
@@ -3437,22 +3434,10 @@ export function PtyWorkspaceProvider({
                       isWorkspaceFileBufferNewer(currentBuffer, incomingBuffer)
                         ? currentBuffer
                         : incomingBuffer;
-                    let targetPane = event.payload.targetPaneId
-                      ? findWorkspacePane(
-                          treeRef.current,
-                          event.payload.targetPaneId,
-                        )
-                      : null;
-                    targetPane ??=
-                      listWorkspacePanes(treeRef.current).find((candidate) =>
-                        hasWorkspaceContent(candidate, {
-                          kind: "file",
-                          documentId: document.id,
-                        }),
-                      ) ?? null;
-                    targetPane ??= findWorkspacePane(
+                    // 与 beginReturn 时记录的目标 pane 一致，驱动上下文不再重新解析。
+                    const targetPane = findWorkspacePane(
                       treeRef.current,
-                      focusedPaneIdRef.current,
+                      returnTargetPaneId,
                     );
                     if (!targetPane)
                       throw new Error(tRef.current("pty.workspaceRestoring"));

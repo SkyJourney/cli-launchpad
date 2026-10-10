@@ -326,6 +326,73 @@ describe("PTY return to the workspace", () => {
     expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-failed");
     expect(host.errors).toEqual([]);
   });
+
+  it("fails cleanly when the target pane is closed while the PTY attach is pending, and retries", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const content = { kind: "pty", slotId: slot.instanceId } as const;
+    const targetPaneId = listWorkspacePanes(host.ctx().tree)[0].id;
+    const attach = deferred<{ sessionId: string; state: string }>();
+    terminal.attachHandoff.mockImplementationOnce(() => attach.promise);
+
+    // 在源 pane 旁边新建一个 pane，作为关闭目标 pane 之后的存活 pane。
+    await act(async () => {
+      host!.ctx().splitPane(targetPaneId, "horizontal");
+    });
+    await flush();
+    const survivorPaneId = listWorkspacePanes(host.ctx().tree).find(
+      (pane) => pane.id !== targetPaneId,
+    )?.id;
+    if (!survivorPaneId) throw new Error("split did not create a second pane");
+
+    // 请求返回（无指定目标，记录的目标是源 pane），attach 挂起。
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-1",
+    });
+    await flush();
+    expect(coordinator.get(content)).toMatchObject({
+      phase: "returning",
+      target: { paneId: targetPaneId },
+    });
+
+    // attach 挂起期间关闭记录的目标 pane（此时它已为空）。
+    await act(async () => {
+      host!.ctx().focusPane(survivorPaneId);
+      host!.ctx().closeEmptyPane(targetPaneId);
+    });
+    await flush();
+    expect(findPaneIds(host)).not.toContain(targetPaneId);
+
+    // attach 完成：提交前发现记录的 pane 已不存在，返回失败并回滚交接。
+    attach.resolve({ sessionId: slot.sessionId!, state: "running" });
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(terminal.cancelHandoff).toHaveBeenCalledTimes(1);
+    expect(emittedTypesTo(windowLabel)).toContain("pty-return-failed");
+    expect(panesContaining(host, content)).toBe(0);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+
+    // 重试：记录的源 pane 已不存在，解析回落到存活的 pane，返回成功。
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-2",
+    });
+    await flush();
+
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(panesContaining(host, content)).toBe(1);
+    expect(findPaneIds(host)).toContain(survivorPaneId);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+  });
 });
 
 describe("file return to the workspace", () => {

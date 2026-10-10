@@ -286,6 +286,7 @@ describe("planWorkspaceReturn", () => {
 
   it("returns null for unknown content and never changes the tree", () => {
     const tree = emptyTwoPanes();
+    const before = JSON.stringify(tree);
     const unknown: WorkspacePaneContentRef = {
       kind: "unknown",
       originalKind: "markdownPreview",
@@ -302,5 +303,7 @@ describe("planWorkspaceReturn", () => {
         }),
       ).toBeNull();
     }
+    // 反向断言：未知内容不改变输入树。
+    expect(JSON.stringify(tree)).toBe(before);
   });
 });
