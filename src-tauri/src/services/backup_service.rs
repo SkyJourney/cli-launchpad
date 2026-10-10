@@ -6,7 +6,10 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{backup::Backup, Connection, DatabaseName, OpenFlags};
 
 use crate::db::connection;
+use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::{BackupManifest, BackupReason};
+use crate::services::pty_session_service::PtySessionManager;
+use crate::{AppError, CacheDb, Db};
 
 use super::storage_service::StoragePaths;
 
@@ -127,6 +130,62 @@ pub fn restore(
     Ok(manifest)
 }
 
+/// 恢复完成后通知主窗口的抽象，便于测试替换 Tauri 的 emit。
+pub trait RestoreNotifier {
+    fn workspace_data_restored(&self) -> Result<(), String>;
+}
+
+pub struct RestoreOutcome {
+    pub manifest: BackupManifest,
+    pub close_behavior: CloseBehavior,
+    pub cache_warning: Option<String>,
+}
+
+/// 数据库替换、缓存失效与通知的编排。数据库阶段失败时直接返回 Err（数据库未被替换）；
+/// 数据库替换成功后不再返回 Err：缓存清理失败只记录为 cache_warning，通知失败只记日志。
+pub fn restore_with_runtime_invalidation(
+    db: &Db,
+    cache: &CacheDb,
+    sessions: &PtySessionManager,
+    paths: &StoragePaths,
+    backup_id: &str,
+    notifier: &dyn RestoreNotifier,
+) -> Result<RestoreOutcome, AppError> {
+    let (manifest, close_behavior) = crate::with_connection(db, |connection| {
+        let _restore_guard = sessions.begin_backup_restore()?;
+        let manifest = restore(connection, paths, backup_id)?;
+        let close_behavior = crate::db::app_setting_repo::get_close_behavior(connection)?;
+        Ok((manifest, close_behavior))
+    })?;
+    // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
+    let cache_warning = crate::with_cache_connection(cache, |connection| {
+        let targeted = (|| -> anyhow::Result<()> {
+            crate::services::cache_service::remove_prefix(connection, "sessions:")?;
+            crate::services::cache_service::remove_prefix(connection, "workspace-file-index:")?;
+            crate::services::cache_service::clear_session_search(connection)?;
+            Ok(())
+        })();
+        if let Err(targeted_error) = targeted {
+            log::warn!(
+                "backup restore: targeted cache cleanup failed, clearing the whole cache: {targeted_error}"
+            );
+            if let Err(clear_error) = crate::services::cache_service::clear(connection) {
+                return Ok(Some(format!("缓存清理失败：{clear_error}")));
+            }
+        }
+        Ok(None)
+    })
+    .unwrap_or_else(|lock_error| Some(format!("缓存清理失败：{lock_error}")));
+    if let Err(error) = notifier.workspace_data_restored() {
+        log::error!("backup restore: unable to notify the main window: {error}");
+    }
+    Ok(RestoreOutcome {
+        manifest,
+        close_behavior,
+        cache_warning,
+    })
+}
+
 fn validate_database(path: &Path) -> Result<()> {
     let connection = open_read_only(path)?;
     connection::ensure_integrity(&connection)
@@ -217,7 +276,14 @@ fn prune(paths: &StoragePaths, protected_id: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{app_setting_repo, session_search_repo};
     use crate::db::{connection, directory_repo};
+    use crate::models::app_setting::CloseBehavior;
+    use crate::models::session::{SessionSearchIndexDocument, SessionSearchIndexSource};
+    use crate::models::tool::ToolKey;
+    use crate::services::cache_service;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
     fn setup() -> (tempfile::TempDir, StoragePaths, Connection) {
@@ -512,5 +578,260 @@ mod tests {
         assert!(list(&paths).unwrap().is_empty());
         create(&connection, &paths, BackupReason::Manual).unwrap();
         assert!(victim.exists());
+    }
+
+    struct RecordingNotifier {
+        calls: std::sync::atomic::AtomicUsize,
+        result: Result<(), String>,
+    }
+
+    impl RecordingNotifier {
+        fn ok() -> Self {
+            Self {
+                calls: Default::default(),
+                result: Ok(()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                calls: Default::default(),
+                result: Err("closed".to_string()),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl RestoreNotifier for RecordingNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.result.clone()
+        }
+    }
+
+    /// 数据库里有目录 A（备份时）与 B（备份之后），备份的关闭行为为 Quit。
+    fn scenario() -> (tempfile::TempDir, StoragePaths, Db, CacheDb, BackupManifest) {
+        let (directory, paths, connection) = setup();
+        app_setting_repo::set_close_behavior(&connection, CloseBehavior::Quit).unwrap();
+        directory_repo::add(&connection, "A", "C:\\A", None).unwrap();
+        let backup = create(&connection, &paths, BackupReason::Manual).unwrap();
+        app_setting_repo::set_close_behavior(&connection, CloseBehavior::MinimizeToTray).unwrap();
+        directory_repo::add(&connection, "B", "C:\\B", None).unwrap();
+        let db = Db(Arc::new(Mutex::new(connection)));
+        let cache = CacheDb(Arc::new(Mutex::new(
+            crate::db::cache_connection::init_cache(&directory.path().join("cache.db")).unwrap(),
+        )));
+        (directory, paths, db, cache, backup)
+    }
+
+    fn directory_names(db: &Db) -> Vec<String> {
+        directory_repo::list(&db.0.lock().unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|directory| directory.name)
+            .collect()
+    }
+
+    #[test]
+    fn restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync() {
+        // 子场景 A：缓存清理两级都失败（缓存表被删除）。
+        {
+            let (_directory, paths, db, cache, backup) = scenario();
+            cache
+                .0
+                .lock()
+                .unwrap()
+                .execute("drop table cache_entries", [])
+                .unwrap();
+            let notifier = RecordingNotifier::ok();
+            let outcome = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &PtySessionManager::default(),
+                &paths,
+                &backup.id,
+                &notifier,
+            )
+            .unwrap();
+            assert!(outcome.cache_warning.is_some());
+            assert_eq!(notifier.calls(), 1);
+            assert_eq!(outcome.close_behavior, CloseBehavior::Quit);
+            assert_eq!(directory_names(&db), vec!["A".to_string()]);
+        }
+
+        // 子场景 B：正常恢复，缓存被清空。
+        {
+            let (_directory, paths, db, cache, backup) = scenario();
+            cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+            let notifier = RecordingNotifier::ok();
+            let outcome = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &PtySessionManager::default(),
+                &paths,
+                &backup.id,
+                &notifier,
+            )
+            .unwrap();
+            assert!(outcome.cache_warning.is_none());
+            assert_eq!(notifier.calls(), 1);
+            assert!(cache_service::get_any::<String>(
+                &cache.0.lock().unwrap(),
+                "sessions:1:claude"
+            )
+            .unwrap()
+            .is_none());
+        }
+
+        // 子场景 C：备份不存在，数据库未被替换，缓存与守卫都保持原样。
+        {
+            let (_directory, paths, db, cache, _backup) = scenario();
+            cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+            let notifier = RecordingNotifier::ok();
+            let sessions = PtySessionManager::default();
+            let result = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &sessions,
+                &paths,
+                "missing-backup",
+                &notifier,
+            );
+            assert!(result.is_err());
+            assert_eq!(notifier.calls(), 0);
+            assert!(cache_service::get_any::<String>(
+                &cache.0.lock().unwrap(),
+                "sessions:1:claude"
+            )
+            .unwrap()
+            .is_some());
+            assert_eq!(directory_names(&db).len(), 2);
+            // 反向断言：守卫已释放，同一个 sessions 实例仍能启动会话。
+            assert!(sessions.begin_session_start().is_ok());
+        }
+    }
+
+    #[test]
+    fn restore_invalidates_session_index_and_file_index_caches() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        {
+            let conn = cache.0.lock().unwrap();
+            cache_service::put(&conn, "sessions:1:claude", &"x").unwrap();
+            cache_service::put(&conn, "workspace-file-index:1", &"y").unwrap();
+            session_search_repo::refresh(
+                &conn,
+                1,
+                &[SessionSearchIndexSource {
+                    tool_key: ToolKey::Claude,
+                    documents: Some(vec![SessionSearchIndexDocument {
+                        tool_key: ToolKey::Claude,
+                        session_id: "s1".to_string(),
+                        title: "query title".to_string(),
+                        last_active_ms: Some(1),
+                        fields: vec!["query title".to_string()],
+                    }]),
+                    incomplete: false,
+                }],
+            )
+            .unwrap();
+            // 反向基线：恢复前索引确实可搜到，否则“空结果”的断言会空洞地通过。
+            assert_eq!(
+                session_search_repo::search(&conn, 1, "query", &HashMap::new())
+                    .unwrap()
+                    .items
+                    .len(),
+                1
+            );
+        }
+        let notifier = RecordingNotifier::ok();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &PtySessionManager::default(),
+            &paths,
+            &backup.id,
+            &notifier,
+        )
+        .unwrap();
+        {
+            let conn = cache.0.lock().unwrap();
+            assert!(cache_service::get_any::<String>(&conn, "sessions:1:claude")
+                .unwrap()
+                .is_none());
+            assert!(
+                cache_service::get_any::<String>(&conn, "workspace-file-index:1")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                session_search_repo::search(&conn, 1, "query", &HashMap::new())
+                    .unwrap()
+                    .items
+                    .is_empty()
+            );
+        }
+        assert_eq!(notifier.calls(), 1);
+        assert!(outcome.cache_warning.is_none());
+    }
+
+    #[test]
+    fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+        let sessions = PtySessionManager::default();
+        let notifier = RecordingNotifier::ok();
+        let starting = sessions.begin_session_start().unwrap();
+
+        // 第一步：有会话正在启动，恢复必须失败且不通知、不替换数据库。
+        let error = match restore_with_runtime_invalidation(
+            &db, &cache, &sessions, &paths, &backup.id, &notifier,
+        ) {
+            Ok(_) => panic!("restore must fail while a session is starting"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "pty_session_starting"
+        );
+        assert_eq!(notifier.calls(), 0);
+        assert_eq!(directory_names(&db).len(), 2);
+        // 反向断言：失败时缓存未被清理。
+        assert!(
+            cache_service::get_any::<String>(&cache.0.lock().unwrap(), "sessions:1:claude")
+                .unwrap()
+                .is_some()
+        );
+
+        // 第二步：守卫释放后恢复成功并通知一次。
+        drop(starting);
+        restore_with_runtime_invalidation(&db, &cache, &sessions, &paths, &backup.id, &notifier)
+            .unwrap();
+        assert_eq!(notifier.calls(), 1);
+
+        // 第三步：恢复结束后守卫已释放。
+        assert!(sessions.begin_session_start().is_ok());
+    }
+
+    #[test]
+    fn restore_notification_failure_is_logged_and_does_not_fail_the_restore() {
+        let (_directory, paths, db, cache, backup) = scenario();
+        let notifier = RecordingNotifier::failing();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &PtySessionManager::default(),
+            &paths,
+            &backup.id,
+            &notifier,
+        )
+        .unwrap();
+        assert_eq!(notifier.calls(), 1);
+        assert_eq!(outcome.close_behavior, CloseBehavior::Quit);
+        assert_eq!(directory_names(&db), vec!["A".to_string()]);
+        // 反向断言：通知失败不得被伪装成缓存警告。
+        assert!(outcome.cache_warning.is_none());
     }
 }

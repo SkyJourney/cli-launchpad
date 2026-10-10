@@ -51,6 +51,7 @@ import type {
   WorkspaceLayoutDocument,
   WorkspaceLayoutStateRead,
 } from "../../lib/tauri";
+import { WorkspaceDataRestoreListener } from "../../components/WorkspaceDataRestoreListener";
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import { WORKSPACE_CONTENT_WINDOW_EVENT } from "../../lib/workspaceContentWindowProtocol";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
@@ -301,6 +302,8 @@ export interface MountWorkspaceOptions {
   strict?: boolean;
   /** 主窗口监听逐项重试的延迟序列（测试注入零延迟，避免真实等待）。 */
   listenerRetryDelaysMs?: readonly number[];
+  /** 挂载 WorkspaceDataRestoreListener（仅恢复相关的宿主测试使用，默认不挂载）。 */
+  restoreListener?: boolean;
 }
 
 export interface WorkspaceHost {
@@ -343,6 +346,7 @@ export async function mountWorkspace(
         >
           <Probe onValue={(value) => (context.current = value)} />
           <PtyWorkspaceRegion />
+          {options.restoreListener ? <WorkspaceDataRestoreListener /> : null}
         </PtyWorkspaceProvider>
       </CapturingBoundary>
     </QueryClientProvider>

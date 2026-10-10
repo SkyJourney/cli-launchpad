@@ -3874,7 +3874,10 @@ export function PtyWorkspaceProvider({
   }, []);
 
   const cancelBackupRestore = useCallback(() => {
-    backupRestoreInProgressRef.current = false;
+    // 恢复请求结束（成功或失败）都不在这里解冻：恢复成功后必须等
+    // workspace-data-restored 触发 rehydrateWorkspace 才能重新允许持久化，
+    // 否则旧内存布局会覆盖刚恢复的布局（FE-NEW-04）；恢复失败时由调用方
+    // 显式执行 rehydrateWorkspace。解冻只发生在 rehydrateWorkspace。
   }, []);
 
   const rehydrateWorkspace = useCallback(async () => {

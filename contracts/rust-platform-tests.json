@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "minimumPassed": { "Windows": 363, "Linux": 364, "macOS": 361 },
+  "minimumPassed": { "Windows": 367, "Linux": 368, "macOS": 365 },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
@@ -78,7 +78,11 @@
       "services::pty_session_service::tests::finalized_handoff_rejects_source_cancel_in_manager",
       "services::pty_session_service::tests::handoff_state_machine_rejects_illegal_transitions",
       "services::cli_adapters::codex::app_server::tests::timed_out_request_terminates_the_whole_server_process_tree",
-      "services::cli_adapters::codex::app_server::tests::tree_guard_drop_without_an_attached_process_is_harmless"
+      "services::cli_adapters::codex::app_server::tests::tree_guard_drop_without_an_attached_process_is_harmless",
+      "services::backup_service::tests::restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync",
+      "services::backup_service::tests::restore_invalidates_session_index_and_file_index_caches",
+      "services::backup_service::tests::restore_releases_the_session_guard_and_does_not_notify_on_failure",
+      "services::backup_service::tests::restore_notification_failure_is_logged_and_does_not_fail_the_restore"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
