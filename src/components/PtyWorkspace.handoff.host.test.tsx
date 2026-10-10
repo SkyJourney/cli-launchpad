@@ -139,6 +139,11 @@ function stubPresetPlan(target: WorkspaceHost) {
   );
 }
 
+/** 当前树中所有 pane 的 id。 */
+function findPaneIds(target: WorkspaceHost): string[] {
+  return listWorkspacePanes(target.ctx().tree).map((pane) => pane.id);
+}
+
 describe("PTY return to the workspace", () => {
   it("keeps the workspace mounted and persists a valid layout while a PTY is returning", async () => {
     const coordinator = new WorkspaceContentCoordinator();
@@ -277,6 +282,47 @@ describe("PTY return to the workspace", () => {
     expect(coordinator.get(content)?.phase).toBe("attached");
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：没有向窗口发出返回失败，也没有记录错误。
+    expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-failed");
+    expect(host.errors).toEqual([]);
+  });
+
+  it("returns a detached PTY to a surviving pane when its source pane was closed", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const content = { kind: "pty", slotId: slot.instanceId } as const;
+    const sourcePaneId = listWorkspacePanes(host.ctx().tree)[0].id;
+
+    // 在源 pane 旁边新建一个 pane 并聚焦它，然后关闭已为空的源 pane。
+    await act(async () => {
+      host!.ctx().splitPane(sourcePaneId, "horizontal");
+    });
+    await flush();
+    const survivor = listWorkspacePanes(host.ctx().tree).find(
+      (pane) => pane.id !== sourcePaneId,
+    );
+    if (!survivor) throw new Error("split did not create a second pane");
+    await act(async () => {
+      host!.ctx().focusPane(survivor.id);
+      host!.ctx().closeEmptyPane(sourcePaneId);
+    });
+    await flush();
+    expect(findPaneIds(host)).not.toContain(sourcePaneId);
+
+    // 无目标返回：记录的 lastPaneId 已不存在，必须回落到存活的 pane 而不是永久失败。
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-1",
+    });
+    await flush();
+
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(panesContaining(host, content)).toBe(1);
+    expect(findPaneIds(host)).toContain(survivor.id);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(emittedTypesTo(windowLabel)).not.toContain("pty-return-failed");
     expect(host.errors).toEqual([]);
   });

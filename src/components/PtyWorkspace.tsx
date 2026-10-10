@@ -194,6 +194,7 @@ import { WorkspaceContentContextMenu } from "./WorkspaceContentContextMenu";
 import {
   planWorkspaceReturn,
   reduceWorkspaceTree,
+  resolveWorkspaceReturnPaneId,
 } from "../lib/workspaceContentCommand";
 import { partitionVisibleTabs } from "../lib/workspaceTabLayout";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
@@ -2653,11 +2654,23 @@ export function PtyWorkspaceProvider({
           );
         }
       }
+      const returnTargetPaneId = resolveWorkspaceReturnPaneId(treeRef.current, {
+        requestedPaneId: payload.targetPaneId,
+        lastPaneId: (() => {
+          const latest = contentCoordinatorRef.current.get(returningContent);
+          return latest?.phase === "detached" ? latest.lastPaneId : null;
+        })(),
+        focusedPaneId: focusedPaneIdRef.current,
+      });
+      if (!returnTargetPaneId) {
+        fail(tRef.current("pty.workspaceRestoring"));
+        return;
+      }
       const returning = contentCoordinatorRef.current.beginReturn(
         returningContent,
         payload.token,
         "main",
-        payload.targetPaneId,
+        returnTargetPaneId,
       );
       if (returning?.outcome !== "changed") {
         fail(tRef.current("pty.detachedStateChanged"));
@@ -3363,11 +3376,39 @@ export function PtyWorkspaceProvider({
                     return;
                   }
                   detachedFilesRef.current.set(key, managedWindow);
+                  const returnTargetPaneId = resolveWorkspaceReturnPaneId(
+                    treeRef.current,
+                    {
+                      requestedPaneId: event.payload.targetPaneId,
+                      lastPaneId: (() => {
+                        const latest =
+                          contentCoordinatorRef.current.get(content);
+                        return latest?.phase === "detached"
+                          ? latest.lastPaneId
+                          : null;
+                      })(),
+                      focusedPaneId: focusedPaneIdRef.current,
+                    },
+                  );
+                  if (!returnTargetPaneId) {
+                    await emitWorkspaceContentWindowEvent(
+                      event.payload.windowLabel,
+                      "workspace-file-window-return-failed",
+                      {
+                        documentId: event.payload.documentId,
+                        token: event.payload.token,
+                        message: tRef.current("pty.returnFailed", {
+                          error: tRef.current("pty.workspaceRestoring"),
+                        }),
+                      },
+                    ).catch(() => undefined);
+                    return;
+                  }
                   const returning = contentCoordinatorRef.current.beginReturn(
                     content,
                     event.payload.token,
                     "main",
-                    event.payload.targetPaneId,
+                    returnTargetPaneId,
                   );
                   if (returning?.outcome !== "changed") {
                     await emitWorkspaceContentWindowEvent(

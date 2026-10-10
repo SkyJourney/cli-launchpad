@@ -117,6 +117,29 @@ export interface WorkspaceReturnPlan {
 }
 
 /**
+ * Resolves the pane a return should target, using only panes that exist in the
+ * given tree: requested pane, then the pane the content last lived in, then the
+ * focused pane, then the first pane. Null only when the tree has no pane.
+ */
+export function resolveWorkspaceReturnPaneId(
+  tree: WorkspaceNode,
+  args: {
+    requestedPaneId?: string | null;
+    lastPaneId?: string | null;
+    focusedPaneId: string;
+  },
+): string | null {
+  for (const candidate of [
+    args.requestedPaneId,
+    args.lastPaneId,
+    args.focusedPaneId,
+  ]) {
+    if (candidate && findWorkspacePane(tree, candidate)) return candidate;
+  }
+  return listWorkspacePanes(tree)[0]?.id ?? null;
+}
+
+/**
  * Decides where returning content lands in the given (latest) tree.
  * Callers must pass `treeRef.current` read after every await of the return
  * pipeline, then commit the coordinator and the tree without awaiting.
