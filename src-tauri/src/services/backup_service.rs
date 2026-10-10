@@ -763,7 +763,7 @@ mod tests {
             .unwrap()
             .is_some());
             assert_eq!(directory_names(&db).len(), 2);
-            // 反向断言：守卫已释放，同一个 sessions 实例仍能启动会话。
+            // 反向断言：许可已释放，同一个 lifecycle 实例仍能准入 PTY 启动。
             assert!(lifecycle
                 .admit(crate::services::app_lifecycle::Operation::PtyStart)
                 .is_ok());
