@@ -71,8 +71,10 @@ impl CacheDb {
     }
 }
 
-/// The only entry point for blocking filesystem, process, `canonicalize`
-/// and executable-resolution work. A timed-out closure cannot be cancelled;
+/// The shared entry point for blocking filesystem, process, `canonicalize`
+/// and executable-resolution work. Adapter executable resolution inside the
+/// adapter budget calls `spawn_blocking` directly (`cli_adapters::context_within_budget`),
+/// which is allowed by R-RS-1. A timed-out closure cannot be cancelled;
 /// it keeps running on its pool thread and the caller gets `blocking.timeout`.
 pub async fn blocking<T: Send + 'static>(
     op: &'static str,
