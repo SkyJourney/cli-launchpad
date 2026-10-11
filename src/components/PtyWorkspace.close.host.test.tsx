@@ -25,6 +25,8 @@ import {
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
+import { act } from "@testing-library/react";
+import { createBackend, DIRECTORY } from "../test/host/workspaceHarness";
 
 let host: WorkspaceHost | undefined;
 afterEach(async () => {
@@ -72,6 +74,137 @@ describe("render-error placeholder", () => {
       expect(host.editor.releaseDocument).toHaveBeenCalledTimes(1);
       expect(host.editor.releaseDocument).toHaveBeenCalledWith(doc.id);
       // 反向断言：渲染错误被内容级 ErrorBoundary 吸收，没有冒泡到宿主。
+      expect(host.errors).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+});
+
+describe("editor model release", () => {
+  it("releases models of documents dropped by rehydrateWorkspace", async () => {
+    host = await mountWorkspace();
+    const doc = await openFile(host);
+
+    await act(async () => {
+      await host!.ctx().rehydrateWorkspace();
+    });
+    await flush();
+
+    expect(host.editor.releaseDocument).toHaveBeenCalledWith(doc.id);
+    // 反向断言：同一个 id 不得被释放两次（rehydrate 先释放，hydrate 内差集为空）。
+    expect(
+      host.editor.releaseDocument.mock.calls.filter(([id]) => id === doc.id),
+    ).toHaveLength(1);
+    expect(host.ctx().fileDocuments).toEqual([]);
+  });
+
+  it("releases models of documents replaced by retry hydration", async () => {
+    const backend = createBackend();
+    backend.handlers.set("get_workspace_layout", () => {
+      throw { code: "x", message: "boom" };
+    });
+    host = await mountWorkspace({ backend });
+    await flush();
+    expect(host.ctx().hydrationStatus).toBe("loadFailed");
+    const doc = await openFile(host);
+
+    backend.handlers.delete("get_workspace_layout");
+    backend.layout = {
+      status: { status: "ready" },
+      revision: 3,
+      schemaVersion: 5,
+      updatedAtMs: 1,
+      layout: {
+        schemaVersion: 5,
+        tree: {
+          kind: "pane",
+          id: "workspace-root",
+          paneNumber: 1,
+          contents: [],
+          activeContent: null,
+        },
+        focusedPaneId: "workspace-root",
+        slots: [],
+        documents: [],
+        detachedContents: [],
+      },
+      slotStates: [],
+    };
+    await act(async () => {
+      host!.ctx().retryHydration();
+    });
+    await flush();
+
+    expect(host.ctx().hydrationStatus).toBe("ready");
+    expect(host.ctx().fileDocuments).toEqual([]);
+    expect(host.editor.releaseDocument).toHaveBeenCalledWith(doc.id);
+    expect(
+      host.editor.releaseDocument.mock.calls.filter(([id]) => id === doc.id),
+    ).toHaveLength(1);
+  });
+
+  it("does not release a document kept across a named layout apply", async () => {
+    host = await mountWorkspace();
+    const doc = await openFile(host);
+    host.backend.handlers.set("plan_apply_workspace_layout_preset", () => ({
+      slotStates: [],
+      layout: {
+        schemaVersion: 5,
+        focusedPaneId: "workspace-root",
+        slots: [],
+        detachedContents: [],
+        documents: [
+          {
+            id: "preset-doc",
+            directoryId: DIRECTORY.id,
+            directoryPath: DIRECTORY.path,
+            relativePath: "a.txt",
+          },
+        ],
+        tree: {
+          kind: "pane",
+          id: "workspace-root",
+          paneNumber: 1,
+          contents: [{ kind: "file", documentId: "preset-doc" }],
+          activeContent: { kind: "file", documentId: "preset-doc" },
+        },
+      },
+    }));
+
+    await act(async () => {
+      await host!.ctx().applyWorkspaceLayoutPreset("preset-1");
+    });
+    await flush();
+
+    expect(host.editor.releaseDocument).not.toHaveBeenCalled();
+    expect(host.ctx().fileDocuments.map((document) => document.id)).toEqual([
+      doc.id,
+    ]);
+  });
+
+  it("a failing release hook does not break rehydration", async () => {
+    host = await mountWorkspace();
+    await openFile(host);
+    host.editor.releaseDocument.mockImplementationOnce(() => {
+      throw new Error("release exploded");
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      await act(async () => {
+        await host!.ctx().rehydrateWorkspace();
+      });
+      await flush();
+
+      expect(host.ctx().hydrationStatus).toBe("ready");
+      expect(
+        consoleError.mock.calls.some(
+          ([message]) => message === "Workspace file document release failed",
+        ),
+      ).toBe(true);
+      // 反向断言：释放失败没有冒泡成渲染错误。
       expect(host.errors).toEqual([]);
     } finally {
       consoleError.mockRestore();

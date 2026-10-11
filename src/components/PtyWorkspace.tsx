@@ -219,6 +219,8 @@ import {
   WorkspacePtySessionRegistry,
   type PtyWorkspaceSlot,
 } from "./WorkspacePtySessionRegistry";
+import { droppedFileDocumentIds } from "../lib/workspaceFileDocumentRelease";
+import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import "allotment/dist/style.css";
 
 type PtyWorkspaceHydrationStatus =
@@ -617,6 +619,26 @@ export function PtyWorkspaceProvider({
 
   persistLatestRef.current = () => persistWorkspaceSnapshot();
 
+  const releaseFileDocuments = useCallback((documentIds: readonly string[]) => {
+    if (documentIds.length === 0) return;
+    const dispose = tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose;
+    if (!dispose) return;
+    for (const documentId of documentIds) {
+      void (async () => {
+        try {
+          await dispose({
+            content: { kind: "file", documentId },
+            owner: { kind: "window", windowLabel: "main" },
+            generation: 0,
+            reason: "ownerEnded",
+          });
+        } catch (error) {
+          console.error("Workspace file document release failed", error);
+        }
+      })();
+    }
+  }, []);
+
   const hydrateWorkspace = useCallback(async () => {
     const requestId = ++hydrationRequestRef.current;
     setHydrationStatus("loading");
@@ -661,6 +683,12 @@ export function PtyWorkspaceProvider({
         treeRef.current = restoredSnapshot.tree;
         focusedPaneIdRef.current = restoredSnapshot.focusedPaneId;
         setSlots(restoredSlots);
+        releaseFileDocuments(
+          droppedFileDocumentIds(
+            fileDocumentsRef.current,
+            restoredSnapshot.documents ?? [],
+          ),
+        );
         setFileDocuments(restoredSnapshot.documents ?? []);
         setFileBuffers({});
         detachedByInstanceRef.current.clear();
@@ -706,7 +734,7 @@ export function PtyWorkspaceProvider({
       setHydrationError(formatAppError(reason, tRef.current));
       setHydrationStatus("loadFailed");
     }
-  }, [createSaveQueue]);
+  }, [createSaveQueue, releaseFileDocuments]);
 
   useEffect(() => {
     void hydrateWorkspace();
@@ -909,12 +937,15 @@ export function PtyWorkspaceProvider({
       treeRef.current = restoredTree;
       focusedPaneIdRef.current = restored.focusedPaneId;
       setSlots(restoredSlots);
+      releaseFileDocuments(
+        droppedFileDocumentIds(currentDocuments, nextDocuments),
+      );
       setFileDocuments(nextDocuments);
       fileDocumentsRef.current = nextDocuments;
       setTree(restoredTree);
       setFocusedPaneId(restored.focusedPaneId);
     },
-    [directories],
+    [directories, releaseFileDocuments],
   );
 
   const commitTree = useCallback((next: WorkspaceNode) => {
@@ -1035,12 +1066,15 @@ export function PtyWorkspaceProvider({
           pendingDetachedFilesRef.current.get(workspaceFileKey(document.id))
             ?.window;
         if (detachedWindow) {
-          await detachedWindow.setFocus().catch((error: unknown) => {
-            console.warn(
-              "[window.set_focus_failed] 无法聚焦独立工作区窗口",
-              error,
+          await detachedWindow
+            .setFocus()
+            .catch((error: unknown) =>
+              reportWindowSyncFailure(
+                "window.set_focus_failed",
+                error,
+                "无法聚焦独立工作区窗口",
+              ),
             );
-          });
           return;
         }
 
@@ -3906,6 +3940,9 @@ export function PtyWorkspaceProvider({
 
   const rehydrateWorkspace = useCallback(async () => {
     backupRestoreInProgressRef.current = false;
+    releaseFileDocuments(
+      fileDocumentsRef.current.map((document) => document.id),
+    );
     fileDocumentsRef.current.forEach((document) =>
       invalidateFileOperationGeneration(document.id),
     );
@@ -3929,7 +3966,7 @@ export function PtyWorkspaceProvider({
     setFocusedPaneId(initialPaneId);
     setWorkspaceTreeRevision((revision) => revision + 1);
     await hydrateWorkspace();
-  }, [hydrateWorkspace, initialPaneId]);
+  }, [hydrateWorkspace, initialPaneId, releaseFileDocuments]);
 
   const value = useMemo(
     () => ({

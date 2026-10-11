@@ -16,13 +16,10 @@ import {
 } from "../lib/appPreferencesMain";
 import { resolveThemeMode } from "../lib/themes";
 import { setTrayMenuLabels } from "../lib/tauri";
+import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import { useAppStore } from "../store/appStore";
 
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
-
-function reportWindowSyncFailure(code: string, error: unknown) {
-  console.warn(`[${code}] 原生窗口偏好同步失败`, error);
-}
 
 export function useThemeSync() {
   const themeMode = useAppStore((state) => state.themeMode);
