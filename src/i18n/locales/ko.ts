@@ -14,6 +14,8 @@ export const ko = {
       "프로젝트 폴더의 식별 정보가 변경되었습니다. 문서를 다시 불러오거나 다른 위치에 저장하세요.",
     ptyOwnerMismatch: "이 터미널 세션은 더 이상 현재 창에 속하지 않습니다.",
     ptyHandoffExpired: "터미널 전달 시간이 초과되었습니다. 다시 시도하세요.",
+    ptyHandoffTargetIsSource:
+      "대상 창이 원본 창과 같아 터미널을 넘길 수 없습니다.",
     ptyInputBackpressure:
       "터미널 입력 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.",
     ptyInputUnavailable:

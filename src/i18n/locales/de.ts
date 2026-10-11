@@ -16,6 +16,8 @@ export const de = {
       "Diese Terminal-Sitzung gehört nicht mehr zu diesem Fenster.",
     ptyHandoffExpired:
       "Die Übergabe des Terminals ist abgelaufen. Versuche es erneut.",
+    ptyHandoffTargetIsSource:
+      "Das Zielfenster ist das Quellfenster; das Terminal kann nicht übergeben werden.",
     ptyInputBackpressure:
       "Die Terminal-Eingabewarteschlange ist voll. Versuche es gleich erneut.",
     ptyInputUnavailable:

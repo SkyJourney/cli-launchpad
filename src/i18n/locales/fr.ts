@@ -15,6 +15,8 @@ export const fr = {
     ptyOwnerMismatch:
       "Cette session de terminal n’appartient plus à cette fenêtre.",
     ptyHandoffExpired: "Le transfert du terminal a expiré. Réessayez.",
+    ptyHandoffTargetIsSource:
+      "La fenêtre cible est la fenêtre source ; le terminal ne peut pas être transféré.",
     ptyInputBackpressure:
       "La file d’entrée du terminal est pleine. Réessayez dans un instant.",
     ptyInputUnavailable:

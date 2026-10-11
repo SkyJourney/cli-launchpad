@@ -17,6 +17,7 @@
     "internal.task_failed",
     "project.identity_changed",
     "project.not_found",
+    "pty.handoff_target_is_source",
     "pty.input_backpressure",
     "pty.input_unavailable",
     "pty.session_starting",

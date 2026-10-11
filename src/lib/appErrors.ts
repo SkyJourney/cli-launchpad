@@ -20,6 +20,7 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "internal.task_failed": "errors.internal",
   "project.identity_changed": "errors.fileIdentityChanged",
   "project.not_found": "errors.projectNotFound",
+  "pty.handoff_target_is_source": "errors.ptyHandoffTargetIsSource",
   "pty.input_backpressure": "errors.ptyInputBackpressure",
   "pty.input_unavailable": "errors.ptyInputUnavailable",
   "pty.session_starting": "errors.ptySessionStarting",

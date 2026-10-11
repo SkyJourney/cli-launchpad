@@ -1,15 +1,14 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 484,
-    "Linux": 490,
-    "macOS": 487
+    "Windows": 486,
+    "Linux": 492,
+    "macOS": 489
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
-    "platform::file_cas::tests::cross_process_cas_worker",
-    "services::pty_session_service::tests::handoff_target_equal_to_source_is_rejected"
+    "platform::file_cas::tests::cross_process_cas_worker"
   ],
   "required": {
     "all": [
@@ -205,7 +204,9 @@
       "platform::path_rules::tests::windows_component_violation_rejects_forbidden_characters_trailing_dots_and_controls",
       "platform::path_rules::tests::control_characters_are_rejected_on_every_platform",
       "services::cli_adapters::tests::claude_and_codex_require_canonical_uuid_session_ids",
-      "services::session_service::tests::canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms"
+      "services::session_service::tests::canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms",
+      "services::pty_session_service::tests::handoff_target_equal_to_source_is_rejected",
+      "services::pty_session_service::tests::handoff_target_rejection_keeps_the_pending_handoff_usable"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

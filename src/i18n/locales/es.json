@@ -6,6 +6,7 @@
     "fileIdentityChanged": "La identidad de la carpeta del proyecto cambió. Vuelve a cargar el documento o guárdalo en otra ubicación.",
     "ptyOwnerMismatch": "Esta sesión de terminal ya no pertenece a esta ventana.",
     "ptyHandoffExpired": "La transferencia del terminal venció. Inténtalo de nuevo.",
+    "ptyHandoffTargetIsSource": "La ventana de destino es la de origen; el terminal no se puede transferir.",
     "ptyInputBackpressure": "La cola de entrada del terminal está llena. Inténtalo en breve.",
     "ptyInputUnavailable": "El canal de entrada del terminal está cerrado. Vuelve a conectar la sesión.",
     "ptySessionsActive": "Restaurar una copia de seguridad o importar una configuración está bloqueado mientras haya {{count}} sesión(es) de terminal en ejecución. Ciérralas primero.",

@@ -1104,6 +1104,12 @@ impl PtySessionManager {
             .as_mut()
             .filter(|transfer| transfer.token == token)
             .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
+        if transfer.source_window_label == target_window_label {
+            return Err(AppError::coded(
+                crate::error_codes::PTY_HANDOFF_TARGET_IS_SOURCE,
+                "目标窗口与源窗口相同，无法交接终端",
+            ));
+        }
         if !session.flow.is_paused_at(transfer.sequence) {
             return Err(AppError::msg("终端窗口交接超时，请重试"));
         }
@@ -2807,7 +2813,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "待 m6-037"]
     fn handoff_target_equal_to_source_is_rejected() {
         // PD-09（已确认）：交接目标等于源窗口必须被拒绝，错误码 pty.handoff_target_is_source。
         // 当前代码返回 Ok（T2-N13），由 m6-037 实现拒绝逻辑后去掉 #[ignore]。
@@ -2830,6 +2835,41 @@ mod tests {
         );
         assert_eq!(manager.test_route(&s), before);
         assert_eq!(is_paused(&session), paused_before);
+    }
+
+    #[test]
+    fn handoff_target_rejection_keeps_the_pending_handoff_usable() {
+        // PD-09：拒绝不得写入目标或改变路由，之后用正确目标仍可完成同一次交接。
+        let manager = PtySessionManager::default();
+        let (s, session) = main_owned_session(&manager);
+        let h = manager.begin_handoff(&s, "main").unwrap();
+        manager
+            .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+            .unwrap();
+
+        let error = manager
+            .complete_handoff(&s, "main", &h.token, ch())
+            .unwrap_err();
+        let value = serde_json::to_value(&error).unwrap();
+        assert_eq!(value["code"], "pty.handoff_target_is_source");
+        assert!(value["message"]
+            .as_str()
+            .unwrap()
+            .contains("目标窗口与源窗口相同"));
+        assert!(session
+            .pending_handoff
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .target_window_label
+            .is_none());
+
+        manager
+            .complete_handoff(&s, T1, &h.token, recording_channel().0)
+            .unwrap();
+        manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
+        assert_eq!(manager.test_route(&s).window_label, T1);
     }
 
     #[test]

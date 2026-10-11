@@ -8,6 +8,8 @@ export const en = {
     ptyOwnerMismatch:
       "This terminal session is no longer owned by this window.",
     ptyHandoffExpired: "The terminal handoff expired. Try again.",
+    ptyHandoffTargetIsSource:
+      "The target window is the source window, so the terminal cannot be handed over.",
     ptyInputBackpressure:
       "The terminal input queue is full. Try again shortly.",
     ptyInputUnavailable:

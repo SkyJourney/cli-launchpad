@@ -17,6 +17,7 @@ pub const EXIT_REQUEST_MISMATCH: &str = "exit.request_mismatch";
 pub const INTERNAL_TASK_FAILED: &str = "internal.task_failed";
 pub const PROJECT_IDENTITY_CHANGED: &str = "project.identity_changed";
 pub const PROJECT_NOT_FOUND: &str = "project.not_found";
+pub const PTY_HANDOFF_TARGET_IS_SOURCE: &str = "pty.handoff_target_is_source";
 pub const PTY_INPUT_BACKPRESSURE: &str = "pty.input_backpressure";
 pub const PTY_INPUT_UNAVAILABLE: &str = "pty.input_unavailable";
 pub const PTY_SESSION_STARTING: &str = "pty.session_starting";
@@ -43,6 +44,7 @@ pub const ALL: &[&str] = &[
     INTERNAL_TASK_FAILED,
     PROJECT_IDENTITY_CHANGED,
     PROJECT_NOT_FOUND,
+    PTY_HANDOFF_TARGET_IS_SOURCE,
     PTY_INPUT_BACKPRESSURE,
     PTY_INPUT_UNAVAILABLE,
     PTY_SESSION_STARTING,

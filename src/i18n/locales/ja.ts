@@ -16,6 +16,8 @@ export const ja = {
       "このターミナルセッションは現在のウィンドウに属していません。",
     ptyHandoffExpired:
       "ターミナルの引き継ぎがタイムアウトしました。もう一度お試しください。",
+    ptyHandoffTargetIsSource:
+      "移行先ウィンドウが移行元と同じため、ターミナルを引き継げません。",
     ptyInputBackpressure:
       "ターミナル入力キューがいっぱいです。少し待ってから再試行してください。",
     ptyInputUnavailable:

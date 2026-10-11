@@ -6,6 +6,7 @@ export const zh = {
     fileIdentityChanged: "项目目录身份已变化，请重新载入文件或另存到其他位置。",
     ptyOwnerMismatch: "此终端会话已不属于当前窗口。",
     ptyHandoffExpired: "终端窗口交接已超时，请重试。",
+    ptyHandoffTargetIsSource: "目标窗口与源窗口相同，无法交接终端。",
     ptyInputBackpressure: "终端输入队列已满，请稍后重试。",
     ptyInputUnavailable: "终端输入通道已关闭，请重新连接会话。",
     ptySessionsActive:
