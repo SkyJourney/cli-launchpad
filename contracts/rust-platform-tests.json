@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 479,
-    "Linux": 484,
-    "macOS": 481
+    "Windows": 482,
+    "Linux": 488,
+    "macOS": 485
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -200,7 +200,10 @@
       "services::session_service::tests::session_ownership_check_is_bounded_by_budget",
       "services::session_service::tests::session_ownership_check_returns_the_adapter_result_within_budget",
       "services::execution_service::tests::run_task_delegates_panic_handling_to_supervise_task",
-      "services::execution_service::tests::supervised_task_panic_finishes_failed_and_releases_slot"
+      "services::execution_service::tests::supervised_task_panic_finishes_failed_and_releases_slot",
+      "platform::path_rules::tests::windows_reserved_device_names_cover_com0_lpt0_and_superscripts",
+      "platform::path_rules::tests::windows_component_violation_rejects_forbidden_characters_trailing_dots_and_controls",
+      "platform::path_rules::tests::control_characters_are_rejected_on_every_platform"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -269,7 +272,8 @@
       "platform::file_cas::tests::cas_checks_the_symlink_policy_again_after_locking",
       "services::file_service::tests::open_file_rejects_a_symlink_intermediate_directory",
       "services::file_service::tests::save_text_file_rejects_a_symlink_final_component",
-      "services::file_service::tests::list_directory_rejects_a_symlink_directory_argument"
+      "services::file_service::tests::list_directory_rejects_a_symlink_directory_argument",
+      "services::file_service::tests::control_character_file_names_are_handled_consistently_by_listing_and_layout"
     ],
     "Linux": [
       "services::file_service::tests::listing_scan_budget_covers_entries_skipped_for_unreadable_names",

@@ -1314,4 +1314,56 @@ mod tests {
             "hi"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn control_character_file_names_are_handled_consistently_by_listing_and_layout() {
+        use crate::models::workspace_layout::{
+            WorkspaceFileDocument, WorkspaceLayoutDocument, WorkspaceLayoutNode,
+            WorkspacePaneContentRef, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+        };
+
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("line\nbreak.txt"), "hidden").unwrap();
+        fs::write(directory.path().join("tab\tname.txt"), "hidden").unwrap();
+        fs::write(directory.path().join("ok.txt"), "visible").unwrap();
+
+        let listing = list_directory(directory.path(), "").unwrap();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, ["ok.txt"]);
+        assert!(listing.skipped_count >= 2);
+        assert!(open_file(directory.path(), "line\nbreak.txt").is_err());
+
+        let document_id = uuid::Uuid::new_v4().to_string();
+        let file = WorkspacePaneContentRef::File {
+            document_id: document_id.clone(),
+        };
+        let layout = WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![file.clone()],
+                active_content: Some(file),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: Vec::new(),
+            documents: vec![WorkspaceFileDocument {
+                id: document_id,
+                directory_id: 1,
+                directory_path: "/tmp/project".to_string(),
+                relative_path: "ok.txt".to_string(),
+            }],
+            detached_contents: Vec::new(),
+        };
+        layout.validate().unwrap();
+        let mut value = serde_json::to_value(&layout).unwrap();
+        assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_ok());
+        value["documents"][0]["relativePath"] = serde_json::json!("line\nbreak.txt");
+        assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_err());
+    }
 }
