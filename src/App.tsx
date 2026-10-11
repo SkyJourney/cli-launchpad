@@ -171,12 +171,17 @@ function AppContent() {
       }
       const { requestId, ptyCount, executionTaskCount } = payload;
       exitRequestIdRef.current = requestId;
+      // 新请求取代旧请求：先收起旧对话框，并解除旧确认的“终止中”，使屏幕上的内容
+      // 始终对应后端当前的待决请求；旧确认的结果会各自结束，不再影响新对话框。
+      setExitRequest(null);
+      setExitPending(false);
       setExitError(null);
       void collectExitImpacts(ptyCount)
         .then(async (collected) => {
           if (exitRequestIdRef.current !== requestId) return;
           const impacts: AppExitRequest = {
             ...collected,
+            requestId,
             executionTaskCount,
           };
           if (shouldExitWithoutPrompt(impacts)) {
@@ -184,9 +189,12 @@ function AppContent() {
             try {
               await confirmAppExit(requestId);
             } catch (error) {
+              // 无论是否已过期，这次确认都已结束：先解除“终止中”，否则新请求的对话框会被禁用。
+              setExitPending(false);
+              // 过期请求的失败不得覆盖当前对话框（R-EXIT-1）。
+              if (exitRequestIdRef.current !== requestId) return;
               // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
               // 不能停在“终止中”让两个按钮都被禁用。
-              setExitPending(false);
               setExitRequest(impacts);
               setExitError(formatAppError(error, tRef.current));
             }
@@ -205,6 +213,7 @@ function AppContent() {
               buffers: current.fileBuffers,
               uncertainDocumentIds: current.detachedFileIds,
             }),
+            requestId,
             executionTaskCount,
           });
           setExitError(formatAppError(error, tRef.current));
@@ -221,16 +230,17 @@ function AppContent() {
     };
   }, [collectExitImpacts]);
 
-  const quitWithActiveSessions = async () => {
-    const requestId = exitRequestIdRef.current;
-    if (requestId === null) return;
+  // requestId 必须来自对话框展示的那次请求（exitRequest.requestId），不得读取最新收到的请求。
+  const quitWithActiveSessions = async (requestId: string) => {
     setExitPending(true);
     setExitError(null);
     try {
       await confirmAppExit(requestId);
     } catch (error) {
-      setExitError(formatAppError(error, t));
       setExitPending(false);
+      // 确认的请求已被新请求取代：失败只属于旧对话框，不得显示在新对话框上。
+      if (exitRequestIdRef.current !== requestId) return;
+      setExitError(formatAppError(error, tRef.current));
     }
   };
 
@@ -409,7 +419,9 @@ function AppContent() {
               <button
                 className="primary-button"
                 disabled={exitPending}
-                onClick={() => void quitWithActiveSessions()}
+                onClick={() =>
+                  void quitWithActiveSessions(exitRequest.requestId)
+                }
               >
                 {exitPending
                   ? t("appExit.terminating")

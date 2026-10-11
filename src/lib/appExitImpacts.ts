@@ -6,8 +6,12 @@ export interface AppExitImpacts {
   dirtyFiles: Array<{ documentId: string; relativePath: string }>;
 }
 
-/** 退出对话框使用的请求：在退出影响之上附带 Rust 计算的活动执行任务数。 */
+/**
+ * 退出对话框使用的请求：在退出影响之上附带 Rust 计算的活动执行任务数，以及该次请求的 id。
+ * 确认时只能回传这个 id（对话框展示什么，就确认什么），不得读取最新收到的请求 id。
+ */
 export interface AppExitRequest extends AppExitImpacts {
+  requestId: string;
   executionTaskCount: number;
 }
 

@@ -361,23 +361,109 @@ describe("application exit requests", () => {
   it("ignores a superseded request whose impacts resolve after a newer request", async () => {
     // 无脏文件、无 PTY 的 req-1 本会静默退出；它的影响收集晚于 req-2 才完成，必须被丢弃。
     const host = await mountExitApp({ dirty: false });
-    await Promise.all([
-      emitBackendEvent("app-exit-requested", {
-        requestId: "req-1",
-        ptyCount: 0,
-        executionTaskCount: 0,
-      }),
-      emitBackendEvent("app-exit-requested", {
-        requestId: "req-2",
-        ptyCount: 1,
-        executionTaskCount: 0,
-      }),
-    ]);
+    // 两次投递放在同一个 act 中：不能用 Promise.all 叠加多个 emitBackendEvent（重叠的 act 会破坏后续渲染）。
+    await act(async () => {
+      tauriMock.emitEvent(
+        "app-exit-requested",
+        { requestId: "req-1", ptyCount: 0, executionTaskCount: 0 },
+        "main",
+      );
+      tauriMock.emitEvent(
+        "app-exit-requested",
+        { requestId: "req-2", ptyCount: 1, executionTaskCount: 0 },
+        "main",
+      );
+    });
     await flush(10);
 
     expect(invokes("confirm_app_exit")).toHaveLength(0);
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(host.errors).toEqual([]);
     expect(invokes("terminate_pty_session")).toHaveLength(0);
+  });
+});
+
+describe("application exit requests in flight", () => {
+  it("ignores a silent exit failure that belongs to a superseded request", async () => {
+    await mountExitApp({ dirty: false });
+    // 挂起静默路径的确认，使 req-1 的失败晚于 req-2 到达。
+    let rejectSilent: ((error: unknown) => void) | undefined;
+    host!.backend.handlers.set(
+      "confirm_app_exit",
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSilent = reject;
+        }),
+    );
+    await requestExit({ ptyCount: 0 }, "req-1");
+    await requestExit({ ptyCount: 1 }, "req-2");
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+    // 新请求的对话框不继承旧确认的“终止中”：确认按钮可用。
+    expect(
+      (
+        within(screen.getByRole("dialog")).getByText(
+          "appExit.confirmDiscard",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+
+    await act(async () => {
+      rejectSilent?.({
+        code: "exit.request_mismatch",
+        message: "stale",
+      });
+    });
+    await flush();
+
+    const dialog = screen.getByRole("dialog");
+    // 当前对话框仍是 req-2 的内容（ptyCount 1），没有被 req-1 的影响替换。
+    expect(dialog.textContent).toContain("appExit.description");
+    // 反向断言：过期失败没有显示在新对话框上，按钮已解除“终止中”。
+    expect(dialog.querySelector(".error")).toBeNull();
+    expect(dialog.textContent).not.toContain("appExit.terminating");
+    expect(
+      (within(dialog).getByText("appExit.confirmDiscard") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(invokes("terminate_pty_session")).toHaveLength(0);
+  });
+
+  it("ignores a confirm failure from the dialog that belongs to a superseded request", async () => {
+    await mountExitApp({ dirty: true });
+    // 挂起对话框确认，使 req-1 的失败晚于 req-2 到达。
+    let rejectConfirm: ((error: unknown) => void) | undefined;
+    host!.backend.handlers.set(
+      "confirm_app_exit",
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectConfirm = reject;
+        }),
+    );
+    await requestExit({ ptyCount: 0 }, "req-1");
+    await clickInDialog("appExit.confirmDiscard");
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+
+    await requestExit({ ptyCount: 1 }, "req-2");
+    await act(async () => {
+      rejectConfirm?.({
+        code: "exit.request_mismatch",
+        message: "stale",
+      });
+    });
+    await flush();
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("appExit.description");
+    // 反向断言：req-1 的确认失败不显示在 req-2 的对话框上，且 req-2 可以确认。
+    expect(dialog.querySelector(".error")).toBeNull();
+    expect(
+      (within(dialog).getByText("appExit.confirmDiscard") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      invokes("confirm_app_exit").map(
+        (call) => (call.args as { requestId?: string }).requestId,
+      ),
+    ).toEqual(["req-1"]);
   });
 });
