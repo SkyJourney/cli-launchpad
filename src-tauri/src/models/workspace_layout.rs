@@ -47,8 +47,77 @@ pub struct WorkspaceLayoutDocument {
     pub detached_contents: Vec<WorkspacePaneContentRef>,
 }
 
+pub const DEGRADED_FILE_KIND: &str = "invalidFile";
+pub const DEGRADED_FILE_REASON: &str = "文件名在当前平台上无效，已降级为占位";
+
+/// A file document replaced by an `Unknown` placeholder because its relative
+/// path violates this platform's file-name rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DegradedFileDocument {
+    pub document_id: String,
+    pub relative_path: String,
+    pub reason: String,
+}
+
 impl WorkspaceLayoutDocument {
     pub fn from_json(json: &str) -> Result<Self, WorkspaceLayoutError> {
+        let document = Self::parse_migrated(json)?;
+        document.validate()?;
+        Ok(document)
+    }
+
+    /// Like `from_json`, but a file document whose only defect is a path-rule
+    /// violation is replaced by a placeholder instead of failing the layout.
+    pub fn from_json_degrading_invalid_files(
+        json: &str,
+    ) -> Result<(Self, Vec<DegradedFileDocument>), WorkspaceLayoutError> {
+        let mut document = Self::parse_migrated(json)?;
+        let degraded = document.degrade_invalid_file_documents();
+        document.validate()?;
+        Ok((document, degraded))
+    }
+
+    fn degrade_invalid_file_documents(&mut self) -> Vec<DegradedFileDocument> {
+        let documents = std::mem::take(&mut self.documents);
+        let (invalid, valid): (Vec<_>, Vec<_>) = documents
+            .into_iter()
+            .partition(is_platform_invalid_file_path);
+        self.documents = valid;
+        if invalid.is_empty() {
+            return Vec::new();
+        }
+
+        let mut placeholders = HashMap::with_capacity(invalid.len());
+        let mut degraded = Vec::with_capacity(invalid.len());
+        for document in invalid {
+            degraded.push(DegradedFileDocument {
+                document_id: document.id.clone(),
+                relative_path: document.relative_path.clone(),
+                reason: DEGRADED_FILE_REASON.to_string(),
+            });
+            let placeholder = WorkspacePaneContentRef::Unknown {
+                original_kind: DEGRADED_FILE_KIND.to_string(),
+                raw: serde_json::json!({
+                    "kind": DEGRADED_FILE_KIND,
+                    "documentId": document.id,
+                    "directoryId": document.directory_id,
+                    "directoryPath": document.directory_path,
+                    "relativePath": document.relative_path,
+                    "reason": DEGRADED_FILE_REASON,
+                    "incomplete": true,
+                }),
+            };
+            placeholders.insert(document.id, placeholder);
+        }
+
+        replace_file_references(&mut self.tree, &placeholders);
+        for content in &mut self.detached_contents {
+            replace_file_reference(content, &placeholders);
+        }
+        degraded
+    }
+
+    fn parse_migrated(json: &str) -> Result<Self, WorkspaceLayoutError> {
         if json.len() > MAX_WORKSPACE_LAYOUT_BYTES {
             return Err(WorkspaceLayoutError::PayloadTooLarge);
         }
@@ -69,7 +138,6 @@ impl WorkspaceLayoutDocument {
         }
         let document: Self = serde_json::from_value(value)
             .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
-        document.validate()?;
         Ok(document)
     }
 
@@ -695,6 +763,66 @@ fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError>
         validate_text(title, MAX_CUSTOM_TITLE_CHARS, "自定义标题")?;
     }
     Ok(())
+}
+
+/// Only a path-rule violation may degrade a file document; every other defect
+/// keeps the whole layout in `NeedsReset`.
+fn is_platform_invalid_file_path(document: &WorkspaceFileDocument) -> bool {
+    validate_uuid(&document.id, "文件文档 ID").is_ok()
+        && document.directory_id > 0
+        && validate_text(
+            &document.directory_path,
+            MAX_DIRECTORY_PATH_CHARS,
+            "文件项目路径",
+        )
+        .is_ok()
+        && validate_text(
+            &document.relative_path,
+            MAX_DIRECTORY_PATH_CHARS,
+            "项目内相对路径",
+        )
+        .is_ok()
+        && !document.relative_path.is_empty()
+        && crate::services::project_directory::ProjectDirectory::validate_relative_path(
+            &document.relative_path,
+        )
+        .is_err()
+}
+
+fn replace_file_references(
+    node: &mut WorkspaceLayoutNode,
+    placeholders: &HashMap<String, WorkspacePaneContentRef>,
+) {
+    match node {
+        WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } => {
+            for content in contents.iter_mut() {
+                replace_file_reference(content, placeholders);
+            }
+            if let Some(active) = active_content {
+                replace_file_reference(active, placeholders);
+            }
+        }
+        WorkspaceLayoutNode::Split { first, second, .. } => {
+            replace_file_references(first, placeholders);
+            replace_file_references(second, placeholders);
+        }
+    }
+}
+
+fn replace_file_reference(
+    content: &mut WorkspacePaneContentRef,
+    placeholders: &HashMap<String, WorkspacePaneContentRef>,
+) {
+    let WorkspacePaneContentRef::File { document_id } = content else {
+        return;
+    };
+    if let Some(placeholder) = placeholders.get(document_id.as_str()) {
+        *content = placeholder.clone();
+    }
 }
 
 fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), WorkspaceLayoutError> {
@@ -1534,6 +1662,107 @@ mod tests {
         assert!(
             message.contains("unsupported legacy fixture version"),
             "{message}"
+        );
+    }
+
+    #[test]
+    fn degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest() {
+        use crate::models::tool::ToolKey;
+
+        let slot_id = Uuid::new_v4().to_string();
+        let ok_id = Uuid::new_v4().to_string();
+        let bad_id = Uuid::new_v4().to_string();
+        let detached_bad_id = Uuid::new_v4().to_string();
+        let document = |id: &str, relative_path: &str| WorkspaceFileDocument {
+            id: id.to_string(),
+            directory_id: 1,
+            directory_path: "/tmp/project".to_string(),
+            relative_path: relative_path.to_string(),
+        };
+        let file = |id: &str| WorkspacePaneContentRef::File {
+            document_id: id.to_string(),
+        };
+        let ok_file = file(&ok_id);
+        let layout = WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![
+                    WorkspacePaneContentRef::Pty {
+                        slot_id: slot_id.clone(),
+                    },
+                    ok_file.clone(),
+                    file(&bad_id),
+                ],
+                active_content: Some(ok_file.clone()),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: vec![WorkspaceLayoutSlot {
+                instance_id: slot_id.clone(),
+                directory_id: 1,
+                directory_path: "/tmp/project".to_string(),
+                project_name: "project".to_string(),
+                tool_key: ToolKey::Claude,
+                sequence: 1,
+                session_id: None,
+                resume_session_id: None,
+                title: WorkspaceSlotTitle::Automatic,
+            }],
+            documents: vec![
+                document(&ok_id, "ok.txt"),
+                document(&bad_id, "ok2.txt"),
+                document(&detached_bad_id, "ok3.txt"),
+            ],
+            detached_contents: vec![file(&detached_bad_id)],
+        };
+        layout.validate().unwrap();
+        let mut value = serde_json::to_value(&layout).unwrap();
+        value["documents"][1]["relativePath"] = serde_json::json!("a//b.txt");
+        value["documents"][2]["relativePath"] = serde_json::json!("c//d.txt");
+        let json = value.to_string();
+
+        assert!(WorkspaceLayoutDocument::from_json(&json).is_err());
+        let (degraded_layout, degraded) =
+            WorkspaceLayoutDocument::from_json_degrading_invalid_files(&json).unwrap();
+        assert_eq!(degraded_layout.documents.len(), 1);
+        assert_eq!(degraded_layout.documents[0].id, ok_id);
+        let degraded_paths: Vec<&str> = degraded
+            .iter()
+            .map(|item| item.relative_path.as_str())
+            .collect();
+        assert_eq!(degraded_paths, ["a//b.txt", "c//d.txt"]);
+        assert!(degraded
+            .iter()
+            .all(|item| item.reason == DEGRADED_FILE_REASON));
+
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = &degraded_layout.tree
+        else {
+            panic!("the root must remain a pane");
+        };
+        assert_eq!(contents[0], WorkspacePaneContentRef::Pty { slot_id });
+        assert_eq!(contents[1], ok_file);
+        assert!(matches!(
+            &contents[2],
+            WorkspacePaneContentRef::Unknown { original_kind, .. } if original_kind == DEGRADED_FILE_KIND
+        ));
+        assert_eq!(active_content.as_ref(), Some(&ok_file));
+        assert_eq!(degraded_layout.detached_contents.len(), 1);
+        assert!(matches!(
+            &degraded_layout.detached_contents[0],
+            WorkspacePaneContentRef::Unknown { original_kind, .. } if original_kind == DEGRADED_FILE_KIND
+        ));
+        degraded_layout.validate().unwrap();
+
+        let mut broken = value.clone();
+        broken["documents"][0]["id"] = serde_json::json!("x");
+        assert!(
+            WorkspaceLayoutDocument::from_json_degrading_invalid_files(&broken.to_string())
+                .is_err()
         );
     }
 }

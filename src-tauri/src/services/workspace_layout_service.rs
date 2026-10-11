@@ -75,8 +75,18 @@ pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, Ap
             "布局 JSON 版本与数据库版本不一致".to_string(),
         )));
     }
-    let layout = match WorkspaceLayoutDocument::from_json(&row.payload_json) {
-        Ok(layout) => layout,
+    let layout = match WorkspaceLayoutDocument::from_json_degrading_invalid_files(&row.payload_json)
+    {
+        Ok((layout, degraded)) => {
+            for item in &degraded {
+                log::warn!(
+                    "当前布局的文件引用在本平台无效，已降级为占位 document_id={} path={}",
+                    item.document_id,
+                    item.relative_path
+                );
+            }
+            layout
+        }
         Err(error) => {
             return Ok(LayoutReadStage::Done(needs_reset(
                 row.revision,
@@ -122,8 +132,10 @@ pub fn save_current(
                 "当前布局版本不受支持；请先显式重置工作区后再保存",
             ));
         }
-        let stored = WorkspaceLayoutDocument::from_json(&current.payload_json)
-            .map_err(|error| AppError::msg(format!("当前布局需要显式重置：{error}")))?;
+        let stored =
+            WorkspaceLayoutDocument::from_json_degrading_invalid_files(&current.payload_json)
+                .map(|(layout, _)| layout)
+                .map_err(|error| AppError::msg(format!("当前布局需要显式重置：{error}")))?;
         if source_layout_version(&current.payload_json) != Some(current.schema_version) {
             return Err(AppError::msg("当前布局版本信息不一致；请先显式重置工作区"));
         }
@@ -166,7 +178,8 @@ fn save_result_from_outcome(
 pub fn reset_current(connection: &mut Connection) -> Result<i64, AppError> {
     if let Some(current) = workspace_layout_repo::get_current(connection)? {
         if is_supported_layout_version(current.schema_version)
-            && WorkspaceLayoutDocument::from_json(&current.payload_json).is_ok()
+            && WorkspaceLayoutDocument::from_json_degrading_invalid_files(&current.payload_json)
+                .is_ok()
         {
             return Err(AppError::msg("当前布局可以正常读取，无需执行恢复性重置"));
         }
@@ -1806,5 +1819,140 @@ mod tests {
             resolve_slot_with(&facts, &mut missing.slots[0]).state,
             WorkspaceSlotStateKind::MissingProject
         );
+    }
+
+    fn current_row_with_file_path(
+        connection: &Connection,
+        revision: i64,
+        relative_path: &str,
+    ) -> String {
+        let mut layout = layout_with_slot(1, "/tmp/project", "project", None);
+        let document_id = Uuid::new_v4().to_string();
+        layout
+            .documents
+            .push(crate::models::workspace_layout::WorkspaceFileDocument {
+                id: document_id.clone(),
+                directory_id: 1,
+                directory_path: "/tmp/project".to_string(),
+                relative_path: "ok.txt".to_string(),
+            });
+        if let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = &mut layout.tree
+        {
+            let file = WorkspacePaneContentRef::File {
+                document_id: document_id.clone(),
+            };
+            contents.push(file.clone());
+            *active_content = Some(file);
+        }
+        layout.validate().unwrap();
+        let mut value = serde_json::to_value(&layout).unwrap();
+        value["documents"][0]["relativePath"] = serde_json::json!(relative_path);
+        connection
+            .execute(
+                "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, 5, ?1, ?2, 10)",
+                rusqlite::params![revision, value.to_string()],
+            )
+            .unwrap();
+        document_id
+    }
+
+    fn assert_file_degrades_to_placeholder(
+        connection: &mut Connection,
+        document_id: &str,
+        relative_path: &str,
+    ) {
+        let read = read_current(connection).unwrap();
+        assert!(
+            matches!(read.status, WorkspaceLayoutStateStatus::Ready),
+            "{:?}",
+            read.status
+        );
+        let layout = read.layout.clone().expect("a degradable layout must load");
+        assert!(layout.documents.is_empty());
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = &layout.tree
+        else {
+            panic!("the root must remain a pane");
+        };
+        assert_eq!(contents.len(), 2);
+        assert!(matches!(contents[0], WorkspacePaneContentRef::Pty { .. }));
+        let WorkspacePaneContentRef::Unknown { original_kind, raw } = &contents[1] else {
+            panic!(
+                "the file reference must become a placeholder: {:?}",
+                contents[1]
+            );
+        };
+        assert_eq!(original_kind, "invalidFile");
+        assert_eq!(raw["documentId"], document_id);
+        assert_eq!(raw["relativePath"], relative_path);
+        assert!(raw["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()));
+        assert_eq!(raw["incomplete"], true);
+        assert_eq!(active_content.as_ref(), Some(&contents[1]));
+        assert_eq!(layout.focused_pane_id, "workspace-root");
+        assert_eq!(layout.slots.len(), 1);
+        layout.validate().unwrap();
+
+        let revision = read.revision.unwrap();
+        let saved = save_current(connection, revision + 1, &layout).unwrap();
+        assert!(saved.saved, "a degraded layout must be saveable: {saved:?}");
+
+        let reread = read_current(connection).unwrap();
+        assert!(matches!(reread.status, WorkspaceLayoutStateStatus::Ready));
+        let stable = reread.layout.expect("the saved layout must load");
+        assert!(stable.documents.is_empty());
+        let WorkspaceLayoutNode::Pane { contents, .. } = &stable.tree else {
+            panic!("the root must remain a pane");
+        };
+        assert_eq!(
+            contents
+                .iter()
+                .filter(|content| matches!(content, WorkspacePaneContentRef::Unknown { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_layout_with_platform_invalid_file_name_degrades_the_item() {
+        let mut connection = database();
+        let document_id = current_row_with_file_path(&connection, 3, "notes:final.txt");
+        assert_file_degrades_to_placeholder(&mut connection, &document_id, "notes:final.txt");
+    }
+
+    #[test]
+    fn current_layout_with_an_invalid_file_path_degrades_the_item() {
+        let mut connection = database();
+        let document_id = current_row_with_file_path(&connection, 3, "a//b.txt");
+        assert!(reset_current(&mut connection).is_err());
+        assert_file_degrades_to_placeholder(&mut connection, &document_id, "a//b.txt");
+    }
+
+    #[test]
+    fn current_layout_with_a_structurally_invalid_file_document_still_needs_reset() {
+        let mut connection = database();
+        let document_id = current_row_with_file_path(&connection, 3, "ok.txt");
+        connection
+            .execute(
+                "update workspace_state set payload_json = replace(payload_json, ?1, 'not-a-uuid') where id = 1",
+                rusqlite::params![document_id],
+            )
+            .unwrap();
+        let read = read_current(&connection).unwrap();
+        assert!(matches!(
+            read.status,
+            WorkspaceLayoutStateStatus::NeedsReset(_)
+        ));
+        assert!(read.layout.is_none());
+        assert!(save_current(&mut connection, 4, &empty_layout()).is_err());
     }
 }

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 486,
-    "Linux": 492,
-    "macOS": 489
+    "Windows": 490,
+    "Linux": 495,
+    "macOS": 492
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -206,7 +206,10 @@
       "services::cli_adapters::tests::claude_and_codex_require_canonical_uuid_session_ids",
       "services::session_service::tests::canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms",
       "services::pty_session_service::tests::handoff_target_equal_to_source_is_rejected",
-      "services::pty_session_service::tests::handoff_target_rejection_keeps_the_pending_handoff_usable"
+      "services::pty_session_service::tests::handoff_target_rejection_keeps_the_pending_handoff_usable",
+      "services::workspace_layout_service::tests::current_layout_with_an_invalid_file_path_degrades_the_item",
+      "services::workspace_layout_service::tests::current_layout_with_a_structurally_invalid_file_document_still_needs_reset",
+      "models::workspace_layout::tests::degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -240,7 +243,8 @@
       "services::session_service::tests::paths_match_ignores_separators_and_case",
       "platform::execution_process::windows::tests::tree_worker_waits_for_the_dedicated_job_before_spawning",
       "platform::file_location::tests::locate_rejects_a_junction_intermediate_component",
-      "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory"
+      "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory",
+      "services::workspace_layout_service::tests::current_layout_with_platform_invalid_file_name_degrades_the_item"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",
