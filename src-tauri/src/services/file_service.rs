@@ -884,6 +884,35 @@ mod tests {
         assert!(listing.entries.len() + listing.skipped_count <= 2);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_rejects_creating_non_utf8_file_names() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempdir().unwrap();
+        let name = std::ffi::OsStr::from_bytes(b"bad-\xff.txt");
+        let error = fs::write(directory.path().join(name), "never stored")
+            .expect_err("macOS must refuse to create a file whose name is not valid UTF-8");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::EILSEQ),
+            "unexpected error: {error:?}"
+        );
+
+        // Nothing was created: the raw directory is empty and the listing has nothing to skip.
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        let listing = list_directory(directory.path(), "").unwrap();
+        assert!(listing.entries.is_empty());
+        assert_eq!(listing.skipped_count, 0);
+
+        // Reverse: a valid UTF-8 name is created, listed and not skipped.
+        fs::write(directory.path().join("good.txt"), "stored").unwrap();
+        let listing = list_directory(directory.path(), "").unwrap();
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "good.txt");
+        assert_eq!(listing.skipped_count, 0);
+    }
+
     #[test]
     fn directory_listing_is_bounded_and_reports_truncation() {
         let directory = tempdir().unwrap();

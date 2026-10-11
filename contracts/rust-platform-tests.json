@@ -3,7 +3,7 @@
   "minimumPassed": {
     "Windows": 490,
     "Linux": 495,
-    "macOS": 492
+    "macOS": 493
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -289,7 +289,8 @@
       "platform::file_cas::tests::cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement"
     ],
     "macOS": [
-      "services::install_service::tests::macos_installs_use_fixed_official_scripts"
+      "services::install_service::tests::macos_installs_use_fixed_official_scripts",
+      "services::file_service::tests::macos_rejects_creating_non_utf8_file_names"
     ]
   }
 }
