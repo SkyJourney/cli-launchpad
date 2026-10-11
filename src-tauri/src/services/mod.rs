@@ -1,6 +1,7 @@
 pub mod app_lifecycle;
 pub mod backup_service;
 pub mod cache_service;
+pub mod clean_exit_marker;
 pub mod cli_adapters;
 pub mod cli_detect_service;
 pub mod config_service;
@@ -14,6 +15,7 @@ pub mod launch_service;
 pub mod project_directory;
 pub mod pty_session_service;
 pub mod session_service;
+pub mod startup_notices;
 pub mod storage_service;
 pub mod version_service;
 pub mod window_lifecycle;

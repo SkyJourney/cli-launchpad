@@ -66,5 +66,6 @@
   "update_workspace_layout_preset",
   "rename_workspace_layout_preset",
   "delete_workspace_layout_preset",
-  "plan_apply_workspace_layout_preset"
+  "plan_apply_workspace_layout_preset",
+  "take_startup_notices"
 ]

@@ -3646,6 +3646,26 @@ h1 {
   margin-top: 4px;
 }
 
+.startup-notice {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  bottom: 16px;
+  box-shadow: 0 8px 28px var(--color-dialog-shadow);
+  display: flex;
+  gap: 12px;
+  inset-inline-end: 16px;
+  max-width: 420px;
+  padding: 10px 14px;
+  position: fixed;
+  z-index: 900;
+}
+
+.startup-notice p {
+  margin: 0;
+}
+
 .project-dialog-backdrop {
   align-items: center;
   background: var(--color-dialog-backdrop);

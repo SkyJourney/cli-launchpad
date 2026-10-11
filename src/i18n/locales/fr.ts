@@ -126,6 +126,13 @@ export const fr = {
     confirmDiscard: "Abandonner les modifications et quitter",
     terminating: "Fermeture en cours…",
   },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad ne s’est pas fermé normalement la dernière fois. Les modifications non enregistrées ont peut-être été perdues.",
+    abnormalExitWithTime:
+      "CLI Launchpad ne s’est pas fermé normalement la dernière fois (démarré {{time}}). Les modifications non enregistrées ont peut-être été perdues.",
+    dismiss: "Fermer",
+  },
   appCrash: {
     title: "Une erreur inattendue s’est produite",
     description:

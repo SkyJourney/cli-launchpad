@@ -126,6 +126,13 @@ export const pt = {
     confirmDiscard: "Descartar alterações e sair",
     terminating: "Saindo…",
   },
+  startupNotice: {
+    abnormalExit:
+      "O CLI Launchpad não foi encerrado normalmente da última vez. As edições não salvas podem ter sido perdidas.",
+    abnormalExitWithTime:
+      "O CLI Launchpad não foi encerrado normalmente da última vez (iniciado em {{time}}). As edições não salvas podem ter sido perdidas.",
+    dismiss: "Fechar",
+  },
   appCrash: {
     title: "Ocorreu um erro inesperado",
     description:

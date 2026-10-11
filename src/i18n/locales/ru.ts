@@ -120,6 +120,13 @@ export const ru = {
     confirmDiscard: "Отменить изменения и выйти",
     terminating: "Выход…",
   },
+  startupNotice: {
+    abnormalExit:
+      "В прошлый раз CLI Launchpad завершился нештатно. Несохранённые изменения могут быть потеряны.",
+    abnormalExitWithTime:
+      "В прошлый раз CLI Launchpad (запущен {{time}}) завершился нештатно. Несохранённые изменения могут быть потеряны.",
+    dismiss: "Закрыть",
+  },
   appCrash: {
     title: "Произошла непредвиденная ошибка",
     description:

@@ -131,6 +131,11 @@ pub fn run() {
                     .build(),
             )?;
             log::info!("application startup storage_root={}", paths.root.display());
+            let previous_exit = services::clean_exit_marker::begin_session(
+                &paths,
+                services::execution_service::now_ms(),
+            );
+            log::info!("previous session exit state={previous_exit:?}");
 
             // Register after storage migration so prior window state is available
             // on the first launch under the stable Tauri identifier. Visibility
@@ -247,6 +252,9 @@ pub fn run() {
             services::cache_service::remove_prefix(&cache, "sessions:")
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             app.manage(CacheDb(Arc::new(Mutex::new(cache))));
+            app.manage(
+                services::startup_notices::StartupNotices::from_previous_exit(&previous_exit),
+            );
             app.manage(paths);
 
             // 托盘创建失败不能让应用启动失败：降级后主窗口关闭一律走“退出”确认。
@@ -324,6 +332,7 @@ pub fn run() {
             commands::workspace_layout::rename_workspace_layout_preset,
             commands::workspace_layout::delete_workspace_layout_preset,
             commands::workspace_layout::plan_apply_workspace_layout_preset,
+            commands::startup_notice::take_startup_notices,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
@@ -443,6 +452,13 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                 services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {
                     api.prevent_exit();
                 }
+            }
+        }
+        tauri::RunEvent::Exit => {
+            // Graceful exit reached (ExitRequested was not prevented): clear the
+            // running marker. Never do this in ExitRequested, which can be prevented.
+            if let Some(paths) = app.try_state::<services::storage_service::StoragePaths>() {
+                services::clean_exit_marker::end_session_cleanly(&paths);
             }
         }
         #[cfg(target_os = "macos")]

@@ -767,6 +767,15 @@ export function confirmAppExit() {
   return invoke<void>("confirm_app_exit");
 }
 
+export interface StartupNotice {
+  kind: "abnormal_exit_detected";
+  startedAtMs: number | null;
+}
+
+export function takeStartupNotices() {
+  return invoke<StartupNotice[]>("take_startup_notices");
+}
+
 export function getCloseBehavior() {
   return invoke<CloseBehavior>("get_close_behavior");
 }

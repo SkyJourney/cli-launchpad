@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 430,
-    "Linux": 431,
-    "macOS": 428
+    "Windows": 439,
+    "Linux": 440,
+    "macOS": 437
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -151,7 +151,16 @@
       "contracts::reserved_and_frontend_codes_have_no_rust_producer",
       "contracts::event_contract_matches_rust_event_constants",
       "contracts::rust_event_names_are_only_spelled_in_the_events_module",
-      "contracts::event_contract_entries_are_well_formed"
+      "contracts::event_contract_entries_are_well_formed",
+      "services::clean_exit_marker::tests::first_run_has_no_marker_and_writes_one",
+      "services::clean_exit_marker::tests::clean_exit_removes_the_marker",
+      "services::clean_exit_marker::tests::leftover_marker_reports_abnormal_with_the_previous_start_time",
+      "services::clean_exit_marker::tests::corrupt_marker_is_still_abnormal_not_an_error",
+      "services::clean_exit_marker::tests::unwritable_data_dir_never_blocks_startup",
+      "services::clean_exit_marker::tests::end_session_is_idempotent",
+      "services::clean_exit_marker::tests::marker_is_started_only_from_setup_and_cleared_only_on_graceful_exit",
+      "services::startup_notices::tests::startup_notice_is_taken_exactly_once",
+      "services::startup_notices::tests::startup_notice_serializes_kind_and_camel_case_started_at"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

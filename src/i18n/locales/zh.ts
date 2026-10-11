@@ -102,6 +102,12 @@ export const zh = {
     confirmDiscard: "放弃更改并退出",
     terminating: "正在退出…",
   },
+  startupNotice: {
+    abnormalExit: "上次 CLI Launchpad 未正常退出，未保存的编辑可能丢失。",
+    abnormalExitWithTime:
+      "上次 CLI Launchpad（启动于 {{time}}）未正常退出，未保存的编辑可能丢失。",
+    dismiss: "关闭",
+  },
   appCrash: {
     title: "出现了意外错误",
     description:

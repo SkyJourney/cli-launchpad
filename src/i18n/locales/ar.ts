@@ -117,6 +117,13 @@ export const ar = {
     confirmDiscard: "تجاهل التغييرات والخروج",
     terminating: "جارٍ الخروج…",
   },
+  startupNotice: {
+    abnormalExit:
+      "لم يُغلق CLI Launchpad بشكل طبيعي في المرة السابقة. قد تكون التعديلات غير المحفوظة قد فُقدت.",
+    abnormalExitWithTime:
+      "لم يُغلق CLI Launchpad بشكل طبيعي في المرة السابقة (بدأ في {{time}}). قد تكون التعديلات غير المحفوظة قد فُقدت.",
+    dismiss: "إغلاق",
+  },
   appCrash: {
     title: "حدث خطأ غير متوقع",
     description:

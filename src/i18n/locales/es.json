@@ -98,6 +98,11 @@
     "confirmDiscard": "Descartar cambios y salir",
     "terminating": "Saliendo..."
   },
+  "startupNotice": {
+    "abnormalExit": "CLI Launchpad no se cerró correctamente la última vez. Es posible que se hayan perdido las ediciones sin guardar.",
+    "abnormalExitWithTime": "CLI Launchpad no se cerró correctamente la última vez (iniciado {{time}}). Es posible que se hayan perdido las ediciones sin guardar.",
+    "dismiss": "Cerrar"
+  },
   "appCrash": {
     "title": "Se produjo un error inesperado",
     "description": "CLI Launchpad encontró un error inesperado en esta ventana. Al recargar, la ventana se reinicia; es posible que se pierdan las ediciones sin guardar.",

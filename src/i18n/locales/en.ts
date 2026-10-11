@@ -113,6 +113,13 @@ export const en = {
     confirmDiscard: "Discard changes and quit",
     terminating: "Quitting…",
   },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad did not exit normally last time. Unsaved edits may be lost.",
+    abnormalExitWithTime:
+      "CLI Launchpad did not exit normally last time (started {{time}}). Unsaved edits may be lost.",
+    dismiss: "Dismiss",
+  },
   appCrash: {
     title: "Something went wrong",
     description:

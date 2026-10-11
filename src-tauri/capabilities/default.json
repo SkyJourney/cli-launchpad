@@ -94,6 +94,7 @@
     "allow-update-workspace-layout-preset",
     "allow-rename-workspace-layout-preset",
     "allow-delete-workspace-layout-preset",
-    "allow-plan-apply-workspace-layout-preset"
+    "allow-plan-apply-workspace-layout-preset",
+    "allow-take-startup-notices"
   ]
 }

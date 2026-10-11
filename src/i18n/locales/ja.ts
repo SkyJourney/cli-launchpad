@@ -124,6 +124,13 @@ export const ja = {
     confirmDiscard: "変更を破棄して終了",
     terminating: "終了しています…",
   },
+  startupNotice: {
+    abnormalExit:
+      "前回の CLI Launchpad は正常に終了しませんでした。未保存の編集内容が失われた可能性があります。",
+    abnormalExitWithTime:
+      "前回の CLI Launchpad（{{time}} に起動）は正常に終了しませんでした。未保存の編集内容が失われた可能性があります。",
+    dismiss: "閉じる",
+  },
   appCrash: {
     title: "予期しないエラーが発生しました",
     description:

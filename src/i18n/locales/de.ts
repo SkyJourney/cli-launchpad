@@ -129,6 +129,13 @@ export const de = {
     confirmDiscard: "Änderungen verwerfen und schließen",
     terminating: "Wird beendet…",
   },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad wurde beim letzten Mal nicht ordnungsgemäß beendet. Nicht gespeicherte Änderungen sind möglicherweise verloren gegangen.",
+    abnormalExitWithTime:
+      "CLI Launchpad wurde beim letzten Mal (gestartet {{time}}) nicht ordnungsgemäß beendet. Nicht gespeicherte Änderungen sind möglicherweise verloren gegangen.",
+    dismiss: "Schließen",
+  },
   appCrash: {
     title: "Ein unerwarteter Fehler ist aufgetreten",
     description:

@@ -118,6 +118,13 @@ export const ko = {
     confirmDiscard: "변경 사항을 버리고 종료",
     terminating: "종료 중…",
   },
+  startupNotice: {
+    abnormalExit:
+      "지난번에 CLI Launchpad가 정상적으로 종료되지 않았습니다. 저장하지 않은 편집 내용이 사라졌을 수 있습니다.",
+    abnormalExitWithTime:
+      "지난번에 CLI Launchpad({{time}}에 시작됨)가 정상적으로 종료되지 않았습니다. 저장하지 않은 편집 내용이 사라졌을 수 있습니다.",
+    dismiss: "닫기",
+  },
   appCrash: {
     title: "예기치 않은 오류가 발생했습니다",
     description:

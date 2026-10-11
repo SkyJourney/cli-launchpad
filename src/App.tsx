@@ -14,6 +14,7 @@ import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
 import { AppLogo } from "./components/AppLogo";
 import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
 import { WorkspaceDataRestoreListener } from "./components/WorkspaceDataRestoreListener";
+import { StartupNotices } from "./components/StartupNotices";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
 import { formatAppError } from "./lib/appErrors";
@@ -127,8 +128,13 @@ function AppContent() {
   const tRef = useRef(t);
   tRef.current = t;
   useWindowLevelBehaviors();
-  const { collectExitImpacts, fileDocuments, fileBuffers, detachedFileIds } =
-    usePtyWorkspace();
+  const {
+    collectExitImpacts,
+    fileDocuments,
+    fileBuffers,
+    detachedFileIds,
+    hydrationStatus,
+  } = usePtyWorkspace();
   const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
   exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
   const view = useAppStore((state) => state.view);
@@ -245,6 +251,7 @@ function AppContent() {
   return (
     <>
       <WorkspaceDataRestoreListener />
+      <StartupNotices ready={hydrationStatus !== "loading"} />
       <div className="app-window-shell">
         <WindowTitlebar
           variant="main"
