@@ -3384,6 +3384,14 @@ export function PtyWorkspaceProvider({
                       event.payload.windowLabel ||
                     currentOwnership.windowToken !== event.payload.token
                   ) {
+                    // 拒绝返回是显式结果：记录原因，并把拒绝告知子窗口；告知失败也要留下日志。
+                    console.warn(
+                      "workspace file return rejected: detached state changed",
+                      {
+                        documentId: event.payload.documentId,
+                        windowLabel: event.payload.windowLabel,
+                      },
+                    );
                     await emitWorkspaceContentWindowEvent(
                       event.payload.windowLabel,
                       "workspace-file-window-return-failed",
@@ -3394,7 +3402,12 @@ export function PtyWorkspaceProvider({
                           error: tRef.current("pty.detachedStateChanged"),
                         }),
                       },
-                    ).catch(() => undefined);
+                    ).catch((error: unknown) => {
+                      console.warn(
+                        "workspace file return-failed notification could not be delivered",
+                        error,
+                      );
+                    });
                     return;
                   }
                   detachedFilesRef.current.set(key, managedWindow);
