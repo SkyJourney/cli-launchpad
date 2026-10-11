@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 482,
-    "Linux": 488,
-    "macOS": 485
+    "Windows": 484,
+    "Linux": 490,
+    "macOS": 487
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -203,7 +203,9 @@
       "services::execution_service::tests::supervised_task_panic_finishes_failed_and_releases_slot",
       "platform::path_rules::tests::windows_reserved_device_names_cover_com0_lpt0_and_superscripts",
       "platform::path_rules::tests::windows_component_violation_rejects_forbidden_characters_trailing_dots_and_controls",
-      "platform::path_rules::tests::control_characters_are_rejected_on_every_platform"
+      "platform::path_rules::tests::control_characters_are_rejected_on_every_platform",
+      "services::cli_adapters::tests::claude_and_codex_require_canonical_uuid_session_ids",
+      "services::session_service::tests::canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

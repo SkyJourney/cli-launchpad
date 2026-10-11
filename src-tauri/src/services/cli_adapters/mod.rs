@@ -373,6 +373,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn claude_and_codex_require_canonical_uuid_session_ids() {
+        let accepted = [
+            "8e783338-f464-4b10-b15e-b534748c6241",
+            "01890a5d-ac96-774b-bcce-b302099a8057",
+        ];
+        let rejected = [
+            "session-1",
+            "8e783338f4644b10b15eb534748c6241",
+            "{8e783338-f464-4b10-b15e-b534748c6241}",
+            "8E783338-F464-4B10-B15E-B534748C6241",
+            "8e783338-F464-4b10-b15e-b534748c6241",
+            "8e783338-f464-4b10-b15e-b534748c6241-extra",
+            "8e783338-f464-4b10-b15e-b534748c624",
+            "8e783338-f464-4b10-b15e-b534748c6241 ",
+            "8e783338_f464_4b10_b15e_b534748c6241",
+            "",
+            "-8e783338-f464-4b10-b15e-b534748c6241",
+        ];
+        for key in [ToolKey::Claude, ToolKey::Codex] {
+            for session_id in accepted {
+                assert!(valid_session_id(key, session_id), "{key:?} {session_id}");
+            }
+            for session_id in rejected {
+                assert!(
+                    !valid_session_id(key, session_id),
+                    "{key:?} {session_id:?} must be rejected"
+                );
+            }
+        }
+        assert!(valid_session_id(ToolKey::Antigravity, "session-1"));
+        assert!(valid_session_id(ToolKey::Grok, "session-1"));
+        assert!(valid_session_id(ToolKey::Hermes, "a.b:c"));
+    }
+
+    #[test]
     fn executable_path_requirement_matches_the_adapter_scope() {
         let expected = [
             (ToolKey::Claude, false),

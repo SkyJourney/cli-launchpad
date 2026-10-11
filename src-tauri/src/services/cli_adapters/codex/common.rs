@@ -40,6 +40,10 @@ impl CliAdapter for CodexAdapter {
         Ok(vec!["resume".to_string(), session_id.to_string()])
     }
 
+    fn valid_session_id(&self, session_id: &str) -> bool {
+        crate::services::session_service::is_canonical_uuid(session_id)
+    }
+
     fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
         crate::services::cli_adapters::blocking_latest(ToolKey::Codex, context, || {
             let latest = version_service::fetch_release_text(LATEST_URL)

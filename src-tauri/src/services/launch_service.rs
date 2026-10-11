@@ -213,25 +213,31 @@ mod tests {
     fn resume_keeps_only_the_selected_cli_internal_arguments() {
         use crate::models::tool::ToolKey;
 
+        let uuid = "8e783338-f464-4b10-b15e-b534748c6241";
         let cases = [
             (
                 ToolKey::Claude,
-                vec!["--resume".to_string(), "session-1".to_string()],
+                uuid,
+                vec!["--resume".to_string(), uuid.to_string()],
             ),
             (
                 ToolKey::Codex,
-                vec!["resume".to_string(), "session-1".to_string()],
+                uuid,
+                vec!["resume".to_string(), uuid.to_string()],
             ),
             (
                 ToolKey::Antigravity,
+                "session-1",
                 vec!["--conversation=session-1".to_string()],
             ),
             (
                 ToolKey::Grok,
+                "session-1",
                 vec!["--resume".to_string(), "session-1".to_string()],
             ),
             (
                 ToolKey::Hermes,
+                "session-1",
                 vec![
                     "--resume".to_string(),
                     "session-1".to_string(),
@@ -240,13 +246,13 @@ mod tests {
             ),
         ];
 
-        for (tool_key, expected) in cases {
+        for (tool_key, session_id, expected) in cases {
             let mut payload = CliLaunchPayload {
                 directory: "project".to_string(),
                 tool_executable: "cli".to_string(),
                 tool_args: Vec::new(),
             };
-            apply_resume(&mut payload, tool_key, "session-1").unwrap();
+            apply_resume(&mut payload, tool_key, session_id).unwrap();
             assert_eq!(payload.tool_args, expected);
         }
     }

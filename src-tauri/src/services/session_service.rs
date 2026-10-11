@@ -580,6 +580,16 @@ pub(crate) fn safe_session_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+/// Canonical lowercase hyphenated UUID: 8-4-4-4-12 hex digits, 36 bytes.
+pub(crate) fn is_canonical_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(byte),
+        })
+}
+
 pub(crate) fn paths_match(a: &str, b: &str) -> bool {
     path_identity::paths_equal(a, b)
 }
@@ -1222,6 +1232,40 @@ mod tests {
         assert!(!safe_session_id("../outside"));
         assert!(!safe_session_id("folder\\outside"));
         assert!(!safe_session_id("-resume-as-option"));
+    }
+
+    #[test]
+    fn canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms() {
+        let accepted = [
+            "8e783338-f464-4b10-b15e-b534748c6241",
+            "01890a5d-ac96-774b-bcce-b302099a8057",
+        ];
+        let rejected = [
+            "session-1",
+            "8e783338f4644b10b15eb534748c6241",
+            "{8e783338-f464-4b10-b15e-b534748c6241}",
+            "8E783338-F464-4B10-B15E-B534748C6241",
+            "8e783338-F464-4b10-b15e-b534748c6241",
+            "8e783338-f464-4b10-b15e-b534748c6241-extra",
+            "8e783338-f464-4b10-b15e-b534748c624",
+            "8e783338-f464-4b10-b15e-b534748c6241 ",
+            "8e783338_f464_4b10_b15e_b534748c6241",
+            "",
+            "-8e783338-f464-4b10-b15e-b534748c6241",
+        ];
+        for session_id in accepted {
+            assert!(
+                is_canonical_uuid(session_id),
+                "{session_id} must be accepted"
+            );
+        }
+        for session_id in rejected {
+            assert!(
+                !is_canonical_uuid(session_id),
+                "{session_id:?} must be rejected"
+            );
+        }
+        assert!(safe_session_id("session-1"));
     }
 
     #[test]
