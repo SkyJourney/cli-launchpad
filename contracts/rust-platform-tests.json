@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 490,
-    "Linux": 495,
-    "macOS": 493
+    "Windows": 491,
+    "Linux": 496,
+    "macOS": 494
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -209,7 +209,8 @@
       "services::pty_session_service::tests::handoff_target_rejection_keeps_the_pending_handoff_usable",
       "services::workspace_layout_service::tests::current_layout_with_an_invalid_file_path_degrades_the_item",
       "services::workspace_layout_service::tests::current_layout_with_a_structurally_invalid_file_document_still_needs_reset",
-      "models::workspace_layout::tests::degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest"
+      "models::workspace_layout::tests::degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest",
+      "services::workspace_layout_service::tests::applying_presets_saved_by_every_supported_layout_version"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

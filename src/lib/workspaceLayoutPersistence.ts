@@ -178,7 +178,7 @@ export function restoreWorkspaceLayoutApplyPlan(
   plan: WorkspaceLayoutApplyPlan,
 ): WorkspaceLayoutApplySnapshot {
   const snapshot = restoreWorkspaceRuntimeSnapshot(plan.layout);
-  const detachedSlotIds = new Set(
+  const detachedPtySlotIds = new Set(
     snapshot.detachedContents.flatMap((content) =>
       content.kind === "pty" ? [content.slotId] : [],
     ),
@@ -210,7 +210,7 @@ export function restoreWorkspaceLayoutApplyPlan(
   });
 
   let tree = snapshot.tree;
-  for (const instanceId of detachedSlotIds) {
+  for (const instanceId of detachedPtySlotIds) {
     tree = removeWorkspaceSession(tree, instanceId);
   }
   for (const instanceId of endedIds) {
@@ -409,6 +409,7 @@ function sameWorkspaceContentRefs(
   );
 }
 
+// Validates only: layout migration from older versions lives in Rust (PD-16).
 export function migrateWorkspaceLayoutDocument(
   source: unknown,
 ): WorkspaceLayoutDocument {
@@ -416,23 +417,6 @@ export function migrateWorkspaceLayoutDocument(
     throw new Error("Workspace layout must be an object");
   }
   const value = { ...(source as Record<string, unknown>) };
-  if (value.schemaVersion === 3) {
-    const legacySlotIds =
-      value.detachedSlotIds === undefined ? [] : value.detachedSlotIds;
-    if (
-      !Array.isArray(legacySlotIds) ||
-      legacySlotIds.some((slotId) => typeof slotId !== "string")
-    ) {
-      throw new Error("Legacy detached slot references are invalid");
-    }
-    value.detachedContents = [
-      ...legacySlotIds.map((slotId) => ({ kind: "pty", slotId })),
-    ];
-    delete value.detachedSlotIds;
-    value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
-  } else if (value.schemaVersion === 4) {
-    value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
-  }
   if (value.schemaVersion !== WORKSPACE_LAYOUT_SCHEMA_VERSION) {
     throw new UnsupportedWorkspaceLayoutVersionError(value.schemaVersion);
   }

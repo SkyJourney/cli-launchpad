@@ -148,6 +148,25 @@ describe("hydration failure modes", () => {
     expect(host.ctx().hydrationStatus).not.toBe("loadFailed");
     expect(invokes("save_workspace_layout")).toHaveLength(0);
   });
+
+  it.each([3, 4])(
+    "routes a ready layout with legacy schema version %s to needsReset because the browser no longer migrates it",
+    async (version) => {
+      const backend = createBackend({
+        status: { status: "ready" },
+        revision: 3,
+        schemaVersion: version,
+        layout: { ...futureSchemaLayout(), schemaVersion: version },
+      });
+
+      host = await mountWorkspace({ backend });
+      await flush();
+
+      expect(host.ctx().hydrationStatus).toBe("needsReset");
+      expect(host.ctx().hydrationStatus).not.toBe("loadFailed");
+      expect(invokes("save_workspace_layout")).toHaveLength(0);
+    },
+  );
 });
 
 describe("named layouts with detached contents", () => {

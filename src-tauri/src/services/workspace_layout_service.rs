@@ -1955,4 +1955,74 @@ mod tests {
         assert!(read.layout.is_none());
         assert!(save_current(&mut connection, 4, &empty_layout()).is_err());
     }
+
+    #[test]
+    fn applying_presets_saved_by_every_supported_layout_version() {
+        use crate::models::workspace_layout::legacy_payload_json;
+
+        fn preset_payload(version: u32) -> String {
+            let payload = legacy_payload_json(version);
+            if version != 3 {
+                return payload;
+            }
+            // The v3 fixture parks its slot in detachedSlotIds, which a named
+            // layout may not contain (validate_as_preset); move it into the pane.
+            let mut value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            let slot_id = value["detachedSlotIds"][0].clone();
+            assert!(
+                slot_id.is_string(),
+                "the v3 fixture must carry one detached slot"
+            );
+            value["detachedSlotIds"] = serde_json::json!([]);
+            let reference = serde_json::json!({ "kind": "pty", "slotId": slot_id });
+            value["tree"]["contents"] = serde_json::json!([reference.clone()]);
+            value["tree"]["activeContent"] = reference;
+            serde_json::to_string(&value).unwrap()
+        }
+
+        for version in 1u32..=4 {
+            let connection = database();
+            let payload = preset_payload(version);
+            let raw: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(raw["schemaVersion"], serde_json::json!(version));
+            let raw_slots = raw["slots"].as_array().map_or(0, Vec::len);
+            let raw_documents = raw["documents"].as_array().map_or(0, Vec::len);
+            assert!(raw_slots >= 1, "v{version} fixture must contain a slot");
+            if version == 2 {
+                assert!(
+                    raw_documents >= 1,
+                    "v2 fixture must contain a file document"
+                );
+            }
+            let id = format!("preset-v{version}");
+            connection
+                .execute(
+                    "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values (?1, ?2, ?3, ?4, 0, 0)",
+                    rusqlite::params![id, format!("Preset v{version}"), version, payload],
+                )
+                .unwrap();
+
+            let plan = plan_apply_preset(&connection, &id, &empty_layout())
+                .unwrap_or_else(|error| panic!("applying the v{version} preset failed: {error:?}"));
+
+            plan.layout.validate().unwrap();
+            assert_eq!(plan.layout.schema_version, WORKSPACE_LAYOUT_SCHEMA_VERSION);
+            assert_eq!(plan.layout.slots.len(), raw_slots, "v{version} slot count");
+            assert_eq!(
+                plan.layout.documents.len(),
+                raw_documents,
+                "v{version} document count"
+            );
+            // Reverse: no detached content appears, and planning does not rewrite the stored row.
+            assert!(plan.layout.detached_contents.is_empty());
+            let stored: (i64, String) = connection
+                .query_row(
+                    "select schema_version, payload_json from workspace_layout_presets where id = ?1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(stored, (i64::from(version), payload));
+        }
+    }
 }

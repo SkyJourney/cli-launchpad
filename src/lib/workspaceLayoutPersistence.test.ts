@@ -125,67 +125,6 @@ describe("workspace layout persistence mapping", () => {
     });
   });
 
-  it("migrates v3 detached slot IDs into v5 PTY content references", () => {
-    const v3 = JSON.parse(JSON.stringify(createDocument())) as Record<
-      string,
-      unknown
-    >;
-    v3.schemaVersion = 3;
-    v3.detachedSlotIds = ["slot-1"];
-    if (
-      typeof v3.tree === "object" &&
-      v3.tree !== null &&
-      "first" in v3.tree &&
-      typeof v3.tree.first === "object" &&
-      v3.tree.first !== null &&
-      "contents" in v3.tree.first &&
-      "activeContent" in v3.tree.first
-    ) {
-      v3.tree.first.contents = [];
-      v3.tree.first.activeContent = null;
-    }
-
-    const migrated = migrateWorkspaceLayoutDocument(v3);
-
-    expect(migrated.schemaVersion).toBe(5);
-    expect(migrated.detachedContents).toEqual([
-      { kind: "pty", slotId: "slot-1" },
-    ]);
-    expect(migrated).not.toHaveProperty("detachedSlotIds");
-  });
-
-  it("migrates v4 layouts and preserves unknown content payloads", () => {
-    const v4 = JSON.parse(JSON.stringify(createDocument())) as Record<
-      string,
-      unknown
-    >;
-    v4.schemaVersion = 4;
-    const tree = v4.tree as {
-      first: { contents: unknown[]; activeContent: unknown };
-    };
-    const unknownContent = {
-      kind: "unknown",
-      originalKind: "editor",
-      raw: {
-        kind: "editor",
-        documentId: "doc-1",
-        options: { wrap: true },
-      },
-    };
-    tree.first.contents.push(unknownContent);
-
-    const migrated = migrateWorkspaceLayoutDocument(v4);
-    const roundTripped = migrateWorkspaceLayoutDocument(migrated);
-
-    expect(migrated.schemaVersion).toBe(5);
-    expect(roundTripped.tree).toEqual(migrated.tree);
-    expect(roundTripped.tree).toMatchObject({
-      first: {
-        contents: expect.arrayContaining([unknownContent]),
-      },
-    });
-  });
-
   it("rejects detached references that are also owned by a pane", () => {
     const current = createDocument();
 
@@ -874,6 +813,90 @@ describe("unsupported layout versions", () => {
       ).not.toThrow();
     },
   );
+
+  it.each([3, 4])(
+    "rejects legacy schema version %s because layout migration only happens in Rust",
+    (version) => {
+      const legacy = { ...createDocument(), schemaVersion: version };
+
+      expect(() => migrateWorkspaceLayoutDocument(legacy)).toThrow(
+        /Unsupported workspace layout version/,
+      );
+      let thrown: unknown;
+      try {
+        migrateWorkspaceLayoutDocument(legacy);
+      } catch (reason) {
+        thrown = reason;
+      }
+      expect(thrown).toBeInstanceOf(UnsupportedWorkspaceLayoutVersionError);
+      expect((thrown as UnsupportedWorkspaceLayoutVersionError).code).toBe(
+        "layout.needs_reset",
+      );
+      expect(() => restoreWorkspaceRuntimeSnapshot(legacy)).toThrow(
+        UnsupportedWorkspaceLayoutVersionError,
+      );
+      // The input is neither mutated nor half-migrated.
+      expect(legacy.schemaVersion).toBe(version);
+      // Reverse: the current version is still accepted.
+      expect(() =>
+        migrateWorkspaceLayoutDocument(createDocument()),
+      ).not.toThrow();
+    },
+  );
+
+  it("restores the detached contents of a layout that Rust already migrated to v5", () => {
+    // Shape produced by the Rust v3 migration: the detached slot became a
+    // detachedContents reference and the version is the current one.
+    const rustMigrated = createDocument();
+    if (rustMigrated.tree.kind !== "split") throw new Error("expected split");
+    const pane = rustMigrated.tree.first;
+    if (pane.kind !== "pane") throw new Error("expected first pane");
+    pane.contents = [];
+    pane.activeContent = null;
+    rustMigrated.detachedContents = [{ kind: "pty", slotId: "slot-1" }];
+
+    const restored = restoreWorkspaceRuntimeSnapshot(rustMigrated);
+
+    expect(rustMigrated.schemaVersion).toBe(5);
+    // No legacy key survives: the key set equals that of a freshly built v5 document.
+    expect(Object.keys(rustMigrated).sort()).toEqual(
+      Object.keys(createDocument()).sort(),
+    );
+    expect(restored.detachedContents).toEqual([
+      { kind: "pty", slotId: "slot-1" },
+    ]);
+    expect(restored.slots).toEqual(rustMigrated.slots);
+    // Reverse: re-serializing the restored snapshot gives back the same document.
+    expect(createWorkspaceLayoutDocument(restored)).toEqual(rustMigrated);
+  });
+
+  it("keeps unknown content payloads unchanged through restore and re-serialize of a v5 layout", () => {
+    const unknownContent = {
+      kind: "unknown",
+      originalKind: "editor",
+      raw: { kind: "editor", documentId: "doc-1", options: { wrap: true } },
+    };
+    const document = JSON.parse(
+      JSON.stringify(createDocument()),
+    ) as WorkspaceLayoutDocument;
+    const tree = document.tree as unknown as {
+      first: { contents: unknown[] };
+    };
+    tree.first.contents.push(unknownContent);
+    const before = JSON.parse(JSON.stringify(document));
+
+    const restored = restoreWorkspaceRuntimeSnapshot(document);
+    const rewritten = createWorkspaceLayoutDocument(restored);
+    const restoredAgain = restoreWorkspaceRuntimeSnapshot(rewritten);
+
+    expect(rewritten.tree).toEqual(before.tree);
+    expect(rewritten.tree).toMatchObject({
+      first: { contents: expect.arrayContaining([unknownContent]) },
+    });
+    expect(restoredAgain.tree).toEqual(restored.tree);
+    // Reverse: the input document was not modified.
+    expect(document).toEqual(before);
+  });
 });
 
 describe("persisted detached contents", () => {
