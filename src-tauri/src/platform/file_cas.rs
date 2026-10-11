@@ -7,47 +7,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use cap_std::fs::{Dir, OpenOptions};
 
-/// Returns a stable, platform-specific identifier for a file reached through
-/// a retained directory capability. Services use this when they need to
-/// compare a previewed file with the file currently at the same relative path.
-pub fn file_identity(
-    directory: &Dir,
-    name: &str,
-    _metadata: &cap_std::fs::Metadata,
-) -> Result<String> {
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt;
-        let _ = (directory, name);
-        Ok(format!("unix:{}:{}", _metadata.dev(), _metadata.ino()))
-    }
+use crate::platform::file_location::{locate_nofollow, FileLocation};
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-
-        let file = directory.open(name)?.into_std();
-        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let file_index =
-            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-        Ok(format!(
-            "windows:{}:{file_index}",
-            information.dwVolumeSerialNumber
-        ))
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (directory, name);
-        Ok(format!("fallback:{}", _metadata.len()))
-    }
-}
+use crate::platform::file_identity::FileIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompareAndSwapOutcome {
@@ -57,12 +19,6 @@ pub enum CompareAndSwapOutcome {
 }
 
 const MAX_IDENTITY_RETRIES: usize = 8;
-/// Budget for re-resolving a stale destination (m6-002). It is separate from
-/// `MAX_IDENTITY_RETRIES` because stale resolutions come in bursts when the
-/// resolving thread is preempted next to a tight external replacement loop.
-const MAX_RESOLUTION_RETRIES: usize = 32;
-const RESOLUTION_YIELD_ATTEMPTS: usize = 4;
-const RESOLUTION_BACKOFF: Duration = Duration::from_millis(1);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -70,13 +26,6 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 /// Implementations receive a retained directory capability and a relative
 /// target, so platform adapters cannot silently fall back to ambient paths.
 pub trait FileCasAdapter {
-    /// Resolves the requested project-relative path to the relative path that
-    /// the shared flow locks. The default delegates to the capability's
-    /// canonicalization; tests inject stale results through this seam.
-    fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
-        Ok(root.canonicalize(relative)?)
-    }
-
     fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File>;
     fn path_matches_locked_file(&self, directory: &Dir, path: &Path, locked: &File)
         -> Result<bool>;
@@ -258,101 +207,6 @@ where
     )
 }
 
-fn destination_names_match(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
-    if cfg!(target_os = "linux") {
-        left == right
-    } else {
-        left == right
-            || left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
-    }
-}
-
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error
-        .root_cause()
-        .downcast_ref::<std::io::Error>()
-        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-}
-
-/// Returns whether `resolved` can be trusted as the destination for
-/// `requested`. `Ok(false)` means the resolution is stale and must be redone.
-pub(crate) fn validate_resolved_destination(
-    root: &Dir,
-    requested: &Path,
-    resolved: &Path,
-) -> Result<bool> {
-    match root.symlink_metadata(resolved) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("无法检查解析后的目标文件：{}", resolved.display()))
-        }
-    }
-    let (Some(requested_name), Some(resolved_name)) = (requested.file_name(), resolved.file_name())
-    else {
-        // 没有可比较的最后组件（例如请求以 `..` 结尾）：只做存在性校验，
-        // 其余错误由 parent_and_name 按原有文案报告。
-        return Ok(true);
-    };
-    if destination_names_match(requested_name, resolved_name) {
-        return Ok(true);
-    }
-    let metadata = match root.symlink_metadata(requested) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("无法检查请求的目标文件：{}", requested.display()))
-        }
-    };
-    if !metadata.file_type().is_symlink() {
-        return Ok(false);
-    }
-    let target = match root.read_link(requested) {
-        Ok(target) => target,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(error).with_context(|| format!("无法读取符号链接：{}", requested.display()))
-        }
-    };
-    Ok(target
-        .file_name()
-        .is_some_and(|name| destination_names_match(name, resolved_name)))
-}
-
-pub(crate) fn resolve_cas_destination_with(
-    adapter: &impl FileCasAdapter,
-    root: &Dir,
-    relative: &Path,
-) -> Result<PathBuf> {
-    for attempt in 0..MAX_RESOLUTION_RETRIES {
-        let resolved = adapter
-            .resolve_destination(root, relative)
-            .context("项目文件不存在或无法访问")?;
-        if validate_resolved_destination(root, relative, &resolved)? {
-            return Ok(resolved);
-        }
-        // A stale resolution usually means this thread was preempted between
-        // the two steps of the capability's canonicalization while another
-        // process replaced the file. Immediate retries tend to be preempted
-        // the same way, so give the replacer room before resolving again.
-        if attempt < RESOLUTION_YIELD_ATTEMPTS {
-            thread::yield_now();
-        } else {
-            thread::sleep(RESOLUTION_BACKOFF);
-        }
-    }
-    bail!("待保存文件在并发替换期间持续变化，请重试")
-}
-
-/// SEAM-12 的无 adapter 入口，只供测试直接调用；生产路径使用
-/// `resolve_cas_destination_with`。
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) fn resolve_cas_destination(root: &Dir, relative: &Path) -> Result<PathBuf> {
-    resolve_cas_destination_with(&NativeFileCasAdapter, root, relative)
-}
-
 pub fn compare_and_swap_with_adapter<R, Revision>(
     adapter: &impl FileCasAdapter,
     root: &Dir,
@@ -366,26 +220,54 @@ where
     R: PartialEq,
     Revision: Fn(&[u8]) -> R,
 {
-    let mut canonical = resolve_cas_destination_with(adapter, root, relative_destination)?;
-    let (parent, mut destination) = parent_and_name(root, &canonical)?;
-    let mut temporary = create_temporary(adapter, &parent, replacement)?;
+    let location = locate_nofollow(root, relative_destination)?;
+    compare_and_swap_located(
+        adapter,
+        &location,
+        replacement,
+        expected_revision,
+        max_current_bytes,
+        revision_of,
+    )
+}
+
+/// Refuses a final component that is a symbolic link or is not a regular file.
+/// Runs before writing and again under the lock, so a name swapped after locking
+/// is still refused.
+fn ensure_regular_file(directory: &Dir, name: &Path) -> Result<()> {
+    let metadata = directory
+        .symlink_metadata(name)
+        .context("项目文件不存在或无法访问")?;
+    if metadata.file_type().is_symlink() {
+        bail!("项目文件是符号链接，已拒绝保存");
+    }
+    if !metadata.is_file() {
+        bail!("只能保存普通文本文件");
+    }
+    Ok(())
+}
+
+fn compare_and_swap_located<R, Revision>(
+    adapter: &impl FileCasAdapter,
+    location: &FileLocation,
+    replacement: &[u8],
+    expected_revision: &R,
+    max_current_bytes: u64,
+    revision_of: Revision,
+) -> Result<CompareAndSwapOutcome>
+where
+    R: PartialEq,
+    Revision: Fn(&[u8]) -> R,
+{
+    let parent = &location.parent;
+    let destination = PathBuf::from(&location.name);
+    ensure_regular_file(parent, &destination)?;
+    let mut temporary = create_temporary(adapter, parent, replacement)?;
     temporary.finish_writing()?;
 
     for _ in 0..MAX_IDENTITY_RETRIES {
-        let locked = match adapter.lock_current(&parent, &destination) {
-            Ok(locked) => locked,
-            Err(error) if !cfg!(windows) && is_not_found(&error) => {
-                let fresh = resolve_cas_destination_with(adapter, root, relative_destination)?;
-                if fresh.parent() != canonical.parent() {
-                    bail!("待保存文件所在目录在保存期间发生变化，请重试");
-                }
-                destination = PathBuf::from(fresh.file_name().context("文件路径不能为空")?);
-                canonical = fresh;
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        if !adapter.path_matches_locked_file(&parent, &destination, &locked)? {
+        let locked = adapter.lock_current(parent, &destination)?;
+        if !adapter.path_matches_locked_file(parent, &destination, &locked)? {
             drop(locked);
             continue;
         }
@@ -398,7 +280,7 @@ where
         // identity check while this handle remains locked. Recheck immediately
         // before commit so that such a replacement is retried against its new
         // revision instead of being overwritten with stale content.
-        if !adapter.path_matches_locked_file(&parent, &destination, &locked)? {
+        if !adapter.path_matches_locked_file(parent, &destination, &locked)? {
             drop(locked);
             continue;
         }
@@ -450,24 +332,6 @@ pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn parent_and_name(root: &Dir, destination: &Path) -> Result<(Dir, PathBuf)> {
-    let mut components = destination.components();
-    let mut parts = Vec::new();
-    for component in &mut components {
-        match component {
-            std::path::Component::Normal(part) => parts.push(part.to_owned()),
-            _ => bail!("文件路径必须是规范的项目内相对路径"),
-        }
-    }
-    let name = parts.pop().context("文件路径不能为空")?;
-    let parent = if parts.is_empty() {
-        root.try_clone()?
-    } else {
-        root.open_dir(parts.iter().collect::<PathBuf>())?
-    };
-    Ok((parent, PathBuf::from(name)))
-}
-
 fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     let file = loop {
@@ -480,8 +344,7 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
             {
                 // Windows only: a concurrent atomic replacement can briefly make the
                 // destination unavailable while its pathname is swapped. Unix rename
-                // never hides the name, so NotFound there means the resolution is
-                // stale and the shared flow re-resolves.
+                // never hides the name, so NotFound there is reported as an error.
                 thread::sleep(LOCK_RETRY_INTERVAL);
             }
             Err(error) => {
@@ -507,40 +370,9 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
 }
 
 fn same_file(directory: &Dir, path: &Path, locked: &File) -> Result<bool> {
+    ensure_regular_file(directory, path)?;
     let current = open_target(directory, path)?.into_std();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let locked = locked.metadata()?;
-        let current = current.metadata()?;
-        Ok(locked.dev() == current.dev() && locked.ino() == current.ino())
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-        fn identity(file: &File) -> Result<(u32, u64)> {
-            let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-            if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) }
-                == 0
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            Ok((
-                information.dwVolumeSerialNumber,
-                (u64::from(information.nFileIndexHigh) << 32)
-                    | u64::from(information.nFileIndexLow),
-            ))
-        }
-        Ok(identity(locked)? == identity(&current)?)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = current;
-        bail!("当前平台尚未实现文件身份比较适配")
-    }
+    Ok(FileIdentity::of(locked)? == FileIdentity::of(&current)?)
 }
 
 fn open_target(directory: &Dir, path: &Path) -> std::io::Result<cap_std::fs::File> {
@@ -628,13 +460,33 @@ impl TemporaryReplacement {
     }
 }
 
+const TEMPORARY_SUFFIX: &str = ".writing";
+
+/// Name of a new CAS temporary file: `.` + 32 lowercase hex digits + `.writing`.
+pub fn temporary_name() -> String {
+    format!(".{}{TEMPORARY_SUFFIX}", uuid::Uuid::new_v4().simple())
+}
+
+pub fn is_temporary_name(name: &str) -> bool {
+    let Some(identifier) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(TEMPORARY_SUFFIX))
+    else {
+        return false;
+    };
+    identifier.len() == 32
+        && identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn create_temporary(
     adapter: &impl FileCasAdapter,
     directory: &Dir,
     bytes: &[u8],
 ) -> Result<TemporaryReplacement> {
     for _ in 0..8 {
-        let name = PathBuf::from(format!(".{}.writing", uuid::Uuid::new_v4().simple()));
+        let name = PathBuf::from(temporary_name());
         match adapter.create_private_temporary(directory, &name) {
             Ok(file) => {
                 let mut temporary = TemporaryReplacement {
@@ -724,22 +576,7 @@ fn open_windows_rename_directory(directory: &Dir) -> std::io::Result<WindowsRena
     }
     let reopened = unsafe { File::from_raw_handle(reopened as _) };
 
-    fn identity(file: &File) -> std::io::Result<(u32, u64)> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok((
-            information.dwVolumeSerialNumber,
-            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
-        ))
-    }
-
-    if identity(&original)? != identity(&reopened)? {
+    if FileIdentity::of(&original)? != FileIdentity::of(&reopened)? {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "重新打开的目标目录与保留的目录能力不一致",
@@ -1297,160 +1134,6 @@ mod tests {
         }
     }
 
-    struct DeletedAliasOnceAdapter {
-        native: NativeFileCasAdapter,
-        resolutions: AtomicUsize,
-    }
-
-    impl FileCasAdapter for DeletedAliasOnceAdapter {
-        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
-            if self.resolutions.fetch_add(1, Ordering::Relaxed) == 0 {
-                return Ok(PathBuf::from("note.txt (deleted)"));
-            }
-            self.native.resolve_destination(root, relative)
-        }
-
-        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
-            self.native.lock_current(directory, path)
-        }
-
-        fn path_matches_locked_file(
-            &self,
-            directory: &Dir,
-            path: &Path,
-            locked: &File,
-        ) -> Result<bool> {
-            self.native
-                .path_matches_locked_file(directory, path, locked)
-        }
-
-        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
-            self.native.create_private_temporary(directory, path)
-        }
-
-        fn commit(
-            &self,
-            directory: &Dir,
-            destination: &Path,
-            temporary: &Path,
-            temporary_file: &mut Option<File>,
-            locked_target: Option<&File>,
-            permissions: Option<std::fs::Permissions>,
-        ) -> Result<bool> {
-            self.native.commit(
-                directory,
-                destination,
-                temporary,
-                temporary_file,
-                locked_target,
-                permissions,
-            )
-        }
-    }
-
-    struct StaleAliasAdapter {
-        native: NativeFileCasAdapter,
-        stale_resolutions: usize,
-        resolutions: AtomicUsize,
-    }
-
-    impl FileCasAdapter for StaleAliasAdapter {
-        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
-            if self.resolutions.fetch_add(1, Ordering::Relaxed) < self.stale_resolutions {
-                return Ok(PathBuf::from("note.txt (deleted)"));
-            }
-            self.native.resolve_destination(root, relative)
-        }
-
-        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
-            self.native.lock_current(directory, path)
-        }
-
-        fn path_matches_locked_file(
-            &self,
-            directory: &Dir,
-            path: &Path,
-            locked: &File,
-        ) -> Result<bool> {
-            self.native
-                .path_matches_locked_file(directory, path, locked)
-        }
-
-        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
-            self.native.create_private_temporary(directory, path)
-        }
-
-        fn commit(
-            &self,
-            directory: &Dir,
-            destination: &Path,
-            temporary: &Path,
-            temporary_file: &mut Option<File>,
-            locked_target: Option<&File>,
-            permissions: Option<std::fs::Permissions>,
-        ) -> Result<bool> {
-            self.native.commit(
-                directory,
-                destination,
-                temporary,
-                temporary_file,
-                locked_target,
-                permissions,
-            )
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    struct ResolveCountingAdapter {
-        native: NativeFileCasAdapter,
-        resolutions: AtomicUsize,
-    }
-
-    #[cfg(target_os = "linux")]
-    impl FileCasAdapter for ResolveCountingAdapter {
-        fn resolve_destination(&self, root: &Dir, relative: &Path) -> Result<PathBuf> {
-            self.resolutions.fetch_add(1, Ordering::Relaxed);
-            self.native.resolve_destination(root, relative)
-        }
-
-        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
-            self.native.lock_current(directory, path)
-        }
-
-        fn path_matches_locked_file(
-            &self,
-            directory: &Dir,
-            path: &Path,
-            locked: &File,
-        ) -> Result<bool> {
-            self.native
-                .path_matches_locked_file(directory, path, locked)
-        }
-
-        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
-            self.native.create_private_temporary(directory, path)
-        }
-
-        fn commit(
-            &self,
-            directory: &Dir,
-            destination: &Path,
-            temporary: &Path,
-            temporary_file: &mut Option<File>,
-            locked_target: Option<&File>,
-            permissions: Option<std::fs::Permissions>,
-        ) -> Result<bool> {
-            self.native.commit(
-                directory,
-                destination,
-                temporary,
-                temporary_file,
-                locked_target,
-                permissions,
-            )
-        }
-    }
-
     const WORKER_GATE: &str = "CLI_LAUNCHPAD_PROJECT_CAS_GATE";
     const WORKER_ROOT: &str = "CLI_LAUNCHPAD_PROJECT_CAS_ROOT";
     const WORKER_REVISION: &str = "CLI_LAUNCHPAD_PROJECT_CAS_REVISION";
@@ -1837,147 +1520,6 @@ mod tests {
     }
 
     #[test]
-    fn cas_retries_when_resolved_destination_is_a_deleted_alias() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "before").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-        let adapter = DeletedAliasOnceAdapter {
-            native: NativeFileCasAdapter,
-            resolutions: AtomicUsize::new(0),
-        };
-
-        let started = Instant::now();
-        let outcome = compare_and_swap_with_adapter(
-            &adapter,
-            &dir,
-            Path::new("note.txt"),
-            b"after",
-            &revision(b"before"),
-            1024,
-            revision,
-        );
-        let elapsed = started.elapsed();
-
-        assert!(
-            matches!(&outcome, Ok(CompareAndSwapOutcome::Written)),
-            "实际结果：{outcome:?}"
-        );
-        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 2);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("note.txt")).unwrap(),
-            "after"
-        );
-        let names = file_names(root.path());
-        assert!(
-            !names.iter().any(|name| name.ends_with(".writing")),
-            "存在 .writing 残留：{names:?}"
-        );
-        assert!(
-            !names.iter().any(|name| name == "note.txt (deleted)"),
-            "不应出现别名文件：{names:?}"
-        );
-        // 走锁超时路径的耗时必然 >= LOCK_TIMEOUT，所以分界就是 LOCK_TIMEOUT 本身；
-        // 更紧的上限（曾用 1 秒）在整套测试高负载时会误报（实测 1.015 秒）。
-        assert!(
-            elapsed < LOCK_TIMEOUT,
-            "耗时 {elapsed:?}，不得走 {LOCK_TIMEOUT:?} 锁超时"
-        );
-    }
-
-    #[test]
-    fn cas_never_targets_a_real_file_named_like_a_deleted_alias() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "before").unwrap();
-        std::fs::write(root.path().join("note.txt (deleted)"), "decoy").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-        let adapter = DeletedAliasOnceAdapter {
-            native: NativeFileCasAdapter,
-            resolutions: AtomicUsize::new(0),
-        };
-
-        let outcome = compare_and_swap_with_adapter(
-            &adapter,
-            &dir,
-            Path::new("note.txt"),
-            b"after",
-            &revision(b"before"),
-            1024,
-            revision,
-        );
-
-        assert!(
-            matches!(&outcome, Ok(CompareAndSwapOutcome::Written)),
-            "实际结果：{outcome:?}"
-        );
-        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 2);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("note.txt")).unwrap(),
-            "after"
-        );
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("note.txt (deleted)")).unwrap(),
-            "decoy",
-            "诱饵文件必须保持原样"
-        );
-    }
-
-    #[test]
-    fn resolve_cas_destination_survives_many_consecutive_stale_resolutions() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-        let adapter = StaleAliasAdapter {
-            native: NativeFileCasAdapter,
-            stale_resolutions: 20,
-            resolutions: AtomicUsize::new(0),
-        };
-
-        let resolved = resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt"));
-
-        assert_eq!(
-            resolved.as_ref().ok(),
-            Some(&PathBuf::from("note.txt")),
-            "实际结果：{resolved:?}"
-        );
-        assert_eq!(adapter.resolutions.load(Ordering::Relaxed), 21);
-    }
-
-    #[test]
-    fn resolve_cas_destination_gives_up_when_resolutions_never_stabilize() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-        let adapter = StaleAliasAdapter {
-            native: NativeFileCasAdapter,
-            stale_resolutions: usize::MAX,
-            resolutions: AtomicUsize::new(0),
-        };
-
-        let started = Instant::now();
-        let error = resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt"))
-            .expect_err("永不稳定的解析必须报错");
-        let elapsed = started.elapsed();
-
-        assert!(
-            format!("{error:#}").contains("持续变化"),
-            "实际错误：{error:#}"
-        );
-        assert_eq!(
-            adapter.resolutions.load(Ordering::Relaxed),
-            MAX_RESOLUTION_RETRIES
-        );
-        assert_eq!(
-            file_names(root.path()),
-            vec!["note.txt".to_string()],
-            "解析阶段不得创建任何文件"
-        );
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "放弃前的退避总耗时 {elapsed:?} 过长"
-        );
-    }
-
-    #[test]
     fn lock_current_error_names_the_requested_path() {
         let root = tempdir().unwrap();
         let directory = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
@@ -2004,105 +1546,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn validate_resolved_destination_accepts_an_existing_file_with_the_requested_name() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(
-            validate_resolved_destination(&dir, Path::new("note.txt"), Path::new("note.txt"))
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn validate_resolved_destination_rejects_a_missing_resolved_path() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(!validate_resolved_destination(
-            &dir,
-            Path::new("note.txt"),
-            Path::new("note.txt (deleted)")
-        )
-        .unwrap());
-        assert!(
-            !validate_resolved_destination(&dir, Path::new("note.txt"), Path::new("gone.txt"))
-                .unwrap()
-        );
-        assert!(
-            !validate_resolved_destination(&dir, Path::new("gone.txt"), Path::new("gone.txt"))
-                .unwrap(),
-            "不存在的解析结果即使名字一致也不可信"
-        );
-    }
-
-    #[test]
-    fn validate_resolved_destination_rejects_an_existing_decoy_with_a_different_name() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        std::fs::write(root.path().join("note.txt (deleted)"), "decoy").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(!validate_resolved_destination(
-            &dir,
-            Path::new("note.txt"),
-            Path::new("note.txt (deleted)")
-        )
-        .unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn validate_resolved_destination_accepts_the_symlink_target_name() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("real.txt"), "x").unwrap();
-        std::fs::write(root.path().join("other.txt"), "y").unwrap();
-        std::os::unix::fs::symlink("real.txt", root.path().join("link.txt")).unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(
-            validate_resolved_destination(&dir, Path::new("link.txt"), Path::new("real.txt"))
-                .unwrap()
-        );
-        assert!(
-            !validate_resolved_destination(&dir, Path::new("link.txt"), Path::new("other.txt"))
-                .unwrap(),
-            "符号链接指向 real.txt 时，other.txt 不是可信的解析结果"
-        );
-    }
-
-    #[test]
-    fn validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only() {
-        let root = tempdir().unwrap();
-        std::fs::create_dir(root.path().join("sub")).unwrap();
-        std::fs::write(root.path().join("sub").join("a.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(
-            validate_resolved_destination(&dir, Path::new("sub/.."), Path::new("sub")).unwrap()
-        );
-        assert!(
-            !validate_resolved_destination(&dir, Path::new("sub/.."), Path::new("missing"))
-                .unwrap()
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn validate_resolved_destination_ignores_case_differences_on_windows() {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-
-        assert!(
-            validate_resolved_destination(&dir, Path::new("NOTE.TXT"), Path::new("note.txt"))
-                .unwrap()
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn lock_current_does_not_spin_on_unix_when_the_path_is_missing() {
@@ -2125,62 +1568,6 @@ mod tests {
         assert!(
             elapsed < Duration::from_millis(500),
             "耗时 {elapsed:?}，Unix 上不得自旋等待 2 秒"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn resolve_cas_destination_never_returns_a_deleted_alias_under_concurrent_replacement() {
-        use std::sync::atomic::AtomicBool;
-        use std::sync::Arc;
-
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("note.txt"), "x").unwrap();
-        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
-        let stop = Arc::new(AtomicBool::new(false));
-        let replacer = {
-            let stop = Arc::clone(&stop);
-            let base = root.path().to_path_buf();
-            thread::spawn(move || {
-                let temporary = base.join(".r.tmp");
-                let target = base.join("note.txt");
-                while !stop.load(Ordering::Relaxed) {
-                    std::fs::write(&temporary, "x").unwrap();
-                    std::fs::rename(&temporary, &target).unwrap();
-                }
-            })
-        };
-        let adapter = ResolveCountingAdapter {
-            native: NativeFileCasAdapter,
-            resolutions: AtomicUsize::new(0),
-        };
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut iterations = 0_usize;
-        let mut failures = Vec::new();
-        while iterations < 200_000 && Instant::now() < deadline && failures.len() < 5 {
-            iterations += 1;
-            match resolve_cas_destination_with(&adapter, &dir, Path::new("note.txt")) {
-                Ok(resolved) if resolved == Path::new("note.txt") => {}
-                other => failures.push(format!("{other:?}")),
-            }
-        }
-        stop.store(true, Ordering::Relaxed);
-        replacer.join().unwrap();
-
-        let resolutions = adapter.resolutions.load(Ordering::Relaxed);
-        eprintln!(
-            "iterations={iterations} resolutions={resolutions} retries={}",
-            resolutions.saturating_sub(iterations)
-        );
-        assert!(failures.is_empty(), "解析结果异常：{failures:?}");
-        assert!(
-            iterations >= 100,
-            "循环次数过少（{iterations}），测试没有真正施压"
-        );
-        assert_eq!(
-            resolve_cas_destination(&dir, Path::new("note.txt")).unwrap(),
-            PathBuf::from("note.txt")
         );
     }
 
@@ -2552,5 +1939,254 @@ mod tests {
         unsafe { LocalFree(descriptor) };
         assert_eq!(actual_acl, expected_acl);
         assert!(replacement_acl_is_protected);
+    }
+
+    #[cfg(unix)]
+    struct SwapToSymlinkAdapter {
+        native: NativeFileCasAdapter,
+        root: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl FileCasAdapter for SwapToSymlinkAdapter {
+        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
+            let locked = self.native.lock_current(directory, path)?;
+            // A non-cooperating party swaps the name for a symbolic link after locking.
+            let link = self.root.join(".l.tmp");
+            std::os::unix::fs::symlink(self.root.join("real.txt"), &link)?;
+            std::fs::rename(&link, self.root.join(path))?;
+            Ok(locked)
+        }
+
+        fn path_matches_locked_file(
+            &self,
+            directory: &Dir,
+            path: &Path,
+            locked: &File,
+        ) -> Result<bool> {
+            self.native
+                .path_matches_locked_file(directory, path, locked)
+        }
+
+        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
+            self.native.create_private_temporary(directory, path)
+        }
+
+        fn commit(
+            &self,
+            directory: &Dir,
+            destination: &Path,
+            temporary: &Path,
+            temporary_file: &mut Option<File>,
+            locked_target: Option<&File>,
+            permissions: Option<std::fs::Permissions>,
+        ) -> Result<bool> {
+            self.native.commit(
+                directory,
+                destination,
+                temporary,
+                temporary_file,
+                locked_target,
+                permissions,
+            )
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_refuses_a_symlink_final_component_and_leaves_target_and_link_untouched() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("real.txt"), b"before").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real.txt"), root.path().join("note.txt"))
+            .unwrap();
+
+        let error = compare_and_swap_in_directory(
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            std::fs::read(root.path().join("real.txt")).unwrap(),
+            b"before"
+        );
+        assert!(root
+            .path()
+            .join("note.txt")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_checks_the_symlink_policy_again_after_locking() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("real.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt"), b"before").unwrap();
+        let adapter = SwapToSymlinkAdapter {
+            native: NativeFileCasAdapter,
+            root: root.path().to_path_buf(),
+        };
+
+        let error = compare_and_swap_with_adapter(
+            &adapter,
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            std::fs::read(root.path().join("real.txt")).unwrap(),
+            b"before"
+        );
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn cas_writes_through_the_located_parent_directory() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::create_dir(root.path().join("sub")).unwrap();
+        std::fs::write(root.path().join("sub/note.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt"), b"root-original").unwrap();
+
+        let outcome = compare_and_swap_in_directory(
+            &dir,
+            Path::new("sub/note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, CompareAndSwapOutcome::Written);
+        assert_eq!(
+            std::fs::read(root.path().join("sub/note.txt")).unwrap(),
+            b"after"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt")).unwrap(),
+            b"root-original"
+        );
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+        assert!(!file_names(&root.path().join("sub"))
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn cas_ignores_a_decoy_file_named_like_a_deleted_alias() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("note.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt (deleted)"), b"decoy").unwrap();
+
+        let outcome = compare_and_swap_in_directory(
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, CompareAndSwapOutcome::Written);
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt")).unwrap(),
+            b"after"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt (deleted)")).unwrap(),
+            b"decoy"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("note.txt"), b"same").unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let replacer = {
+            let stop = stop.clone();
+            let root = root.path().to_path_buf();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(root.join(".r.tmp"), b"same").unwrap();
+                    std::fs::rename(root.join(".r.tmp"), root.join("note.txt")).unwrap();
+                }
+            })
+        };
+
+        let started = Instant::now();
+        for _ in 0..300 {
+            match compare_and_swap_in_directory(
+                &dir,
+                Path::new("note.txt"),
+                b"same",
+                &revision(b"same"),
+                1024,
+                revision,
+            ) {
+                Ok(outcome) => assert_eq!(outcome, CompareAndSwapOutcome::Written),
+                Err(error) => {
+                    let text = format!("{error:#}");
+                    assert!(text.contains("持续变化"), "{text}");
+                    assert!(!text.contains("(deleted)"), "{text}");
+                    assert!(!text.contains("无法打开待保存文件"), "{text}");
+                }
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn temporary_name_generation_and_recognition_round_trip() {
+        let names: std::collections::HashSet<String> = (0..50).map(|_| temporary_name()).collect();
+        assert_eq!(names.len(), 50);
+        for name in &names {
+            assert!(is_temporary_name(name), "{name}");
+        }
+        assert!(is_temporary_name(&format!(".{}.writing", "a".repeat(32))));
+        for rejected in [
+            ".short.writing".to_string(),
+            format!(".{}.writing", "a".repeat(31)),
+            format!(".{}.writing", "g".repeat(32)),
+            format!(".{}.writing", "A".repeat(32)),
+            format!("{}.writing", "a".repeat(32)),
+            format!(".{}.tmp", "a".repeat(32)),
+        ] {
+            assert!(!is_temporary_name(&rejected), "{rejected}");
+        }
     }
 }

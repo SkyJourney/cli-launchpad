@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 457,
-    "Linux": 458,
-    "macOS": 455
+    "Windows": 465,
+    "Linux": 470,
+    "macOS": 467
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -36,16 +36,8 @@
       "models::window_kind::tests::window_label_fixture_vectors_match_rust_registry",
       "models::workspace_layout::tests::legacy_payload_fixtures_migrate_to_current_version",
       "models::workspace_layout::tests::legacy_payload_json_rejects_unsupported_versions",
-      "platform::file_cas::tests::cas_never_targets_a_real_file_named_like_a_deleted_alias",
-      "platform::file_cas::tests::cas_retries_when_resolved_destination_is_a_deleted_alias",
       "platform::file_cas::tests::lock_current_error_names_the_requested_path",
-      "platform::file_cas::tests::resolve_cas_destination_gives_up_when_resolutions_never_stabilize",
-      "platform::file_cas::tests::resolve_cas_destination_survives_many_consecutive_stale_resolutions",
       "platform::file_cas::tests::separate_processes_using_same_revision_allow_only_one_winner",
-      "platform::file_cas::tests::validate_resolved_destination_accepts_an_existing_file_with_the_requested_name",
-      "platform::file_cas::tests::validate_resolved_destination_rejects_a_missing_resolved_path",
-      "platform::file_cas::tests::validate_resolved_destination_rejects_an_existing_decoy_with_a_different_name",
-      "platform::file_cas::tests::validate_resolved_destination_treats_requests_without_a_file_name_as_existence_only",
       "services::install_service::tests::antigravity_update_plan_for_uses_builtin_command",
       "services::install_service::tests::claude_update_plan_for_uses_builtin_command",
       "services::launch_service::tests::resume_validation_failure_produces_no_launch_payload",
@@ -178,7 +170,23 @@
       "services::app_lifecycle::tests::exit_requested_payload_reports_pty_and_execution_task_counts",
       "services::app_lifecycle::tests::exit_requested_decision_issues_a_fresh_request_for_every_exit_attempt",
       "services::app_lifecycle::tests::exit_authorization_expires_and_cannot_be_reused",
-      "contracts::confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field"
+      "contracts::confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field",
+      "platform::file_identity::tests::identity_of_two_handles_to_the_same_file_is_equal",
+      "platform::file_identity::tests::identity_differs_for_different_files",
+      "platform::file_identity::tests::identity_changes_when_the_path_is_atomically_replaced",
+      "platform::file_identity::tests::identity_token_has_a_platform_prefix_and_two_numeric_parts",
+      "platform::file_identity::tests::of_entry_matches_the_identity_of_an_open_file",
+      "platform::file_location::tests::locate_returns_parent_handle_and_final_name_without_resolving_the_final_component",
+      "platform::file_location::tests::locate_accepts_a_missing_final_component",
+      "platform::file_location::tests::locate_rejects_a_missing_intermediate_directory",
+      "platform::file_location::tests::locate_rejects_a_file_used_as_a_directory",
+      "platform::file_location::tests::locate_rejects_empty_absolute_and_parent_traversal_paths",
+      "services::project_directory::tests::open_directory_returns_the_root_for_the_empty_path_and_rejects_files",
+      "services::project_directory::tests::locate_applies_project_relative_path_validation",
+      "platform::file_cas::tests::cas_writes_through_the_located_parent_directory",
+      "platform::file_cas::tests::cas_ignores_a_decoy_file_named_like_a_deleted_alias",
+      "platform::file_cas::tests::temporary_name_generation_and_recognition_round_trip",
+      "services::file_service::tests::save_reports_conflict_when_revision_differs_even_if_current_is_not_text"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -192,7 +200,6 @@
       "platform::file_cas::tests::replacement_preserves_protected_target_acl",
       "platform::file_cas::tests::temporary_acl_is_private_and_replacement_preserves_inherited_target_acl",
       "platform::file_cas::tests::unconditional_replacement_preserves_readonly_attribute",
-      "platform::file_cas::tests::validate_resolved_destination_ignores_case_differences_on_windows",
       "platform::file_cas::tests::windows_network_rename_paths_are_classified_and_built_without_root_handle",
       "platform::path_identity::tests::windows_paths_ignore_case_and_separator_style",
       "platform::path_rules::tests::windows_rejects_ads_reserved_names_and_trailing_dots",
@@ -211,7 +218,9 @@
       "services::install_service::tests::powershell_argument_escapes_single_quotes",
       "services::session_service::tests::file_uri_matches_windows_path_and_decodes_spaces",
       "services::session_service::tests::paths_match_ignores_separators_and_case",
-      "platform::execution_process::windows::tests::tree_worker_waits_for_the_dedicated_job_before_spawning"
+      "platform::execution_process::windows::tests::tree_worker_waits_for_the_dedicated_job_before_spawning",
+      "platform::file_location::tests::locate_rejects_a_junction_intermediate_component",
+      "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",
@@ -223,7 +232,6 @@
       "platform::file_cas::tests::lock_current_does_not_spin_on_unix_when_the_path_is_missing",
       "platform::file_cas::tests::permission_restore_failure_after_rename_is_a_warning_not_a_save_error",
       "platform::file_cas::tests::replacement_preserves_mode_and_starts_with_private_temporary_mode",
-      "platform::file_cas::tests::validate_resolved_destination_accepts_the_symlink_target_name",
       "platform::path_identity::tests::unix_paths_preserve_case_and_ignore_trailing_separator",
       "platform::path_rules::tests::unix_allows_colon_and_backslash_as_filename_characters",
       "platform::process::tests::timeout_kills_descendants_that_ignore_terminate_after_root_exits",
@@ -241,13 +249,19 @@
       "services::install_service::tests::codex_unix_update_plan_for_uses_builtin_command",
       "services::install_service::tests::codex_update_uses_builtin_command",
       "services::session_service::tests::file_uri_matches_unix_path_and_preserves_case",
-      "services::cli_adapters::codex::app_server::tests::successful_request_terminates_the_server_process_tree"
+      "services::cli_adapters::codex::app_server::tests::successful_request_terminates_the_server_process_tree",
+      "platform::file_location::tests::locate_rejects_a_symlink_intermediate_component",
+      "platform::file_cas::tests::cas_refuses_a_symlink_final_component_and_leaves_target_and_link_untouched",
+      "platform::file_cas::tests::cas_checks_the_symlink_policy_again_after_locking",
+      "services::file_service::tests::open_file_rejects_a_symlink_intermediate_directory",
+      "services::file_service::tests::save_text_file_rejects_a_symlink_final_component",
+      "services::file_service::tests::list_directory_rejects_a_symlink_directory_argument"
     ],
     "Linux": [
-      "platform::file_cas::tests::resolve_cas_destination_never_returns_a_deleted_alias_under_concurrent_replacement",
       "services::file_service::tests::listing_scan_budget_covers_entries_skipped_for_unreadable_names",
       "services::file_service::tests::listing_skips_non_utf8_names_and_reports_the_count",
-      "services::install_service::tests::linux_installs_use_fixed_official_scripts"
+      "services::install_service::tests::linux_installs_use_fixed_official_scripts",
+      "platform::file_cas::tests::cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement"
     ],
     "macOS": [
       "services::install_service::tests::macos_installs_use_fixed_official_scripts"

@@ -217,7 +217,7 @@ fn scan_file_cas_residues(
             }
             continue;
         }
-        if !metadata.is_file() || !is_file_cas_temporary_name(&name) {
+        if !metadata.is_file() || !crate::platform::file_cas::is_temporary_name(&name) {
             continue;
         }
         let Some(modified_at_ms) = metadata
@@ -231,8 +231,11 @@ fn scan_file_cas_residues(
         if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS {
             continue;
         }
-        let identity = match crate::platform::file_cas::file_identity(directory, &name, &metadata) {
-            Ok(identity) => identity,
+        let identity = match crate::platform::file_identity::of_entry(
+            directory,
+            std::ffi::OsStr::new(&name),
+        ) {
+            Ok(identity) => identity.token(),
             Err(_) => {
                 listing.skipped_count += 1;
                 continue;
@@ -253,20 +256,14 @@ fn remove_file_cas_residue_with_time(
     residue: &ProjectFileCasResidue,
     now_ms: u64,
 ) -> Result<()> {
-    let relative_path = ProjectDirectory::path(&residue.relative_path)?;
-    let Some(name) = relative_path.file_name().and_then(|name| name.to_str()) else {
+    let location = root.locate(&residue.relative_path)?;
+    let parent = location.parent;
+    let Some(name) = location.name.to_str() else {
         bail!("临时文件路径无效");
     };
-    if !is_file_cas_temporary_name(name) {
+    if !crate::platform::file_cas::is_temporary_name(name) {
         bail!("只允许清理 Launchpad 文件保存临时文件");
     }
-    let parent_path = relative_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty());
-    let parent = match parent_path {
-        Some(path) => root.dir().open_dir(path).context("临时文件目录已变化")?,
-        None => root.dir().try_clone()?,
-    };
     let metadata = parent
         .symlink_metadata(name)
         .context("临时文件已不存在或无法访问")?;
@@ -281,25 +278,12 @@ fn remove_file_cas_residue_with_time(
     if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS
         || metadata.len() != residue.size_bytes
         || modified_at_ms != residue.modified_at_ms
-        || crate::platform::file_cas::file_identity(&parent, name, &metadata)?
+        || crate::platform::file_identity::of_entry(&parent, std::ffi::OsStr::new(name))?.token()
             != residue.file_identity
     {
         bail!("临时文件在预览后发生变化；请重新扫描确认");
     }
     parent.remove_file(name).context("无法删除已确认的临时文件")
-}
-
-fn is_file_cas_temporary_name(name: &str) -> bool {
-    let Some(identifier) = name
-        .strip_prefix('.')
-        .and_then(|name| name.strip_suffix(".writing"))
-    else {
-        return false;
-    };
-    identifier.len() == 32
-        && identifier
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn system_time_to_ms(time: SystemTime) -> Result<u64> {
@@ -324,21 +308,13 @@ fn list_directory_with_limit(
     relative_path: &str,
     max_entries: usize,
 ) -> Result<ProjectDirectoryListing> {
-    let directory_path = ProjectDirectory::path(relative_path)?;
-    if !relative_path.is_empty() && !root.dir().metadata(&directory_path)?.is_dir() {
-        bail!("所选项目路径不是目录");
-    }
+    let directory = root.open_directory(relative_path)?;
 
     let mut entries = Vec::new();
     let mut truncated = false;
     let mut skipped_count = 0;
     let mut scanned_count = 0;
-    let read_dir = if relative_path.is_empty() {
-        root.dir().entries()
-    } else {
-        root.dir().read_dir(&directory_path)
-    }
-    .context("无法读取项目目录")?;
+    let read_dir = directory.entries().context("无法读取项目目录")?;
     for item in read_dir {
         if scanned_count >= max_entries || entries.len() >= max_entries {
             truncated = true;
@@ -360,7 +336,7 @@ fn list_directory_with_limit(
             skipped_count += 1;
             continue;
         }
-        if is_file_cas_temporary_name(&name) {
+        if crate::platform::file_cas::is_temporary_name(&name) {
             continue;
         }
         let child_relative = if relative_path.is_empty() {
@@ -368,9 +344,7 @@ fn list_directory_with_limit(
         } else {
             format!("{relative_path}/{name}")
         };
-        let metadata = match ProjectDirectory::path(&child_relative)
-            .and_then(|path| root.dir().symlink_metadata(&path).map_err(Into::into))
-        {
+        let metadata = match directory.symlink_metadata(&name) {
             Ok(metadata) => metadata,
             Err(_) => {
                 skipped_count += 1;
@@ -443,10 +417,10 @@ pub(crate) fn open_file_in(
     root: &ProjectDirectory,
     relative_path: &str,
 ) -> Result<ProjectFileOpenResult> {
-    let path = ProjectDirectory::path(relative_path)?;
-    let path_metadata = root
-        .dir()
-        .symlink_metadata(&path)
+    let location = root.locate(relative_path)?;
+    let path_metadata = location
+        .parent
+        .symlink_metadata(&location.name)
         .context("项目文件不存在或无法访问")?;
     if !path_metadata.is_file() {
         bail!("只能打开普通文件");
@@ -457,11 +431,11 @@ pub(crate) fn open_file_in(
     #[cfg(unix)]
     {
         use cap_std::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     }
-    let file = root
-        .dir()
-        .open_with(&path, &options)
+    let file = location
+        .parent
+        .open_with(&location.name, &options)
         .context("项目文件不存在或无法访问")?;
     let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
@@ -575,18 +549,29 @@ pub(crate) fn save_text_file_in(
     if !is_plain_text(content.as_bytes()) {
         bail!("只能保存 UTF-8 文本文件");
     }
-    let path = ProjectDirectory::path(relative_path)?;
-    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
-    let metadata = file.metadata().context("无法读取文件属性")?;
+    ProjectDirectory::path(relative_path)?;
+    // Option A (user decision, 2026-10-11): a single pre-read rejects non-text content only when the
+    // current bytes match the expected revision, which keeps the historical error for a binary file.
+    // A differing revision is not decided here: the CAS compares revisions under the lock and reports
+    // Conflict, so the authoritative revision comparison still happens once, in the CAS.
+    let location = root.locate(relative_path)?;
+    let metadata = location
+        .parent
+        .symlink_metadata(&location.name)
+        .context("项目文件不存在或无法访问")?;
+    if metadata.file_type().is_symlink() {
+        bail!("项目文件是符号链接，已拒绝保存");
+    }
     if !metadata.is_file() {
         bail!("只能保存普通文本文件");
     }
+    let file = location
+        .parent
+        .open(&location.name)
+        .context("项目文件不存在或无法访问")?;
     let current = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
-    if !is_plain_text(&current) {
+    if content_revision(&current) == expected_revision && !is_plain_text(&current) {
         bail!("只能保存 UTF-8 文本文件");
-    }
-    if content_revision(&current) != expected_revision {
-        return Ok(ProjectTextFileSaveResult::Conflict);
     }
     let outcome =
         replace_file_if_revision(root, relative_path, content.as_bytes(), expected_revision)
@@ -718,7 +703,7 @@ mod tests {
             .any(|entry| entry.name == ".env" && entry.hidden));
         assert!(!entries
             .iter()
-            .any(|entry| is_file_cas_temporary_name(&entry.name)));
+            .any(|entry| crate::platform::file_cas::is_temporary_name(&entry.name)));
         assert!(entries
             .iter()
             .any(|entry| entry.name == "node_modules" && entry.ignored));
@@ -1232,6 +1217,101 @@ mod tests {
         assert_eq!(
             read_text_file_in(&capability, "note.txt").unwrap().content,
             "original root"
+        );
+    }
+
+    #[test]
+    fn save_reports_conflict_when_revision_differs_even_if_current_is_not_text() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("note.txt"), [b'x', 1, 2]).unwrap();
+
+        let result =
+            save_text_file(root.path(), "note.txt", "new", &content_revision(b"other")).unwrap();
+
+        assert!(matches!(result, ProjectTextFileSaveResult::Conflict));
+        assert_eq!(
+            fs::read(root.path().join("note.txt")).unwrap(),
+            vec![b'x', 1, 2]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_file_rejects_a_symlink_intermediate_directory() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "hi").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("link")).unwrap();
+
+        assert!(read_text_file(root.path(), "link/a.txt").is_err());
+        assert_eq!(
+            read_text_file(root.path(), "real/a.txt").unwrap().content,
+            "hi"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_text_file_rejects_a_symlink_final_component() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("real.txt"), "before").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real.txt"), root.path().join("note.txt"))
+            .unwrap();
+        let opened = content_revision(b"before");
+
+        let error = save_text_file(root.path(), "note.txt", "after", &opened).unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            fs::read_to_string(root.path().join("real.txt")).unwrap(),
+            "before"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_directory_rejects_a_symlink_directory_argument() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("link")).unwrap();
+
+        assert!(list_directory(root.path(), "link").is_err());
+        let listing = list_directory(root.path(), "real").unwrap();
+        assert!(listing.entries.iter().any(|entry| entry.name == "a.txt"));
+        let top = list_directory(root.path(), "").unwrap();
+        let link = top
+            .entries
+            .iter()
+            .find(|entry| entry.name == "link")
+            .unwrap();
+        assert!(link.symbolic_link);
+        assert_eq!(link.kind, ProjectFileKind::Other);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_file_rejects_a_junction_intermediate_directory() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "hi").unwrap();
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.path().join("link"))
+            .arg(root.path().join("real"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(read_text_file(root.path(), "link/a.txt").is_err());
+        assert_eq!(
+            read_text_file(root.path(), "real/a.txt").unwrap().content,
+            "hi"
         );
     }
 }
