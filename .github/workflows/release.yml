@@ -153,16 +153,28 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt_retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo timeout 240 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"; then
+                return 0
+              fi
+              echo "apt-get $1 failed (attempt $attempt/3)" >&2
+              sleep $((attempt * 10))
+            done
+            return 1
+          }
+          apt_retry update
+          apt_retry install -y \
             build-essential curl wget file \
             libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev \
             libwebkit2gtk-4.1-dev xdg-utils
           # linuxdeploy's downloaded AppImage tooling needs libfuse2 to run;
           # Ubuntu renamed the package to libfuse2t64 on newer releases.
-          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+          apt_retry install -y libfuse2t64 || apt_retry install -y libfuse2
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
