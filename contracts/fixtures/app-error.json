@@ -3,7 +3,7 @@
     {
       "name": "withoutParams",
       "value": {
-        "code": "file.not_found",
+        "code": "project.not_found",
         "message": "file not found"
       }
     },

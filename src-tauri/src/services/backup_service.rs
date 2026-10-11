@@ -859,7 +859,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&error).unwrap()["code"],
-            "pty_session_starting"
+            "pty.session_starting"
         );
         assert_eq!(notifier.calls(), 0);
         assert_eq!(directory_names(&db).len(), 2);
@@ -931,7 +931,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             notifier.observed.lock().unwrap().as_deref(),
-            Some("backup_restore_in_progress"),
+            Some("backup.restore_in_progress"),
             "the data replace permit must still be held when the notification is sent"
         );
         // after the restore returns, the permit is released and admission reopens

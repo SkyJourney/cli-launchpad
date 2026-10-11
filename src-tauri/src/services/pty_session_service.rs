@@ -49,18 +49,18 @@ const MAX_PTY_INPUT_BYTES: usize = 64 * 1024;
 fn enqueue_pty_input(sender: &SyncSender<Vec<u8>>, data: &[u8]) -> Result<(), AppError> {
     if data.len() > MAX_PTY_INPUT_BYTES {
         return Err(AppError::coded(
-            "pty_input_backpressure",
+            crate::error_codes::PTY_INPUT_BACKPRESSURE,
             "终端输入片段超过安全上限，请分段粘贴",
         ));
     }
     match sender.try_send(data.to_vec()) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => Err(AppError::coded(
-            "pty_input_backpressure",
+            crate::error_codes::PTY_INPUT_BACKPRESSURE,
             "终端输入队列已满，请稍后重试",
         )),
         Err(TrySendError::Disconnected(_)) => Err(AppError::coded(
-            "pty_input_unavailable",
+            crate::error_codes::PTY_INPUT_UNAVAILABLE,
             "终端输入通道已关闭，请重新连接会话",
         )),
     }
@@ -513,7 +513,7 @@ impl PtySessionManager {
         })?;
         if !crate::platform::path_identity::paths_equal(&directory.path, &payload.directory) {
             return Err(AppError::coded(
-                "project_identity_changed",
+                crate::error_codes::PROJECT_IDENTITY_CHANGED,
                 "项目目录在启动准备期间发生变化，请重试",
             ));
         }
@@ -1973,7 +1973,7 @@ mod tests {
         let error = enqueue_pty_input(&sender, b"second").unwrap_err();
         let value = serde_json::to_value(error).unwrap();
 
-        assert_eq!(value["code"], "pty_input_backpressure");
+        assert_eq!(value["code"], "pty.input_backpressure");
     }
 
     #[test]
@@ -1983,7 +1983,7 @@ mod tests {
         let error = enqueue_pty_input(&sender, &vec![b'x'; MAX_PTY_INPUT_BYTES + 1]).unwrap_err();
         let value = serde_json::to_value(error).unwrap();
 
-        assert_eq!(value["code"], "pty_input_backpressure");
+        assert_eq!(value["code"], "pty.input_backpressure");
     }
 
     // ---- manager 级测试（m6-024）：全部通过 insert_test_session 构造真实会话，
@@ -2431,7 +2431,7 @@ mod tests {
         let error = manager
             .write(&s, T1, &vec![0u8; MAX_PTY_INPUT_BYTES + 1])
             .unwrap_err();
-        assert_eq!(code(&error), "pty_input_backpressure");
+        assert_eq!(code(&error), "pty.input_backpressure");
         assert_eq!(input.try_recv(), Err(mpsc::TryRecvError::Empty));
 
         // 4. 后端按字节计数而不是按字符：21846 个汉字 = 65538 字节，被拒绝。
@@ -2439,7 +2439,7 @@ mod tests {
         let wide = "你".repeat(21846);
         assert_eq!(wide.len(), 65538);
         let error = manager.write(&s, T1, wide.as_bytes()).unwrap_err();
-        assert_eq!(code(&error), "pty_input_backpressure");
+        assert_eq!(code(&error), "pty.input_backpressure");
         assert_eq!(input.try_recv(), Err(mpsc::TryRecvError::Empty));
 
         // 5. 队列容量为 32：第 33 次写入被背压拒绝，读空后恰为 32 条。
@@ -2447,7 +2447,7 @@ mod tests {
             manager.write(&s, T1, b"y").unwrap();
         }
         let error = manager.write(&s, T1, b"y").unwrap_err();
-        assert_eq!(code(&error), "pty_input_backpressure");
+        assert_eq!(code(&error), "pty.input_backpressure");
         let mut drained = 0;
         while input.try_recv().is_ok() {
             drained += 1;
@@ -2457,7 +2457,7 @@ mod tests {
         // 6. 写线程退出（接收端被丢弃）之后返回 unavailable。
         drop(input);
         let error = manager.write(&s, T1, b"z").unwrap_err();
-        assert_eq!(code(&error), "pty_input_unavailable");
+        assert_eq!(code(&error), "pty.input_unavailable");
     }
 
     // ---- m6-025：窗口状态报告与交接状态机

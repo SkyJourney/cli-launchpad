@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 423,
-    "Linux": 424,
-    "macOS": 421
+    "Windows": 430,
+    "Linux": 431,
+    "macOS": 428
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -144,7 +144,14 @@
       "commands::session::tests::refresh_command_is_wired_through_the_restore_generation_guard",
       "commands::backup::tests::restore_command_passes_the_managed_generation_to_the_restore_orchestration",
       "services::content_window_grants::tests::release_window_still_reports_the_lost_window_when_the_grant_table_is_poisoned",
-      "models::window_kind::tests::caller_window_errors_reach_the_frontend_with_their_codes"
+      "models::window_kind::tests::caller_window_errors_reach_the_frontend_with_their_codes",
+      "contracts::error_code_contract_matches_rust_registry",
+      "contracts::app_errors_use_registered_code_constants",
+      "contracts::every_registered_code_constant_is_used_outside_the_registry",
+      "contracts::reserved_and_frontend_codes_have_no_rust_producer",
+      "contracts::event_contract_matches_rust_event_constants",
+      "contracts::rust_event_names_are_only_spelled_in_the_events_module",
+      "contracts::event_contract_entries_are_well_formed"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

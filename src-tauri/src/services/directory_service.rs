@@ -8,7 +8,7 @@ pub fn remove_directory(connection: &rusqlite::Connection, id: i64) -> Result<()
     let transaction = connection.unchecked_transaction()?;
     if directory_repo::has_running_pty_session(&transaction, id)? {
         return Err(AppError::coded(
-            "directory.in_use",
+            crate::error_codes::DIRECTORY_IN_USE,
             "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
         ));
     }

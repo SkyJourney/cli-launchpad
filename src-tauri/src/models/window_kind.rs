@@ -75,11 +75,10 @@ pub fn is_detached_window_label(label: &str) -> bool {
     )
 }
 
+use crate::error_codes::{WINDOW_LABEL_INVALID, WINDOW_NOT_ALLOWED};
 use crate::AppError;
 
 // m6-033 moves these into the error code registry.
-const CODE_WINDOW_LABEL_INVALID: &str = "window.label_invalid";
-const CODE_WINDOW_NOT_ALLOWED: &str = "window.not_allowed";
 
 /// The main window's label, read from `contracts/window-kinds.json`.
 pub fn main_window_label() -> &'static str {
@@ -114,7 +113,7 @@ pub struct WindowLabel {
 impl WindowLabel {
     pub fn parse(raw: &str) -> Result<Self, AppError> {
         let kind = window_kind_of(raw)
-            .ok_or_else(|| AppError::coded(CODE_WINDOW_LABEL_INVALID, "窗口标识无效"))?;
+            .ok_or_else(|| AppError::coded(WINDOW_LABEL_INVALID, "窗口标识无效"))?;
         Ok(Self {
             raw: raw.to_string(),
             kind,
@@ -158,7 +157,7 @@ impl CallerWindow {
             Ok(())
         } else {
             Err(AppError::coded(
-                CODE_WINDOW_NOT_ALLOWED,
+                WINDOW_NOT_ALLOWED,
                 "当前窗口不允许执行该操作",
             ))
         }

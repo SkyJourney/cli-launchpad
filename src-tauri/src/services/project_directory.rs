@@ -25,7 +25,7 @@ impl ProjectDirectory {
     /// Database stage: reads the directory row only. No filesystem access.
     pub fn lookup(connection: &Connection, directory_id: i64) -> Result<Directory, AppError> {
         directory_repo::get(connection, directory_id)?
-            .ok_or_else(|| AppError::coded("file.not_found", "项目目录不存在"))
+            .ok_or_else(|| AppError::coded(crate::error_codes::PROJECT_NOT_FOUND, "项目目录不存在"))
     }
 
     /// Filesystem stage: compares the caller's path snapshot with the stored
@@ -33,7 +33,7 @@ impl ProjectDirectory {
     pub fn open_snapshot(directory_path: &str, expected_path: &str) -> Result<Self, AppError> {
         if !path_identity::paths_equal(expected_path, directory_path) {
             return Err(AppError::coded(
-                "project_identity_changed",
+                crate::error_codes::PROJECT_IDENTITY_CHANGED,
                 "项目目录身份已变化，请重新选择项目后再访问文件",
             ));
         }
@@ -104,7 +104,7 @@ mod tests {
             Err(error) => error,
         };
         let serialized = serde_json::to_value(error).unwrap();
-        assert_eq!(serialized["code"], "project_identity_changed");
+        assert_eq!(serialized["code"], "project.identity_changed");
     }
 
     #[test]
@@ -118,6 +118,6 @@ mod tests {
             Err(error) => error,
         };
         let serialized = serde_json::to_value(error).unwrap();
-        assert_eq!(serialized["code"], "project_identity_changed");
+        assert_eq!(serialized["code"], "project.identity_changed");
     }
 }

@@ -13,14 +13,30 @@ export const en = {
     ptyInputUnavailable:
       "The terminal input channel is closed. Reconnect the session.",
     ptySessionsActive:
-      "{{count}} terminal session(s) are still running. Close them before restoring a backup.",
+      "Restoring a backup or importing a configuration is blocked while {{count}} terminal session(s) are running. Close them first.",
     backupRestoreInProgress:
       "A backup restore is in progress. Try again after it finishes.",
     ptySessionStarting:
-      "{{count}} terminal session(s) are starting. Try restoring again shortly.",
+      "{{count}} terminal session(s) or execution task(s) are still starting. Try again shortly.",
     execPlanChanged: "The execution plan changed. Review and confirm it again.",
     execBusy: "This tool already has a running task.",
     layoutNeedsReset: "The workspace layout is invalid and needs to be reset.",
+    internal:
+      "An internal error occurred. Try again, and restart the app if it keeps happening.",
+    appExiting: "The app is exiting. Try again after it restarts.",
+    appExitDeferred:
+      "A restore or import is still running, so the app cannot exit yet.",
+    dataReplaceBlocked:
+      "{{count}} install or update task(s) are still running. Wait for them to finish before restoring or importing.",
+    dataReplaceInProgress: "Another restore or import is already in progress.",
+    configImportInProgress:
+      "A configuration import is in progress. Try again after it finishes.",
+    projectNotFound: "The project folder could not be found.",
+    layoutSaveRejected:
+      "The backend repeatedly rejected the workspace layout, so saving has stopped.",
+    layoutSchemaIncompatible:
+      "The workspace layout was written by a newer version of the app and cannot be saved by this version.",
+    appError: "An unexpected error occurred. Try again.",
     generic: "The operation failed.",
     directoryInUse: "This project still has a running terminal session.",
   },

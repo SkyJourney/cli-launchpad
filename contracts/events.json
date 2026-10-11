@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "name": "app-exit-requested",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "app-preferences",
+      "mechanism": "emit",
+      "direction": "window-to-all",
+      "allowedSourceKinds": ["main"],
+      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
+      "payloadVersion": 1,
+      "plannedLayer": "L3"
+    },
+    {
+      "name": "app-preferences-requested",
+      "mechanism": "emit_to",
+      "direction": "window-to-window",
+      "allowedSourceKinds": ["terminal", "workspaceContent"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": 1,
+      "plannedLayer": "L2"
+    },
+    {
+      "name": "execution-task-log",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "execution-task-updated",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "pty-session-owner-lost",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "workspace-content-window-event",
+      "mechanism": "emit_to",
+      "direction": "window-to-window",
+      "allowedSourceKinds": ["main", "terminal", "workspaceContent"],
+      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
+      "payloadVersion": 1,
+      "plannedLayer": "L2"
+    },
+    {
+      "name": "workspace-content-window-lost",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "workspace-data-restored",
+      "mechanism": "emit_to",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    }
+  ]
+}

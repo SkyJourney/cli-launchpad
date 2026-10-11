@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
+import { RUST_EVENTS } from "../lib/eventNames";
 import { refreshCliStatusForTool } from "./useCliStatus";
 import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
@@ -70,7 +71,7 @@ export function useExecutionTaskEvents() {
 
     const register = async () => {
       const taskUnlisten = await listen<ExecutionTask>(
-        "execution-task-updated",
+        RUST_EVENTS.executionTaskUpdated,
         (event) => {
           const task = event.payload;
           // list 与 detail 两份缓存各自可能滞后（list 会被轮询刷新），任一方为终态即视为已结束。
@@ -154,7 +155,7 @@ export function useExecutionTaskEvents() {
       }
 
       const logUnlisten = await listen<ExecutionLogChunk>(
-        "execution-task-log",
+        RUST_EVENTS.executionTaskLog,
         (event) => {
           const chunk = event.payload;
           queryClient.setQueryData<ExecutionTaskDetail>(

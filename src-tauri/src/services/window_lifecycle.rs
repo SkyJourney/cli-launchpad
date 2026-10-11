@@ -5,8 +5,8 @@
 
 use crate::models::window_kind::WindowLabel;
 
-pub const PTY_SESSION_OWNER_LOST_EVENT: &str = "pty-session-owner-lost";
-pub const WORKSPACE_CONTENT_WINDOW_LOST_EVENT: &str = "workspace-content-window-lost";
+pub const PTY_SESSION_OWNER_LOST_EVENT: &str = crate::events::PTY_SESSION_OWNER_LOST;
+pub const WORKSPACE_CONTENT_WINDOW_LOST_EVENT: &str = crate::events::WORKSPACE_CONTENT_WINDOW_LOST;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {

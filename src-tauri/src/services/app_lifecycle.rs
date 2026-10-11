@@ -113,18 +113,15 @@ pub fn effective_close_behavior(stored: CloseBehavior, tray: &TrayAvailability) 
     }
 }
 
+use crate::error_codes::{
+    APP_DATA_REPLACE_BLOCKED, APP_DATA_REPLACE_IN_PROGRESS, APP_EXITING, APP_EXIT_DEFERRED,
+    BACKUP_RESTORE_IN_PROGRESS, CONFIG_IMPORT_IN_PROGRESS, PTY_SESSIONS_ACTIVE,
+    PTY_SESSION_STARTING,
+};
 use crate::AppError;
 
 // m6-033 moves these into the error code registry. The three legacy codes
 // keep their current strings (PD-15 keeps them as aliases for one version).
-const CODE_RESTORE_IN_PROGRESS: &str = "backup_restore_in_progress";
-const CODE_SESSION_STARTING: &str = "pty_session_starting";
-const CODE_SESSIONS_ACTIVE: &str = "pty_sessions_active";
-const CODE_IMPORT_IN_PROGRESS: &str = "config.import_in_progress";
-const CODE_DATA_REPLACE_BLOCKED: &str = "app.data_replace_blocked";
-const CODE_DATA_REPLACE_IN_PROGRESS: &str = "app.data_replace_in_progress";
-const CODE_EXIT_DEFERRED: &str = "app.exit_deferred";
-const CODE_EXITING: &str = "app.exiting";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -306,28 +303,28 @@ impl AppLifecycle {
                 Ok(self.permit(PermitKind::ExitPending))
             }
             (Phase::Restoring, Operation::PtyStart) => Err(AppError::coded(
-                CODE_RESTORE_IN_PROGRESS,
+                BACKUP_RESTORE_IN_PROGRESS,
                 "备份恢复正在进行，暂时不能启动终端会话",
             )),
             (Phase::Restoring, Operation::ExecStart) => Err(AppError::coded(
-                CODE_RESTORE_IN_PROGRESS,
+                BACKUP_RESTORE_IN_PROGRESS,
                 "备份恢复正在进行，暂时不能启动安装或更新任务",
             )),
             (Phase::Importing, Operation::PtyStart | Operation::ExecStart) => Err(AppError::coded(
-                CODE_IMPORT_IN_PROGRESS,
+                CONFIG_IMPORT_IN_PROGRESS,
                 "配置导入正在进行，暂时不能启动终端会话或任务",
             )),
             (Phase::Restoring | Phase::Importing, Operation::DataReplace(_)) => Err(
-                AppError::coded(CODE_DATA_REPLACE_IN_PROGRESS, "另一个数据替换操作正在进行"),
+                AppError::coded(APP_DATA_REPLACE_IN_PROGRESS, "另一个数据替换操作正在进行"),
             ),
             (Phase::Restoring | Phase::Importing, Operation::Exit) => Err(AppError::coded(
-                CODE_EXIT_DEFERRED,
+                APP_EXIT_DEFERRED,
                 "数据替换正在进行，暂缓退出",
             )),
             (
                 Phase::Exiting,
                 Operation::PtyStart | Operation::ExecStart | Operation::DataReplace(_),
-            ) => Err(AppError::coded(CODE_EXITING, "应用正在退出")),
+            ) => Err(AppError::coded(APP_EXITING, "应用正在退出")),
             (Phase::Exiting, Operation::Exit) => Ok(self.permit(PermitKind::ExitRepeated)),
         }
     }
@@ -353,14 +350,14 @@ impl AppLifecycle {
         };
         if inflight > 0 {
             return Err(AppError::coded_with_params(
-                CODE_SESSION_STARTING,
+                PTY_SESSION_STARTING,
                 format!("有 {inflight} 个终端会话或执行任务正在启动，请稍后重试{action}"),
                 params(inflight),
             ));
         }
         if activity.pty > 0 {
             return Err(AppError::coded_with_params(
-                CODE_SESSIONS_ACTIVE,
+                PTY_SESSIONS_ACTIVE,
                 format!(
                     "请先关闭所有运行中的终端会话（当前 {} 个）再{action}",
                     activity.pty
@@ -370,7 +367,7 @@ impl AppLifecycle {
         }
         if activity.exec > 0 {
             return Err(AppError::coded_with_params(
-                CODE_DATA_REPLACE_BLOCKED,
+                APP_DATA_REPLACE_BLOCKED,
                 format!(
                     "有 {} 个安装或更新任务正在执行，请等待其结束后再{action}",
                     activity.exec
@@ -786,13 +783,13 @@ mod tests {
             (
                 Phase::Restoring,
                 PtyStart,
-                Some("backup_restore_in_progress"),
+                Some("backup.restore_in_progress"),
                 Phase::Restoring,
             ),
             (
                 Phase::Restoring,
                 ExecStart,
-                Some("backup_restore_in_progress"),
+                Some("backup.restore_in_progress"),
                 Phase::Restoring,
             ),
             (
@@ -905,7 +902,7 @@ mod tests {
         let starting = lifecycle.admit(Operation::PtyStart).unwrap();
         let error = lifecycle.admit(replace).unwrap_err();
         let value = serde_json::to_value(&error).unwrap();
-        assert_eq!(value["code"], "pty_session_starting");
+        assert_eq!(value["code"], "pty.session_starting");
         assert_eq!(value["params"]["count"], 1);
         assert_eq!(value["params"]["inflightStarts"], 1);
         assert_eq!(value["params"]["ptyCount"], 2);
@@ -916,7 +913,7 @@ mod tests {
         // 2. then active PTY sessions
         let error = lifecycle.admit(replace).unwrap_err();
         let value = serde_json::to_value(&error).unwrap();
-        assert_eq!(value["code"], "pty_sessions_active");
+        assert_eq!(value["code"], "pty.sessions_active");
         assert_eq!(value["params"]["count"], 2);
         assert!(error.to_string().contains("2 个"));
         assert_eq!(lifecycle.phase(), Phase::Running);
@@ -1043,7 +1040,7 @@ mod tests {
         let error = lifecycle
             .admit(Operation::DataReplace(DataReplaceKind::RestoreBackup))
             .unwrap_err();
-        assert_eq!(code_of(&error), "pty_sessions_active");
+        assert_eq!(code_of(&error), "pty.sessions_active");
         assert!(error.to_string().contains("1 个"));
     }
 
@@ -1056,7 +1053,7 @@ mod tests {
             Ok(_) => panic!("restore must wait for a session startup"),
             Err(error) => error,
         };
-        assert_eq!(code_of(&starting_error), "pty_session_starting");
+        assert_eq!(code_of(&starting_error), "pty.session_starting");
 
         drop(starting);
         let restoring = lifecycle.admit(restore).unwrap();
@@ -1064,7 +1061,7 @@ mod tests {
             Ok(_) => panic!("session startup must be blocked during restore"),
             Err(error) => error,
         };
-        assert_eq!(code_of(&start_error), "backup_restore_in_progress");
+        assert_eq!(code_of(&start_error), "backup.restore_in_progress");
 
         drop(restoring);
         assert!(lifecycle.admit(Operation::PtyStart).is_ok());
@@ -1082,14 +1079,14 @@ mod tests {
         let session = manager.insert_test_session("main", None);
         let error = lifecycle.admit(restore).unwrap_err();
         let value = serde_json::to_value(&error).unwrap();
-        assert_eq!(value["code"], "pty_sessions_active");
+        assert_eq!(value["code"], "pty.sessions_active");
         assert_eq!(value["params"]["count"], 1);
 
         manager.remove_test_session(&session.session_id);
         let restoring = lifecycle.admit(restore).unwrap();
         assert_eq!(
             code_of(&lifecycle.admit(Operation::PtyStart).unwrap_err()),
-            "backup_restore_in_progress"
+            "backup.restore_in_progress"
         );
         drop(restoring);
         assert!(lifecycle.admit(Operation::PtyStart).is_ok());

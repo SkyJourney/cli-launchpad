@@ -42,7 +42,7 @@ struct TauriRestoreNotifier(tauri::AppHandle);
 impl backup_service::RestoreNotifier for TauriRestoreNotifier {
     fn workspace_data_restored(&self) -> Result<(), String> {
         self.0
-            .emit_to("main", "workspace-data-restored", ())
+            .emit_to("main", crate::events::WORKSPACE_DATA_RESTORED, ())
             .map_err(|error| error.to_string())
     }
 }

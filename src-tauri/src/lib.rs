@@ -5,6 +5,8 @@ mod commands;
 mod contracts;
 mod db;
 mod error;
+mod error_codes;
+mod events;
 mod models;
 mod platform;
 mod runtime;
@@ -431,7 +433,7 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                     }
                     let _ = app.emit_to(
                         "main",
-                        "app-exit-requested",
+                        crate::events::APP_EXIT_REQUESTED,
                         serde_json::json!({
                             "ptyCount": pty_count,
                             "executionTaskCount": execution_task_count,

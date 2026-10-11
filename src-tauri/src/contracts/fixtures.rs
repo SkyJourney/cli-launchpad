@@ -848,7 +848,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         &mut cases,
         name,
         "withoutParams",
-        AppError::coded("file.not_found", "file not found"),
+        AppError::coded(crate::error_codes::PROJECT_NOT_FOUND, "file not found"),
     );
     sample_serialize_only(
         &mut cases,

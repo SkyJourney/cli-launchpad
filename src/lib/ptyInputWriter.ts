@@ -1,11 +1,11 @@
-import { getAppErrorCode } from "./appErrors";
+import { getAppErrorCode, normalizeAppErrorCode } from "./appErrors";
 
 export const PTY_INPUT_MAX_CHUNK_BYTES = 65536;
 export const PTY_INPUT_RETRY_DELAYS_MS = [16, 32, 64, 128, 256] as const;
 
 export function isPtyInputBackpressure(reason: unknown): boolean {
   const code = getAppErrorCode(reason);
-  return code === "pty_input_backpressure" || code === "pty.input_backpressure";
+  return normalizeAppErrorCode(code) === "pty.input_backpressure";
 }
 
 export interface PtyInputWriterOptions {

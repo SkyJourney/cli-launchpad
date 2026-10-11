@@ -1685,3 +1685,398 @@ fn service_code_does_not_branch_on_window_label_literals() {
         }
     }
 }
+
+// ---- m6-033: error code and event contracts (red phase) ----
+
+const ERROR_CODES_JSON: &str = include_str!("../../../contracts/error-codes.json");
+const EVENTS_JSON: &str = include_str!("../../../contracts/events.json");
+
+fn string_array(value: &serde_json::Value, what: &str) -> Vec<String> {
+    value
+        .as_array()
+        .unwrap_or_else(|| panic!("{what} must be an array"))
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .unwrap_or_else(|| panic!("{what} items must be strings"))
+                .to_string()
+        })
+        .collect()
+}
+
+/// Removes every `#[cfg(test)]` item (up to its `;` or its first brace block), wherever it
+/// appears, so production code placed after a test-only const or helper is still scanned.
+/// Only an attribute that starts its own line counts; the same text inside a string literal
+/// (for example the splitter in `commands/backup.rs`) is left alone.
+fn production_text(source: &str) -> String {
+    const ATTRIBUTE: &str = "#[cfg(test)]";
+    let mut out = String::new();
+    let mut rest = source;
+    while let Some(at) = rest.find(ATTRIBUTE) {
+        let line_start = rest[..at].rfind('\n').map_or(0, |newline| newline + 1);
+        if !rest[line_start..at].trim().is_empty() {
+            out.push_str(&rest[..at + ATTRIBUTE.len()]);
+            rest = &rest[at + ATTRIBUTE.len()..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        let item = &rest[at + ATTRIBUTE.len()..];
+        let end = item_end(item).expect("cfg(test) item ends with a `;` or a brace block");
+        rest = &item[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Byte offset just past a `#[cfg(test)]` item: its first top-level `;`, or the block it opens.
+/// Semicolons inside parentheses or brackets (array types, signatures) do not end the item.
+fn item_end(item: &str) -> Option<usize> {
+    let mut nesting = 0usize;
+    for (i, byte) in item.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' => nesting += 1,
+            b')' | b']' => nesting = nesting.saturating_sub(1),
+            b';' if nesting == 0 => return Some(i + 1),
+            b'{' if nesting == 0 => return block_end(item, i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Byte offset just past the brace that closes the block opened at `open`.
+/// Braces inside string, raw string, char literals and comments are not counted.
+fn block_end(text: &str, open: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'r' if i + 1 < bytes.len() && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#') => {
+                let hashes = bytes[i + 1..]
+                    .iter()
+                    .take_while(|byte| **byte == b'#')
+                    .count();
+                let quote = i + 1 + hashes;
+                if quote < bytes.len() && bytes[quote] == b'"' {
+                    let mut closing = vec![b'"'];
+                    closing.extend(std::iter::repeat(b'#').take(hashes));
+                    match text[quote + 1..].find(std::str::from_utf8(&closing).unwrap()) {
+                        Some(offset) => i = quote + 1 + offset + closing.len() - 1,
+                        None => return None,
+                    }
+                }
+            }
+            b'\'' => {
+                if i + 3 < bytes.len() && bytes[i + 1] == b'\\' {
+                    match text[i + 3..].find('\'') {
+                        Some(offset) => i = i + 3 + offset,
+                        None => return None,
+                    }
+                } else if i + 2 < bytes.len() && bytes[i + 2] == b'\'' {
+                    i += 2;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => match text[i..].find('\n') {
+                Some(offset) => i += offset,
+                None => return None,
+            },
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => match text[i + 2..].find("*/") {
+                Some(offset) => i = i + 2 + offset + 1,
+                None => return None,
+            },
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Every non-test Rust source file under `src/` as (relative path, production text).
+/// `contracts/` is skipped: it is compiled only for tests and holds frozen fixtures.
+fn production_rust_sources() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .filter_map(|path| {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative.starts_with("contracts/") {
+                return None;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            Some((relative, production_text(&text)))
+        })
+        .collect()
+}
+
+#[test]
+fn error_code_contract_matches_rust_registry() {
+    let contract: serde_json::Value = serde_json::from_str(ERROR_CODES_JSON).unwrap();
+    let mut codes = string_array(&contract["codes"], "codes");
+    codes.sort();
+    let mut registry: Vec<String> = crate::error_codes::ALL
+        .iter()
+        .map(|code| code.to_string())
+        .collect();
+    registry.sort();
+    assert_eq!(
+        codes, registry,
+        "contracts/error-codes.json codes must equal error_codes::ALL"
+    );
+
+    let dotted = |code: &str| {
+        let mut parts = code.split('.');
+        let first = parts.next().unwrap_or("");
+        let rest: Vec<&str> = parts.collect();
+        !first.is_empty()
+            && first.chars().all(|c| c.is_ascii_lowercase())
+            && !rest.is_empty()
+            && rest.iter().all(|part| {
+                !part.is_empty()
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            })
+    };
+    for code in codes
+        .iter()
+        .chain(string_array(&contract["frontendCodes"], "frontendCodes").iter())
+        .chain(string_array(&contract["reservedCodes"], "reservedCodes").iter())
+    {
+        assert!(dotted(code), "{code} must be a domain.reason code");
+    }
+
+    let aliases = contract["aliases"]
+        .as_object()
+        .expect("aliases must be an object");
+    assert!(!aliases.is_empty());
+    for (alias, target) in aliases {
+        let target = target.as_str().unwrap();
+        assert!(
+            codes.iter().any(|code| code == target),
+            "alias {alias} targets unknown code {target}"
+        );
+        assert!(
+            !codes.iter().any(|code| code == alias),
+            "alias {alias} must not also be a code"
+        );
+    }
+    for code in string_array(&contract["frontendCodes"], "frontendCodes")
+        .iter()
+        .chain(string_array(&contract["reservedCodes"], "reservedCodes").iter())
+    {
+        assert!(
+            !codes.contains(code),
+            "{code} must not be listed as a backend code"
+        );
+    }
+}
+
+#[test]
+fn app_errors_use_registered_code_constants() {
+    let sources = production_rust_sources();
+    assert!(
+        sources.len() > 50,
+        "the scanner must read the production tree, found {}",
+        sources.len()
+    );
+    for (path, text) in sources {
+        for needle in ["AppError::coded(", "AppError::coded_with_params("] {
+            let mut rest = text.as_str();
+            while let Some(index) = rest.find(needle) {
+                let after = rest[index + needle.len()..].trim_start();
+                assert!(
+                    !after.starts_with('"'),
+                    "{path}: `{needle}` must take an error_codes constant, not a string literal"
+                );
+                rest = &rest[index + needle.len()..];
+            }
+        }
+    }
+}
+
+#[test]
+fn every_registered_code_constant_is_used_outside_the_registry() {
+    let registry = production_text(include_str!("../error_codes.rs"));
+    let names: Vec<String> = registry
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub const "))
+        .filter_map(|rest| rest.split(':').next())
+        .map(|name| name.trim().to_string())
+        .collect();
+    assert_eq!(names.len(), crate::error_codes::ALL.len());
+    let sources = production_rust_sources();
+    for name in names {
+        let used = sources
+            .iter()
+            .filter(|(path, _)| path != "error_codes.rs")
+            .any(|(_, text)| text.contains(&name));
+        assert!(
+            used,
+            "{name} is registered but never used outside error_codes.rs"
+        );
+    }
+}
+
+#[test]
+fn reserved_and_frontend_codes_have_no_rust_producer() {
+    let contract: serde_json::Value = serde_json::from_str(ERROR_CODES_JSON).unwrap();
+    let mut unproduced = string_array(&contract["reservedCodes"], "reservedCodes");
+    unproduced.extend(string_array(&contract["frontendCodes"], "frontendCodes"));
+    assert!(!unproduced.is_empty());
+    for (path, text) in production_rust_sources() {
+        for code in &unproduced {
+            assert!(
+                !text.contains(&format!("\"{code}\"")),
+                "{path} spells the non-backend code {code}"
+            );
+        }
+    }
+}
+
+#[test]
+fn event_contract_matches_rust_event_constants() {
+    let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
+    let events = contract["events"]
+        .as_array()
+        .expect("events must be an array");
+    let mut rust_emitted: Vec<String> = events
+        .iter()
+        .filter(|event| {
+            string_array(&event["allowedSourceKinds"], "allowedSourceKinds")
+                .contains(&"rust".to_string())
+        })
+        .map(|event| event["name"].as_str().unwrap().to_string())
+        .collect();
+    rust_emitted.sort();
+    let mut constants: Vec<String> = crate::events::ALL
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    constants.sort();
+    assert_eq!(
+        rust_emitted, constants,
+        "events emitted by Rust must equal events::ALL"
+    );
+}
+
+#[test]
+fn rust_event_names_are_only_spelled_in_the_events_module() {
+    let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
+    let sources = production_rust_sources();
+    assert!(
+        sources.len() > 50,
+        "the scanner must read the production tree, found {}",
+        sources.len()
+    );
+    for event in contract["events"].as_array().unwrap() {
+        let name = event["name"].as_str().unwrap();
+        if !string_array(&event["allowedSourceKinds"], "allowedSourceKinds")
+            .contains(&"rust".to_string())
+        {
+            continue;
+        }
+        let spelled: Vec<&String> = sources
+            .iter()
+            .filter(|(_, text)| text.contains(&format!("\"{name}\"")))
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(
+            spelled,
+            vec!["events.rs"],
+            "{name} must be spelled only in events.rs, found in {spelled:?}"
+        );
+    }
+    assert!(
+        !sources
+            .iter()
+            .any(|(_, text)| text.contains("\"execution-task-persistence-failed\"")),
+        "the dead persistence-failed event must be gone"
+    );
+}
+
+#[test]
+fn event_contract_entries_are_well_formed() {
+    let kinds: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/window-kinds.json")).unwrap();
+    let kind_ids: Vec<String> = kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|kind| kind["id"].as_str().unwrap().to_string())
+        .collect();
+    let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
+    let mut seen = std::collections::HashSet::new();
+    for event in contract["events"].as_array().unwrap() {
+        let name = event["name"].as_str().unwrap();
+        assert!(seen.insert(name.to_string()), "duplicate event {name}");
+        assert!(
+            name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+            "{name} must be kebab-case"
+        );
+        assert!(
+            ["emit", "emit_to"].contains(&event["mechanism"].as_str().unwrap()),
+            "{name}"
+        );
+        assert!(
+            ["rust-to-window", "window-to-window", "window-to-all"]
+                .contains(&event["direction"].as_str().unwrap()),
+            "{name}"
+        );
+        assert!(
+            ["L1", "L2", "L3"].contains(&event["plannedLayer"].as_str().unwrap()),
+            "{name}"
+        );
+        assert!(
+            event["payloadVersion"].is_null() || event["payloadVersion"].is_u64(),
+            "{name}"
+        );
+        for source in string_array(&event["allowedSourceKinds"], "allowedSourceKinds") {
+            assert!(
+                source == "rust" || kind_ids.contains(&source),
+                "{name}: unknown source {source}"
+            );
+        }
+        let targets = string_array(&event["allowedTargetKinds"], "allowedTargetKinds");
+        assert!(!targets.is_empty(), "{name}");
+        for target in targets {
+            assert!(
+                kind_ids.contains(&target),
+                "{name}: unknown target {target}"
+            );
+        }
+    }
+}

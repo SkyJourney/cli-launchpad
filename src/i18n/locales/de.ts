@@ -21,16 +21,35 @@ export const de = {
     ptyInputUnavailable:
       "Der Terminal-Eingabekanal ist geschlossen. Verbinde die Sitzung erneut.",
     ptySessionsActive:
-      "{{count}} Terminal-Sitzung(en) laufen noch. Schließe sie vor dem Wiederherstellen eines Backups.",
+      "Das Wiederherstellen eines Backups oder das Importieren einer Konfiguration ist blockiert, solange {{count}} Terminal-Sitzung(en) laufen. Schließen Sie sie zuerst.",
     backupRestoreInProgress:
       "Eine Backup-Wiederherstellung läuft. Versuche es danach erneut.",
     ptySessionStarting:
-      "{{count}} Terminal-Sitzung(en) starten gerade. Versuche die Wiederherstellung später erneut.",
+      "{{count}} Terminal-Sitzung(en) oder Ausführungsaufgabe(n) werden noch gestartet. Versuchen Sie es gleich erneut.",
     execPlanChanged:
       "Der Ausführungsplan hat sich geändert. Prüfe und bestätige ihn erneut.",
     execBusy: "Für dieses Tool läuft bereits eine Aufgabe.",
     layoutNeedsReset:
       "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
+    internal:
+      "Es ist ein interner Fehler aufgetreten. Versuchen Sie es erneut und starten Sie die App neu, falls das Problem bestehen bleibt.",
+    appExiting:
+      "Die App wird beendet. Versuchen Sie es nach dem Neustart erneut.",
+    appExitDeferred:
+      "Eine Wiederherstellung oder ein Import läuft noch, daher kann die App noch nicht beendet werden.",
+    dataReplaceBlocked:
+      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Warten Sie, bis sie beendet sind, bevor Sie wiederherstellen oder importieren.",
+    dataReplaceInProgress:
+      "Eine andere Wiederherstellung oder ein anderer Import läuft bereits.",
+    configImportInProgress:
+      "Ein Konfigurationsimport läuft. Versuchen Sie es nach dem Abschluss erneut.",
+    projectNotFound: "Der Projektordner wurde nicht gefunden.",
+    layoutSaveRejected:
+      "Das Backend hat das Workspace-Layout wiederholt abgelehnt, daher wurde das Speichern gestoppt.",
+    layoutSchemaIncompatible:
+      "Das Workspace-Layout wurde von einer neueren App-Version geschrieben und kann von dieser Version nicht gespeichert werden.",
+    appError:
+      "Ein unerwarteter Fehler ist aufgetreten. Versuchen Sie es erneut.",
     generic: "Der Vorgang ist fehlgeschlagen.",
     directoryInUse: "Für dieses Projekt läuft noch eine Terminal-Sitzung.",
   },

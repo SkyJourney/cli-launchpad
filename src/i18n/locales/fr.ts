@@ -20,16 +20,34 @@ export const fr = {
     ptyInputUnavailable:
       "Le canal d’entrée du terminal est fermé. Reconnectez la session.",
     ptySessionsActive:
-      "{{count}} session(s) de terminal sont encore actives. Fermez-les avant de restaurer une sauvegarde.",
+      "La restauration d'une sauvegarde ou l'import d'une configuration est bloqué tant que {{count}} session(s) de terminal sont en cours. Fermez-les d'abord.",
     backupRestoreInProgress:
       "Une restauration de sauvegarde est en cours. Réessayez lorsqu’elle sera terminée.",
     ptySessionStarting:
-      "{{count}} session(s) de terminal démarrent. Réessayez la restauration dans un instant.",
+      "{{count}} session(s) de terminal ou tâche(s) d'exécution sont en cours de démarrage. Réessayez dans un instant.",
     execPlanChanged:
       "Le plan d’exécution a changé. Vérifiez-le et confirmez-le à nouveau.",
     execBusy: "Une tâche est déjà en cours pour cet outil.",
     layoutNeedsReset:
       "La disposition de l’espace de travail est invalide et doit être réinitialisée.",
+    internal:
+      "Une erreur interne s'est produite. Réessayez et redémarrez l'application si le problème persiste.",
+    appExiting:
+      "L'application est en train de se fermer. Réessayez après son redémarrage.",
+    appExitDeferred:
+      "Une restauration ou un import est encore en cours ; l'application ne peut pas encore se fermer.",
+    dataReplaceBlocked:
+      "{{count}} tâche(s) d'installation ou de mise à jour sont encore en cours. Attendez leur fin avant de restaurer ou d'importer.",
+    dataReplaceInProgress:
+      "Une autre restauration ou un autre import est déjà en cours.",
+    configImportInProgress:
+      "Un import de configuration est en cours. Réessayez une fois terminé.",
+    projectNotFound: "Le dossier du projet est introuvable.",
+    layoutSaveRejected:
+      "Le backend a rejeté la disposition de l'espace de travail à plusieurs reprises ; l'enregistrement a été arrêté.",
+    layoutSchemaIncompatible:
+      "La disposition de l'espace de travail a été écrite par une version plus récente de l'application et ne peut pas être enregistrée par cette version.",
+    appError: "Une erreur inattendue s'est produite. Réessayez.",
     generic: "L’opération a échoué.",
     directoryInUse: "Une session de terminal est encore active pour ce projet.",
   },

@@ -72,6 +72,7 @@ import {
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
 import { windowKindOf } from "./lib/windowKinds";
+import { RUST_EVENTS } from "./lib/eventNames";
 
 export function App() {
   const { t } = useTranslation();
@@ -154,7 +155,7 @@ function AppContent() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen<{ ptyCount: number; executionTaskCount?: number }>(
-      "app-exit-requested",
+      RUST_EVENTS.appExitRequested,
       (event) => {
         setExitError(null);
         // 载荷来自后端，但非有限数（null、字符串、NaN）不能卡出一个空对话框。

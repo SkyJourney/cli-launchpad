@@ -238,7 +238,7 @@ mod tests {
             Err(error) => error,
         };
 
-        assert_eq!(code_of(&error), "project_identity_changed");
+        assert_eq!(code_of(&error), "project.identity_changed");
     }
 
     #[tokio::test]
@@ -263,6 +263,6 @@ mod tests {
             Err(error) => error,
         };
 
-        assert_eq!(code_of(&error), "file.not_found");
+        assert_eq!(code_of(&error), "project.not_found");
     }
 }

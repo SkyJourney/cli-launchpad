@@ -17,8 +17,8 @@ use crate::platform::execution_process::ProcessTree;
 use crate::services::cli_adapters;
 use crate::{AppError, Db};
 
-pub const TASK_UPDATED_EVENT: &str = "execution-task-updated";
-pub const TASK_LOG_EVENT: &str = "execution-task-log";
+pub const TASK_UPDATED_EVENT: &str = crate::events::EXECUTION_TASK_UPDATED;
+pub const TASK_LOG_EVENT: &str = crate::events::EXECUTION_TASK_LOG;
 const EXECUTION_EVENT_TARGET: &str = "main";
 const TASK_TIMEOUT: Duration = Duration::from_secs(600);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
@@ -165,24 +165,16 @@ impl ExecutionTaskManager {
         error_message: Option<&str>,
     ) -> Result<ExecutionTask, AppError> {
         debug_assert!(status.is_terminal());
-        let task = self.release_before(id, || {
-            update_status(app, id, status, Some(now_ms()), exit_code, error_message)
-        })
-        .map_err(|error| {
-            log::error!("unable to persist terminal execution task state task_id={id} error={error}");
-            if let Err(emit_error) = app.emit_to(
-                "main",
-                "execution-task-persistence-failed",
-                serde_json::json!({
-                    "taskId": id,
-                    "status": status.as_str(),
-                    "message": error.to_string(),
-                }),
-            ) {
-                log::warn!("unable to emit execution task persistence failure task_id={id} error={emit_error}");
-            }
-            error
-        })?;
+        let task = self
+            .release_before(id, || {
+                update_status(app, id, status, Some(now_ms()), exit_code, error_message)
+            })
+            .map_err(|error| {
+                log::error!(
+                    "unable to persist terminal execution task state task_id={id} error={error}"
+                );
+                error
+            })?;
         if let Err(error) = with_db(app, |connection| {
             execution_task_repo::prune_old_finished(connection)?;
             Ok(())

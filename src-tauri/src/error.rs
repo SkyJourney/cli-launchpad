@@ -15,7 +15,7 @@ impl AppError {
     pub fn msg(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            code: "app.error".to_string(),
+            code: crate::error_codes::APP_ERROR.to_string(),
             params: None,
         }
     }

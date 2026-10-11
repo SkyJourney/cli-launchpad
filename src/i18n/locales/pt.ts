@@ -20,16 +20,34 @@ export const pt = {
     ptyInputUnavailable:
       "O canal de entrada do terminal está fechado. Reconecte a sessão.",
     ptySessionsActive:
-      "Ainda há {{count}} sessão(ões) de terminal em execução. Feche-as antes de restaurar um backup.",
+      "Restaurar uma cópia de segurança ou importar uma configuração está bloqueado enquanto houver {{count}} sessão(ões) de terminal em execução. Feche-as primeiro.",
     backupRestoreInProgress:
       "Uma restauração de backup está em andamento. Tente novamente quando terminar.",
     ptySessionStarting:
-      "{{count}} sessão(ões) de terminal estão iniciando. Tente restaurar novamente em instantes.",
+      "{{count}} sessão(ões) de terminal ou tarefa(s) de execução ainda estão a iniciar. Tente novamente em breve.",
     execPlanChanged:
       "O plano de execução foi alterado. Revise e confirme novamente.",
     execBusy: "Já existe uma tarefa em execução para esta ferramenta.",
     layoutNeedsReset:
       "O layout do espaço de trabalho é inválido e precisa ser redefinido.",
+    internal:
+      "Ocorreu um erro interno. Tente novamente e reinicie o aplicativo se o problema persistir.",
+    appExiting:
+      "O aplicativo está sendo encerrado. Tente novamente depois de reiniciá-lo.",
+    appExitDeferred:
+      "Uma restauração ou importação ainda está em andamento, então o aplicativo ainda não pode ser encerrado.",
+    dataReplaceBlocked:
+      "Ainda há {{count}} tarefa(s) de instalação ou atualização em execução. Aguarde o término antes de restaurar ou importar.",
+    dataReplaceInProgress:
+      "Já há outra restauração ou importação em andamento.",
+    configImportInProgress:
+      "Uma importação de configuração está em andamento. Tente novamente quando terminar.",
+    projectNotFound: "A pasta do projeto não foi encontrada.",
+    layoutSaveRejected:
+      "O backend rejeitou repetidamente o layout do espaço de trabalho, então o salvamento foi interrompido.",
+    layoutSchemaIncompatible:
+      "O layout do espaço de trabalho foi gravado por uma versão mais recente do aplicativo e esta versão não consegue salvá-lo.",
+    appError: "Ocorreu um erro inesperado. Tente novamente.",
     generic: "A operação falhou.",
     directoryInUse:
       "Ainda há uma sessão de terminal em execução neste projeto.",

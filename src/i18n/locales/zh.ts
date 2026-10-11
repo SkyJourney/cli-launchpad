@@ -9,12 +9,25 @@ export const zh = {
     ptyInputBackpressure: "终端输入队列已满，请稍后重试。",
     ptyInputUnavailable: "终端输入通道已关闭，请重新连接会话。",
     ptySessionsActive:
-      "还有 {{count}} 个终端会话正在运行，请先关闭后再恢复备份。",
+      "恢复备份或导入配置前，仍有 {{count}} 个终端会话在运行，请先关闭它们。",
     backupRestoreInProgress: "备份恢复正在进行，请等待完成后重试。",
-    ptySessionStarting: "还有 {{count}} 个终端会话正在启动，请稍后再恢复备份。",
+    ptySessionStarting:
+      "还有 {{count}} 个终端会话或执行任务正在启动，请稍后重试。",
     execPlanChanged: "执行计划已变化，请重新检查并确认。",
     execBusy: "此工具已有正在运行的任务。",
     layoutNeedsReset: "工作区布局无效，需要重置。",
+    internal: "发生内部错误。请重试，若问题持续请重启应用。",
+    appExiting: "应用正在退出，请在重新启动后再试。",
+    appExitDeferred: "恢复或导入仍在进行，暂时无法退出应用。",
+    dataReplaceBlocked:
+      "仍有 {{count}} 个安装或更新任务在执行，请等待其结束后再恢复或导入。",
+    dataReplaceInProgress: "另一个恢复或导入操作正在进行。",
+    configImportInProgress: "配置导入正在进行，请在完成后重试。",
+    projectNotFound: "找不到该项目目录。",
+    layoutSaveRejected: "后端连续拒绝了工作区布局，已停止保存。",
+    layoutSchemaIncompatible:
+      "工作区布局由更高版本的应用写入，当前版本无法保存。",
+    appError: "发生未知错误，请重试。",
     generic: "操作失败。",
     directoryInUse: "此项目仍有运行中的终端会话。",
   },

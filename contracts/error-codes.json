@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "codes": [
+    "app.data_replace_blocked",
+    "app.data_replace_in_progress",
+    "app.error",
+    "app.exit_deferred",
+    "app.exiting",
+    "backup.restore_in_progress",
+    "blocking.timeout",
+    "config.import_in_progress",
+    "db.poisoned",
+    "directory.in_use",
+    "exec.plan_changed",
+    "internal.task_failed",
+    "project.identity_changed",
+    "project.not_found",
+    "pty.input_backpressure",
+    "pty.input_unavailable",
+    "pty.session_starting",
+    "pty.sessions_active",
+    "window.label_invalid",
+    "window.not_allowed"
+  ],
+  "frontendCodes": [
+    "layout.needs_reset",
+    "layout.save_rejected",
+    "layout.schema_incompatible"
+  ],
+  "reservedCodes": ["file.too_large"],
+  "aliases": {
+    "backup_restore_in_progress": "backup.restore_in_progress",
+    "file.identity_changed": "project.identity_changed",
+    "file.not_found": "project.not_found",
+    "plan_changed": "exec.plan_changed",
+    "project_identity_changed": "project.identity_changed",
+    "pty_input_backpressure": "pty.input_backpressure",
+    "pty_input_unavailable": "pty.input_unavailable",
+    "pty_session_starting": "pty.session_starting",
+    "pty_sessions_active": "pty.sessions_active"
+  }
+}

@@ -19,13 +19,29 @@ export const ko = {
     ptyInputUnavailable:
       "터미널 입력 채널이 닫혔습니다. 세션을 다시 연결하세요.",
     ptySessionsActive:
-      "터미널 세션 {{count}}개가 아직 실행 중입니다. 백업을 복원하기 전에 종료하세요.",
+      "터미널 세션 {{count}}개가 실행 중이므로 백업 복원 또는 설정 가져오기를 할 수 없습니다. 먼저 세션을 닫으세요.",
     backupRestoreInProgress: "백업을 복원 중입니다. 완료된 후 다시 시도하세요.",
     ptySessionStarting:
-      "터미널 세션 {{count}}개를 시작하는 중입니다. 잠시 후 복원을 다시 시도하세요.",
+      "터미널 세션 또는 실행 작업 {{count}}개를 시작하는 중입니다. 잠시 후 다시 시도하세요.",
     execPlanChanged: "실행 계획이 변경되었습니다. 다시 검토하고 확인하세요.",
     execBusy: "이 도구에서 이미 작업이 실행 중입니다.",
     layoutNeedsReset: "작업 공간 레이아웃이 잘못되어 초기화해야 합니다.",
+    internal:
+      "내부 오류가 발생했습니다. 다시 시도하고, 문제가 계속되면 앱을 다시 시작하세요.",
+    appExiting: "앱을 종료하는 중입니다. 다시 시작한 후 다시 시도하세요.",
+    appExitDeferred:
+      "복원 또는 가져오기가 아직 진행 중이므로 앱을 아직 종료할 수 없습니다.",
+    dataReplaceBlocked:
+      "설치 또는 업데이트 작업 {{count}}개가 아직 실행 중입니다. 작업이 끝난 후 복원하거나 가져오세요.",
+    dataReplaceInProgress: "다른 복원 또는 가져오기가 이미 진행 중입니다.",
+    configImportInProgress:
+      "구성 가져오기가 진행 중입니다. 완료된 후 다시 시도하세요.",
+    projectNotFound: "프로젝트 폴더를 찾을 수 없습니다.",
+    layoutSaveRejected:
+      "백엔드가 작업 공간 레이아웃을 반복해서 거부하여 저장을 중단했습니다.",
+    layoutSchemaIncompatible:
+      "작업 공간 레이아웃이 더 새로운 버전의 앱에서 기록되어 이 버전에서는 저장할 수 없습니다.",
+    appError: "예기치 않은 오류가 발생했습니다. 다시 시도하세요.",
     generic: "작업에 실패했습니다.",
     directoryInUse: "이 프로젝트에서 실행 중인 터미널 세션이 있습니다.",
   },

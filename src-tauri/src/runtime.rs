@@ -14,12 +14,10 @@ use std::time::Duration;
 use rusqlite::Connection;
 use serde_json::json;
 
+use crate::error_codes::{BLOCKING_TIMEOUT, DB_POISONED, INTERNAL_TASK_FAILED};
 use crate::{AppError, CacheDb, Db};
 
 // m6-033 moves these into the error code registry.
-const CODE_DB_POISONED: &str = "db.poisoned";
-const CODE_TASK_FAILED: &str = "internal.task_failed";
-const CODE_BLOCKING_TIMEOUT: &str = "blocking.timeout";
 
 async fn run_on_blocking_pool<T: Send + 'static>(
     op: &'static str,
@@ -29,7 +27,7 @@ async fn run_on_blocking_pool<T: Send + 'static>(
         .await
         .map_err(|error| {
             AppError::coded_with_params(
-                CODE_TASK_FAILED,
+                INTERNAL_TASK_FAILED,
                 format!("{op}: {error}"),
                 json!({ "op": op }),
             )
@@ -47,7 +45,7 @@ impl Db {
         run_on_blocking_pool(op, move || {
             let mut connection =
                 db.0.lock()
-                    .map_err(|_| AppError::coded(CODE_DB_POISONED, "数据库连接锁中毒"))?;
+                    .map_err(|_| AppError::coded(DB_POISONED, "数据库连接锁中毒"))?;
             f(&mut connection)
         })
         .await
@@ -66,7 +64,7 @@ impl CacheDb {
             let connection = cache
                 .0
                 .lock()
-                .map_err(|_| AppError::coded(CODE_DB_POISONED, "缓存数据库连接锁中毒"))?;
+                .map_err(|_| AppError::coded(DB_POISONED, "缓存数据库连接锁中毒"))?;
             f(&connection)
         })
         .await
@@ -86,7 +84,7 @@ pub async fn blocking<T: Send + 'static>(
         Err(_) => {
             let budget_ms = budget.as_millis() as u64;
             Err(AppError::coded_with_params(
-                CODE_BLOCKING_TIMEOUT,
+                BLOCKING_TIMEOUT,
                 format!("{op} 超过 {budget_ms} ms 仍未完成"),
                 json!({ "op": op, "budgetMs": budget_ms }),
             ))

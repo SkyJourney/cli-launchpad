@@ -32,6 +32,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
 import { abortableDelay } from "../lib/abortableDelay";
+import { RUST_EVENTS } from "../lib/eventNames";
 import { createWindowLabel, windowKindOf } from "../lib/windowKinds";
 import {
   emitWorkspaceContentWindowEvent,
@@ -2837,10 +2838,10 @@ export function PtyWorkspaceProvider({
             ),
         },
         {
-          name: "pty-session-owner-lost",
+          name: RUST_EVENTS.ptySessionOwnerLost,
           register: () =>
             listen<PtySessionOwnerLostEvent>(
-              "pty-session-owner-lost",
+              RUST_EVENTS.ptySessionOwnerLost,
               (event) => {
                 void handlePtySessionOwnerLost(event.payload);
               },
@@ -2938,10 +2939,10 @@ export function PtyWorkspaceProvider({
     void setupWorkspaceContentListeners({
       registrations: [
         {
-          name: "workspace-content-window-lost",
+          name: RUST_EVENTS.workspaceContentWindowLost,
           register: () =>
             listen<WorkspaceContentWindowLostEvent>(
-              "workspace-content-window-lost",
+              RUST_EVENTS.workspaceContentWindowLost,
               (event) => {
                 handleWorkspaceContentWindowLost(event.payload);
               },
