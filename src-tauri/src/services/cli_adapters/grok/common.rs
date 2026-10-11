@@ -18,6 +18,10 @@ impl CliAdapter for GrokAdapter {
         &["grok"]
     }
 
+    fn requires_executable_path(&self) -> bool {
+        true
+    }
+
     fn additional_install_dirs(&self) -> Vec<std::path::PathBuf> {
         version::grok_native_install_dirs()
     }

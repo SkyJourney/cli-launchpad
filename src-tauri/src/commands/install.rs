@@ -40,13 +40,8 @@ pub async fn fetch_latest_version(
             )?)
         })
         .await?;
-    let context = match blocking("install.context", budgets::EXECUTABLE_PROBE, move || {
-        cli_adapters::context_for_tool(tool_key, std::time::Duration::from_secs(30))
-            .map_err(AppError::from)
-    })
-    .await
-    {
-        Ok(context) => context,
+    let home = match crate::services::session_service::home_dir() {
+        Ok(home) => home,
         Err(error) => {
             let mut failed = crate::services::version_service::latest_from_version_result(
                 tool_key,
@@ -62,7 +57,21 @@ pub async fn fetch_latest_version(
             return Ok(failed);
         }
     };
-    let mut fetched = cli_adapters::query_update(tool_key, context).await;
+    let (context, remaining) = cli_adapters::context_within_budget(
+        cli_adapters::get(tool_key),
+        std::time::Duration::from_secs(30),
+        home,
+        std::sync::Arc::new(cli_adapters::NativeExecutableResolver),
+    )
+    .await;
+    let mut fetched = if remaining.is_zero() {
+        crate::services::version_service::latest_from_version_result(
+            tool_key,
+            Err(format!("{} 版本查询超时", tool_key.as_str())),
+        )
+    } else {
+        cli_adapters::query_update(tool_key, context).await
+    };
     crate::services::version_service::apply_update_availability(
         &mut fetched,
         current_version.as_deref(),

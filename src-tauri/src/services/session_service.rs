@@ -17,6 +17,7 @@ use crate::models::session::{
 };
 use crate::models::tool::ToolKey;
 use crate::platform::path_identity;
+use crate::services::cli_adapters::CliAdapter;
 use crate::AppError;
 
 pub(crate) const TITLE_MAX_CHARS: usize = 100;
@@ -24,6 +25,8 @@ const MAX_PAGE_SIZE: usize = 50;
 const OFFSET_CURSOR_PREFIX: &str = "offset:";
 const MAX_SEARCH_QUERY_CHARS: usize = 200;
 const SEARCH_INDEX_ADAPTER_BUDGET: Duration = Duration::from_secs(10);
+const LIST_SESSIONS_BUDGET: Duration = Duration::from_secs(30);
+const SESSION_OWNERSHIP_BUDGET: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_SEARCH_INDEX_SCANS: usize = 2;
 static SEARCH_INDEX_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 pub(crate) const MAX_SEARCH_FIELD_CHARS: usize = 4_000;
@@ -92,24 +95,6 @@ pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))
 }
 
-/// Runs the synchronous adapter context lookup (executable probing) off the
-/// async runtime, within the executable probe budget.
-async fn context_for_tool_blocking(
-    tool_key: ToolKey,
-    budget: std::time::Duration,
-) -> Result<crate::services::cli_adapters::AdapterContext> {
-    crate::blocking(
-        "adapter.context",
-        crate::budgets::EXECUTABLE_PROBE,
-        move || {
-            crate::services::cli_adapters::context_for_tool(tool_key, budget)
-                .map_err(|error| crate::AppError::msg(error.to_string()))
-        },
-    )
-    .await
-    .map_err(|error| anyhow!(error.to_string()))
-}
-
 /// Bumped once per backup restore, while the business database lock is held,
 /// after the database file content has been replaced.
 #[derive(Clone, Debug, Default)]
@@ -165,22 +150,16 @@ pub async fn list_sessions(
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<SessionPage> {
-    let limit = limit.clamp(1, MAX_PAGE_SIZE);
-    let adapter = crate::services::cli_adapters::get(tool_key);
-    let directory_path = directory_path.to_string();
-    let cursor = cursor.map(str::to_string);
-    let context = context_for_tool_blocking(tool_key, std::time::Duration::from_secs(30)).await?;
-    let budget = context.budget;
-    tokio::spawn(async move {
-        tokio::time::timeout(
-            budget,
-            adapter.list_sessions(directory_path, cursor, limit, context),
-        )
-        .await
-        .map_err(|_| anyhow!("{} 会话读取超时", tool_key.as_str()))?
-    })
+    list_sessions_with(
+        crate::services::cli_adapters::get(tool_key),
+        directory_path.to_string(),
+        cursor.map(str::to_string),
+        limit,
+        Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+        home_dir()?,
+        LIST_SESSIONS_BUDGET,
+    )
     .await
-    .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
 }
 
 #[derive(Debug, Clone)]
@@ -195,52 +174,84 @@ pub(crate) struct SearchSource {
     pub(crate) incomplete: bool,
 }
 
-pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSearchIndexSource>> {
-    refresh_search_index_with(directory_path, |tool_key| {
-        context_for_tool_blocking(tool_key, SEARCH_INDEX_ADAPTER_BUDGET)
-    })
-    .await
+/// Every adapter reported as incomplete with no documents, in product order. Used when the
+/// refresh cannot run at all (for example the user directory is unknown).
+fn incomplete_sources(adapters: &[&'static dyn CliAdapter]) -> Vec<SessionSearchIndexSource> {
+    let mut sources: Vec<_> = adapters
+        .iter()
+        .map(|adapter| SessionSearchIndexSource {
+            tool_key: adapter.tool_key(),
+            documents: None,
+            incomplete: true,
+        })
+        .collect();
+    sources.sort_by_key(|source| {
+        ToolKey::ALL
+            .iter()
+            .position(|tool_key| *tool_key == source.tool_key)
+            .unwrap_or(usize::MAX)
+    });
+    sources
 }
 
-async fn refresh_search_index_with<F, Fut>(
+pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSearchIndexSource>> {
+    let adapters: Vec<&'static dyn CliAdapter> = crate::services::cli_adapters::all().collect();
+    match home_dir() {
+        Ok(home) => Ok(refresh_search_index_with(
+            directory_path,
+            adapters,
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            home,
+            SEARCH_INDEX_ADAPTER_BUDGET,
+        )
+        .await),
+        Err(error) => {
+            log::warn!("会话索引刷新无法确定用户目录，所有来源降级为不完整：{error}");
+            Ok(incomplete_sources(&adapters))
+        }
+    }
+}
+
+async fn refresh_search_index_with(
     directory_path: &str,
-    context_for: F,
-) -> Result<Vec<SessionSearchIndexSource>>
-where
-    F: Fn(ToolKey) -> Fut,
-    Fut: std::future::Future<Output = Result<crate::services::cli_adapters::AdapterContext>>,
-{
+    adapters: Vec<&'static dyn CliAdapter>,
+    resolver: Arc<dyn crate::services::cli_adapters::ExecutableResolver>,
+    home: PathBuf,
+    budget: Duration,
+) -> Vec<SessionSearchIndexSource> {
     let mut tasks = tokio::task::JoinSet::new();
     let mut task_tools = HashMap::new();
     // A tool whose context cannot be built keeps its last usable index; it must not
     // fail the refresh for the other tools.
     let mut sources = Vec::with_capacity(ToolKey::ALL.len());
-    for adapter in crate::services::cli_adapters::all() {
+    for adapter in adapters {
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
-        let context = match context_for(tool_key).await {
-            Ok(context) => context,
-            Err(error) => {
+        let home = home.clone();
+        let resolver = resolver.clone();
+        let task = tasks.spawn(async move {
+            let (context, remaining) = crate::services::cli_adapters::context_within_budget(
+                adapter, budget, home, resolver,
+            )
+            .await;
+            let source = if remaining.is_zero() {
                 log::warn!(
-                    "{} 会话索引适配器上下文不可用，保留上次可用索引：{error}",
+                    "{} 会话索引解析可执行文件超过预算，保留上次可用索引",
                     tool_key.as_str()
                 );
-                sources.push(SessionSearchIndexSource {
+                SessionSearchIndexSource {
                     tool_key,
                     documents: None,
                     incomplete: true,
-                });
-                continue;
-            }
-        };
-        let budget = context.budget;
-        let task = tasks.spawn(async move {
-            let source = bounded_search_index_source(
-                tool_key,
-                adapter.search_index_source(path, context),
-                budget,
-            )
-            .await;
+                }
+            } else {
+                bounded_search_index_source(
+                    tool_key,
+                    adapter.search_index_source(path, context),
+                    remaining,
+                )
+                .await
+            };
             (tool_key, source)
         });
         task_tools.insert(task.id(), tool_key);
@@ -286,7 +297,7 @@ where
             .position(|tool_key| *tool_key == source.tool_key)
             .unwrap_or(usize::MAX)
     });
-    Ok(sources)
+    sources
 }
 
 async fn bounded_search_index_source<F>(
@@ -398,6 +409,53 @@ pub fn normalize_alias(alias: &str) -> Result<String> {
     Ok(alias.to_string())
 }
 
+pub(crate) async fn list_sessions_with(
+    adapter: &'static dyn CliAdapter,
+    directory_path: String,
+    cursor: Option<String>,
+    limit: usize,
+    resolver: Arc<dyn crate::services::cli_adapters::ExecutableResolver>,
+    home: PathBuf,
+    budget: Duration,
+) -> Result<SessionPage> {
+    let limit = limit.clamp(1, MAX_PAGE_SIZE);
+    let tool_key = adapter.tool_key();
+    let (context, remaining) =
+        crate::services::cli_adapters::context_within_budget(adapter, budget, home, resolver).await;
+    if remaining.is_zero() {
+        return Err(anyhow!("{} 会话读取超时", tool_key.as_str()));
+    }
+    tokio::spawn(async move {
+        tokio::time::timeout(
+            remaining,
+            adapter.list_sessions(directory_path, cursor, limit, context),
+        )
+        .await
+        .map_err(|_| anyhow!("{} 会话读取超时", tool_key.as_str()))?
+    })
+    .await
+    .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
+}
+
+pub(crate) async fn session_belongs_to_directory_with(
+    adapter: &'static dyn CliAdapter,
+    directory_path: String,
+    session_id: String,
+    budget: Duration,
+) -> Result<bool> {
+    let tool_key = adapter.tool_key();
+    tokio::spawn(async move {
+        tokio::time::timeout(
+            budget,
+            adapter.session_belongs_to_directory(directory_path, session_id),
+        )
+        .await
+        .map_err(|_| anyhow!("{} 会话归属验证超时", tool_key.as_str()))?
+    })
+    .await
+    .map_err(|error| anyhow!("{} 会话归属验证适配器异常：{error}", tool_key.as_str()))?
+}
+
 pub async fn session_belongs_to_directory(
     tool_key: ToolKey,
     directory_path: &str,
@@ -406,16 +464,13 @@ pub async fn session_belongs_to_directory(
     if !crate::services::cli_adapters::valid_session_id(tool_key, session_id) {
         return Ok(false);
     }
-    let adapter = crate::services::cli_adapters::get(tool_key);
-    let directory_path = directory_path.to_string();
-    let session_id = session_id.to_string();
-    tokio::spawn(async move {
-        adapter
-            .session_belongs_to_directory(directory_path, session_id)
-            .await
-    })
+    session_belongs_to_directory_with(
+        crate::services::cli_adapters::get(tool_key),
+        directory_path.to_string(),
+        session_id.to_string(),
+        SESSION_OWNERSHIP_BUDGET,
+    )
     .await
-    .map_err(|error| anyhow!("{} 会话归属验证适配器异常：{error}", tool_key.as_str()))?
 }
 
 pub(crate) fn home_dir() -> Result<PathBuf> {
@@ -573,11 +628,14 @@ mod tests {
     async fn a_failing_adapter_context_does_not_fail_the_whole_refresh() {
         // Every adapter's context fails, so no scan runs: each source must keep its
         // last usable index and be marked incomplete, and the refresh itself succeeds.
-        let sources = refresh_search_index_with("C:/project", |_| async {
-            Err(anyhow!("where.exe probe timed out"))
-        })
-        .await
-        .unwrap();
+        let sources = refresh_search_index_with(
+            "C:/project",
+            crate::services::cli_adapters::all().collect(),
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            std::env::temp_dir(),
+            Duration::ZERO,
+        )
+        .await;
 
         assert_eq!(sources.len(), ToolKey::ALL.len());
         for source in &sources {
@@ -1447,5 +1505,458 @@ mod tests {
             message.contains("已丢弃恢复前开始的会话索引刷新"),
             "{message}"
         );
+    }
+
+    use crate::services::cli_adapters::{
+        AdapterContext, AdapterFuture, CliAdapter, ExecutableResolver,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+
+    fn budget_ticker() -> (Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let ticker = tokio::spawn({
+            let ticks = ticks.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    ticks.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        (ticks, ticker)
+    }
+
+    struct SleepingBudgetResolver(Duration);
+
+    impl ExecutableResolver for SleepingBudgetResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            std::thread::sleep(self.0);
+            None
+        }
+    }
+
+    struct FixedBudgetResolver {
+        delay: Duration,
+        answer: Option<PathBuf>,
+    }
+
+    impl ExecutableResolver for FixedBudgetResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            std::thread::sleep(self.delay);
+            self.answer.clone()
+        }
+    }
+
+    struct FastHistory;
+    static FAST_HISTORY: FastHistory = FastHistory;
+    static FAST_HISTORY_CALLED: AtomicBool = AtomicBool::new(false);
+
+    impl CliAdapter for FastHistory {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            _context: AdapterContext,
+        ) -> AdapterFuture<Result<SessionPage>> {
+            FAST_HISTORY_CALLED.store(true, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+    }
+
+    struct BudgetProbe;
+    static BUDGET_PROBE: BudgetProbe = BudgetProbe;
+    static SAW_PATH: AtomicBool = AtomicBool::new(false);
+    static SAW_BUDGET_MS: AtomicU64 = AtomicU64::new(0);
+
+    impl CliAdapter for BudgetProbe {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            context: AdapterContext,
+        ) -> AdapterFuture<Result<SessionPage>> {
+            SAW_PATH.store(context.resolved_path.is_some(), Ordering::SeqCst);
+            SAW_BUDGET_MS.store(context.budget.as_millis() as u64, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+    }
+
+    struct SlowOwnership;
+    static SLOW_OWNERSHIP: SlowOwnership = SlowOwnership;
+
+    impl CliAdapter for SlowOwnership {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["claude"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> AdapterFuture<Result<bool>> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(true)
+            })
+        }
+    }
+
+    enum OwnershipAnswer {
+        Yes,
+        No,
+        Fails,
+    }
+
+    struct FixedOwnership(OwnershipAnswer);
+
+    impl CliAdapter for FixedOwnership {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["claude"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> AdapterFuture<Result<bool>> {
+            let answer = match self.0 {
+                OwnershipAnswer::Yes => Ok(true),
+                OwnershipAnswer::No => Ok(false),
+                OwnershipAnswer::Fails => Err(anyhow!("adapter failed")),
+            };
+            Box::pin(async move { answer })
+        }
+    }
+
+    static OWNERSHIP_YES: FixedOwnership = FixedOwnership(OwnershipAnswer::Yes);
+    static OWNERSHIP_NO: FixedOwnership = FixedOwnership(OwnershipAnswer::No);
+    static OWNERSHIP_FAILS: FixedOwnership = FixedOwnership(OwnershipAnswer::Fails);
+
+    #[derive(Clone, Copy)]
+    enum IndexBehavior {
+        Complete,
+        PanicInFuture,
+        WrongTool,
+    }
+
+    struct FakeIndexAdapter {
+        tool: ToolKey,
+        requires_path: bool,
+        behavior: IndexBehavior,
+    }
+
+    static CLAUDE_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Claude,
+        requires_path: false,
+        behavior: IndexBehavior::Complete,
+    };
+    static CODEX_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Codex,
+        requires_path: true,
+        behavior: IndexBehavior::Complete,
+    };
+    static ANTIGRAVITY_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Antigravity,
+        requires_path: false,
+        behavior: IndexBehavior::Complete,
+    };
+    static GROK_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Grok,
+        requires_path: false,
+        behavior: IndexBehavior::PanicInFuture,
+    };
+    static HERMES_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Hermes,
+        requires_path: false,
+        behavior: IndexBehavior::WrongTool,
+    };
+    static CODEX_CALLED: AtomicBool = AtomicBool::new(false);
+
+    impl CliAdapter for FakeIndexAdapter {
+        fn tool_key(&self) -> ToolKey {
+            self.tool
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["fake"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            self.requires_path
+        }
+
+        fn search_index_source(
+            &self,
+            _directory_path: String,
+            _context: AdapterContext,
+        ) -> AdapterFuture<SessionSearchIndexSource> {
+            if self.tool == ToolKey::Codex {
+                CODEX_CALLED.store(true, Ordering::SeqCst);
+            }
+            let tool = self.tool;
+            match self.behavior {
+                IndexBehavior::Complete => Box::pin(async move {
+                    SessionSearchIndexSource {
+                        tool_key: tool,
+                        documents: Some(Vec::new()),
+                        incomplete: false,
+                    }
+                }),
+                IndexBehavior::PanicInFuture => Box::pin(async move { panic!("adapter panic") }),
+                IndexBehavior::WrongTool => Box::pin(async move {
+                    SessionSearchIndexSource {
+                        tool_key: ToolKey::Claude,
+                        documents: Some(Vec::new()),
+                        incomplete: false,
+                    }
+                }),
+            }
+        }
+    }
+
+    struct SelectiveSleepResolver;
+
+    impl ExecutableResolver for SelectiveSleepResolver {
+        fn resolve(&self, adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            if adapter.tool_key() == ToolKey::Codex {
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            None
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_sessions_budget_includes_executable_resolution() {
+        let (ticks, ticker) = budget_ticker();
+        let home = tempfile::tempdir().unwrap();
+
+        let started = std::time::Instant::now();
+        let result = list_sessions_with(
+            &FAST_HISTORY,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(SleepingBudgetResolver(Duration::from_secs(5))),
+            home.path().to_path_buf(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        let error = match result {
+            Ok(_) => panic!("resolution must count against the budget"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("超时"));
+        assert!(!FAST_HISTORY_CALLED.load(Ordering::SeqCst));
+        assert!(ticks.load(Ordering::SeqCst) >= 10);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_passes_the_remaining_budget_to_the_adapter() {
+        let home = tempfile::tempdir().unwrap();
+
+        let result = list_sessions_with(
+            &BUDGET_PROBE,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(FixedBudgetResolver {
+                delay: Duration::from_millis(200),
+                answer: Some(PathBuf::from("/opt/cli")),
+            }),
+            home.path().to_path_buf(),
+            Duration::from_secs(5),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(SAW_PATH.load(Ordering::SeqCst));
+        let budget_ms = SAW_BUDGET_MS.load(Ordering::SeqCst);
+        assert!(
+            budget_ms > 4000 && budget_ms < 5000,
+            "the resolution time must be deducted from the budget: {budget_ms} ms"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refresh_search_index_isolates_slow_resolution_and_panicking_adapter() {
+        let (ticks, ticker) = budget_ticker();
+        let home = tempfile::tempdir().unwrap();
+        let adapters: Vec<&'static dyn CliAdapter> = vec![
+            &CLAUDE_FAKE,
+            &CODEX_FAKE,
+            &ANTIGRAVITY_FAKE,
+            &GROK_FAKE,
+            &HERMES_FAKE,
+        ];
+
+        let started = std::time::Instant::now();
+        let sources = refresh_search_index_with(
+            "project",
+            adapters,
+            Arc::new(SelectiveSleepResolver),
+            home.path().to_path_buf(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        let tools: Vec<ToolKey> = sources.iter().map(|source| source.tool_key).collect();
+        assert_eq!(tools, ToolKey::ALL.to_vec());
+        for tool in [ToolKey::Claude, ToolKey::Antigravity] {
+            let source = sources
+                .iter()
+                .find(|source| source.tool_key == tool)
+                .unwrap();
+            assert!(matches!(&source.documents, Some(documents) if documents.is_empty()));
+            assert!(!source.incomplete);
+        }
+        for tool in [ToolKey::Codex, ToolKey::Grok, ToolKey::Hermes] {
+            let source = sources
+                .iter()
+                .find(|source| source.tool_key == tool)
+                .unwrap();
+            assert!(source.documents.is_none(), "{}", tool.as_str());
+            assert!(source.incomplete, "{}", tool.as_str());
+        }
+        assert!(!CODEX_CALLED.load(Ordering::SeqCst));
+        assert!(ticks.load(Ordering::SeqCst) >= 10);
+    }
+
+    #[tokio::test]
+    async fn session_ownership_check_is_bounded_by_budget() {
+        let started = std::time::Instant::now();
+        let result = session_belongs_to_directory_with(
+            &SLOW_OWNERSHIP,
+            "project".to_string(),
+            "session".to_string(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        let error = match result {
+            Ok(value) => panic!("an unbounded ownership check returned {value}"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("超时"));
+    }
+
+    #[tokio::test]
+    async fn session_ownership_check_returns_the_adapter_result_within_budget() {
+        let budget = Duration::from_secs(5);
+
+        assert!(session_belongs_to_directory_with(
+            &OWNERSHIP_YES,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap());
+        assert!(!session_belongs_to_directory_with(
+            &OWNERSHIP_NO,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap());
+        let error = session_belongs_to_directory_with(
+            &OWNERSHIP_FAILS,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("adapter failed"));
+    }
+
+    #[test]
+    fn incomplete_sources_cover_every_adapter_in_product_order() {
+        let mut adapters: Vec<&'static dyn CliAdapter> =
+            crate::services::cli_adapters::all().collect();
+        adapters.reverse();
+
+        let sources = incomplete_sources(&adapters);
+
+        let tools: Vec<ToolKey> = sources.iter().map(|source| source.tool_key).collect();
+        assert_eq!(sources.len(), 5);
+        assert_eq!(tools, ToolKey::ALL.to_vec());
+        for source in &sources {
+            assert!(source.documents.is_none(), "{}", source.tool_key.as_str());
+            assert!(source.incomplete, "{}", source.tool_key.as_str());
+        }
     }
 }

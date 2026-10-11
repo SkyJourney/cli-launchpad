@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -25,9 +26,15 @@ pub struct ExecutionPreflight {
 }
 
 impl AdapterContext {
-    fn for_adapter(adapter: &dyn CliAdapter, budget: Duration) -> Result<Self> {
+    // Blocking: only call from a blocking thread (see commands that run build_plan inside blocking).
+    fn for_adapter_blocking(adapter: &dyn CliAdapter, budget: Duration) -> Result<Self> {
+        let resolved_path = if adapter.requires_executable_path() {
+            installed_path(adapter)
+        } else {
+            None
+        };
         Ok(Self {
-            resolved_path: installed_path(adapter),
+            resolved_path,
             home: crate::services::session_service::home_dir()?,
             budget,
         })
@@ -50,6 +57,12 @@ pub trait CliAdapter: Sync {
     }
 
     fn command_candidates(&self) -> &'static [&'static str];
+
+    /// Whether any operation of this adapter reads `AdapterContext::resolved_path`.
+    /// Only adapters returning `true` pay for executable resolution.
+    fn requires_executable_path(&self) -> bool {
+        false
+    }
 
     fn additional_install_dirs(&self) -> Vec<PathBuf> {
         Vec::new()
@@ -187,17 +200,80 @@ pub async fn installed_path_async(adapter: &'static dyn CliAdapter) -> Option<Pa
     None
 }
 
+/// Resolves the executable path of an adapter. Replaceable so tests can inject
+/// slow, panicking or counting resolvers without touching the real PATH.
+pub trait ExecutableResolver: Send + Sync + 'static {
+    fn resolve(&self, adapter: &'static dyn CliAdapter) -> Option<PathBuf>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NativeExecutableResolver;
+
+impl ExecutableResolver for NativeExecutableResolver {
+    fn resolve(&self, adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+        installed_path(adapter)
+    }
+}
+
+/// Resolves the adapter's executable path inside the budget. Only adapters that declare
+/// `requires_executable_path()` pay for it; resolution runs on a blocking thread, so a slow
+/// probe never occupies the async executor. Exhausting the budget means "timed out": the
+/// remaining budget is zero and the adapter must not be called. A panicking resolver counts as
+/// "not found" and keeps the remaining budget.
+pub async fn context_within_budget(
+    adapter: &'static dyn CliAdapter,
+    budget: Duration,
+    home: PathBuf,
+    resolver: Arc<dyn ExecutableResolver>,
+) -> (AdapterContext, Duration) {
+    let needs_path = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        adapter.requires_executable_path()
+    }))
+    .unwrap_or(false);
+    if !needs_path {
+        return (
+            AdapterContext {
+                resolved_path: None,
+                home,
+                budget,
+            },
+            budget,
+        );
+    }
+    let started = std::time::Instant::now();
+    let (resolved_path, exhausted) = match tokio::time::timeout(
+        budget,
+        tokio::task::spawn_blocking(move || resolver.resolve(adapter)),
+    )
+    .await
+    {
+        Ok(Ok(path)) => (path, false),
+        // The resolver panicked: treat as "not found" and keep the budget.
+        Ok(Err(_)) => (None, false),
+        Err(_) => (None, true),
+    };
+    let remaining = if exhausted {
+        Duration::ZERO
+    } else {
+        budget.saturating_sub(started.elapsed())
+    };
+    (
+        AdapterContext {
+            resolved_path,
+            home,
+            budget: remaining,
+        },
+        remaining,
+    )
+}
+
 pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
-    let context = AdapterContext::for_adapter(get(tool_key), Duration::from_secs(30))?;
+    let context = AdapterContext::for_adapter_blocking(get(tool_key), Duration::from_secs(30))?;
     let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {
         get(tool_key).build_plan(kind, &context)
     })?;
     plan.refresh_fingerprint();
     Ok(plan)
-}
-
-pub fn context_for_tool(tool_key: ToolKey, budget: Duration) -> Result<AdapterContext> {
-    AdapterContext::for_adapter(get(tool_key), budget)
 }
 
 pub async fn query_update(tool_key: ToolKey, context: AdapterContext) -> LatestVersion {
@@ -295,6 +371,26 @@ fn catch_adapter<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_path_requirement_matches_the_adapter_scope() {
+        let expected = [
+            (ToolKey::Claude, false),
+            (ToolKey::Codex, true),
+            (ToolKey::Antigravity, false),
+            (ToolKey::Grok, true),
+            (ToolKey::Hermes, true),
+        ];
+        assert_eq!(ToolKey::ALL.len(), expected.len());
+        for (tool_key, required) in expected {
+            assert_eq!(
+                get(tool_key).requires_executable_path(),
+                required,
+                "{}",
+                tool_key.as_str()
+            );
+        }
+    }
 
     #[test]
     fn adapter_registry_covers_the_fixed_cli_scope_in_product_order() {
@@ -416,5 +512,193 @@ mod tests {
         let adapter = MissingHistoryAdapter;
 
         assert!(adapter.resume_args("session").is_err());
+    }
+
+    struct PathlessAdapter;
+    static PATHLESS: PathlessAdapter = PathlessAdapter;
+
+    impl CliAdapter for PathlessAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct PathNeedingAdapter;
+    static PATH_NEEDING: PathNeedingAdapter = PathNeedingAdapter;
+
+    impl CliAdapter for PathNeedingAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+    }
+
+    struct UnknownCommandAdapter;
+    static UNKNOWN_COMMAND: UnknownCommandAdapter = UnknownCommandAdapter;
+
+    impl CliAdapter for UnknownCommandAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Grok
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["cli-launchpad-test-nonexistent-command-8f3a"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+    }
+
+    struct CountingResolver {
+        calls: std::sync::atomic::AtomicUsize,
+        answer: Option<PathBuf>,
+    }
+
+    impl ExecutableResolver for CountingResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.answer.clone()
+        }
+    }
+
+    struct SleepingResolver(std::time::Duration);
+
+    impl ExecutableResolver for SleepingResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            std::thread::sleep(self.0);
+            None
+        }
+    }
+
+    struct PanickingResolver;
+
+    impl ExecutableResolver for PanickingResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            panic!("resolver panic")
+        }
+    }
+
+    #[tokio::test]
+    async fn context_within_budget_skips_resolution_for_adapters_that_do_not_need_a_path() {
+        let resolver = Arc::new(CountingResolver {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            answer: Some(PathBuf::from("/opt/cli")),
+        });
+        let home = tempfile::tempdir().unwrap();
+
+        let (context, remaining) = context_within_budget(
+            &PATHLESS,
+            Duration::from_secs(5),
+            home.path().to_path_buf(),
+            resolver.clone(),
+        )
+        .await;
+
+        assert!(context.resolved_path.is_none());
+        assert_eq!(remaining, Duration::from_secs(5));
+        assert_eq!(context.budget, Duration::from_secs(5));
+        assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn context_within_budget_resolves_for_adapters_that_need_a_path() {
+        let resolver = Arc::new(CountingResolver {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            answer: Some(PathBuf::from("/opt/cli")),
+        });
+        let home = tempfile::tempdir().unwrap();
+
+        let (context, remaining) = context_within_budget(
+            &PATH_NEEDING,
+            Duration::from_secs(5),
+            home.path().to_path_buf(),
+            resolver.clone(),
+        )
+        .await;
+
+        assert_eq!(context.resolved_path, Some(PathBuf::from("/opt/cli")));
+        assert_eq!(resolver.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(remaining > Duration::ZERO && remaining <= Duration::from_secs(5));
+        assert_eq!(context.budget, remaining);
+        assert_eq!(context.home, home.path());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn context_within_budget_reports_exhausted_budget_when_resolution_is_slow() {
+        let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let ticker = tokio::spawn({
+            let ticks = ticks.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
+        let home = tempfile::tempdir().unwrap();
+
+        let started = std::time::Instant::now();
+        let (context, remaining) = context_within_budget(
+            &PATH_NEEDING,
+            Duration::from_millis(300),
+            home.path().to_path_buf(),
+            Arc::new(SleepingResolver(Duration::from_secs(2))),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        assert!(context.resolved_path.is_none());
+        assert_eq!(remaining, Duration::ZERO);
+        assert!(
+            ticks.load(std::sync::atomic::Ordering::SeqCst) >= 10,
+            "the executor must stay responsive while a resolver is slow"
+        );
+    }
+
+    #[tokio::test]
+    async fn context_within_budget_turns_a_resolver_panic_into_no_path() {
+        let home = tempfile::tempdir().unwrap();
+
+        let (context, remaining) = context_within_budget(
+            &PATH_NEEDING,
+            Duration::from_secs(5),
+            home.path().to_path_buf(),
+            Arc::new(PanickingResolver),
+        )
+        .await;
+
+        assert!(context.resolved_path.is_none());
+        assert!(remaining > Duration::ZERO);
+    }
+
+    #[test]
+    fn native_resolver_returns_none_for_unknown_commands() {
+        assert!(NativeExecutableResolver.resolve(&UNKNOWN_COMMAND).is_none());
     }
 }

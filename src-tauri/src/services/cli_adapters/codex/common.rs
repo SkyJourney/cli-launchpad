@@ -20,6 +20,10 @@ impl CliAdapter for CodexAdapter {
         &["codex"]
     }
 
+    fn requires_executable_path(&self) -> bool {
+        true
+    }
+
     fn additional_install_dirs(&self) -> Vec<std::path::PathBuf> {
         #[cfg(windows)]
         if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {

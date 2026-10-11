@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 465,
-    "Linux": 470,
-    "macOS": 467
+    "Windows": 477,
+    "Linux": 482,
+    "macOS": 479
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -186,7 +186,19 @@
       "platform::file_cas::tests::cas_writes_through_the_located_parent_directory",
       "platform::file_cas::tests::cas_ignores_a_decoy_file_named_like_a_deleted_alias",
       "platform::file_cas::tests::temporary_name_generation_and_recognition_round_trip",
-      "services::file_service::tests::save_reports_conflict_when_revision_differs_even_if_current_is_not_text"
+      "services::file_service::tests::save_reports_conflict_when_revision_differs_even_if_current_is_not_text",
+      "services::cli_adapters::tests::executable_path_requirement_matches_the_adapter_scope",
+      "services::cli_adapters::tests::context_within_budget_skips_resolution_for_adapters_that_do_not_need_a_path",
+      "services::cli_adapters::tests::context_within_budget_resolves_for_adapters_that_need_a_path",
+      "services::cli_adapters::tests::context_within_budget_reports_exhausted_budget_when_resolution_is_slow",
+      "services::cli_adapters::tests::context_within_budget_turns_a_resolver_panic_into_no_path",
+      "services::cli_adapters::tests::native_resolver_returns_none_for_unknown_commands",
+      "services::session_service::tests::list_sessions_budget_includes_executable_resolution",
+      "services::session_service::tests::list_sessions_passes_the_remaining_budget_to_the_adapter",
+      "services::session_service::tests::refresh_search_index_isolates_slow_resolution_and_panicking_adapter",
+      "services::session_service::tests::incomplete_sources_cover_every_adapter_in_product_order",
+      "services::session_service::tests::session_ownership_check_is_bounded_by_budget",
+      "services::session_service::tests::session_ownership_check_returns_the_adapter_result_within_budget"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

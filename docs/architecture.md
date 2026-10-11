@@ -435,8 +435,9 @@ Platform primitives and persistent execution task manager
 ```
 
 - 管理能力由适配器声明命令候选、CLI 专属已知安装目录、安装来源、当前版本探测与解析、更新检查与比较语义，以及固定结构化安装/更新计划。Grok 安装来源校验、Hermes 官方更新语义、Codex Windows PowerShell 5.1 安装和更新封装均保留为对应 CLI 差异。
-- 启动参数由各 CLI 的 `resume_args` 和 PTY 创建组合逻辑生成；`CliAdapter` 不声明通用能力标记，项目目录归属校验、PTY 创建/尺寸/退出、会话窗口与独立窗口状态机仍由公共服务管理。关闭、移动窗格或应用布局不得由适配器创建或复制 PTY。
+- 启动参数由各 CLI 的 `resume_args` 和 PTY 创建组合逻辑生成；`CliAdapter` 不声明通用能力标记，唯一的声明是 `requires_executable_path()`（决定公共层是否在预算内解析可执行文件），项目目录归属校验、PTY 创建/尺寸/退出、会话窗口与独立窗口状态机仍由公共服务管理。关闭、移动窗格或应用布局不得由适配器创建或复制 PTY。
 - 历史适配器只负责定位各 CLI 的本地事实来源、读取所需 metadata、校验项目归属并映射到规范会话 DTO。公共历史服务、SQLite FTS 索引和搜索负责统一分页、查询、别名合并和去重，去重键为 `ToolKey + session_id`；适配器不各自建立检索引擎，也不把完整 transcript 或项目路径写入搜索缓存。
+- 适配器上下文由 `cli_adapters::context_within_budget` 构造：只有声明 `requires_executable_path()` 的适配器（Codex、Grok、Hermes）才在 `spawn_blocking` 内解析可执行文件，解析与适配器调用共享同一预算，解析耗尽即该工具超时且适配器不被调用，解析 panic 视为未找到。会话列表、索引刷新与归属校验通过 `session_service::*_with` 入口注入解析器；会话列表与归属校验各有 30 秒预算，索引刷新中任一工具的失败、超时、panic 或标识不符只让该工具变为不完整，`home_dir()` 不可用时整批降级为不完整。`build_plan` 的同步解析只在需要路径的适配器上执行，并要求在阻塞线程中调用。
 - CLI 图标与名称属于展示能力，存放在前端适配器/注册表中，并使用与 Rust 相同的 `ToolKey`；不把 React 资源塞进 Rust CLI 适配器。公共 UI 负责选择展示，不复制各 CLI 的交互状态逻辑。
 - Rust 适配器按 CLI 组织公共实现与平台实现：`<cli>/common.rs` 放稳定的命令候选、命令语义、解析、参数和数据转换；`<cli>/platform.rs` 放安装/更新等平台命令计划，并通过平台条件分支覆盖确有操作系统差异的实现。只有平台差异需要独立维护时再拆成 `platform/{windows,macos,linux}`。共享路径解析、进程执行、PTY 和文件访问能力优先留在公共 platform primitives；不为每种 CLI 和每个平台复制一份无差异实现。
 - 适配器合约为可选能力提供安全默认值：未接入历史时返回显式错误、未配置安装/更新时明确报错、未配置状态查询时返回未知并附错误；一个适配器能力缺失不得阻塞其他 CLI 或主应用启动。接入新 CLI 时按阶段替换默认能力，不要求一次实现全部模块。

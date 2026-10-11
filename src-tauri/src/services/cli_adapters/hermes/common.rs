@@ -18,6 +18,10 @@ impl CliAdapter for HermesAdapter {
         &["hermes"]
     }
 
+    fn requires_executable_path(&self) -> bool {
+        true
+    }
+
     fn additional_install_dirs(&self) -> Vec<std::path::PathBuf> {
         super::version::hermes_install_dirs()
     }
