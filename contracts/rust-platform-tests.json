@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 477,
-    "Linux": 482,
-    "macOS": 479
+    "Windows": 479,
+    "Linux": 484,
+    "macOS": 481
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -198,7 +198,9 @@
       "services::session_service::tests::refresh_search_index_isolates_slow_resolution_and_panicking_adapter",
       "services::session_service::tests::incomplete_sources_cover_every_adapter_in_product_order",
       "services::session_service::tests::session_ownership_check_is_bounded_by_budget",
-      "services::session_service::tests::session_ownership_check_returns_the_adapter_result_within_budget"
+      "services::session_service::tests::session_ownership_check_returns_the_adapter_result_within_budget",
+      "services::execution_service::tests::run_task_delegates_panic_handling_to_supervise_task",
+      "services::execution_service::tests::supervised_task_panic_finishes_failed_and_releases_slot"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

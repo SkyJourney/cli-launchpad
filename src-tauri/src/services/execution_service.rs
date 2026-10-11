@@ -244,13 +244,25 @@ enum Completion {
     TimedOut,
 }
 
+/// Runs `task` on its own tokio task so a panic inside it cannot take the
+/// supervisor down, and reports any abnormal exit (panic or cancellation).
+pub(crate) async fn supervise_task<F, E>(task: F, on_abnormal_exit: E)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+    E: FnOnce(String) + Send,
+{
+    if let Err(error) = tokio::spawn(task).await {
+        on_abnormal_exit(format!("执行任务异常退出：{error}"));
+    }
+}
+
 async fn run_task(app: AppHandle, id: String, plan: InstallPlan, cancel: oneshot::Receiver<()>) {
     let task_app = app.clone();
     let task_id = id.clone();
-    let task = tokio::spawn(run_task_inner(app, id, plan, cancel));
-    if let Err(error) = task.await {
-        finish_failed(&task_app, &task_id, format!("执行任务异常退出：{error}"));
-    }
+    supervise_task(run_task_inner(app, id, plan, cancel), move |message| {
+        finish_failed(&task_app, &task_id, message);
+    })
+    .await;
 }
 
 async fn run_task_inner(
@@ -710,6 +722,7 @@ impl crate::services::exit_cleanup::ExitCleanupTarget for ExecutionExitCleanup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn active_task(id: &str) -> ActiveTask {
         let (cancel, _cancel_rx) = oneshot::channel();
@@ -1015,5 +1028,87 @@ mod tests {
             );
         }
         assert_eq!(target.terminate_all(Duration::from_millis(100)).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn supervised_task_panic_finishes_failed_and_releases_slot() {
+        let manager = ExecutionTaskManager::default();
+        manager
+            .active
+            .lock()
+            .unwrap()
+            .insert(ToolKey::Claude, active_task("t1"));
+        let guard = manager.guard("t1");
+        let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+
+        supervise_task(
+            async move {
+                let _guard = guard;
+                panic!("injected panic");
+            },
+            move |message| recorded.lock().unwrap().push(message),
+        )
+        .await;
+
+        let messages = calls.lock().unwrap().clone();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("执行任务异常退出"));
+        assert!(messages[0].contains("panicked"));
+        assert!(!manager
+            .active
+            .lock()
+            .unwrap()
+            .contains_tool(ToolKey::Claude));
+
+        // Reverse: a task that finishes normally never reports an abnormal exit.
+        let quiet_calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let quiet_recorded = quiet_calls.clone();
+        supervise_task(async {}, move |message| {
+            quiet_recorded.lock().unwrap().push(message)
+        })
+        .await;
+        assert!(quiet_calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_task_delegates_panic_handling_to_supervise_task() {
+        let source = include_str!("execution_service.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the source has a production section");
+        let run_task = production
+            .split("async fn run_task(")
+            .nth(1)
+            .expect("run_task exists")
+            .split("async fn run_task_inner(")
+            .next()
+            .expect("run_task_inner follows run_task");
+        assert!(run_task.contains("supervise_task("));
+        assert!(run_task.contains("run_task_inner("));
+        assert!(run_task.contains("finish_failed("));
+        assert!(
+            !run_task.contains("tokio::spawn(")
+                && !run_task.contains("tauri::async_runtime::spawn("),
+            "run_task must not spawn the inner task itself"
+        );
+
+        let supervisor = production
+            .split("pub(crate) async fn supervise_task")
+            .nth(1)
+            .expect("supervise_task exists")
+            .split("async fn run_task(")
+            .next()
+            .expect("run_task follows supervise_task");
+        assert!(supervisor.contains("tokio::spawn(task)"));
+        assert!(supervisor.contains("on_abnormal_exit("));
+        assert!(supervisor.contains("执行任务异常退出"));
+
+        assert_eq!(
+            production.matches("supervise_task(").count(),
+            1,
+            "supervise_task must be called exactly once, from run_task"
+        );
     }
 }
