@@ -763,8 +763,8 @@ export function terminatePtySession(sessionId: string) {
   return invoke<void>("terminate_pty_session", { sessionId });
 }
 
-export function confirmAppExit() {
-  return invoke<void>("confirm_app_exit");
+export function confirmAppExit(requestId: string) {
+  return invoke<void>("confirm_app_exit", { requestId });
 }
 
 export interface StartupNotice {

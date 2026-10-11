@@ -29,6 +29,10 @@ export const ja = {
     execPlanChanged:
       "実行計画が変更されました。内容を確認して再度承認してください。",
     execBusy: "このツールではすでにタスクが実行中です。",
+    exitNoPendingRequest:
+      "保留中の終了要求がありません。もう一度終了してください。",
+    exitRequestMismatch:
+      "この終了要求は最新ではありません。もう一度終了してください。",
     layoutNeedsReset:
       "ワークスペースのレイアウトが無効です。リセットが必要です。",
     internal:

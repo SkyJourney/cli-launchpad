@@ -25,6 +25,9 @@ export const ko = {
       "터미널 세션 또는 실행 작업 {{count}}개를 시작하는 중입니다. 잠시 후 다시 시도하세요.",
     execPlanChanged: "실행 계획이 변경되었습니다. 다시 검토하고 확인하세요.",
     execBusy: "이 도구에서 이미 작업이 실행 중입니다.",
+    exitNoPendingRequest: "대기 중인 종료 요청이 없습니다. 다시 종료해 보세요.",
+    exitRequestMismatch:
+      "이 종료 요청은 더 이상 유효하지 않습니다. 다시 종료해 보세요.",
     layoutNeedsReset: "작업 공간 레이아웃이 잘못되어 초기화해야 합니다.",
     internal:
       "내부 오류가 발생했습니다. 다시 시도하고, 문제가 계속되면 앱을 다시 시작하세요.",

@@ -13,6 +13,8 @@
     "ptySessionStarting": "Aún se están iniciando {{count}} sesión(es) de terminal o tarea(s) de ejecución. Vuelve a intentarlo en breve.",
     "execPlanChanged": "El plan de ejecución cambió. Revísalo y confírmalo de nuevo.",
     "execBusy": "Ya hay una tarea en ejecución para esta herramienta.",
+    "exitNoPendingRequest": "No hay ninguna solicitud de salida pendiente. Inténtalo de nuevo.",
+    "exitRequestMismatch": "Esta solicitud de salida ya no está vigente. Inténtalo de nuevo.",
     "layoutNeedsReset": "El diseño del espacio de trabajo no es válido y debe restablecerse.",
     "internal": "Se produjo un error interno. Inténtalo de nuevo y reinicia la aplicación si el problema continúa.",
     "appExiting": "La aplicación se está cerrando. Inténtalo de nuevo después de reiniciarla.",

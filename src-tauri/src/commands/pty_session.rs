@@ -1,4 +1,4 @@
-use tauri::{ipc::Channel, State, WebviewWindow};
+use tauri::{ipc::Channel, Manager, State, WebviewWindow};
 
 use crate::{
     blocking, budgets,
@@ -219,17 +219,24 @@ pub fn reattach_pty_session(
 #[tauri::command]
 pub async fn confirm_app_exit(
     state: State<'_, PtySessionManager>,
-    exit_gate: State<'_, AppExitGate>,
     lifecycle: State<'_, AppLifecycle>,
     app: tauri::AppHandle,
+    request_id: String,
 ) -> Result<(), AppError> {
     // Held until the process exits: termination failure drops it and rolls the phase back.
     let exit_permit = lifecycle.admit(Operation::Exit)?;
     let sessions = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || sessions.terminate_all())
-        .await
-        .map_err(|error| AppError::msg(format!("结束 PTY 会话任务异常：{error}")))??;
-    exit_gate.authorize();
+    let blocking_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let exit_gate = blocking_app.state::<AppExitGate>();
+        crate::services::app_lifecycle::confirm_exit_with(&exit_gate, &request_id, || {
+            sessions.terminate_all()
+        })
+    })
+    .await
+    .map_err(|error| AppError::msg(format!("结束 PTY 会话任务异常：{error}")))??;
+    // confirm_exit_with has already authorized the exit; 031 requires the "exiting" phase to stay
+    // in place until app.exit, so the permit is kept.
     exit_permit.keep_exiting();
     app.exit(0);
     Ok(())

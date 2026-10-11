@@ -89,11 +89,14 @@ async function mountExitApp(options: { dirty: boolean }) {
   return host;
 }
 
-async function requestExit(payload: {
-  ptyCount: number;
-  executionTaskCount?: number;
-}) {
-  await emitBackendEvent("app-exit-requested", payload);
+async function requestExit(
+  payload: {
+    ptyCount: number;
+    executionTaskCount?: number;
+  },
+  requestId = "req-1",
+) {
+  await emitBackendEvent("app-exit-requested", { requestId, ...payload });
   await flush(10);
 }
 
@@ -214,7 +217,7 @@ describe("application exit precheck", () => {
     await mountExitApp({ dirty: true });
 
     await requestExit({ ptyCount: 1 });
-    await requestExit({ ptyCount: 1 });
+    await requestExit({ ptyCount: 1 }, "req-2");
 
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(invokes("confirm_app_exit")).toHaveLength(0);
@@ -280,5 +283,101 @@ describe("application exit silent failure", () => {
       "errors.ptySessionsActive",
     );
     expect(dialog.textContent).not.toContain("appExit.terminating");
+  });
+});
+
+describe("application exit requests", () => {
+  it("confirms exit with the pending request id", async () => {
+    const host = await mountExitApp({ dirty: false });
+    await emitBackendEvent("app-exit-requested", {
+      requestId: "req-1",
+      ptyCount: 0,
+      executionTaskCount: 0,
+    });
+    await flush(10);
+
+    const confirms = invokes("confirm_app_exit");
+    expect(confirms).toHaveLength(1);
+    expect(confirms[0].args).toEqual({ requestId: "req-1" });
+    expect(host.errors).toEqual([]);
+    expect(invokes("terminate_pty_session")).toHaveLength(0);
+  });
+
+  it("ignores an exit request without a request id", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const host = await mountExitApp({ dirty: false });
+    await emitBackendEvent("app-exit-requested", { ptyCount: 0 });
+    await flush(10);
+
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toBe("app.exit_request_invalid");
+
+    for (const payload of [
+      { requestId: "", ptyCount: 0 },
+      { requestId: 7, ptyCount: 0 },
+      { requestId: "x", ptyCount: "0" },
+    ]) {
+      await emitBackendEvent("app-exit-requested", payload);
+      await flush(10);
+    }
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(invokes("terminate_pty_session")).toHaveLength(0);
+    expect(host.errors).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it("ignores a confirm result for a stale request id", async () => {
+    await mountExitApp({ dirty: true });
+    await emitBackendEvent("app-exit-requested", {
+      requestId: "req-1",
+      ptyCount: 0,
+      executionTaskCount: 0,
+    });
+    await flush(10);
+    await emitBackendEvent("app-exit-requested", {
+      requestId: "req-2",
+      ptyCount: 0,
+      executionTaskCount: 0,
+    });
+    await flush(10);
+
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await clickInDialog("appExit.confirmDiscard");
+
+    const confirms = invokes("confirm_app_exit");
+    expect(confirms).toHaveLength(1);
+    expect(confirms[0].args).toEqual({ requestId: "req-2" });
+    expect(
+      invokes("confirm_app_exit").some(
+        (call) => (call.args as { requestId?: string }).requestId === "req-1",
+      ),
+    ).toBe(false);
+    expect(invokes("terminate_pty_session")).toHaveLength(0);
+  });
+
+  it("ignores a superseded request whose impacts resolve after a newer request", async () => {
+    // 无脏文件、无 PTY 的 req-1 本会静默退出；它的影响收集晚于 req-2 才完成，必须被丢弃。
+    const host = await mountExitApp({ dirty: false });
+    await Promise.all([
+      emitBackendEvent("app-exit-requested", {
+        requestId: "req-1",
+        ptyCount: 0,
+        executionTaskCount: 0,
+      }),
+      emitBackendEvent("app-exit-requested", {
+        requestId: "req-2",
+        ptyCount: 1,
+        executionTaskCount: 0,
+      }),
+    ]);
+    await flush(10);
+
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(host.errors).toEqual([]);
+    expect(invokes("terminate_pty_session")).toHaveLength(0);
   });
 });

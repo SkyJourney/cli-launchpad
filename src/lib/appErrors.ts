@@ -15,6 +15,8 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "db.poisoned": "errors.internal",
   "directory.in_use": "errors.directoryInUse",
   "exec.plan_changed": "errors.execPlanChanged",
+  "exit.no_pending_request": "errors.exitNoPendingRequest",
+  "exit.request_mismatch": "errors.exitRequestMismatch",
   "internal.task_failed": "errors.internal",
   "project.identity_changed": "errors.fileIdentityChanged",
   "project.not_found": "errors.projectNotFound",

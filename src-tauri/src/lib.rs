@@ -440,13 +440,15 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                     if let Some(window) = &main_window {
                         show_main_window(window);
                     }
+                    let request = exit_gate.begin_request();
                     let _ = app.emit_to(
                         "main",
                         crate::events::APP_EXIT_REQUESTED,
-                        serde_json::json!({
-                            "ptyCount": pty_count,
-                            "executionTaskCount": execution_task_count,
-                        }),
+                        services::app_lifecycle::exit_requested_payload(
+                            &request,
+                            pty_count,
+                            execution_task_count,
+                        ),
                     );
                 }
                 services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {

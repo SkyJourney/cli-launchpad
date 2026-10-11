@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 449,
-    "Linux": 450,
-    "macOS": 447
+    "Windows": 457,
+    "Linux": 458,
+    "macOS": 455
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -170,7 +170,15 @@
       "services::execution_service::tests::running_execution_tasks_are_marked_interrupted_and_slots_released",
       "services::pty_session_service::tests::exit_cleanup_target_reports_zero_for_an_empty_manager",
       "services::execution_service::tests::cancelled_while_running_is_interrupted_only_during_exit",
-      "services::execution_service::tests::exit_cleanup_marks_the_manager_as_exiting_before_cancelling"
+      "services::execution_service::tests::exit_cleanup_marks_the_manager_as_exiting_before_cancelling",
+      "services::app_lifecycle::tests::confirm_exit_without_a_pending_request_is_rejected_and_terminates_nothing",
+      "services::app_lifecycle::tests::confirm_exit_with_a_mismatched_id_is_rejected_and_keeps_the_pending_request",
+      "services::app_lifecycle::tests::exit_request_ids_are_single_use_unique_and_superseded_by_newer_requests",
+      "services::app_lifecycle::tests::failed_termination_keeps_the_request_pending_and_does_not_authorize_exit",
+      "services::app_lifecycle::tests::exit_requested_payload_reports_pty_and_execution_task_counts",
+      "services::app_lifecycle::tests::exit_requested_decision_issues_a_fresh_request_for_every_exit_attempt",
+      "services::app_lifecycle::tests::exit_authorization_expires_and_cannot_be_reused",
+      "contracts::confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

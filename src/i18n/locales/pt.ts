@@ -28,6 +28,10 @@ export const pt = {
     execPlanChanged:
       "O plano de execução foi alterado. Revise e confirme novamente.",
     execBusy: "Já existe uma tarefa em execução para esta ferramenta.",
+    exitNoPendingRequest:
+      "Não há nenhum pedido de saída pendente. Tente sair novamente.",
+    exitRequestMismatch:
+      "Este pedido de saída não é mais o atual. Tente sair novamente.",
     layoutNeedsReset:
       "O layout do espaço de trabalho é inválido e precisa ser redefinido.",
     internal:

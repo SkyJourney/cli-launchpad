@@ -28,6 +28,10 @@ export const fr = {
     execPlanChanged:
       "Le plan d’exécution a changé. Vérifiez-le et confirmez-le à nouveau.",
     execBusy: "Une tâche est déjà en cours pour cet outil.",
+    exitNoPendingRequest:
+      "Aucune demande de fermeture en attente. Réessayez de quitter.",
+    exitRequestMismatch:
+      "Cette demande de fermeture n’est plus à jour. Réessayez de quitter.",
     layoutNeedsReset:
       "La disposition de l’espace de travail est invalide et doit être réinitialisée.",
     internal:

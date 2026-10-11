@@ -15,6 +15,8 @@ export const zh = {
       "还有 {{count}} 个终端会话或执行任务正在启动，请稍后重试。",
     execPlanChanged: "执行计划已变化，请重新检查并确认。",
     execBusy: "此工具已有正在运行的任务。",
+    exitNoPendingRequest: "没有待处理的退出请求，请重新尝试退出。",
+    exitRequestMismatch: "该退出请求已失效，请重新尝试退出。",
     layoutNeedsReset: "工作区布局无效，需要重置。",
     internal: "发生内部错误。请重试，若问题持续请重启应用。",
     appExiting: "应用正在退出，请在重新启动后再试。",

@@ -12,6 +12,8 @@ pub const CONFIG_IMPORT_IN_PROGRESS: &str = "config.import_in_progress";
 pub const DB_POISONED: &str = "db.poisoned";
 pub const DIRECTORY_IN_USE: &str = "directory.in_use";
 pub const EXEC_PLAN_CHANGED: &str = "exec.plan_changed";
+pub const EXIT_NO_PENDING_REQUEST: &str = "exit.no_pending_request";
+pub const EXIT_REQUEST_MISMATCH: &str = "exit.request_mismatch";
 pub const INTERNAL_TASK_FAILED: &str = "internal.task_failed";
 pub const PROJECT_IDENTITY_CHANGED: &str = "project.identity_changed";
 pub const PROJECT_NOT_FOUND: &str = "project.not_found";
@@ -36,6 +38,8 @@ pub const ALL: &[&str] = &[
     DB_POISONED,
     DIRECTORY_IN_USE,
     EXEC_PLAN_CHANGED,
+    EXIT_NO_PENDING_REQUEST,
+    EXIT_REQUEST_MISMATCH,
     INTERNAL_TASK_FAILED,
     PROJECT_IDENTITY_CHANGED,
     PROJECT_NOT_FOUND,

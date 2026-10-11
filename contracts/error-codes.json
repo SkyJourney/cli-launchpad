@@ -12,6 +12,8 @@
     "db.poisoned",
     "directory.in_use",
     "exec.plan_changed",
+    "exit.no_pending_request",
+    "exit.request_mismatch",
     "internal.task_failed",
     "project.identity_changed",
     "project.not_found",

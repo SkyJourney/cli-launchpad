@@ -29,6 +29,10 @@ export const de = {
     execPlanChanged:
       "Der Ausführungsplan hat sich geändert. Prüfe und bestätige ihn erneut.",
     execBusy: "Für dieses Tool läuft bereits eine Aufgabe.",
+    exitNoPendingRequest:
+      "Es gibt keine ausstehende Beenden-Anfrage. Versuchen Sie es erneut.",
+    exitRequestMismatch:
+      "Diese Beenden-Anfrage ist nicht mehr aktuell. Versuchen Sie es erneut.",
     layoutNeedsReset:
       "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
     internal:

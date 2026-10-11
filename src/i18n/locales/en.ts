@@ -20,6 +20,10 @@ export const en = {
       "{{count}} terminal session(s) or execution task(s) are still starting. Try again shortly.",
     execPlanChanged: "The execution plan changed. Review and confirm it again.",
     execBusy: "This tool already has a running task.",
+    exitNoPendingRequest:
+      "There is no pending exit request. Try quitting again.",
+    exitRequestMismatch:
+      "This exit request is no longer current. Try quitting again.",
     layoutNeedsReset: "The workspace layout is invalid and needs to be reset.",
     internal:
       "An internal error occurred. Try again, and restart the app if it keeps happening.",

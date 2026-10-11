@@ -7,6 +7,7 @@ import type {
   WorkspaceLayoutDocument,
   WorkspaceLayoutSaveResult,
 } from "./tauri";
+import { parseExitRequestedPayload } from "./exitRequest";
 import { createWorkspaceFileBuffer } from "./workspaceFileBuffer";
 import {
   createWorkspaceLayoutDocument,
@@ -27,11 +28,12 @@ const fixtures = import.meta.glob("../../contracts/fixtures/*.json", {
   import: "default",
 }) as Record<string, FixtureFile>;
 
-// 期望的 12 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
+// 期望的 13 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
 const EXPECTED_FIXTURES: Record<string, string> = {
   "app-error.json": "AppError",
   "cli-status.json": "CliStatus",
   "execution-task.json": "ExecutionTask",
+  "exit-requested-payload.json": "ExitRequestedPayload",
   "install-plan.json": "InstallPlan",
   "managed-update-status.json": "ManagedUpdateStatus",
   "project-file-open-result.json": "ProjectFileOpenResult",
@@ -130,7 +132,7 @@ describe("IPC DTO golden fixtures", () => {
 
   it("covers every variant fixture exported by the Rust golden fixture generator", () => {
     const paths = Object.keys(fixtures);
-    expect(paths.length, REGENERATE).toBe(12);
+    expect(paths.length, REGENERATE).toBe(13);
     const names = paths.map((path) => path.split("/").pop() as string).sort();
     expect(names).toEqual(Object.keys(EXPECTED_FIXTURES).sort());
 
@@ -229,5 +231,29 @@ describe("IPC DTO golden fixtures", () => {
     expect(incompatibleSave).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]?.[0].code).toBe("layout.schema_incompatible");
+  });
+});
+
+describe("exit-requested payload fixture", () => {
+  it("decodes the exit-requested payload fixture with the listener parser", () => {
+    const expected: Record<string, unknown> = {
+      "pending-work": {
+        requestId: "req-1",
+        ptyCount: 2,
+        executionTaskCount: 3,
+      },
+      idle: { requestId: "req-2", ptyCount: 0, executionTaskCount: 0 },
+    };
+    const fixture = fixtureFile("exit-requested-payload.json");
+    expect(fixture.cases.map((item) => item.name).sort()).toEqual(
+      Object.keys(expected).sort(),
+    );
+    for (const item of fixture.cases) {
+      expect(parseExitRequestedPayload(item.value), item.name).toEqual(
+        expected[item.name],
+      );
+    }
+    // 反向：载荷是 camelCase，不得出现下划线键。
+    expect(JSON.stringify(fixture)).not.toMatch(/"[a-z0-9]+_[a-z0-9_]+"\s*:/);
   });
 });

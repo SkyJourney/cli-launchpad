@@ -18,6 +18,7 @@ import { StartupNotices } from "./components/StartupNotices";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
 import { formatAppError } from "./lib/appErrors";
+import { parseExitRequestedPayload } from "./lib/exitRequest";
 import {
   PtyWorkspaceProvider,
   PtyWorkspaceRegion,
@@ -155,58 +156,60 @@ function AppContent() {
   const [exitRequest, setExitRequest] = useState<AppExitRequest | null>(null);
   const [exitPending, setExitPending] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
+  // 最近一次有效退出请求的 id：确认时只回传它，过期请求的异步结果据此丢弃。
+  const exitRequestIdRef = useRef<string | null>(null);
   useExecutionTaskEvents();
 
   useLayoutEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<{ ptyCount: number; executionTaskCount?: number }>(
-      RUST_EVENTS.appExitRequested,
-      (event) => {
-        setExitError(null);
-        // 载荷来自后端，但非有限数（null、字符串、NaN）不能卡出一个空对话框。
-        const reportedTasks = event.payload.executionTaskCount;
-        const executionTaskCount =
-          typeof reportedTasks === "number" && Number.isFinite(reportedTasks)
-            ? Math.max(0, reportedTasks)
-            : 0;
-        void collectExitImpacts(event.payload.ptyCount)
-          .then(async (collected) => {
-            const impacts: AppExitRequest = {
-              ...collected,
-              executionTaskCount,
-            };
-            if (shouldExitWithoutPrompt(impacts)) {
-              setExitPending(true);
-              try {
-                await confirmAppExit();
-              } catch (error) {
-                // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
-                // 不能停在“终止中”让两个按钮都被禁用。
-                setExitPending(false);
-                setExitRequest(impacts);
-                setExitError(formatAppError(error, tRef.current));
-              }
-              return;
+    void listen<unknown>(RUST_EVENTS.appExitRequested, (event) => {
+      const payload = parseExitRequestedPayload(event.payload);
+      if (!payload) {
+        console.warn("app.exit_request_invalid", event.payload);
+        return;
+      }
+      const { requestId, ptyCount, executionTaskCount } = payload;
+      exitRequestIdRef.current = requestId;
+      setExitError(null);
+      void collectExitImpacts(ptyCount)
+        .then(async (collected) => {
+          if (exitRequestIdRef.current !== requestId) return;
+          const impacts: AppExitRequest = {
+            ...collected,
+            executionTaskCount,
+          };
+          if (shouldExitWithoutPrompt(impacts)) {
+            setExitPending(true);
+            try {
+              await confirmAppExit(requestId);
+            } catch (error) {
+              // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
+              // 不能停在“终止中”让两个按钮都被禁用。
+              setExitPending(false);
+              setExitRequest(impacts);
+              setExitError(formatAppError(error, tRef.current));
             }
-            setExitRequest(impacts);
-          })
-          .catch((error) => {
-            console.error("Unable to collect application exit impacts", error);
-            const current = exitStateRef.current;
-            setExitRequest({
-              ...collectAppExitImpacts({
-                ptyCount: event.payload.ptyCount,
-                documents: current.fileDocuments,
-                buffers: current.fileBuffers,
-                uncertainDocumentIds: current.detachedFileIds,
-              }),
-              executionTaskCount,
-            });
-            setExitError(formatAppError(error, tRef.current));
+            return;
+          }
+          setExitRequest(impacts);
+        })
+        .catch((error) => {
+          if (exitRequestIdRef.current !== requestId) return;
+          console.error("Unable to collect application exit impacts", error);
+          const current = exitStateRef.current;
+          setExitRequest({
+            ...collectAppExitImpacts({
+              ptyCount,
+              documents: current.fileDocuments,
+              buffers: current.fileBuffers,
+              uncertainDocumentIds: current.detachedFileIds,
+            }),
+            executionTaskCount,
           });
-      },
-    )
+          setExitError(formatAppError(error, tRef.current));
+        });
+    })
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
@@ -219,10 +222,12 @@ function AppContent() {
   }, [collectExitImpacts]);
 
   const quitWithActiveSessions = async () => {
+    const requestId = exitRequestIdRef.current;
+    if (requestId === null) return;
     setExitPending(true);
     setExitError(null);
     try {
-      await confirmAppExit();
+      await confirmAppExit(requestId);
     } catch (error) {
       setExitError(formatAppError(error, t));
       setExitPending(false);

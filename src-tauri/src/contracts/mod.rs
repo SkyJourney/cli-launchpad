@@ -1211,7 +1211,7 @@ fn golden_fixtures_match_serialized_dtos() {
         }
     }
 
-    assert_eq!(expected_files.len(), 12, "fixture 映射表必须恰好 12 个文件");
+    assert_eq!(expected_files.len(), 13, "fixture 映射表必须恰好 13 个文件");
     let found: BTreeSet<String> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
         .map(|entry| entry.expect("read fixture entry").path())
@@ -2079,4 +2079,60 @@ fn event_contract_entries_are_well_formed() {
             );
         }
     }
+}
+
+#[test]
+fn confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field() {
+    const PTY_COMMAND: &str = include_str!("../commands/pty_session.rs");
+    const APP_TSX: &str = include_str!("../../../src/App.tsx");
+    const TAURI_TS: &str = include_str!("../../../src/lib/tauri.ts");
+    const APP_COMMANDS: &str = include_str!("../../../contracts/app-commands.json");
+    const DEFAULT_CAPABILITY: &str = include_str!("../../capabilities/default.json");
+    const TERMINAL_CAPABILITY: &str = include_str!("../../capabilities/terminal-window.json");
+    const WORKSPACE_CAPABILITY: &str =
+        include_str!("../../capabilities/workspace-content-window.json");
+
+    // (1) the command takes the request id as a parameter
+    let start = PTY_COMMAND
+        .find("pub async fn confirm_app_exit(")
+        .expect("command exists");
+    let params_end = PTY_COMMAND[start..]
+        .find(") -> ")
+        .expect("parameter list ends");
+    let params = &PTY_COMMAND[start..start + params_end];
+    assert!(
+        params.contains("request_id: String"),
+        "confirm_app_exit must take request_id"
+    );
+
+    // (2) the command is still registered for the main window only
+    assert!(APP_COMMANDS.contains("\"confirm_app_exit\""));
+    assert!(DEFAULT_CAPABILITY.contains("allow-confirm-app-exit"));
+    assert!(
+        !TERMINAL_CAPABILITY.contains("allow-confirm-app-exit"),
+        "terminal windows must not confirm exits"
+    );
+    assert!(
+        !WORKSPACE_CAPABILITY.contains("allow-confirm-app-exit"),
+        "content windows must not confirm exits"
+    );
+
+    // (3) the frontend sends the id it received and drops malformed payloads
+    assert!(
+        APP_TSX.contains("requestId"),
+        "App.tsx must carry requestId"
+    );
+    assert!(
+        APP_TSX.contains("parseExitRequestedPayload"),
+        "App.tsx must parse the exit payload"
+    );
+    assert!(
+        APP_TSX.contains("app.exit_request_invalid"),
+        "App.tsx must warn on invalid payloads"
+    );
+    assert!(
+        TAURI_TS.contains("requestId: string"),
+        "confirmAppExit must take requestId"
+    );
+    assert!(TAURI_TS.contains("invoke<void>(\"confirm_app_exit\", { requestId })"));
 }

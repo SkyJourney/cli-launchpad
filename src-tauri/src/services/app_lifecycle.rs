@@ -1,22 +1,133 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::models::app_setting::CloseBehavior;
 use crate::models::window_kind::{window_kind_of, WindowKind};
 
-/// One-shot authorization for the application's final exit request.
+/// Authorization for the application's final exit request, and the pending request it answers.
+/// A confirmation is honoured only for the newest request and only within `AUTHORIZATION_TTL`.
 #[derive(Default)]
 pub struct AppExitGate {
-    authorized: AtomicBool,
+    authorized_at: Mutex<Option<Instant>>,
+    pending_request: Mutex<Option<String>>,
+}
+
+/// An authorization older than this is ignored, so a stale confirmation can never let a later,
+/// unrelated exit through.
+const AUTHORIZATION_TTL: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitConfirmError {
+    NoPendingRequest,
+    RequestMismatch,
 }
 
 impl AppExitGate {
     pub fn authorize(&self) {
-        self.authorized.store(true, Ordering::Release);
+        self.authorize_at(Instant::now());
+    }
+
+    pub fn authorize_at(&self, now: Instant) {
+        if let Ok(mut authorized_at) = self.authorized_at.lock() {
+            *authorized_at = Some(now);
+        }
     }
 
     pub fn consume_authorization(&self) -> bool {
-        self.authorized.swap(false, Ordering::AcqRel)
+        self.consume_authorization_at(Instant::now())
     }
+
+    pub fn consume_authorization_at(&self, now: Instant) -> bool {
+        let issued = match self.authorized_at.lock() {
+            Ok(mut authorized_at) => authorized_at.take(),
+            Err(_) => None,
+        };
+        matches!(issued, Some(at) if now.saturating_duration_since(at) < AUTHORIZATION_TTL)
+    }
+
+    /// A new request supersedes any older pending one (the newest wins).
+    pub fn begin_request(&self) -> ExitRequest {
+        let id = uuid::Uuid::new_v4().to_string();
+        if let Ok(mut pending) = self.pending_request.lock() {
+            *pending = Some(id.clone());
+        }
+        ExitRequest { id }
+    }
+
+    pub fn pending_request_id(&self) -> Option<String> {
+        self.pending_request
+            .lock()
+            .ok()
+            .and_then(|pending| pending.clone())
+    }
+
+    /// Authorizes the exit only when `request_id` equals the pending request, and consumes it.
+    pub fn confirm(&self, request_id: &str) -> Result<(), ExitConfirmError> {
+        {
+            let mut pending = self
+                .pending_request
+                .lock()
+                .map_err(|_| ExitConfirmError::NoPendingRequest)?;
+            let matched = match pending.as_deref() {
+                None => return Err(ExitConfirmError::NoPendingRequest),
+                Some(current) => current == request_id,
+            };
+            if !matched {
+                return Err(ExitConfirmError::RequestMismatch);
+            }
+            *pending = None;
+        }
+        self.authorize();
+        Ok(())
+    }
+}
+
+fn exit_confirm_error(error: ExitConfirmError) -> AppError {
+    match error {
+        ExitConfirmError::NoPendingRequest => AppError::coded(
+            crate::error_codes::EXIT_NO_PENDING_REQUEST,
+            "没有待决的退出请求",
+        ),
+        ExitConfirmError::RequestMismatch => AppError::coded(
+            crate::error_codes::EXIT_REQUEST_MISMATCH,
+            "退出请求与当前待决请求不一致",
+        ),
+    }
+}
+
+/// Checks the request id first, terminates only for the pending request, then confirms it. A
+/// rejected id never reaches `terminate`; a failed `terminate` leaves the request pending.
+pub(crate) fn confirm_exit_with<T>(
+    gate: &AppExitGate,
+    request_id: &str,
+    terminate: impl FnOnce() -> Result<T, AppError>,
+) -> Result<(), AppError> {
+    match gate.pending_request_id() {
+        None => return Err(exit_confirm_error(ExitConfirmError::NoPendingRequest)),
+        Some(current) if current != request_id => {
+            return Err(exit_confirm_error(ExitConfirmError::RequestMismatch))
+        }
+        Some(_) => {}
+    }
+    terminate()?;
+    gate.confirm(request_id).map_err(exit_confirm_error)
+}
+
+pub(crate) fn exit_requested_payload(
+    request: &ExitRequest,
+    pty_count: usize,
+    execution_task_count: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "requestId": request.id,
+        "ptyCount": pty_count,
+        "executionTaskCount": execution_task_count,
+    })
 }
 
 /// 一次应用退出请求的处理结论；调用方根据它执行阻止、显示主窗与通知前端等副作用。
@@ -382,10 +493,20 @@ impl AppLifecycle {
 #[cfg(test)]
 mod tests {
     use super::AppExitGate;
+    use super::{confirm_exit_with, exit_requested_payload, ExitRequest};
     use super::{
         decide_close_request, decide_exit_request, effective_close_behavior, setup_tray_or_degrade,
         ExitRequestDecision, MainCloseDecision, TrayAvailability,
     };
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    fn error_code(error: &AppError) -> String {
+        serde_json::to_value(error).unwrap()["code"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
     use crate::models::app_setting::CloseBehavior;
 
     const FILE_L1: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
@@ -556,7 +677,8 @@ mod tests {
         let run_event = &LIB_RS[start..end];
         assert!(run_event.contains("decide_exit_request("));
         assert!(!run_event.contains("consume_authorization"));
-        assert!(run_event.contains("executionTaskCount"));
+        assert!(run_event.contains("exit_requested_payload("));
+        assert!(run_event.contains("begin_request()"));
         assert!(LIB_RS.contains("on_window_destroyed("));
         assert!(LIB_RS.contains("decide_close_request("));
         // 反向断言：旧的内联逻辑不能回来。
@@ -1090,5 +1212,185 @@ mod tests {
         );
         drop(restoring);
         assert!(lifecycle.admit(Operation::PtyStart).is_ok());
+    }
+
+    #[test]
+    fn confirm_exit_without_a_pending_request_is_rejected_and_terminates_nothing() {
+        let gate = AppExitGate::default();
+        let terminated = Cell::new(0usize);
+
+        let result = confirm_exit_with(&gate, "any-id", || {
+            terminated.set(terminated.get() + 1);
+            Ok::<(), AppError>(())
+        });
+
+        let error = result.unwrap_err();
+        assert_eq!(error_code(&error), "exit.no_pending_request");
+        assert_eq!(terminated.get(), 0);
+        assert!(!gate.consume_authorization());
+    }
+
+    #[test]
+    fn confirm_exit_with_a_mismatched_id_is_rejected_and_keeps_the_pending_request() {
+        let gate = AppExitGate::default();
+        let request = gate.begin_request();
+        let terminated = Cell::new(0usize);
+        let forged = [
+            "forged-id".to_string(),
+            String::new(),
+            request.id.to_uppercase(),
+            format!("{} ", request.id),
+        ];
+        assert_ne!(request.id.to_uppercase(), request.id);
+
+        for candidate in &forged {
+            let result = confirm_exit_with(&gate, candidate, || {
+                terminated.set(terminated.get() + 1);
+                Ok::<(), AppError>(())
+            });
+            let error = result.unwrap_err();
+            assert_eq!(
+                error_code(&error),
+                "exit.request_mismatch",
+                "candidate {candidate:?}"
+            );
+        }
+        assert_eq!(terminated.get(), 0);
+        assert!(!gate.consume_authorization());
+        assert_eq!(gate.pending_request_id(), Some(request.id.clone()));
+
+        let result = confirm_exit_with(&gate, &request.id, || {
+            terminated.set(terminated.get() + 1);
+            Ok::<(), AppError>(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(terminated.get(), 1);
+        assert!(gate.consume_authorization());
+        assert!(!gate.consume_authorization());
+    }
+
+    #[test]
+    fn exit_request_ids_are_single_use_unique_and_superseded_by_newer_requests() {
+        let gate = AppExitGate::default();
+        let ids: std::collections::HashSet<String> =
+            (0..100).map(|_| gate.begin_request().id).collect();
+        assert_eq!(ids.len(), 100);
+        for id in &ids {
+            let parsed = uuid::Uuid::parse_str(id).unwrap();
+            assert_eq!(parsed.get_version_num(), 4);
+        }
+
+        let gate = AppExitGate::default();
+        let terminated = Cell::new(0usize);
+        let first = gate.begin_request();
+        let second = gate.begin_request();
+        // 被取代的旧请求不得终止任何 PTY（校验先于终止）。
+        let stale = confirm_exit_with(&gate, &first.id, || {
+            terminated.set(terminated.get() + 1);
+            Ok::<(), AppError>(())
+        });
+        assert_eq!(error_code(&stale.unwrap_err()), "exit.request_mismatch");
+        assert_eq!(terminated.get(), 0);
+        assert!(!gate.consume_authorization());
+
+        assert!(confirm_exit_with(&gate, &second.id, || {
+            terminated.set(terminated.get() + 1);
+            Ok::<(), AppError>(())
+        })
+        .is_ok());
+        assert_eq!(terminated.get(), 1);
+        let replay = confirm_exit_with(&gate, &second.id, || {
+            terminated.set(terminated.get() + 1);
+            Ok::<(), AppError>(())
+        });
+        assert_eq!(error_code(&replay.unwrap_err()), "exit.no_pending_request");
+        assert_eq!(terminated.get(), 1);
+    }
+
+    #[test]
+    fn failed_termination_keeps_the_request_pending_and_does_not_authorize_exit() {
+        let gate = AppExitGate::default();
+        let request = gate.begin_request();
+
+        let failed = confirm_exit_with(&gate, &request.id, || {
+            Err::<(), AppError>(AppError::msg("pty busy"))
+        });
+        assert_eq!(failed.unwrap_err().to_string(), "pty busy");
+        assert!(!gate.consume_authorization());
+        assert_eq!(gate.pending_request_id(), Some(request.id.clone()));
+
+        let retried = confirm_exit_with(&gate, &request.id, || Ok::<(), AppError>(()));
+        assert!(retried.is_ok());
+        assert!(gate.consume_authorization());
+    }
+
+    #[test]
+    fn exit_requested_payload_reports_pty_and_execution_task_counts() {
+        let request = ExitRequest {
+            id: "r1".to_string(),
+        };
+        let payload = exit_requested_payload(&request, 2, 3);
+        assert_eq!(
+            payload,
+            serde_json::json!({"requestId": "r1", "ptyCount": 2, "executionTaskCount": 3})
+        );
+        let object = payload.as_object().unwrap();
+        assert_eq!(object.len(), 3);
+        assert!(object.keys().all(|key| !key.contains('_')));
+        let text = payload.to_string();
+        assert!(!text.contains("request_id"));
+        assert!(!text.contains("pty_count"));
+    }
+
+    #[test]
+    fn exit_requested_decision_issues_a_fresh_request_for_every_exit_attempt() {
+        let gate = AppExitGate::default();
+        let mut issued = Vec::new();
+        for _ in 0..2 {
+            match decide_exit_request(&gate, 1, 0, true) {
+                ExitRequestDecision::PreventAndAskMain { .. } => issued.push(gate.begin_request()),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_ne!(issued[0].id, issued[1].id);
+        let first = issued[0].clone();
+        let stale = confirm_exit_with(&gate, &first.id, || Ok::<(), AppError>(()));
+        assert_eq!(error_code(&stale.unwrap_err()), "exit.request_mismatch");
+
+        let run_event = &LIB_RS[LIB_RS.find("fn handle_run_event").unwrap()
+            ..LIB_RS.find("fn show_main_window").unwrap()];
+        assert_eq!(run_event.matches("begin_request()").count(), 1);
+        assert_eq!(run_event.matches("exit_requested_payload(").count(), 1);
+        assert!(
+            run_event.find("begin_request()").unwrap()
+                > run_event.find("PreventAndAskMain").unwrap()
+        );
+        assert!(!run_event.contains("serde_json::json!"));
+    }
+
+    #[test]
+    fn exit_authorization_expires_and_cannot_be_reused() {
+        let t0 = Instant::now();
+
+        let gate = AppExitGate::default();
+        gate.authorize_at(t0);
+        assert!(!gate.consume_authorization_at(t0 + Duration::from_secs(6)));
+
+        let gate = AppExitGate::default();
+        gate.authorize_at(t0);
+        assert!(gate.consume_authorization_at(t0 + Duration::from_secs(1)));
+        assert!(!gate.consume_authorization_at(t0 + Duration::from_secs(1)));
+
+        let gate = AppExitGate::default();
+        gate.authorize_at(t0);
+        assert!(gate.consume_authorization_at(t0 + Duration::from_millis(4999)));
+
+        let gate = AppExitGate::default();
+        gate.authorize_at(t0);
+        assert!(!gate.consume_authorization_at(t0 + Duration::from_secs(5)));
+
+        // An expired authorization must not break a later, fresh one.
+        gate.authorize_at(t0);
+        assert!(gate.consume_authorization_at(t0 + Duration::from_secs(1)));
     }
 }

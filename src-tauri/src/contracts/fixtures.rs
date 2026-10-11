@@ -961,5 +961,38 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         cases,
     });
 
+    // ExitRequestedPayload (m6-044): fixed request ids, never a random one.
+    let mut cases = Vec::new();
+    let name = "ExitRequestedPayload";
+    sample(
+        &mut cases,
+        name,
+        "pending-work",
+        crate::services::app_lifecycle::exit_requested_payload(
+            &crate::services::app_lifecycle::ExitRequest {
+                id: "req-1".to_string(),
+            },
+            2,
+            3,
+        ),
+    );
+    sample(
+        &mut cases,
+        name,
+        "idle",
+        crate::services::app_lifecycle::exit_requested_payload(
+            &crate::services::app_lifecycle::ExitRequest {
+                id: "req-2".to_string(),
+            },
+            0,
+            0,
+        ),
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("exit-requested-payload.json"),
+        type_name: name,
+        cases,
+    });
+
     all
 }
