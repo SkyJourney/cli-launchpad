@@ -455,10 +455,22 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         }
         tauri::RunEvent::Exit => {
-            // Graceful exit reached (ExitRequested was not prevented): clear the
-            // running marker. Never do this in ExitRequested, which can be prevented.
-            if let Some(paths) = app.try_state::<services::storage_service::StoragePaths>() {
-                services::clean_exit_marker::end_session_cleanly(&paths);
+            // Best-effort cleanup first, then clear the clean-exit marker. This is the
+            // only place cleanup runs: ExitRequested can still be prevented.
+            let targets = exit_cleanup_targets(app);
+            match app.try_state::<services::storage_service::StoragePaths>() {
+                Some(paths) => services::exit_cleanup::on_run_event_exit(
+                    &paths,
+                    &targets,
+                    services::exit_cleanup::EXIT_CLEANUP_BUDGET,
+                ),
+                // Without storage paths the marker cannot be cleared, but processes and tasks still get cleaned up.
+                None => {
+                    services::exit_cleanup::run_exit_cleanup(
+                        &targets,
+                        services::exit_cleanup::EXIT_CLEANUP_BUDGET,
+                    );
+                }
             }
         }
         #[cfg(target_os = "macos")]
@@ -475,6 +487,28 @@ fn show_main_window(window: &WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+}
+
+fn exit_cleanup_targets(
+    app: &tauri::AppHandle,
+) -> Vec<std::sync::Arc<dyn services::exit_cleanup::ExitCleanupTarget>> {
+    let mut targets: Vec<std::sync::Arc<dyn services::exit_cleanup::ExitCleanupTarget>> =
+        Vec::new();
+    if let Some(sessions) = app.try_state::<services::pty_session_service::PtySessionManager>() {
+        targets.push(std::sync::Arc::new(sessions.inner().clone()));
+    }
+    if let (Some(manager), Some(db)) = (
+        app.try_state::<services::execution_service::ExecutionTaskManager>(),
+        app.try_state::<Db>(),
+    ) {
+        targets.push(std::sync::Arc::new(
+            services::execution_service::ExecutionExitCleanup::new(
+                manager.inner().clone(),
+                db.inner().clone(),
+            ),
+        ));
+    }
+    targets
 }
 
 /// Menu item id of the acceptance-only hook (see the cargo feature in Cargo.toml).

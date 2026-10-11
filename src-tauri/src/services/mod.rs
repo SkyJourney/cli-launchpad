@@ -9,6 +9,7 @@ pub mod content_window_grants;
 pub mod diagnostics_service;
 pub mod directory_service;
 pub mod execution_service;
+pub mod exit_cleanup;
 pub mod file_service;
 pub mod install_service;
 pub mod launch_service;

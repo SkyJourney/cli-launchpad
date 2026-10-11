@@ -221,12 +221,18 @@ mod tests {
         let setup =
             &LIB_RS[LIB_RS.find(".setup(|app|").unwrap()..LIB_RS.find(".invoke_handler(").unwrap()];
         assert_eq!(setup.matches("begin_session(").count(), 1);
-        assert_eq!(LIB_RS.matches("end_session_cleanly(").count(), 1);
+        // lib.rs no longer calls end_session_cleanly directly: the Exit arm delegates.
+        assert_eq!(LIB_RS.matches("end_session_cleanly(").count(), 0);
         let run_event = &LIB_RS[LIB_RS.find("fn handle_run_event").unwrap()
             ..LIB_RS.find("fn show_main_window").unwrap()];
         let exit_index = run_event.find("tauri::RunEvent::Exit =>").unwrap();
-        assert!(run_event[exit_index..].contains("end_session_cleanly("));
-        assert!(!run_event[..exit_index].contains("end_session_cleanly("));
+        assert!(run_event[exit_index..].contains("on_run_event_exit("));
+        assert!(!run_event[..exit_index].contains("on_run_event_exit("));
         assert!(!run_event[..exit_index].contains("begin_session("));
+        // the only call site lives inside on_run_event_exit
+        const EXIT_CLEANUP_RS: &str = include_str!("exit_cleanup.rs");
+        assert_eq!(EXIT_CLEANUP_RS.matches("end_session_cleanly(").count(), 1);
+        let handler = &EXIT_CLEANUP_RS[EXIT_CLEANUP_RS.find("pub fn on_run_event_exit").unwrap()..];
+        assert!(handler.contains("end_session_cleanly("));
     }
 }

@@ -58,6 +58,8 @@ impl ActiveTasks {
 #[derive(Clone, Default)]
 pub struct ExecutionTaskManager {
     active: std::sync::Arc<Mutex<ActiveTasks>>,
+    /// Set once exit cleanup starts cancelling; cancelled tasks then end as `interrupted`.
+    exiting: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct ActiveTaskGuard {
@@ -78,6 +80,36 @@ impl Drop for ActiveTaskGuard {
 }
 
 impl ExecutionTaskManager {
+    pub fn is_exiting(&self) -> bool {
+        self.exiting.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Exit-time helper: take every pending cancel signal sender out of the table.
+    fn take_cancel_senders_for_exit(&self) -> Result<Vec<oneshot::Sender<()>>, AppError> {
+        self.exiting
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+        Ok(active
+            .by_tool
+            .values_mut()
+            .filter_map(|task| task.cancel.take())
+            .collect())
+    }
+
+    /// Exit-time helper: drop every remaining slot and report how many there were.
+    fn clear_all_for_exit(&self) -> Result<usize, AppError> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+        let remaining = active.by_tool.len();
+        active.by_tool.clear();
+        Ok(remaining)
+    }
+
     /// 当前活动的执行任务数（退出请求载荷使用）。只在读取长度期间持锁。
     pub fn active_count(&self) -> usize {
         self.active
@@ -242,7 +274,11 @@ async fn run_task_inner(
     let preflight = match tokio::select! {
         biased;
         _ = &mut cancel => {
-            finish_cancelled(&app, &id, "用户在执行前校验期间终止了任务".to_string());
+            if app_is_exiting(&app) {
+                finish_interrupted_on_exit(&app, &id);
+            } else {
+                finish_cancelled(&app, &id, "用户在执行前校验期间终止了任务".to_string());
+            }
             return;
         }
         result = preflight => result,
@@ -427,12 +463,15 @@ async fn run_task_inner(
             Some(error.to_string()),
             format!("等待命令结束时发生错误：{error}。\n"),
         ),
-        Completion::Cancelled => (
-            ExecutionStatus::Cancelled,
-            None,
-            Some("用户终止了任务".to_string()),
-            "任务已由用户终止。更新中断时可能需要重新安装对应 CLI。\n".to_string(),
-        ),
+        Completion::Cancelled => {
+            let (status, message, log_line) = cancelled_outcome(app_is_exiting(&app));
+            (
+                status,
+                None,
+                Some(message.to_string()),
+                log_line.to_string(),
+            )
+        }
         Completion::TimedOut => (
             ExecutionStatus::TimedOut,
             None,
@@ -484,6 +523,38 @@ fn finish_failed(app: &AppHandle, id: &str, message: String) {
     let manager = app.state::<ExecutionTaskManager>();
     if let Err(error) = manager.complete(app, id, ExecutionStatus::Failed, None, Some(&message)) {
         log::error!("unable to mark execution task failed task_id={id} error={error}");
+    }
+}
+
+/// Outcome of a task cancelled while running. During exit cleanup the cancellation is not a
+/// user action, so the task is recorded as interrupted (PD-12②).
+fn cancelled_outcome(exiting: bool) -> (ExecutionStatus, &'static str, &'static str) {
+    if exiting {
+        (
+            ExecutionStatus::Interrupted,
+            "应用退出时任务被中断",
+            "任务已因应用退出而中断。更新中断时可能需要重新安装对应 CLI。\n",
+        )
+    } else {
+        (
+            ExecutionStatus::Cancelled,
+            "用户终止了任务",
+            "任务已由用户终止。更新中断时可能需要重新安装对应 CLI。\n",
+        )
+    }
+}
+
+fn app_is_exiting(app: &AppHandle) -> bool {
+    app.try_state::<ExecutionTaskManager>()
+        .is_some_and(|manager| manager.is_exiting())
+}
+
+fn finish_interrupted_on_exit(app: &AppHandle, id: &str) {
+    let (status, message, log_line) = cancelled_outcome(true);
+    append_system_log(app, id, log_line);
+    let manager = app.state::<ExecutionTaskManager>();
+    if let Err(error) = manager.complete(app, id, status, None, Some(message)) {
+        log::error!("unable to mark execution task interrupted on exit task_id={id} error={error}");
     }
 }
 
@@ -590,6 +661,50 @@ pub fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+pub struct ExecutionExitCleanup {
+    manager: ExecutionTaskManager,
+    db: Db,
+}
+
+impl ExecutionExitCleanup {
+    pub fn new(manager: ExecutionTaskManager, db: Db) -> Self {
+        Self { manager, db }
+    }
+}
+
+impl crate::services::exit_cleanup::ExitCleanupTarget for ExecutionExitCleanup {
+    fn name(&self) -> &'static str {
+        "execution_tasks"
+    }
+
+    fn terminate_all(&self, budget: Duration) -> Result<usize, AppError> {
+        let active = self.manager.active_count();
+        for cancel in self.manager.take_cancel_senders_for_exit()? {
+            let _ = cancel.send(());
+        }
+        // Leave 500 ms of the budget for the database update below.
+        let deadline =
+            std::time::Instant::now() + budget.saturating_sub(Duration::from_millis(500));
+        while self.manager.active_count() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let leftover = self.manager.clear_all_for_exit()?;
+        if leftover != 0 {
+            log::warn!("{leftover} execution task(s) did not stop in time during exit");
+        }
+        let interrupted = crate::with_connection(&self.db, |connection| {
+            Ok(execution_task_repo::mark_unfinished_interrupted(
+                connection,
+                now_ms(),
+            )?)
+        })?;
+        if interrupted != 0 {
+            log::warn!("marked {interrupted} unfinished execution task(s) as interrupted on exit");
+        }
+        Ok(active)
+    }
 }
 
 #[cfg(test)]
@@ -762,5 +877,143 @@ mod tests {
             super::verify_updated_version("2.1.280", "2.1.288".to_string()).unwrap(),
             "2.1.288"
         );
+    }
+
+    #[test]
+    fn cancelled_while_running_is_interrupted_only_during_exit() {
+        let (status, message, _) = cancelled_outcome(true);
+        assert_eq!(status, ExecutionStatus::Interrupted);
+        assert!(message.contains("退出"));
+        assert!(status.is_terminal());
+
+        let (status, message, log_line) = cancelled_outcome(false);
+        assert_eq!(status, ExecutionStatus::Cancelled);
+        assert_eq!(message, "用户终止了任务");
+        assert!(log_line.contains("用户终止"));
+    }
+
+    #[test]
+    fn exit_cleanup_marks_the_manager_as_exiting_before_cancelling() {
+        let manager = ExecutionTaskManager::default();
+        assert!(!manager.is_exiting());
+        let (tx, _rx) = oneshot::channel::<()>();
+        {
+            let mut active = manager.active.lock().unwrap();
+            active.insert(
+                ToolKey::Claude,
+                ActiveTask {
+                    id: "t1".into(),
+                    cancel: Some(tx),
+                },
+            );
+        }
+        let senders = manager.take_cancel_senders_for_exit().unwrap();
+        assert_eq!(senders.len(), 1);
+        assert!(manager.is_exiting());
+        assert!(manager.clone().is_exiting());
+    }
+
+    #[test]
+    fn running_execution_tasks_are_marked_interrupted_and_slots_released() {
+        use crate::db::execution_task_repo;
+        use crate::models::execution::ExecutionStatus;
+        use crate::models::install::{InstallKind, InstallPlan};
+        use crate::models::tool::ToolKey;
+        use crate::services::exit_cleanup::ExitCleanupTarget;
+        use std::sync::Arc;
+
+        fn plan(tool_key: ToolKey) -> InstallPlan {
+            InstallPlan {
+                tool_key,
+                kind: InstallKind::Update,
+                program: "C:\\tool.exe".to_string(),
+                args: vec!["update".to_string()],
+                fingerprint: "test-fingerprint".to_string(),
+                source: "test".to_string(),
+                preview: "C:\\tool.exe update".to_string(),
+                effects: None,
+            }
+        }
+
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        execution_task_repo::insert(&connection, "t1", &plan(ToolKey::Claude), 100).unwrap();
+        execution_task_repo::insert(&connection, "t2", &plan(ToolKey::Codex), 100).unwrap();
+        execution_task_repo::update_status(
+            &connection,
+            "t1",
+            ExecutionStatus::Running,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        execution_task_repo::update_status(
+            &connection,
+            "t2",
+            ExecutionStatus::Running,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        execution_task_repo::insert(&connection, "t3", &plan(ToolKey::Antigravity), 100).unwrap();
+        execution_task_repo::update_status(
+            &connection,
+            "t3",
+            ExecutionStatus::Succeeded,
+            Some(150),
+            Some(0),
+            None,
+        )
+        .unwrap();
+        let db = Db(Arc::new(Mutex::new(connection)));
+
+        let manager = ExecutionTaskManager::default();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut active = manager.active.lock().unwrap();
+            active.insert(
+                ToolKey::Claude,
+                ActiveTask {
+                    id: "t1".into(),
+                    cancel: None,
+                },
+            );
+            active.insert(
+                ToolKey::Codex,
+                ActiveTask {
+                    id: "t2".into(),
+                    cancel: Some(tx),
+                },
+            );
+        }
+        let cleanup = ExecutionExitCleanup::new(manager.clone(), db.clone());
+        let target: &dyn ExitCleanupTarget = &cleanup;
+
+        assert_eq!(target.terminate_all(Duration::from_millis(100)).unwrap(), 2);
+        assert_eq!(manager.active_count(), 0);
+        assert!(rx.try_recv().is_ok());
+        {
+            let connection = db.0.lock().unwrap();
+            for id in ["t1", "t2"] {
+                let task = execution_task_repo::get(&connection, id).unwrap().unwrap();
+                assert_eq!(task.status, ExecutionStatus::Interrupted);
+                assert!(task.finished_at_ms.is_some());
+            }
+            let finished = execution_task_repo::get(&connection, "t3")
+                .unwrap()
+                .unwrap();
+            assert_eq!(finished.status, ExecutionStatus::Succeeded);
+            assert_eq!(finished.finished_at_ms, Some(150));
+            assert_eq!(
+                execution_task_repo::mark_unfinished_interrupted(&connection, 999).unwrap(),
+                0
+            );
+        }
+        assert_eq!(target.terminate_all(Duration::from_millis(100)).unwrap(), 0);
     }
 }

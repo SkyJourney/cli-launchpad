@@ -1701,6 +1701,20 @@ impl WindowScopedResource for PtySessionManager {
     }
 }
 
+impl crate::services::exit_cleanup::ExitCleanupTarget for PtySessionManager {
+    fn name(&self) -> &'static str {
+        "pty_sessions"
+    }
+
+    fn terminate_all(&self, _budget: std::time::Duration) -> Result<usize, AppError> {
+        // The inherent `PtySessionManager::terminate_all` bounds itself (about three
+        // seconds); the budget is enforced by `run_exit_cleanup`'s timeout.
+        let count = self.active_count();
+        PtySessionManager::terminate_all(self)?;
+        Ok(count)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2816,5 +2830,27 @@ mod tests {
         );
         assert_eq!(manager.test_route(&s), before);
         assert_eq!(is_paused(&session), paused_before);
+    }
+
+    #[test]
+    fn exit_cleanup_target_reports_zero_for_an_empty_manager() {
+        use crate::services::exit_cleanup::ExitCleanupTarget;
+
+        let manager = PtySessionManager::default();
+        let target: &dyn ExitCleanupTarget = &manager;
+        assert_eq!(target.name(), "pty_sessions");
+        assert_eq!(
+            target
+                .terminate_all(std::time::Duration::from_millis(100))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            target
+                .terminate_all(std::time::Duration::from_millis(100))
+                .unwrap(),
+            0
+        );
+        assert_eq!(manager.active_count(), 0);
     }
 }

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 439,
-    "Linux": 440,
-    "macOS": 437
+    "Windows": 449,
+    "Linux": 450,
+    "macOS": 447
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -160,7 +160,17 @@
       "services::clean_exit_marker::tests::end_session_is_idempotent",
       "services::clean_exit_marker::tests::marker_is_started_only_from_setup_and_cleared_only_on_graceful_exit",
       "services::startup_notices::tests::startup_notice_is_taken_exactly_once",
-      "services::startup_notices::tests::startup_notice_serializes_kind_and_camel_case_started_at"
+      "services::startup_notices::tests::startup_notice_serializes_kind_and_camel_case_started_at",
+      "services::exit_cleanup::tests::cleanup_terminates_every_target_in_order",
+      "services::exit_cleanup::tests::cleanup_is_idempotent",
+      "services::exit_cleanup::tests::cleanup_respects_the_total_budget",
+      "services::exit_cleanup::tests::a_failed_target_does_not_skip_the_others",
+      "services::exit_cleanup::tests::exit_event_runs_cleanup_then_clears_the_marker_even_if_cleanup_times_out",
+      "services::exit_cleanup::tests::exit_requested_does_not_run_cleanup_or_clear_the_marker",
+      "services::execution_service::tests::running_execution_tasks_are_marked_interrupted_and_slots_released",
+      "services::pty_session_service::tests::exit_cleanup_target_reports_zero_for_an_empty_manager",
+      "services::execution_service::tests::cancelled_while_running_is_interrupted_only_during_exit",
+      "services::execution_service::tests::exit_cleanup_marks_the_manager_as_exiting_before_cancelling"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
