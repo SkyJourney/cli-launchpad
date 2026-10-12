@@ -182,6 +182,12 @@ import {
   type WorkspaceContentHandoffPayloadByKind,
 } from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
+import {
+  WorkspaceHostStore,
+  WorkspaceHostStoreContext,
+  createInitialHostSnapshot,
+  type HostSnapshot,
+} from "../workspace/host/workspaceHostStore";
 import { AnchoredPopover } from "./AnchoredPopover";
 import {
   WorkspaceContentView,
@@ -435,8 +441,6 @@ export function PtyWorkspaceProvider({
     return () => controller.abort();
   }, []);
   const { data: directories } = useDirectories();
-  const [hydrationStatus, setHydrationStatus] =
-    useState<PtyWorkspaceHydrationStatus>("loading");
   const [hydrationError, setHydrationError] = useState<string | null>(null);
   const [layoutSaveError, setLayoutSaveError] = useState<string | null>(null);
   const [layoutResetError, setLayoutResetError] = useState<string | null>(null);
@@ -448,18 +452,30 @@ export function PtyWorkspaceProvider({
     ((confirmed: boolean) => void) | null
   >(null);
   const [initialPaneId] = useState<string>(() => crypto.randomUUID());
-  const [slots, setSlots] = useState<PtyWorkspaceSlot[]>([]);
-  const [fileDocuments, setFileDocuments] = useState<WorkspaceFileDocument[]>(
-    [],
+  // 惰性初始化：StrictMode 下只保留第一次构造的 store（useRef 的初始值会被丢弃）。
+  const [store] = useState(
+    () => new WorkspaceHostStore(createInitialHostSnapshot(initialPaneId)),
   );
-  const [fileBuffers, setFileBuffers] = useState<
-    Record<string, WorkspaceFileBuffer>
-  >({});
-  const [tree, setTree] = useState<WorkspaceNode>(() =>
-    createWorkspacePane(initialPaneId),
+  // 对象式写入的薄包装，内部仍只调用 store.commit（唯一写入口）。
+  const patchHost = useCallback(
+    (patch: Partial<HostSnapshot>, reason: string) =>
+      store.commit((live) => ({ ...live, ...patch }), reason),
+    [store],
   );
-  const [workspaceTreeRevision, setWorkspaceTreeRevision] = useState(0);
-  const [focusedPaneId, setFocusedPaneId] = useState(initialPaneId);
+  // 宿主状态的唯一来源是 store 的已发布快照；写入只经 store.commit。
+  const {
+    tree,
+    treeRevision: workspaceTreeRevision,
+    focusedPaneId,
+    slots,
+    documents: fileDocuments,
+    buffers: fileBuffers,
+    hydrationStatus,
+  } = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
   const [portalTargets, setPortalTargets] = useState<
     Record<string, HTMLDivElement>
   >({});
@@ -467,18 +483,12 @@ export function PtyWorkspaceProvider({
   const saveQueueRef = useRef<WorkspaceLayoutSaveQueue | null>(null);
   const backupRestoreInProgressRef = useRef(false);
   const hydrationRequestRef = useRef(0);
-  const hydrationStatusRef = useRef(hydrationStatus);
   const ratioSaveTimerRef = useRef<number | null>(null);
   const splitResizeInProgressRef = useRef(false);
   const persistLatestRef = useRef<(() => void) | null>(null);
-  const slotsRef = useRef(slots);
-  const fileDocumentsRef = useRef(fileDocuments);
-  const fileBuffersRef = useRef(fileBuffers);
   const fileOperationGenerationsRef = useRef(new Map<string, number>());
   const openingFileRequestsRef = useRef(new Map<string, Promise<void>>());
   const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
-  const treeRef = useRef(tree);
-  const focusedPaneIdRef = useRef(focusedPaneId);
   const detachedByInstanceRef = useRef(new Map<string, WebviewWindow>());
   const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
   const detachedFilesRef = useRef(new Map<string, WebviewWindow>());
@@ -556,13 +566,6 @@ export function PtyWorkspaceProvider({
   const removePtySession = useAppStore((state) => state.removePtySession);
   const activeView = useAppStore((state) => state.view);
 
-  slotsRef.current = slots;
-  fileDocumentsRef.current = fileDocuments;
-  fileBuffersRef.current = fileBuffers;
-  if (!splitResizeInProgressRef.current) treeRef.current = tree;
-  focusedPaneIdRef.current = focusedPaneId;
-  hydrationStatusRef.current = hydrationStatus;
-
   const getFileOperationGeneration = (documentId: string) =>
     fileOperationGenerationsRef.current.get(documentId) ?? 0;
   const invalidateFileOperationGeneration = (documentId: string) => {
@@ -585,24 +588,24 @@ export function PtyWorkspaceProvider({
 
   const persistWorkspaceSnapshot = useCallback(
     (treeOverride?: WorkspaceNode) => {
-      if (hydrationStatusRef.current !== "ready") return;
+      if (store.getLive().hydrationStatus !== "ready") return;
       if (backupRestoreInProgressRef.current) return;
       const queue = saveQueueRef.current;
       if (!queue) return;
 
-      const snapshotTree = treeOverride ?? treeRef.current;
+      const snapshotTree = treeOverride ?? store.getLive().tree;
       // 快照构造不得把异常抛进 effect：根边界只能兜底成重载提示（丢失未保存缓冲），
       // 所以这里降级为一次可自愈的保存错误，下一次状态变化会重新保存。
       try {
-        const persistedSlots: WorkspaceLayoutSlot[] = slotsRef.current.map(
-          (slot) => toWorkspaceLayoutSlot(slot, directories ?? []),
-        );
+        const persistedSlots: WorkspaceLayoutSlot[] = store
+          .getLive()
+          .slots.map((slot) => toWorkspaceLayoutSlot(slot, directories ?? []));
         queue.enqueue(
           createWorkspaceLayoutDocument({
             tree: snapshotTree,
-            focusedPaneId: focusedPaneIdRef.current,
+            focusedPaneId: store.getLive().focusedPaneId,
             slots: persistedSlots,
-            documents: fileDocumentsRef.current,
+            documents: store.getLive().documents,
             detachedContents: listPersistedDetachedContents(
               contentCoordinatorRef.current.listWindowOwned(),
               snapshotTree,
@@ -641,7 +644,7 @@ export function PtyWorkspaceProvider({
 
   const hydrateWorkspace = useCallback(async () => {
     const requestId = ++hydrationRequestRef.current;
-    setHydrationStatus("loading");
+    patchHost({ hydrationStatus: "loading" }, "hydrate:loading");
     setHydrationError(null);
     setLayoutResetError(null);
     saveQueueRef.current = null;
@@ -653,10 +656,11 @@ export function PtyWorkspaceProvider({
 
       if (read.status.status === "needsReset") {
         setHydrationError(read.status.reason);
-        setHydrationStatus("needsReset");
+        patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
         return;
       }
 
+      let restoredPatch: Partial<HostSnapshot> = {};
       if (read.status.status === "ready") {
         if (!read.layout) {
           throw new Error(tRef.current("pty.layoutDataMissing"));
@@ -675,22 +679,24 @@ export function PtyWorkspaceProvider({
         const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
 
         new Set([
-          ...fileDocumentsRef.current.map((document) => document.id),
+          ...store.getLive().documents.map((document) => document.id),
           ...(restoredSnapshot.documents ?? []).map((document) => document.id),
         ]).forEach(invalidateFileOperationGeneration);
 
-        slotsRef.current = restoredSlots;
-        treeRef.current = restoredSnapshot.tree;
-        focusedPaneIdRef.current = restoredSnapshot.focusedPaneId;
-        setSlots(restoredSlots);
+        // 释放旧文档必须读取提交前的文档集合，因此放在发布新状态之前。
         releaseFileDocuments(
           droppedFileDocumentIds(
-            fileDocumentsRef.current,
+            store.getLive().documents,
             restoredSnapshot.documents ?? [],
           ),
         );
-        setFileDocuments(restoredSnapshot.documents ?? []);
-        setFileBuffers({});
+        restoredPatch = {
+          slots: restoredSlots,
+          documents: restoredSnapshot.documents ?? [],
+          buffers: {},
+          tree: restoredSnapshot.tree,
+          focusedPaneId: restoredSnapshot.focusedPaneId,
+        };
         detachedByInstanceRef.current.clear();
         detachedFilesRef.current.clear();
         clearPendingWorkspaceContentWindows(
@@ -717,24 +723,22 @@ export function PtyWorkspaceProvider({
             void pending.window.destroy().catch(() => undefined);
           },
         );
-        setTree(restoredSnapshot.tree);
-        setFocusedPaneId(restoredSnapshot.focusedPaneId);
       }
 
       saveQueueRef.current = createSaveQueue(revision);
       setLayoutSaveError(null);
-      setHydrationStatus("ready");
+      patchHost({ ...restoredPatch, hydrationStatus: "ready" }, "hydrated");
     } catch (reason) {
       if (requestId !== hydrationRequestRef.current) return;
       if (reason instanceof UnsupportedWorkspaceLayoutVersionError) {
         setHydrationError(reason.message);
-        setHydrationStatus("needsReset");
+        patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
         return;
       }
       setHydrationError(formatAppError(reason, tRef.current));
-      setHydrationStatus("loadFailed");
+      patchHost({ hydrationStatus: "loadFailed" }, "hydrate:loadFailed");
     }
-  }, [createSaveQueue, releaseFileDocuments]);
+  }, [createSaveQueue, releaseFileDocuments, store]);
 
   useEffect(() => {
     void hydrateWorkspace();
@@ -797,7 +801,7 @@ export function PtyWorkspaceProvider({
       if (ratioSaveTimerRef.current !== null) {
         window.clearTimeout(ratioSaveTimerRef.current);
       }
-      if (hydrationStatusRef.current === "ready") {
+      if (store.getLive().hydrationStatus === "ready") {
         persistLatestRef.current?.();
         const queue = saveQueueRef.current;
         void queue?.flush();
@@ -812,7 +816,7 @@ export function PtyWorkspaceProvider({
   }, [hydrateWorkspace]);
 
   const resetWorkspace = useCallback(async () => {
-    if (hydrationStatusRef.current !== "needsReset") return;
+    if (store.getLive().hydrationStatus !== "needsReset") return;
     setLayoutResetPending(true);
     setLayoutResetError(null);
     try {
@@ -820,7 +824,7 @@ export function PtyWorkspaceProvider({
       saveQueueRef.current = createSaveQueue(revision);
       setHydrationError(null);
       setLayoutSaveError(null);
-      setHydrationStatus("ready");
+      patchHost({ hydrationStatus: "ready" }, "resetWorkspace:ready");
     } catch (reason) {
       setLayoutResetError(formatAppError(reason, tRef.current));
       throw reason;
@@ -831,12 +835,12 @@ export function PtyWorkspaceProvider({
 
   const applyWorkspaceLayoutPreset = useCallback(
     async (presetId: string) => {
-      if (hydrationStatusRef.current !== "ready") return;
+      if (store.getLive().hydrationStatus !== "ready") return;
       const protectedContents = contentCoordinatorRef.current.listWindowOwned();
       const expectedState = {
-        tree: treeRef.current,
-        slots: slotsRef.current,
-        focusedPaneId: focusedPaneIdRef.current,
+        tree: store.getLive().tree,
+        slots: store.getLive().slots,
+        focusedPaneId: store.getLive().focusedPaneId,
         detachedContents: protectedContents,
       };
       let activeTree = expectedState.tree;
@@ -852,14 +856,14 @@ export function PtyWorkspaceProvider({
       const activeLayout = createWorkspaceLayoutDocument({
         tree: activeTree,
         focusedPaneId: activePanes.some(
-          (pane) => pane.id === focusedPaneIdRef.current,
+          (pane) => pane.id === store.getLive().focusedPaneId,
         )
-          ? focusedPaneIdRef.current
+          ? store.getLive().focusedPaneId
           : activePanes[0].id,
-        slots: slotsRef.current.map((slot) =>
-          toWorkspaceLayoutSlot(slot, directories ?? []),
-        ),
-        documents: fileDocumentsRef.current,
+        slots: store
+          .getLive()
+          .slots.map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
+        documents: store.getLive().documents,
         detachedContents: listPersistedDetachedContents(
           contentCoordinatorRef.current.listWindowOwned(),
           activeTree,
@@ -868,9 +872,9 @@ export function PtyWorkspaceProvider({
       const plan = await planApplyWorkspaceLayoutPreset(presetId, activeLayout);
       if (
         !isWorkspaceApplyStateCurrent(expectedState, {
-          tree: treeRef.current,
-          slots: slotsRef.current,
-          focusedPaneId: focusedPaneIdRef.current,
+          tree: store.getLive().tree,
+          slots: store.getLive().slots,
+          focusedPaneId: store.getLive().focusedPaneId,
           detachedContents: contentCoordinatorRef.current.listWindowOwned(),
         })
       ) {
@@ -879,7 +883,7 @@ export function PtyWorkspaceProvider({
       const restored = restoreWorkspaceLayoutApplyPlan(plan);
       const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
       const restoredDocuments = [...(restored.documents ?? [])];
-      const currentDocuments = fileDocumentsRef.current;
+      const currentDocuments = store.getLive().documents;
       const currentDocumentByIdentity = new Map(
         currentDocuments.map((document) => [
           `${document.directoryId}:${document.relativePath}`,
@@ -933,38 +937,39 @@ export function PtyWorkspaceProvider({
         }
       }
 
-      slotsRef.current = restoredSlots;
-      treeRef.current = restoredTree;
-      focusedPaneIdRef.current = restored.focusedPaneId;
-      setSlots(restoredSlots);
       releaseFileDocuments(
         droppedFileDocumentIds(currentDocuments, nextDocuments),
       );
-      setFileDocuments(nextDocuments);
-      fileDocumentsRef.current = nextDocuments;
-      setTree(restoredTree);
-      setFocusedPaneId(restored.focusedPaneId);
+      patchHost(
+        {
+          slots: restoredSlots,
+          documents: nextDocuments,
+          tree: restoredTree,
+          focusedPaneId: restored.focusedPaneId,
+        },
+        "applyWorkspaceLayoutPreset:apply",
+      );
     },
-    [directories, releaseFileDocuments],
+    [directories, releaseFileDocuments, store],
   );
 
-  const commitTree = useCallback((next: WorkspaceNode) => {
-    treeRef.current = next;
-    setTree(next);
-  }, []);
+  const commitTree = useCallback(
+    (next: WorkspaceNode) => patchHost({ tree: next }, "commitTree"),
+    [patchHost],
+  );
 
-  const setFocusedPane = useCallback((paneId: string) => {
-    focusedPaneIdRef.current = paneId;
-    setFocusedPaneId(paneId);
-  }, []);
+  const setFocusedPane = useCallback(
+    (paneId: string) => patchHost({ focusedPaneId: paneId }, "setFocusedPane"),
+    [patchHost],
+  );
 
   const getWorkspacePresentationContext = useCallback(
     (): WorkspaceContentPresentationContext => ({
       directories: directories ?? [],
-      ptySlots: slotsRef.current,
+      ptySlots: store.getLive().slots,
       ptySessionsById: useAppStore.getState().ptySessionsById,
-      fileDocuments: fileDocumentsRef.current,
-      fileBuffers: fileBuffersRef.current,
+      fileDocuments: store.getLive().documents,
+      fileBuffers: store.getLive().buffers,
       selectedDirectoryId: useAppStore.getState().selectedDirectoryId,
     }),
     [directories],
@@ -1000,11 +1005,13 @@ export function PtyWorkspaceProvider({
       if (pending) return pending;
       const operation = (async () => {
         const hydrationAtStart = hydrationRequestRef.current;
-        let document = fileDocumentsRef.current.find(
-          (entry) =>
-            entry.directoryId === directoryId &&
-            entry.relativePath === relativePath,
-        );
+        let document = store
+          .getLive()
+          .documents.find(
+            (entry) =>
+              entry.directoryId === directoryId &&
+              entry.relativePath === relativePath,
+          );
         if (!document) {
           const loaded = createWorkspaceFileBuffer(
             await openProjectFileContent(
@@ -1022,16 +1029,16 @@ export function PtyWorkspaceProvider({
             directoryPath,
             relativePath,
           };
-          const nextDocuments = [...fileDocumentsRef.current, document];
-          fileDocumentsRef.current = nextDocuments;
-          setFileDocuments(nextDocuments);
+          const nextDocuments = [...store.getLive().documents, document];
           const nextBuffers = {
-            ...fileBuffersRef.current,
+            ...store.getLive().buffers,
             [document.id]: loaded,
           };
-          fileBuffersRef.current = nextBuffers;
-          setFileBuffers(nextBuffers);
-        } else if (!fileBuffersRef.current[document.id]) {
+          patchHost(
+            { documents: nextDocuments, buffers: nextBuffers },
+            "openProjectFile:add-document",
+          );
+        } else if (!store.getLive().buffers[document.id]) {
           const generationAtStart = getFileOperationGeneration(document.id);
           const loaded = createWorkspaceFileBuffer(
             await openProjectFileContent(
@@ -1040,25 +1047,24 @@ export function PtyWorkspaceProvider({
               relativePath,
             ),
           );
-          const currentDocument = fileDocumentsRef.current.find(
-            (entry) => entry.id === document?.id,
-          );
+          const currentDocument = store
+            .getLive()
+            .documents.find((entry) => entry.id === document?.id);
           if (
             hydrationAtStart !== hydrationRequestRef.current ||
             generationAtStart !== getFileOperationGeneration(document.id) ||
             !currentDocument ||
             currentDocument.directoryId !== directoryId ||
             currentDocument.relativePath !== relativePath ||
-            fileBuffersRef.current[document.id]
+            store.getLive().buffers[document.id]
           ) {
             return;
           }
           const nextBuffers = {
-            ...fileBuffersRef.current,
+            ...store.getLive().buffers,
             [document.id]: loaded,
           };
-          fileBuffersRef.current = nextBuffers;
-          setFileBuffers(nextBuffers);
+          patchHost({ buffers: nextBuffers }, "openProjectFile:load-buffer");
         }
 
         const detachedWindow =
@@ -1078,29 +1084,36 @@ export function PtyWorkspaceProvider({
           return;
         }
 
-        const ownerPane = listWorkspacePanes(treeRef.current).find((pane) =>
-          hasWorkspaceContent(pane, { kind: "file", documentId: document.id }),
+        const ownerPane = listWorkspacePanes(store.getLive().tree).find(
+          (pane) =>
+            hasWorkspaceContent(pane, {
+              kind: "file",
+              documentId: document.id,
+            }),
         );
         const pane =
           ownerPane ??
-          listWorkspacePanes(treeRef.current).find(
-            (entry) => entry.id === focusedPaneIdRef.current,
+          listWorkspacePanes(store.getLive().tree).find(
+            (entry) => entry.id === store.getLive().focusedPaneId,
           ) ??
-          listWorkspacePanes(treeRef.current)[0];
-        focusedPaneIdRef.current = pane.id;
-        setFocusedPaneId(pane.id);
+          listWorkspacePanes(store.getLive().tree)[0];
+        patchHost({ focusedPaneId: pane.id }, "openProjectFile:focus");
         contentCoordinatorRef.current.ensureAttached(
           { kind: "file", documentId: document.id },
           { kind: "pane", windowLabel: "main", paneId: pane.id },
         );
         commitTree(
           hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
-            ? reduceWorkspaceTree(treeRef.current, {
+            ? reduceWorkspaceTree(store.getLive().tree, {
                 type: "activate",
                 ref: { kind: "file", documentId: document.id },
                 paneId: pane.id,
               })
-            : addWorkspaceFileToPane(treeRef.current, pane.id, document.id),
+            : addWorkspaceFileToPane(
+                store.getLive().tree,
+                pane.id,
+                document.id,
+              ),
         );
       })();
       openingFileRequestsRef.current.set(identity, operation);
@@ -1119,7 +1132,7 @@ export function PtyWorkspaceProvider({
     (paneId: string, documentId: string) => {
       const content = { kind: "file", documentId } as const;
       commitTree(
-        reduceWorkspaceTree(treeRef.current, {
+        reduceWorkspaceTree(store.getLive().tree, {
           type: "activate",
           ref: content,
           paneId,
@@ -1137,7 +1150,7 @@ export function PtyWorkspaceProvider({
       content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
     ) => {
       commitTree(
-        reduceWorkspaceTree(treeRef.current, {
+        reduceWorkspaceTree(store.getLive().tree, {
           type: "activate",
           ref: content,
           paneId,
@@ -1151,10 +1164,10 @@ export function PtyWorkspaceProvider({
   const loadFile = useCallback(
     (documentId: string) =>
       fileOperationFlightsRef.current.load(documentId, async () => {
-        if (fileBuffersRef.current[documentId]) return;
-        const document = fileDocumentsRef.current.find(
-          (entry) => entry.id === documentId,
-        );
+        if (store.getLive().buffers[documentId]) return;
+        const document = store
+          .getLive()
+          .documents.find((entry) => entry.id === documentId);
         if (!document) return;
         const generationAtStart = getFileOperationGeneration(documentId);
         const loaded = createWorkspaceFileBuffer(
@@ -1164,21 +1177,20 @@ export function PtyWorkspaceProvider({
             document.relativePath,
           ),
         );
-        const currentDocument = fileDocumentsRef.current.find(
-          (entry) => entry.id === documentId,
-        );
+        const currentDocument = store
+          .getLive()
+          .documents.find((entry) => entry.id === documentId);
         if (
           !currentDocument ||
           currentDocument.directoryId !== document.directoryId ||
           currentDocument.relativePath !== document.relativePath ||
           generationAtStart !== getFileOperationGeneration(documentId) ||
-          fileBuffersRef.current[documentId]
+          store.getLive().buffers[documentId]
         ) {
           return;
         }
-        const next = { ...fileBuffersRef.current, [documentId]: loaded };
-        fileBuffersRef.current = next;
-        setFileBuffers(next);
+        const next = { ...store.getLive().buffers, [documentId]: loaded };
+        patchHost({ buffers: next }, "loadFile:buffers");
       }),
     [],
   );
@@ -1192,24 +1204,23 @@ export function PtyWorkspaceProvider({
     ) {
       return;
     }
-    const buffer = fileBuffersRef.current[documentId];
+    const buffer = store.getLive().buffers[documentId];
     if (!buffer) return;
     const next = {
-      ...fileBuffersRef.current,
+      ...store.getLive().buffers,
       [documentId]: editWorkspaceFileBuffer(buffer, content),
     };
-    fileBuffersRef.current = next;
-    setFileBuffers(next);
+    patchHost({ buffers: next }, "editFile:buffers");
   }, []);
 
   const reloadFile = useCallback(
     (documentId: string) =>
       fileOperationFlightsRef.current.load(documentId, async () => {
         await fileOperationFlightsRef.current.waitForSave(documentId);
-        const document = fileDocumentsRef.current.find(
-          (entry) => entry.id === documentId,
-        );
-        const startingBuffer = fileBuffersRef.current[documentId];
+        const document = store
+          .getLive()
+          .documents.find((entry) => entry.id === documentId);
+        const startingBuffer = store.getLive().buffers[documentId];
         if (!document || !startingBuffer) return;
         const generationAtStart = getFileOperationGeneration(documentId);
         try {
@@ -1221,10 +1232,10 @@ export function PtyWorkspaceProvider({
             ),
             startingBuffer.epoch + 1,
           );
-          const currentDocument = fileDocumentsRef.current.find(
-            (entry) => entry.id === documentId,
-          );
-          const currentBuffer = fileBuffersRef.current[documentId];
+          const currentDocument = store
+            .getLive()
+            .documents.find((entry) => entry.id === documentId);
+          const currentBuffer = store.getLive().buffers[documentId];
           if (
             !currentDocument ||
             currentDocument.directoryId !== document.directoryId ||
@@ -1236,19 +1247,17 @@ export function PtyWorkspaceProvider({
           ) {
             return;
           }
-          const next = { ...fileBuffersRef.current, [documentId]: loaded };
-          fileBuffersRef.current = next;
-          setFileBuffers(next);
+          const next = { ...store.getLive().buffers, [documentId]: loaded };
+          patchHost({ buffers: next }, "reloadFile:buffers");
         } catch (reason) {
           if (isProjectIdentityChangedError(reason)) {
-            const current = fileBuffersRef.current[documentId];
+            const current = store.getLive().buffers[documentId];
             if (current) {
               const next = {
-                ...fileBuffersRef.current,
+                ...store.getLive().buffers,
                 [documentId]: markWorkspaceFileIdentityChanged(current),
               };
-              fileBuffersRef.current = next;
-              setFileBuffers(next);
+              patchHost({ buffers: next }, "reloadFile:buffers");
             }
             toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
@@ -1270,10 +1279,10 @@ export function PtyWorkspaceProvider({
         ) {
           return;
         }
-        const document = fileDocumentsRef.current.find(
-          (entry) => entry.id === documentId,
-        );
-        const buffer = fileBuffersRef.current[documentId];
+        const document = store
+          .getLive()
+          .documents.find((entry) => entry.id === documentId);
+        const buffer = store.getLive().buffers[documentId];
         if (
           !document ||
           !buffer ||
@@ -1285,16 +1294,17 @@ export function PtyWorkspaceProvider({
           return;
         }
         const submitted = beginWorkspaceFileSave(buffer);
-        fileBuffersRef.current = {
-          ...fileBuffersRef.current,
-          [documentId]: submitted,
-        };
-        setFileBuffers(fileBuffersRef.current);
+        patchHost(
+          {
+            buffers: { ...store.getLive().buffers, [documentId]: submitted },
+          },
+          "saveFile:begin",
+        );
         const saveCommitDisposition = () => {
-          const currentDocument = fileDocumentsRef.current.find(
-            (entry) => entry.id === documentId,
-          );
-          const currentBuffer = fileBuffersRef.current[documentId];
+          const currentDocument = store
+            .getLive()
+            .documents.find((entry) => entry.id === documentId);
+          const currentBuffer = store.getLive().buffers[documentId];
           return resolveWorkspaceFileSaveCommitDisposition(
             currentBuffer,
             submitted,
@@ -1316,25 +1326,23 @@ export function PtyWorkspaceProvider({
           const disposition = saveCommitDisposition();
           if (disposition === "discard-result") return;
           if (disposition === "restore-saving-state") {
-            const current = fileBuffersRef.current[documentId];
+            const current = store.getLive().buffers[documentId];
             if (!current) return;
             const next = {
-              ...fileBuffersRef.current,
+              ...store.getLive().buffers,
               [documentId]: failWorkspaceFileSave(current, submitted),
             };
-            fileBuffersRef.current = next;
-            setFileBuffers(next);
+            patchHost({ buffers: next }, "saveFile:buffers");
             return;
           }
           if (result.kind === "conflict") {
-            const current = fileBuffersRef.current[documentId];
+            const current = store.getLive().buffers[documentId];
             if (!current) return;
             const next = {
-              ...fileBuffersRef.current,
+              ...store.getLive().buffers,
               [documentId]: markWorkspaceFileSaveConflict(current, submitted),
             };
-            fileBuffersRef.current = next;
-            setFileBuffers(next);
+            patchHost({ buffers: next }, "saveFile:buffers");
             toast.error(tRef.current("workspaceFiles.saveConflict"), {
               action: {
                 label: tRef.current("workspaceFiles.reload"),
@@ -1343,14 +1351,13 @@ export function PtyWorkspaceProvider({
             });
             return;
           }
-          const current = fileBuffersRef.current[documentId];
+          const current = store.getLive().buffers[documentId];
           if (!current) return;
           const next = {
-            ...fileBuffersRef.current,
+            ...store.getLive().buffers,
             [documentId]: completeWorkspaceFileSave(current, submitted, result),
           };
-          fileBuffersRef.current = next;
-          setFileBuffers(next);
+          patchHost({ buffers: next }, "saveFile:buffers");
           if (result.warning === "permissionsNotRestored") {
             toast.warning(
               tRef.current("workspaceFiles.permissionsNotRestored"),
@@ -1358,24 +1365,22 @@ export function PtyWorkspaceProvider({
           }
         } catch (reason) {
           if (saveCommitDisposition() === "discard-result") return;
-          const current = fileBuffersRef.current[documentId];
+          const current = store.getLive().buffers[documentId];
           if (!current) return;
           if (isProjectIdentityChangedError(reason)) {
             const next = {
-              ...fileBuffersRef.current,
+              ...store.getLive().buffers,
               [documentId]: markWorkspaceFileIdentityChanged(current),
             };
-            fileBuffersRef.current = next;
-            setFileBuffers(next);
+            patchHost({ buffers: next }, "saveFile:buffers");
             toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
             return;
           }
           const next = {
-            ...fileBuffersRef.current,
+            ...store.getLive().buffers,
             [documentId]: failWorkspaceFileSave(current, submitted),
           };
-          fileBuffersRef.current = next;
-          setFileBuffers(next);
+          patchHost({ buffers: next }, "saveFile:buffers");
           toast.error(formatAppError(reason, tRef.current));
         }
       }),
@@ -1388,7 +1393,7 @@ export function PtyWorkspaceProvider({
       if (isWindowOwned(contentCoordinatorRef.current.get(content))) {
         return;
       }
-      const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
+      const sourcePane = listWorkspacePanes(store.getLive().tree).find((pane) =>
         hasWorkspaceContent(pane, content),
       );
       if (!sourcePane)
@@ -1409,12 +1414,12 @@ export function PtyWorkspaceProvider({
         }
         lifecycleStarted = true;
         grantedWindowLabel = windowLabel;
-        if (!fileBuffersRef.current[documentId]) await loadFile(documentId);
+        if (!store.getLive().buffers[documentId]) await loadFile(documentId);
         await fileOperationFlightsRef.current.waitForSave(documentId);
-        const fileBuffer = fileBuffersRef.current[documentId];
-        const fileDocument = fileDocumentsRef.current.find(
-          (document) => document.id === documentId,
-        );
+        const fileBuffer = store.getLive().buffers[documentId];
+        const fileDocument = store
+          .getLive()
+          .documents.find((document) => document.id === documentId);
         if (!fileDocument || !fileBuffer || fileBuffer.saving) {
           throw new Error(tRef.current("workspaceFiles.loadingFile"));
         }
@@ -1521,7 +1526,7 @@ export function PtyWorkspaceProvider({
 
   const focusPane = useCallback(
     (paneId: string) => {
-      const pane = findWorkspacePane(treeRef.current, paneId);
+      const pane = findWorkspacePane(store.getLive().tree, paneId);
       if (!pane) return;
       setFocusedPane(paneId);
       if (pane.activeContent) syncProjectContext(pane.activeContent);
@@ -1540,23 +1545,22 @@ export function PtyWorkspaceProvider({
           dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
         });
       }
-      const removedSlot = slotsRef.current.find(
-        (slot) => slot.instanceId === instanceId,
-      );
+      const removedSlot = store
+        .getLive()
+        .slots.find((slot) => slot.instanceId === instanceId);
       detachedByInstanceRef.current.delete(workspacePtyKey(instanceId));
-      const nextSlots = slotsRef.current.filter(
-        (slot) => slot.instanceId !== instanceId,
-      );
+      const nextSlots = store
+        .getLive()
+        .slots.filter((slot) => slot.instanceId !== instanceId);
       if (removedSlot?.sessionId) removePtySession(removedSlot.sessionId);
-      slotsRef.current = nextSlots;
-      setSlots(nextSlots);
-      const nextTree = reduceWorkspaceTree(treeRef.current, {
+      patchHost({ slots: nextSlots }, "removeSlot:slots");
+      const nextTree = reduceWorkspaceTree(store.getLive().tree, {
         type: "close",
         refs: [content],
         origin: "window",
       });
       commitTree(nextTree);
-      if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
+      if (!findWorkspacePane(nextTree, store.getLive().focusedPaneId)) {
         setFocusedPane(listWorkspacePanes(nextTree)[0].id);
       }
     },
@@ -1606,15 +1610,15 @@ export function PtyWorkspaceProvider({
       };
       const closeTargets: WorkspaceCloseTarget[] = [];
       for (const content of uniqueContents) {
-        const pane = listWorkspacePanes(treeRef.current).find((candidate) =>
-          hasWorkspaceContent(candidate, content),
+        const pane = listWorkspacePanes(store.getLive().tree).find(
+          (candidate) => hasWorkspaceContent(candidate, content),
         );
         if (!pane) continue;
 
         if (content.kind === "pty") {
-          const slot = slotsRef.current.find(
-            (candidate) => candidate.instanceId === content.slotId,
-          );
+          const slot = store
+            .getLive()
+            .slots.find((candidate) => candidate.instanceId === content.slotId);
           if (
             !slot ||
             isWindowOwned(contentCoordinatorRef.current.get(content))
@@ -1664,9 +1668,9 @@ export function PtyWorkspaceProvider({
           continue;
         }
 
-        const document = fileDocumentsRef.current.find(
-          (candidate) => candidate.id === content.documentId,
-        );
+        const document = store
+          .getLive()
+          .documents.find((candidate) => candidate.id === content.documentId);
         if (
           !document ||
           isWindowOwned(contentCoordinatorRef.current.get(content)) ||
@@ -1674,7 +1678,7 @@ export function PtyWorkspaceProvider({
         ) {
           continue;
         }
-        const buffer = fileBuffersRef.current[content.documentId];
+        const buffer = store.getLive().buffers[content.documentId];
         const isDirty = Boolean(
           buffer &&
           (buffer.content !== buffer.savedContent ||
@@ -1744,7 +1748,7 @@ export function PtyWorkspaceProvider({
                       refs: [content],
                       origin,
                     }),
-                  treeRef.current,
+                  store.getLive().tree,
                 ),
               );
               closedContents.push(...unsupportedContents);
@@ -1755,17 +1759,17 @@ export function PtyWorkspaceProvider({
             if (fileIds.length > 0) {
               const next = closeWorkspaceFileState(
                 {
-                  tree: treeRef.current,
-                  documents: fileDocumentsRef.current,
-                  buffers: fileBuffersRef.current,
+                  tree: store.getLive().tree,
+                  documents: store.getLive().documents,
+                  buffers: store.getLive().buffers,
                 },
                 fileIds,
               );
               commitTree(next.tree);
-              fileDocumentsRef.current = next.documents;
-              setFileDocuments(next.documents);
-              fileBuffersRef.current = next.buffers;
-              setFileBuffers(next.buffers);
+              patchHost(
+                { documents: next.documents, buffers: next.buffers },
+                "closeContents",
+              );
               next.closedDocumentIds.forEach(invalidateFileOperationGeneration);
               closedContents.push(
                 ...next.closedDocumentIds.map((documentId) => ({
@@ -1855,7 +1859,7 @@ export function PtyWorkspaceProvider({
         toast.error(tRef.current("pty.projectUnavailable"));
         return;
       }
-      const currentSlots = slotsRef.current;
+      const currentSlots = store.getLive().slots;
       const sequence = nextWorkspaceSessionSequence(
         currentSlots,
         directoryId,
@@ -1872,20 +1876,21 @@ export function PtyWorkspaceProvider({
         resumeSessionId,
       };
       const nextSlots = [...currentSlots, slot];
-      slotsRef.current = nextSlots;
-      setSlots(nextSlots);
+      patchHost({ slots: nextSlots }, "launchSession:slots");
 
-      const panes = listWorkspacePanes(treeRef.current);
+      const panes = listWorkspacePanes(store.getLive().tree);
       const targetPane =
-        findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
-        panes[0];
+        findWorkspacePane(
+          store.getLive().tree,
+          store.getLive().focusedPaneId,
+        ) ?? panes[0];
       contentCoordinatorRef.current.ensureAttached(
         { kind: "pty", slotId: slot.instanceId },
         { kind: "pane", windowLabel: "main", paneId: targetPane.id },
       );
       commitTree(
         addSessionToWorkspacePane(
-          treeRef.current,
+          store.getLive().tree,
           targetPane.id,
           slot.instanceId,
         ),
@@ -1900,7 +1905,7 @@ export function PtyWorkspaceProvider({
       const content = { kind: "pty", slotId: instanceId } as const;
       try {
         commitTree(
-          reduceWorkspaceTree(treeRef.current, {
+          reduceWorkspaceTree(store.getLive().tree, {
             type: "activate",
             ref: content,
             paneId,
@@ -1917,13 +1922,13 @@ export function PtyWorkspaceProvider({
 
   const splitPane = useCallback(
     (paneId: string, direction: SplitDirection) => {
-      const sourcePane = findWorkspacePane(treeRef.current, paneId);
+      const sourcePane = findWorkspacePane(store.getLive().tree, paneId);
       if (!sourcePane) return;
       if (sourcePane.activeContent)
         syncProjectContext(sourcePane.activeContent);
       const newPaneId = crypto.randomUUID();
       const next = splitWorkspacePane(
-        treeRef.current,
+        store.getLive().tree,
         paneId,
         direction,
         crypto.randomUUID(),
@@ -1942,7 +1947,7 @@ export function PtyWorkspaceProvider({
       direction: SplitDirection,
     ) => {
       if (content.kind === "unknown") return;
-      const sourcePane = findWorkspacePane(treeRef.current, paneId);
+      const sourcePane = findWorkspacePane(store.getLive().tree, paneId);
       if (!sourcePane || !hasWorkspaceContent(sourcePane, content)) return;
       const ownerState = contentCoordinatorRef.current.ensureAttached(content, {
         kind: "pane",
@@ -1951,14 +1956,14 @@ export function PtyWorkspaceProvider({
       });
       if (!canChangeWorkspaceContentPane(ownerState)) return;
       const newPaneId = crypto.randomUUID();
-      const next = reduceWorkspaceTree(treeRef.current, {
+      const next = reduceWorkspaceTree(store.getLive().tree, {
         type: "split",
         ref: content,
         toPaneId: newPaneId,
         direction,
         splitId: crypto.randomUUID(),
       });
-      if (next === treeRef.current) return;
+      if (next === store.getLive().tree) return;
       contentCoordinatorRef.current.ensureAttached(content, {
         kind: "pane",
         windowLabel: "main",
@@ -1994,9 +1999,9 @@ export function PtyWorkspaceProvider({
       content: WorkspacePaneContentRef,
     ) => {
       if (content.kind === "unknown") return;
-      const sourcePane = findWorkspacePane(treeRef.current, sourcePaneId);
+      const sourcePane = findWorkspacePane(store.getLive().tree, sourcePaneId);
       const destinationPane = findWorkspacePane(
-        treeRef.current,
+        store.getLive().tree,
         destinationPaneId,
       );
       if (
@@ -2013,12 +2018,12 @@ export function PtyWorkspaceProvider({
         paneId: sourcePane.id,
       });
       if (!canChangeWorkspaceContentPane(ownerState)) return;
-      const next = reduceWorkspaceTree(treeRef.current, {
+      const next = reduceWorkspaceTree(store.getLive().tree, {
         type: "move",
         ref: content,
         toPaneId: destinationPaneId,
       });
-      if (next === treeRef.current) return;
+      if (next === store.getLive().tree) return;
       contentCoordinatorRef.current.ensureAttached(content, {
         kind: "pane",
         windowLabel: "main",
@@ -2155,12 +2160,12 @@ export function PtyWorkspaceProvider({
           kind: "pty",
           slotId: pending.instanceId,
         } as const;
-        const nextTree = reduceWorkspaceTree(treeRef.current, {
+        const nextTree = reduceWorkspaceTree(store.getLive().tree, {
           type: "detach",
           ref: content,
         });
         commitTree(nextTree);
-        if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
+        if (!findWorkspacePane(nextTree, store.getLive().focusedPaneId)) {
           setFocusedPane(listWorkspacePanes(nextTree)[0].id);
         }
         pending.resolve();
@@ -2206,9 +2211,9 @@ export function PtyWorkspaceProvider({
 
   const detachSession = useCallback(
     async (instanceId: string) => {
-      const slot = slotsRef.current.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
+      const slot = store
+        .getLive()
+        .slots.find((candidate) => candidate.instanceId === instanceId);
       const sessionId = slot?.sessionId;
       if (
         !slot ||
@@ -2230,7 +2235,7 @@ export function PtyWorkspaceProvider({
       if (!terminal) throw new Error(tRef.current("pty.terminalNotReady"));
 
       const windowLabel = createWindowLabel("terminal");
-      const sourcePane = listWorkspacePanes(treeRef.current).find((pane) =>
+      const sourcePane = listWorkspacePanes(store.getLive().tree).find((pane) =>
         hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
       );
       if (!sourcePane)
@@ -2398,12 +2403,12 @@ export function PtyWorkspaceProvider({
         toDetached: (record) => record.window,
       });
       const content = { kind: "pty", slotId: payload.instanceId } as const;
-      const nextTree = reduceWorkspaceTree(treeRef.current, {
+      const nextTree = reduceWorkspaceTree(store.getLive().tree, {
         type: "detach",
         ref: content,
       });
       commitTree(nextTree);
-      if (!findWorkspacePane(nextTree, focusedPaneIdRef.current)) {
+      if (!findWorkspacePane(nextTree, store.getLive().focusedPaneId)) {
         setFocusedPane(listWorkspacePanes(nextTree)[0].id);
       }
       pending.resolve();
@@ -2458,9 +2463,11 @@ export function PtyWorkspaceProvider({
       });
       if (lost.length === 0) return;
       const targetPane =
-        findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
-        listWorkspacePanes(treeRef.current)[0];
-      let nextTree = treeRef.current;
+        findWorkspacePane(
+          store.getLive().tree,
+          store.getLive().focusedPaneId,
+        ) ?? listWorkspacePanes(store.getLive().tree)[0];
+      let nextTree = store.getLive().tree;
       for (const content of lost) {
         if (content.kind !== "file") continue;
         coordinator.ownerEnded(content);
@@ -2494,12 +2501,12 @@ export function PtyWorkspaceProvider({
       try {
         const outcome = await retryWithBackoff<PtyOwnerLostAttemptResult>(
           async () => {
-            const slot = slotsRef.current.find(
-              (candidate) => candidate.sessionId === sessionId,
-            );
+            const slot = store
+              .getLive()
+              .slots.find((candidate) => candidate.sessionId === sessionId);
             if (!slot) return { kind: "slot-gone" };
             const terminal = terminalRefs.current.get(slot.instanceId);
-            if (!terminal || hydrationStatusRef.current !== "ready") {
+            if (!terminal || store.getLive().hydrationStatus !== "ready") {
               throw new Error(
                 "PTY terminal is not ready for owner-lost recovery",
               );
@@ -2553,18 +2560,18 @@ export function PtyWorkspaceProvider({
           return;
         }
 
-        const slot = slotsRef.current.find(
-          (candidate) => candidate.sessionId === sessionId,
-        );
+        const slot = store
+          .getLive()
+          .slots.find((candidate) => candidate.sessionId === sessionId);
         if (!slot) return;
         const content = { kind: "pty", slotId: slot.instanceId } as const;
-        const currentTree = treeRef.current;
+        const currentTree = store.getLive().tree;
         const existingPane = listWorkspacePanes(currentTree).find((pane) =>
           hasWorkspaceContent(pane, content),
         );
         const targetPane =
           existingPane ??
-          findWorkspacePane(currentTree, focusedPaneIdRef.current) ??
+          findWorkspacePane(currentTree, store.getLive().focusedPaneId) ??
           listWorkspacePanes(currentTree)[0];
         if (!targetPane) return;
         const pending = takePendingWorkspaceContentWindow(
@@ -2672,11 +2679,14 @@ export function PtyWorkspaceProvider({
       }
       if (currentOwnership?.phase !== "detached") {
         const sourcePane =
-          listWorkspacePanes(treeRef.current).find((pane) =>
+          listWorkspacePanes(store.getLive().tree).find((pane) =>
             hasWorkspaceContent(pane, returningContent),
           ) ??
-          findWorkspacePane(treeRef.current, focusedPaneIdRef.current) ??
-          listWorkspacePanes(treeRef.current)[0];
+          findWorkspacePane(
+            store.getLive().tree,
+            store.getLive().focusedPaneId,
+          ) ??
+          listWorkspacePanes(store.getLive().tree)[0];
         if (sourcePane) {
           contentCoordinatorRef.current.reconcileDetached(
             returningContent,
@@ -2690,14 +2700,17 @@ export function PtyWorkspaceProvider({
           );
         }
       }
-      const returnTargetPaneId = resolveWorkspaceReturnPaneId(treeRef.current, {
-        requestedPaneId: payload.targetPaneId,
-        lastPaneId: (() => {
-          const latest = contentCoordinatorRef.current.get(returningContent);
-          return latest?.phase === "detached" ? latest.lastPaneId : null;
-        })(),
-        focusedPaneId: focusedPaneIdRef.current,
-      });
+      const returnTargetPaneId = resolveWorkspaceReturnPaneId(
+        store.getLive().tree,
+        {
+          requestedPaneId: payload.targetPaneId,
+          lastPaneId: (() => {
+            const latest = contentCoordinatorRef.current.get(returningContent);
+            return latest?.phase === "detached" ? latest.lastPaneId : null;
+          })(),
+          focusedPaneId: store.getLive().focusedPaneId,
+        },
+      );
       if (!returnTargetPaneId) {
         fail(tRef.current("pty.workspaceRestoring"));
         return;
@@ -2730,27 +2743,31 @@ export function PtyWorkspaceProvider({
         const waitAbortController = new AbortController();
         ptyReturnWaitAbortRef.current = waitAbortController;
         const deadline = Date.now() + 10_000;
-        let slot = slotsRef.current.find(
-          (candidate) => candidate.instanceId === payload.instanceId,
-        );
+        let slot = store
+          .getLive()
+          .slots.find(
+            (candidate) => candidate.instanceId === payload.instanceId,
+          );
         let terminal = terminalRefs.current.get(payload.instanceId);
         while (
-          (!slot || !terminal || hydrationStatusRef.current !== "ready") &&
+          (!slot || !terminal || store.getLive().hydrationStatus !== "ready") &&
           Date.now() < deadline &&
           !waitAbortController.signal.aborted
         ) {
           await abortableDelay(50, waitAbortController.signal);
           if (waitAbortController.signal.aborted) return;
-          slot = slotsRef.current.find(
-            (candidate) => candidate.instanceId === payload.instanceId,
-          );
+          slot = store
+            .getLive()
+            .slots.find(
+              (candidate) => candidate.instanceId === payload.instanceId,
+            );
           terminal = terminalRefs.current.get(payload.instanceId);
         }
         if (ptyReturnWaitAbortRef.current === waitAbortController) {
           ptyReturnWaitAbortRef.current = null;
         }
         if (waitAbortController.signal.aborted) return;
-        if (!slot || !terminal || hydrationStatusRef.current !== "ready") {
+        if (!slot || !terminal || store.getLive().hydrationStatus !== "ready") {
           failPendingReturn(tRef.current("pty.workspaceRestoring"));
           return;
         }
@@ -2758,7 +2775,7 @@ export function PtyWorkspaceProvider({
           failPendingReturn(tRef.current("pty.detachedSessionMissing"));
           return;
         }
-        const currentTree = treeRef.current;
+        const currentTree = store.getLive().tree;
         // 与 beginReturn 时记录的目标 pane 一致，驱动上下文不再重新解析。
         const targetPane = findWorkspacePane(currentTree, returnTargetPaneId);
         if (!targetPane) {
@@ -2801,10 +2818,10 @@ export function PtyWorkspaceProvider({
         // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
         // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
         const recordedPaneId = activeReturn.target.paneId;
-        const plan = planWorkspaceReturn(treeRef.current, {
+        const plan = planWorkspaceReturn(store.getLive().tree, {
           ref: returningContent,
           requestedPaneId: recordedPaneId,
-          focusedPaneId: focusedPaneIdRef.current,
+          focusedPaneId: store.getLive().focusedPaneId,
           whenAlreadyInTree: "activate",
         });
         if (!plan || plan.focusPaneId !== recordedPaneId) {
@@ -2928,10 +2945,12 @@ export function PtyWorkspaceProvider({
                   slotId: event.payload.instanceId,
                 } as const;
                 const owner = contentCoordinatorRef.current.get(content);
-                const slot = slotsRef.current.find(
-                  (candidate) =>
-                    candidate.instanceId === event.payload.instanceId,
-                );
+                const slot = store
+                  .getLive()
+                  .slots.find(
+                    (candidate) =>
+                      candidate.instanceId === event.payload.instanceId,
+                  );
                 if (
                   slot?.sessionId === event.payload.sessionId &&
                   (((owner?.phase === "detached" ||
@@ -3035,7 +3054,7 @@ export function PtyWorkspaceProvider({
                         windowLabel: "main",
                         paneId:
                           pending.sourcePaneId ??
-                          listWorkspacePanes(treeRef.current)[0]?.id ??
+                          listWorkspacePanes(store.getLive().tree)[0]?.id ??
                           "unknown-pane",
                       },
                       target: {
@@ -3045,11 +3064,14 @@ export function PtyWorkspaceProvider({
                       transferId: pending.token,
                       capabilities: {
                         prepare: async () => {
-                          const document = fileDocumentsRef.current.find(
-                            (candidate) => candidate.id === pending.documentId,
-                          );
+                          const document = store
+                            .getLive()
+                            .documents.find(
+                              (candidate) =>
+                                candidate.id === pending.documentId,
+                            );
                           const buffer =
-                            fileBuffersRef.current[pending.documentId];
+                            store.getLive().buffers[pending.documentId];
                           if (!document || !buffer) {
                             throw new Error(
                               tRef.current("workspaceFiles.loadingFile"),
@@ -3185,7 +3207,7 @@ export function PtyWorkspaceProvider({
                     toDetached: (record) => record.window,
                   });
                   commitTree(
-                    reduceWorkspaceTree(treeRef.current, {
+                    reduceWorkspaceTree(store.getLive().tree, {
                       type: "detach",
                       ref: content,
                     }),
@@ -3260,7 +3282,7 @@ export function PtyWorkspaceProvider({
                     return;
                   }
                   const currentBuffer =
-                    fileBuffersRef.current[content.documentId];
+                    store.getLive().buffers[content.documentId];
                   if (
                     !isWorkspaceFileBufferNewer(
                       event.payload.fileBuffer,
@@ -3270,11 +3292,10 @@ export function PtyWorkspaceProvider({
                     return;
                   }
                   const next = {
-                    ...fileBuffersRef.current,
+                    ...store.getLive().buffers,
                     [content.documentId]: event.payload.fileBuffer,
                   };
-                  fileBuffersRef.current = next;
-                  setFileBuffers(next);
+                  patchHost({ buffers: next }, "handlePtyReturn:buffers");
                 },
               ),
           },
@@ -3284,9 +3305,11 @@ export function PtyWorkspaceProvider({
               listenWorkspaceContentWindowEvent(
                 "workspace-file-window-return-requested",
                 async (event) => {
-                  const knownDocument = fileDocumentsRef.current.find(
-                    (document) => document.id === event.payload.documentId,
-                  );
+                  const knownDocument = store
+                    .getLive()
+                    .documents.find(
+                      (document) => document.id === event.payload.documentId,
+                    );
                   const incomingDocument = event.payload.fileDocument;
                   const incomingBuffer = event.payload.fileBuffer;
                   if (
@@ -3385,14 +3408,14 @@ export function PtyWorkspaceProvider({
                     currentOwnership.phase === "attached"
                   ) {
                     const sourcePane =
-                      listWorkspacePanes(treeRef.current).find((pane) =>
+                      listWorkspacePanes(store.getLive().tree).find((pane) =>
                         hasWorkspaceContent(pane, content),
                       ) ??
                       findWorkspacePane(
-                        treeRef.current,
-                        focusedPaneIdRef.current,
+                        store.getLive().tree,
+                        store.getLive().focusedPaneId,
                       ) ??
-                      listWorkspacePanes(treeRef.current)[0];
+                      listWorkspacePanes(store.getLive().tree)[0];
                     if (sourcePane) {
                       contentCoordinatorRef.current.reconcileDetached(
                         content,
@@ -3446,7 +3469,7 @@ export function PtyWorkspaceProvider({
                   }
                   detachedFilesRef.current.set(key, managedWindow);
                   const returnTargetPaneId = resolveWorkspaceReturnPaneId(
-                    treeRef.current,
+                    store.getLive().tree,
                     {
                       requestedPaneId: event.payload.targetPaneId,
                       lastPaneId: (() => {
@@ -3456,7 +3479,7 @@ export function PtyWorkspaceProvider({
                           ? latest.lastPaneId
                           : null;
                       })(),
-                      focusedPaneId: focusedPaneIdRef.current,
+                      focusedPaneId: store.getLive().focusedPaneId,
                     },
                   );
                   if (!returnTargetPaneId) {
@@ -3500,7 +3523,7 @@ export function PtyWorkspaceProvider({
                     | undefined;
                   try {
                     const document = knownDocument;
-                    const currentBuffer = fileBuffersRef.current[document.id];
+                    const currentBuffer = store.getLive().buffers[document.id];
                     const returnedBuffer =
                       currentBuffer &&
                       isWorkspaceFileBufferNewer(currentBuffer, incomingBuffer)
@@ -3508,7 +3531,7 @@ export function PtyWorkspaceProvider({
                         : incomingBuffer;
                     // 与 beginReturn 时记录的目标 pane 一致，驱动上下文不再重新解析。
                     const targetPane = findWorkspacePane(
-                      treeRef.current,
+                      store.getLive().tree,
                       returnTargetPaneId,
                     );
                     if (!targetPane)
@@ -3532,11 +3555,13 @@ export function PtyWorkspaceProvider({
                         }),
                         attach: async (handoffPayload) => {
                           const nextBuffers = {
-                            ...fileBuffersRef.current,
+                            ...store.getLive().buffers,
                             [document.id]: handoffPayload.buffer,
                           };
-                          fileBuffersRef.current = nextBuffers;
-                          setFileBuffers(nextBuffers);
+                          patchHost(
+                            { buffers: nextBuffers },
+                            "handlePtyReturn:buffers",
+                          );
                         },
                         rollback: async () => undefined,
                       },
@@ -3560,10 +3585,10 @@ export function PtyWorkspaceProvider({
                     // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
                     // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
                     const recordedPaneId = activeReturn.target.paneId;
-                    const plan = planWorkspaceReturn(treeRef.current, {
+                    const plan = planWorkspaceReturn(store.getLive().tree, {
                       ref: content,
                       requestedPaneId: recordedPaneId,
-                      focusedPaneId: focusedPaneIdRef.current,
+                      focusedPaneId: store.getLive().focusedPaneId,
                       whenAlreadyInTree: "relocate",
                     });
                     if (!plan || plan.focusPaneId !== recordedPaneId) {
@@ -3664,17 +3689,19 @@ export function PtyWorkspaceProvider({
 
   const closeEmptyPane = useCallback(
     (paneId: string) => {
-      const pane = findWorkspacePane(treeRef.current, paneId);
+      const pane = findWorkspacePane(store.getLive().tree, paneId);
       if (!pane || pane.contents.length > 0) {
         return;
       }
-      const next = removeEmptyWorkspacePane(treeRef.current, paneId);
-      commitTree(next);
+      const next = removeEmptyWorkspacePane(store.getLive().tree, paneId);
       // Closing a pane changes the split topology. Remount the complete tree
       // so every Allotment recalculates from the surviving tree dimensions,
       // rather than retaining any cached sizes from the previous topology.
-      setWorkspaceTreeRevision((revision) => revision + 1);
-      if (!findWorkspacePane(next, focusedPaneIdRef.current)) {
+      patchHost(
+        { tree: next, treeRevision: store.getLive().treeRevision + 1 },
+        "closeEmptyPane",
+      );
+      if (!findWorkspacePane(next, store.getLive().focusedPaneId)) {
         const fallbackPaneId = listWorkspacePanes(next)[0].id;
         setFocusedPane(fallbackPaneId);
         const activeContent = findWorkspacePane(
@@ -3693,11 +3720,12 @@ export function PtyWorkspaceProvider({
       if (sizes.length !== 2 || total <= 0 || !Number.isFinite(total)) return;
 
       const nextTree = setWorkspaceSplitRatio(
-        treeRef.current,
+        store.getLive().tree,
         splitId,
         sizes[0] / total,
       );
-      treeRef.current = nextTree;
+      // 拖拽过程只写未发布的临时树：getLive 可见，不发布、不通知。dragEnd 时再统一发布。
+      if (phase !== "dragEnd") store.setTransientTree(nextTree);
 
       if (phase === "dragEnd") {
         splitResizeInProgressRef.current = false;
@@ -3728,19 +3756,20 @@ export function PtyWorkspaceProvider({
         return;
       }
       upsertPtySession(session);
-      const nextSlots = slotsRef.current.map((slot) =>
-        slot.instanceId === instanceId
-          ? { ...slot, sessionId: session.sessionId }
-          : slot,
-      );
-      slotsRef.current = nextSlots;
-      setSlots(nextSlots);
+      const nextSlots = store
+        .getLive()
+        .slots.map((slot) =>
+          slot.instanceId === instanceId
+            ? { ...slot, sessionId: session.sessionId }
+            : slot,
+        );
+      patchHost({ slots: nextSlots }, "recordSession:slots");
     },
     [removeSlot, upsertPtySession],
   );
 
   const getCurrentPresetLayout = useCallback(() => {
-    let presetTree = treeRef.current;
+    let presetTree = store.getLive().tree;
     const protectedContents = contentCoordinatorRef.current.listWindowOwned();
     for (const content of protectedContents) {
       presetTree = reduceWorkspaceTree(presetTree, {
@@ -3763,7 +3792,7 @@ export function PtyWorkspaceProvider({
         ),
       ),
     );
-    const currentFocusedPaneId = focusedPaneIdRef.current;
+    const currentFocusedPaneId = store.getLive().focusedPaneId;
     return createWorkspaceLayoutDocument({
       tree: presetTree,
       focusedPaneId: presetPanes.some(
@@ -3771,12 +3800,13 @@ export function PtyWorkspaceProvider({
       )
         ? currentFocusedPaneId
         : presetPanes[0].id,
-      slots: slotsRef.current
-        .filter((slot) => paneSlotIds.has(slot.instanceId))
+      slots: store
+        .getLive()
+        .slots.filter((slot) => paneSlotIds.has(slot.instanceId))
         .map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
-      documents: fileDocumentsRef.current.filter((document) =>
-        paneFileIds.has(document.id),
-      ),
+      documents: store
+        .getLive()
+        .documents.filter((document) => paneFileIds.has(document.id)),
       detachedContents: [],
     });
   }, [directories]);
@@ -3836,11 +3866,11 @@ export function PtyWorkspaceProvider({
       })),
     );
     const uncertainDocumentIds: string[] = [];
-    let nextBuffers = fileBuffersRef.current;
+    let nextBuffers = store.getLive().buffers;
     for (const { managed, response } of flushResults) {
-      const currentDocument = fileDocumentsRef.current.find(
-        (document) => document.id === managed.documentId,
-      );
+      const currentDocument = store
+        .getLive()
+        .documents.find((document) => document.id === managed.documentId);
       if (
         !response ||
         !currentDocument ||
@@ -3853,21 +3883,20 @@ export function PtyWorkspaceProvider({
       }
       const currentBuffer = nextBuffers[managed.documentId];
       if (isWorkspaceFileBufferNewer(response.fileBuffer, currentBuffer)) {
-        if (nextBuffers === fileBuffersRef.current) {
-          nextBuffers = { ...fileBuffersRef.current };
+        if (nextBuffers === store.getLive().buffers) {
+          nextBuffers = { ...store.getLive().buffers };
         }
         nextBuffers[managed.documentId] = response.fileBuffer;
       }
     }
-    if (nextBuffers !== fileBuffersRef.current) {
-      fileBuffersRef.current = nextBuffers;
-      setFileBuffers(nextBuffers);
+    if (nextBuffers !== store.getLive().buffers) {
+      patchHost({ buffers: nextBuffers }, "collectExitImpacts:buffers");
     }
 
     return collectAppExitImpacts({
       ptyCount,
-      documents: fileDocumentsRef.current,
-      buffers: fileBuffersRef.current,
+      documents: store.getLive().documents,
+      buffers: store.getLive().buffers,
       uncertainDocumentIds,
     });
   }, []);
@@ -3876,9 +3905,11 @@ export function PtyWorkspaceProvider({
     backupRestoreInProgressRef.current = true;
     try {
       await Promise.all(
-        fileDocumentsRef.current.map((document) =>
-          fileOperationFlightsRef.current.waitForSave(document.id),
-        ),
+        store
+          .getLive()
+          .documents.map((document) =>
+            fileOperationFlightsRef.current.waitForSave(document.id),
+          ),
       );
       await saveQueueRef.current?.flush();
 
@@ -3910,9 +3941,10 @@ export function PtyWorkspaceProvider({
 
   const getDirectoryRemovalBlockers = useCallback((directoryId: number) => {
     return {
-      openFileCount: fileDocumentsRef.current.filter(
-        (document) => document.directoryId === directoryId,
-      ).length,
+      openFileCount: store
+        .getLive()
+        .documents.filter((document) => document.directoryId === directoryId)
+        .length,
       runningPtyCount: Object.values(
         useAppStore.getState().ptySessionsById,
       ).filter(
@@ -3941,17 +3973,14 @@ export function PtyWorkspaceProvider({
   const rehydrateWorkspace = useCallback(async () => {
     backupRestoreInProgressRef.current = false;
     releaseFileDocuments(
-      fileDocumentsRef.current.map((document) => document.id),
+      store.getLive().documents.map((document) => document.id),
     );
-    fileDocumentsRef.current.forEach((document) =>
-      invalidateFileOperationGeneration(document.id),
-    );
+    store
+      .getLive()
+      .documents.forEach((document) =>
+        invalidateFileOperationGeneration(document.id),
+      );
     saveQueueRef.current = null;
-    slotsRef.current = [];
-    fileDocumentsRef.current = [];
-    fileBuffersRef.current = {};
-    treeRef.current = createWorkspacePane(initialPaneId);
-    focusedPaneIdRef.current = initialPaneId;
     detachedByInstanceRef.current.clear();
     detachedFilesRef.current.clear();
     pendingDetachedRef.current.clear();
@@ -3959,12 +3988,17 @@ export function PtyWorkspaceProvider({
     terminalRefs.current.clear();
     contentCoordinatorRef.current.reset();
     useAppStore.getState().clearPtySessions();
-    setSlots([]);
-    setFileDocuments([]);
-    setFileBuffers({});
-    setTree(treeRef.current);
-    setFocusedPaneId(initialPaneId);
-    setWorkspaceTreeRevision((revision) => revision + 1);
+    patchHost(
+      {
+        slots: [],
+        documents: [],
+        buffers: {},
+        tree: createWorkspacePane(initialPaneId),
+        focusedPaneId: initialPaneId,
+        treeRevision: store.getLive().treeRevision + 1,
+      },
+      "rehydrateWorkspace:reset",
+    );
     await hydrateWorkspace();
   }, [hydrateWorkspace, initialPaneId, releaseFileDocuments]);
 
@@ -4077,29 +4111,31 @@ export function PtyWorkspaceProvider({
   );
 
   return (
-    <PtyWorkspaceContext.Provider value={value}>
-      {children}
-      {closeConfirmationImpacts && (
-        <WorkspaceContentCloseDialog
-          impacts={closeConfirmationImpacts}
-          onCancel={() => resolveCloseConfirmation(false)}
-          onConfirm={() => resolveCloseConfirmation(true)}
-        />
-      )}
-      {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
-        <WorkspacePtySessionRegistry
-          slots={slots}
-          tree={tree}
-          focusedPaneId={focusedPaneId}
-          active={activeView === "detail"}
-          terminalRefs={terminalRefs}
-          onSessionChange={recordSession}
-          onPortalTarget={registerPortalTarget}
-          onFocusPane={focusPane}
-          detachedInstanceIds={detachedInstanceIds}
-        />
-      )}
-    </PtyWorkspaceContext.Provider>
+    <WorkspaceHostStoreContext.Provider value={store}>
+      <PtyWorkspaceContext.Provider value={value}>
+        {children}
+        {closeConfirmationImpacts && (
+          <WorkspaceContentCloseDialog
+            impacts={closeConfirmationImpacts}
+            onCancel={() => resolveCloseConfirmation(false)}
+            onConfirm={() => resolveCloseConfirmation(true)}
+          />
+        )}
+        {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
+          <WorkspacePtySessionRegistry
+            slots={slots}
+            tree={tree}
+            focusedPaneId={focusedPaneId}
+            active={activeView === "detail"}
+            terminalRefs={terminalRefs}
+            onSessionChange={recordSession}
+            onPortalTarget={registerPortalTarget}
+            onFocusPane={focusPane}
+            detachedInstanceIds={detachedInstanceIds}
+          />
+        )}
+      </PtyWorkspaceContext.Provider>
+    </WorkspaceHostStoreContext.Provider>
   );
 }
 

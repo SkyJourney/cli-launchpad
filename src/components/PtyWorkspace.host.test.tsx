@@ -19,9 +19,11 @@ import { tauriMock } from "../test/tauriMock";
 import { resetFakeTerminals, toastSpy } from "../test/host/hostMocks";
 import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
 import {
+  detachFileToWindow,
   flush,
   invokes,
   mountWorkspace,
+  openFile,
   type WorkspaceHost,
 } from "../test/host/workspaceHarness";
 
@@ -55,5 +57,28 @@ describe("PtyWorkspace host harness", () => {
     expect(tauriMock.state.eventListeners).toHaveLength(0);
     expect(host.errors).toEqual([]);
     expect(toastSpy.error).not.toHaveBeenCalled();
+  });
+
+  it("hydrates once and detaches a file correctly under StrictMode", async () => {
+    host = await mountWorkspace({ strict: true });
+    const doc = await openFile(host);
+    const result = await detachFileToWindow(host, doc.id);
+    await result.detachPromise;
+    await flush();
+
+    expect(host.ctx().hydrationStatus).toBe("ready");
+    // StrictMode 可能让 effect 重跑一次，因此只允许 1 或 2 次读取。
+    expect(invokes("get_workspace_layout").length).toBeGreaterThanOrEqual(1);
+    expect(invokes("get_workspace_layout").length).toBeLessThanOrEqual(2);
+    expect(tauriMock.state.createdWindows).toHaveLength(1);
+    const inits = tauriMock.state.emittedEvents.filter(
+      (event) =>
+        (event.payload as { type?: string }).type ===
+        "workspace-file-window-init",
+    );
+    expect(inits).toHaveLength(1);
+    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(assertWorkspaceInvariants(host)).toEqual({ skipped: ["I4", "I7"] });
+    expect(host.errors).toEqual([]);
   });
 });
