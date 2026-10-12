@@ -212,6 +212,35 @@ mod tests {
         path
     }
 
+    /// Windows fake server: a cmd wrapper that starts the test binary's tree worker
+    /// (platform::execution_process::tree_worker). The worker joins the server's
+    /// kill-on-close job before it spawns the grandchild and publishes the grandchild
+    /// pid atomically, so the pid appears as soon as the worker runs, instead of after
+    /// a slow nested PowerShell start.
+    #[cfg(windows)]
+    fn windows_tree_worker_script(pidfile: &std::path::Path) -> String {
+        use crate::platform::execution_process::tree_worker;
+        let pidfile_text = pidfile.display().to_string();
+        assert!(
+            !pidfile_text.contains(['%', '&', '"', '^']),
+            "pid 文件路径不能含 cmd 特殊字符：{pidfile_text}"
+        );
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        assert!(
+            !exe.contains(['%', '&', '"', '^']),
+            "测试二进制路径不能含 cmd 特殊字符：{exe}"
+        );
+        let mut script = String::from("@echo off\r\n");
+        for (key, value) in tree_worker::envs(pidfile) {
+            script.push_str(&format!("set {key}={}\r\n", value.to_string_lossy()));
+        }
+        script.push_str(&format!(
+            "\"{exe}\" {} > nul 2>&1\r\n",
+            tree_worker::ARGS.join(" ")
+        ));
+        script
+    }
+
     async fn wait_for_pid_file(path: &std::path::Path, within: Duration) -> Option<u32> {
         let started = std::time::Instant::now();
         loop {
@@ -298,9 +327,7 @@ mod tests {
             write_script(
                 directory.path(),
                 "fake-codex.cmd",
-                &format!(
-                    "@echo off\r\npowershell -NoProfile -Command \"$p = Start-Process powershell -ArgumentList '-NoProfile','-Command','Start-Sleep 60' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '{pidfile_text}' $p.Id; Start-Sleep 60\"\r\n"
-                ),
+                &windows_tree_worker_script(&pidfile),
             ),
             Duration::from_millis(6000),
         );
