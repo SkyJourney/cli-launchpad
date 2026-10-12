@@ -148,7 +148,7 @@ function TextFileContentAdapter({
 
 const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   id: "core.pty",
-  apiVersion: 2,
+  apiVersion: 3,
   kind: "pty",
   render: (context) => {
     if (context.content.kind !== "pty") return null;
@@ -195,7 +195,6 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   },
   labels: {
     menu: "pty.sessionMenu",
-    close: "pty.close",
     closeCurrent: "pty.closeCurrent",
     closeOthers: "pty.closeOthers",
     closeAll: "pty.closeAllInPane",
@@ -215,7 +214,7 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
 
 const fileAdapter: WorkspaceContentAdapter<"file"> = {
   id: "core.file-editor",
-  apiVersion: 2,
+  apiVersion: 3,
   kind: "file",
   render: (context) => {
     if (context.content.kind !== "file" || !context.file?.document) {
@@ -266,7 +265,6 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
   },
   labels: {
     menu: "workspaceFiles.fileMenu",
-    close: "workspaceFiles.closeFile",
     closeCurrent: "workspaceFiles.closeFileNamed",
     closeOthers: "workspaceFiles.closeOthers",
     closeAll: "workspaceFiles.closeAllInPane",

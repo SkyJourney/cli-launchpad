@@ -409,7 +409,7 @@ fn content_kind_contract_matches_rust_serialization() {
 
     let contract: Value =
         serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kind contract");
-    assert_eq!(contract["adapterApiVersion"], 2);
+    assert_eq!(contract["adapterApiVersion"], 3);
     let pty = serde_json::to_value(WorkspacePaneContentRef::Pty {
         slot_id: "slot".to_string(),
     })

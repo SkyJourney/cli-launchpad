@@ -26,7 +26,15 @@ import {
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 import { act } from "@testing-library/react";
-import { createBackend, DIRECTORY } from "../test/host/workspaceHarness";
+import {
+  createBackend,
+  DIRECTORY,
+  launchPty,
+} from "../test/host/workspaceHarness";
+import { toastSpy } from "../test/host/hostMocks";
+import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
+import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
+import { getWorkspaceContentAdapter } from "./workspaceContentAdapterRegistry";
 
 let host: WorkspaceHost | undefined;
 afterEach(async () => {
@@ -209,5 +217,216 @@ describe("editor model release", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+describe("mixed content close", () => {
+  function builtinAdapterCopies() {
+    const dispose = registerBuiltinWorkspaceContentAdapters();
+    try {
+      return {
+        pty: { ...getWorkspaceContentAdapter("pty") },
+        file: { ...getWorkspaceContentAdapter("file") },
+      };
+    } finally {
+      dispose();
+    }
+  }
+
+  async function setup(options: { adapters?: unknown } = {}) {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator, ...options } as never);
+    const doc = await openFile(host);
+    await act(async () => {
+      host!.ctx().editFile(doc.id, "dirty");
+    });
+    const { slot, terminal } = await launchPty(host);
+    const refs = [
+      { kind: "pty" as const, slotId: slot.instanceId },
+      { kind: "file" as const, documentId: doc.id },
+    ];
+    return { coordinator, doc, slot, terminal, refs };
+  }
+
+  it("asks once for running PTY and dirty file impacts and cancels both", async () => {
+    const { coordinator, doc, slot, terminal, refs } = await setup();
+    await act(async () => {
+      void host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+
+    const dialogs = screen.getAllByRole("alertdialog");
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]!.textContent).toContain("pty.confirmCloseMany");
+    expect(dialogs[0]!.textContent).toContain("a.txt");
+    fireEvent.click(
+      within(dialogs[0]!).getByRole("button", { name: "common.cancel" }),
+    );
+    await flush();
+
+    expect(host!.ctx().fileDocuments.map((d) => d.id)).toEqual([doc.id]);
+    expect(host!.ctx().slots.map((s) => s.instanceId)).toEqual([
+      slot.instanceId,
+    ]);
+    expect(terminal.closeSession).not.toHaveBeenCalled();
+    expect(host!.ctx().closingContentKeys.size).toBe(0);
+    expect(coordinator.get(refs[0]!)?.phase).toBe("attached");
+    expect(coordinator.get(refs[1]!)?.phase).toBe("attached");
+    // 反向：取消之后不再有确认对话框。
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("closes both after one confirmation and disposes the file once", async () => {
+    const { doc, terminal, refs } = await setup();
+    await act(async () => {
+      void host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "common.confirm",
+      }),
+    );
+    await flush();
+
+    expect(terminal.closeSession).toHaveBeenCalledTimes(1);
+    expect(terminal.closeSession).toHaveBeenCalledWith(false);
+    expect(host!.ctx().slots).toEqual([]);
+    expect(host!.ctx().fileDocuments).toEqual([]);
+    expect(host!.editor.releaseDocument).toHaveBeenCalledTimes(1);
+    expect(host!.editor.releaseDocument).toHaveBeenCalledWith(doc.id);
+    assertWorkspaceInvariants(host!);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("vetoes the whole batch when one adapter's beforeClose returns false", async () => {
+    const copies = builtinAdapterCopies();
+    const { doc, terminal, refs } = await setup({
+      adapters: [
+        copies.pty,
+        {
+          ...copies.file,
+          id: "test.file",
+          lifecycle: { ...copies.file.lifecycle, beforeClose: () => false },
+        },
+      ],
+    });
+    await act(async () => {
+      await host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(host!.ctx().fileDocuments.map((d) => d.id)).toEqual([doc.id]);
+    expect(host!.ctx().slots).toHaveLength(1);
+    expect(terminal.closeSession).not.toHaveBeenCalled();
+    // 反向：没有内容处于关闭中状态。
+    expect(host!.ctx().closingContentKeys.size).toBe(0);
+  });
+
+  it("treats a throwing beforeClose as a veto", async () => {
+    const copies = builtinAdapterCopies();
+    const { doc, terminal, refs } = await setup({
+      adapters: [
+        copies.pty,
+        {
+          ...copies.file,
+          id: "test.file",
+          lifecycle: {
+            ...copies.file.lifecycle,
+            beforeClose: () => {
+              throw new Error("x");
+            },
+          },
+        },
+      ],
+    });
+    await act(async () => {
+      await host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(host!.ctx().fileDocuments.map((d) => d.id)).toEqual([doc.id]);
+    expect(host!.ctx().slots).toHaveLength(1);
+    expect(terminal.closeSession).not.toHaveBeenCalled();
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("keeps a PTY whose termination fails and reports it", async () => {
+    const { coordinator, terminal, refs } = await setup();
+    terminal.closeSession.mockRejectedValueOnce(new Error("kill failed"));
+    await act(async () => {
+      void host!.ctx().closeContents([refs[0]!], "tab");
+    });
+    await flush();
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "common.confirm",
+      }),
+    );
+    await flush();
+
+    expect(host!.ctx().slots).toHaveLength(1);
+    expect(
+      toastSpy.error.mock.calls.some((call) =>
+        String(call[0]).includes("pty.closeFailedMany"),
+      ),
+    ).toBe(true);
+    expect(host!.ctx().closingContentKeys.size).toBe(0);
+    expect(coordinator.get(refs[0]!)?.phase).toBe("attached");
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("keeps a terminating PTY in closing and rejects moves until it ends", async () => {
+    const { slot, terminal, refs } = await setup();
+    terminal.closeSession.mockResolvedValueOnce("terminating");
+    await act(async () => {
+      host!
+        .ctx()
+        .splitPane(listWorkspacePanes(host!.ctx().tree)[0]!.id, "horizontal");
+    });
+    await flush();
+    const [paneA, paneB] = listWorkspacePanes(host!.ctx().tree);
+    await act(async () => {
+      void host!.ctx().closeContents([refs[0]!], "tab");
+    });
+    await flush();
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "common.confirm",
+      }),
+    );
+    await flush();
+    await act(async () => {
+      host!.ctx().moveSession(paneA!.id, paneB!.id, slot.instanceId);
+    });
+    await flush();
+
+    expect(host!.ctx().closingContentKeys.has(`pty:${slot.instanceId}`)).toBe(
+      true,
+    );
+    const stillInA = listWorkspacePanes(host!.ctx().tree).find(
+      (p) => p.id === paneA!.id,
+    )!;
+    expect(
+      stillInA.contents.some(
+        (c) => c.kind === "pty" && c.slotId === slot.instanceId,
+      ),
+    ).toBe(true);
+    // 反向：移动被拒绝，PTY 没有进入 paneB。
+    const inB = listWorkspacePanes(host!.ctx().tree).find(
+      (p) => p.id === paneB!.id,
+    )!;
+    expect(inB.contents.some((c) => c.kind === "pty")).toBe(false);
+
+    const session = host!.store().getSnapshot().ptySessionsById[
+      slot.sessionId!
+    ]!;
+    await act(async () => {
+      terminal.emitSessionChange({ ...session, state: "exited" });
+    });
+    await flush();
+    expect(host!.ctx().slots).toEqual([]);
   });
 });

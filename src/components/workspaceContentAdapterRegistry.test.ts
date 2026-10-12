@@ -8,6 +8,7 @@ import {
   workspaceContentProjectContext,
 } from "./workspaceContentAdapterRegistry";
 import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
+import contentKinds from "../../contracts/content-kinds.json";
 
 const labels = {
   menu: "menu",
@@ -66,7 +67,7 @@ describe("workspace content adapter registry", () => {
   it("registers and resolves a built-in adapter by content kind", () => {
     const adapter = {
       id: "test.pty",
-      apiVersion: 2 as const,
+      apiVersion: 3 as const,
       kind: "pty" as const,
       render: () => null,
       presentation: () => ({
@@ -89,7 +90,7 @@ describe("workspace content adapter registry", () => {
   it("rejects duplicate IDs and duplicate content kinds", () => {
     const first = registerWorkspaceContentAdapter({
       id: "test.first",
-      apiVersion: 2,
+      apiVersion: 3,
       kind: "file",
       render: () => null,
       presentation: () => ({
@@ -103,7 +104,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.first",
-        apiVersion: 2,
+        apiVersion: 3,
         kind: "pty",
         render: () => null,
         presentation: () => ({
@@ -118,7 +119,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.second",
-        apiVersion: 2,
+        apiVersion: 3,
         kind: "file",
         render: () => null,
         presentation: () => ({
@@ -156,7 +157,7 @@ describe("workspace content adapter registry", () => {
     const unsubscribe = subscribeWorkspaceContentAdapters(listener);
     const dispose = registerWorkspaceContentAdapter({
       id: "test.notify",
-      apiVersion: 2,
+      apiVersion: 3,
       kind: "pty",
       render: () => null,
       presentation: () => ({
@@ -178,7 +179,7 @@ describe("workspace content adapter registry", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.partial-handoff",
-        apiVersion: 2,
+        apiVersion: 3,
         kind: "pty",
         render: () => null,
         presentation: () => ({
@@ -201,7 +202,7 @@ describe("workspace content adapter registry", () => {
   it("accepts a complete typed handoff lifecycle", () => {
     const dispose = registerWorkspaceContentAdapter({
       id: "test.complete-handoff",
-      apiVersion: 2,
+      apiVersion: 3,
       kind: "pty",
       render: () => null,
       presentation: () => ({
@@ -221,6 +222,121 @@ describe("workspace content adapter registry", () => {
       },
     });
     expect(getWorkspaceContentAdapter("pty").id).toBe("test.complete-handoff");
+    dispose();
+  });
+});
+
+describe("content adapter contract version 3", () => {
+  const presentationContext = {
+    directories: [],
+    ptySlots: [],
+    ptySessionsById: {},
+    fileDocuments: [],
+    fileBuffers: {},
+    selectedDirectoryId: null,
+  } as never;
+
+  it("rejects an adapter that declares the previous API version", () => {
+    expect(() =>
+      registerWorkspaceContentAdapter({
+        id: "test.v2",
+        apiVersion: 2 as never,
+        kind: "file",
+        render: () => null,
+        presentation: () => ({
+          title: "t",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
+      } as never),
+    ).toThrow("不支持内容适配器 API 版本: 2");
+    // 反向：被拒绝的注册没有残留。
+    expect(() => getWorkspaceContentAdapter("file")).toThrow(
+      "未注册内容适配器: file",
+    );
+  });
+
+  it("accepts exactly the version declared in the content-kinds contract", () => {
+    expect(contentKinds.adapterApiVersion).toBe(3);
+    const dispose = registerWorkspaceContentAdapter({
+      id: "test.contract",
+      apiVersion: contentKinds.adapterApiVersion as never,
+      kind: "file",
+      render: () => null,
+      presentation: () => ({
+        title: "t",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
+    } as never);
+    expect(typeof dispose).toBe("function");
+    dispose();
+    expect(() => getWorkspaceContentAdapter("file")).toThrow(
+      "未注册内容适配器: file",
+    );
+    // 反向：版本号差 1 的 adapter 被拒绝。
+    expect(() =>
+      registerWorkspaceContentAdapter({
+        id: "test.contract-plus-one",
+        apiVersion: (contentKinds.adapterApiVersion + 1) as never,
+        kind: "file",
+        render: () => null,
+        presentation: () => ({
+          title: "t",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
+      } as never),
+    ).toThrow("不支持内容适配器 API 版本");
+  });
+
+  it("presents and resolves project context through any registered kind without kind branches", () => {
+    const dispose = registerWorkspaceContentAdapter({
+      id: "test.file-presentation",
+      apiVersion: 3,
+      kind: "file",
+      render: () => null,
+      presentation: (content: { documentId: string }) => ({
+        title: "T-" + content.documentId,
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => 7,
+    } as never);
+    expect(
+      presentWorkspaceContent(
+        { kind: "file", documentId: "x" } as never,
+        presentationContext,
+      ).title,
+    ).toBe("T-x");
+    expect(
+      workspaceContentProjectContext(
+        { kind: "file", documentId: "x" } as never,
+        presentationContext,
+      ),
+    ).toBe(7);
+    // 反向：未知内容保留原始类型名，没有项目上下文。
+    const unknown = {
+      kind: "unknown",
+      originalKind: "markdownPreview",
+      raw: {},
+    } as never;
+    expect(presentWorkspaceContent(unknown, presentationContext)).toMatchObject(
+      {
+        title: "markdownPreview",
+        closeLabelKey: "workspaceContent.closeUnsupported",
+      },
+    );
+    expect(
+      workspaceContentProjectContext(unknown, presentationContext),
+    ).toBeNull();
     dispose();
   });
 });

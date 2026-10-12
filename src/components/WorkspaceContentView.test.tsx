@@ -85,7 +85,7 @@ describe("WorkspaceContentView", () => {
     unregisterAdapters.push(
       registerWorkspaceContentAdapter({
         id: "test.throwing-content",
-        apiVersion: 2,
+        apiVersion: 3,
         kind: "pty",
         render: () => {
           throw new Error("adapter render failed");
@@ -130,7 +130,7 @@ describe("WorkspaceContentView", () => {
       unregisterAdapters.push(
         registerWorkspaceContentAdapter({
           id: "test.throwing-nullish-content",
-          apiVersion: 2,
+          apiVersion: 3,
           kind: "pty",
           render: () => {
             throw thrown;

@@ -168,6 +168,14 @@ import {
 import { useAppStore } from "../store/appStore";
 import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
 import { createPtySlotsDomain } from "../workspace/domains/ptySlotsDomain";
+import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
+import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
+import {
+  createWorkspaceDomainTable,
+  getWorkspaceDomain,
+  workspaceDomainKinds,
+} from "../workspace/domains/workspaceDomainTable";
+import { collectWorkspaceImpacts } from "../workspace/impacts/workspaceImpacts";
 import { resetHostRuntime } from "../workspace/host/resetHostRuntime";
 import {
   WorkspaceHostStore,
@@ -198,7 +206,6 @@ import {
   disposeWorkspaceContent,
   shouldCloseWorkspaceContent,
   type WorkspaceContentDisposalImpact,
-  type WorkspaceContentDisposeContext,
 } from "../lib/workspaceContentClose";
 import {
   attachWorkspaceContentHandoff,
@@ -1313,6 +1320,32 @@ export function PtyWorkspaceProvider({
     resolve?.(confirmed);
   }, []);
 
+  // 领域操作注入表：宿主只通过 domainTable[kind] 访问内容类型的关闭行为（file 在前、pty 在后，即关闭顺序）。
+  const domainTable = useMemo(
+    () =>
+      createWorkspaceDomainTable({
+        file: createFileContentDomain({
+          store,
+          fileDomain,
+          isWindowOwned: (ref) =>
+            isWindowOwned(contentCoordinatorRef.current.get(ref)),
+          isHandoffActive: (ref) =>
+            isHandoffActive(contentCoordinatorRef.current.get(ref)),
+        }),
+        pty: createPtyContentDomain({
+          store,
+          terminalRefs: ptyDomain.terminalRefs,
+          isWindowOwned: (ref) =>
+            isWindowOwned(contentCoordinatorRef.current.get(ref)),
+          titleOf: (ref) =>
+            presentWorkspaceContent(ref, getWorkspacePresentationContext())
+              .title,
+          removeSlot: (instanceId, options) => removeSlot(instanceId, options),
+        }),
+      }),
+    [store, fileDomain, ptyDomain, removeSlot, getWorkspacePresentationContext],
+  );
+
   const closeContents = useCallback(
     async (
       requestedContents: WorkspacePaneContentRef[],
@@ -1327,10 +1360,8 @@ export function PtyWorkspaceProvider({
           ]),
         ).values(),
       ];
-      const ptySessionsById = store.getLive().ptySessionsById;
       type WorkspaceCloseTarget = {
         content: WorkspacePaneContentRef;
-        slot?: PtyWorkspaceSlot;
         beforeClose: () => boolean;
         describeDisposalImpact: () => WorkspaceContentDisposalImpact[];
       };
@@ -1341,50 +1372,6 @@ export function PtyWorkspaceProvider({
         );
         if (!pane) continue;
 
-        if (content.kind === "pty") {
-          const slot = store
-            .getLive()
-            .slots.find((candidate) => candidate.instanceId === content.slotId);
-          if (
-            !slot ||
-            isWindowOwned(contentCoordinatorRef.current.get(content))
-          ) {
-            continue;
-          }
-          const session = slot.sessionId
-            ? ptySessionsById[slot.sessionId]
-            : undefined;
-          const title = presentWorkspaceContent(
-            content,
-            getWorkspacePresentationContext(),
-          ).title;
-          const adapter = tryGetWorkspaceContentAdapter("pty");
-          contentCoordinatorRef.current.ensureAttached(content, {
-            kind: "pane",
-            windowLabel: "main",
-            paneId: pane.id,
-          });
-          closeTargets.push({
-            content,
-            slot,
-            beforeClose: () =>
-              shouldCloseWorkspaceContent(adapter?.lifecycle?.beforeClose, {
-                isDirty: false,
-                confirmDiscard: () => false,
-              }),
-            describeDisposalImpact: () =>
-              adapter?.lifecycle?.describeDisposalImpact?.({
-                isDirty: false,
-                isRunning: session?.state === "running",
-                title,
-              }) ??
-              (session?.state === "running"
-                ? [{ kind: "runningPty", title }]
-                : []),
-          });
-          continue;
-        }
-
         if (content.kind === "unknown") {
           closeTargets.push({
             content,
@@ -1394,25 +1381,10 @@ export function PtyWorkspaceProvider({
           continue;
         }
 
-        const document = store
-          .getLive()
-          .documents.find((candidate) => candidate.id === content.documentId);
-        if (
-          !document ||
-          isWindowOwned(contentCoordinatorRef.current.get(content)) ||
-          isHandoffActive(contentCoordinatorRef.current.get(content))
-        ) {
-          continue;
-        }
-        const buffer = store.getLive().buffers[content.documentId];
-        const isDirty = Boolean(
-          buffer &&
-          (buffer.content !== buffer.savedContent ||
-            buffer.saving ||
-            buffer.conflict === true ||
-            buffer.identityChanged === true),
-        );
-        const adapter = tryGetWorkspaceContentAdapter("file");
+        const domain = getWorkspaceDomain(domainTable, content.kind);
+        const input = domain?.closeInput(content);
+        if (!domain || !input) continue;
+        const adapter = tryGetWorkspaceContentAdapter(content.kind);
         contentCoordinatorRef.current.ensureAttached(content, {
           kind: "pane",
           windowLabel: "main",
@@ -1422,26 +1394,17 @@ export function PtyWorkspaceProvider({
           content,
           beforeClose: () =>
             shouldCloseWorkspaceContent(adapter?.lifecycle?.beforeClose, {
-              isDirty,
+              isDirty: input.isDirty,
               confirmDiscard: () => false,
             }),
           describeDisposalImpact: () =>
-            adapter?.lifecycle?.describeDisposalImpact?.({
-              isDirty,
-              isRunning: false,
-              title: document.relativePath,
-            }) ??
-            (isDirty
-              ? [{ kind: "dirtyFile", title: document.relativePath }]
-              : []),
+            collectWorkspaceImpacts({ sources: [{ input, adapter }] }),
         });
       }
       if (closeTargets.length === 0) return;
 
-      const outcomes: Array<{
-        slot: PtyWorkspaceSlot;
-        result: "closed" | "pending" | "cancelled" | "terminating";
-      }> = [];
+      let pendingCount = 0;
+      let failedCount = 0;
       try {
         await closeWorkspaceContentBatch({
           coordinator: contentCoordinatorRef.current,
@@ -1450,18 +1413,14 @@ export function PtyWorkspaceProvider({
           confirmImpacts: confirmCloseImpacts,
           onApproved,
           dispose: (context) => {
-            if (context.content.kind === "pty") {
-              return tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose?.(
-                context as WorkspaceContentDisposeContext<"pty">,
-              );
-            }
             if (context.content.kind === "unknown") return;
-            return tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose?.(
-              context as WorkspaceContentDisposeContext<"file">,
-            );
+            return tryGetWorkspaceContentAdapter(
+              context.content.kind,
+            )?.lifecycle?.dispose?.(context as never);
           },
           execute: async () => {
             const closedContents: WorkspacePaneContentRef[] = [];
+            const pendingContents: WorkspacePaneContentRef[] = [];
             const unsupportedContents = closeTargets.flatMap((target) =>
               target.content.kind === "unknown" ? [target.content] : [],
             );
@@ -1479,63 +1438,21 @@ export function PtyWorkspaceProvider({
               );
               closedContents.push(...unsupportedContents);
             }
-            const fileIds = closeTargets.flatMap((target) =>
-              target.content.kind === "file" ? [target.content.documentId] : [],
-            );
-            if (fileIds.length > 0) {
-              const { closedDocumentIds } = fileDomain.closeDocuments(fileIds);
-              closedContents.push(
-                ...closedDocumentIds.map((documentId) => ({
-                  kind: "file" as const,
-                  documentId,
-                })),
+            for (const kind of workspaceDomainKinds(domainTable)) {
+              const refs = closeTargets.flatMap((target) =>
+                target.content.kind === kind ? [target.content] : [],
               );
+              if (refs.length === 0) continue;
+              const result = await domainTable[kind].close(
+                refs as never,
+                origin,
+              );
+              closedContents.push(...result.closed);
+              pendingContents.push(...result.pending);
+              failedCount += result.failed.length;
             }
-
-            const ptyTargets = closeTargets.flatMap((target) =>
-              target.content.kind === "pty"
-                ? [{ slot: target.slot!, content: target.content }]
-                : [],
-            );
-            const results = await Promise.all(
-              ptyTargets.map(async ({ slot, content }) => {
-                if (slot.restoredState) {
-                  return { slot, content, result: "closed" as const };
-                }
-                const terminal = terminalRefs.current.get(slot.instanceId);
-                if (!terminal) {
-                  return { slot, content, result: "cancelled" as const };
-                }
-                try {
-                  return {
-                    slot,
-                    content,
-                    result: await terminal.closeSession(false),
-                  };
-                } catch {
-                  return { slot, content, result: "cancelled" as const };
-                }
-              }),
-            );
-            outcomes.push(
-              ...results.map(({ slot, result }) => ({ slot, result })),
-            );
-            for (const result of results) {
-              if (result.result === "closed") {
-                removeSlot(result.slot.instanceId, {
-                  disposeOwnerEnded: false,
-                });
-                closedContents.push(result.content);
-              }
-            }
-            return {
-              closed: closedContents,
-              pending: results.flatMap(({ content, result }) =>
-                result === "pending" || result === "terminating"
-                  ? [content]
-                  : [],
-              ),
-            };
+            pendingCount += pendingContents.length;
+            return { closed: closedContents, pending: pendingContents };
           },
         });
       } catch (reason) {
@@ -1545,13 +1462,6 @@ export function PtyWorkspaceProvider({
         );
       }
 
-      const pendingCount = outcomes.filter(
-        (outcome) =>
-          outcome.result === "pending" || outcome.result === "terminating",
-      ).length;
-      const failedCount = outcomes.filter(
-        (outcome) => outcome.result === "cancelled",
-      ).length;
       if (pendingCount > 0) {
         toast.info(tRef.current("pty.closePending", { count: pendingCount }));
       }
@@ -1561,7 +1471,7 @@ export function PtyWorkspaceProvider({
         );
       }
     },
-    [commitTree, confirmCloseImpacts, directories, removeSlot],
+    [commitTree, confirmCloseImpacts, domainTable, store],
   );
 
   const launchSession = useCallback(

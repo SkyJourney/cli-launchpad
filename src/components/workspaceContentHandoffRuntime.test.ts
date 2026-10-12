@@ -32,7 +32,7 @@ describe("workspace content handoff runtime", () => {
     const rollback = vi.fn(async () => undefined);
     unregister = registerWorkspaceContentAdapter({
       id: "test.handoff-runtime",
-      apiVersion: 2,
+      apiVersion: 3,
       kind: "pty",
       render: () => null,
       presentation: () => ({

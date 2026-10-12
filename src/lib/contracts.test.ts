@@ -51,7 +51,7 @@ describe("shared contracts", () => {
   });
 
   it("matches the TypeScript workspace content kinds", () => {
-    expect(contentKinds.adapterApiVersion).toBe(2);
+    expect(contentKinds.adapterApiVersion).toBe(3);
     expect(
       Object.keys(contentKindTypeCoverage).filter((kind) => kind !== "unknown"),
     ).toEqual(contentKinds.kinds);
