@@ -16,6 +16,7 @@
     "core:window:allow-start-resize-dragging",
     "core:window:allow-toggle-maximize",
     "allow-open-granted-file",
-    "allow-save-granted-text-file"
+    "allow-save-granted-text-file",
+    "allow-report-window-sync-failure"
   ]
 }

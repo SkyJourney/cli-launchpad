@@ -5,6 +5,7 @@
   "get_cache_stats",
   "clear_cache",
   "export_diagnostics_to_path",
+  "report_window_sync_failure",
   "list_launch_history",
   "clear_launch_history",
   "get_launch_history_limit",

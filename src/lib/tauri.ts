@@ -759,6 +759,13 @@ export function reportPtyFrontendStage(
   return invoke<void>("report_pty_frontend_stage", { sessionId, stage });
 }
 
+export function reportWindowSyncFailureToBackend(
+  code: string,
+  message: string,
+) {
+  return invoke<void>("report_window_sync_failure", { code, message });
+}
+
 export function terminatePtySession(sessionId: string) {
   return invoke<void>("terminate_pty_session", { sessionId });
 }

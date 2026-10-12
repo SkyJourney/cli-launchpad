@@ -54,6 +54,7 @@
     "allow-resize-pty-session",
     "allow-acknowledge-pty-output",
     "allow-report-pty-frontend-stage",
+    "allow-report-window-sync-failure",
     "allow-terminate-pty-session",
     "allow-confirm-app-exit",
     "allow-list-directories",

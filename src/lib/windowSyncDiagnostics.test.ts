@@ -3,8 +3,12 @@ import themeSyncSource from "../hooks/useThemeSync.ts?raw";
 import workspaceSource from "../components/PtyWorkspace.tsx?raw";
 import { reportWindowSyncFailure } from "./windowSyncDiagnostics";
 
-const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
+const { toastError, reportWindowSyncFailureToBackend } = vi.hoisted(() => ({
+  toastError: vi.fn(),
+  reportWindowSyncFailureToBackend: vi.fn(() => Promise.resolve()),
+}));
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
+vi.mock("./tauri", () => ({ reportWindowSyncFailureToBackend }));
 
 describe("reportWindowSyncFailure", () => {
   afterEach(() => {
@@ -72,5 +76,69 @@ describe("window sync failure reporting contract", () => {
     expect(workspaceSource).not.toContain(
       'console.warn("[window.set_focus_failed]',
     );
+  });
+});
+
+describe("reportWindowSyncFailure backend channel", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    toastError.mockReset();
+    reportWindowSyncFailureToBackend.mockClear();
+  });
+
+  it("sends every failure to the application log, including production builds", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("DEV", false);
+
+    reportWindowSyncFailure(
+      "window.theme_sync_failed",
+      new Error("boom"),
+      "描述",
+    );
+
+    expect(reportWindowSyncFailureToBackend).toHaveBeenCalledWith(
+      "window.theme_sync_failed",
+      "描述: boom",
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("still toasts in development builds and also sends to the log", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    reportWindowSyncFailure(
+      "window.theme_sync_failed",
+      new Error("boom"),
+      "描述",
+    );
+
+    expect(toastError).toHaveBeenCalledWith("window.theme_sync_failed: boom");
+    expect(reportWindowSyncFailureToBackend).toHaveBeenCalledWith(
+      "window.theme_sync_failed",
+      "描述: boom",
+    );
+  });
+
+  it("does not throw into the caller when the backend call fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    reportWindowSyncFailureToBackend.mockImplementationOnce(() => {
+      throw new Error("ipc down");
+    });
+
+    expect(() => reportWindowSyncFailure("window.y", "plain")).not.toThrow();
+    await Promise.resolve();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not surface an asynchronous backend rejection either", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    reportWindowSyncFailureToBackend.mockRejectedValueOnce(
+      new Error("ipc down"),
+    );
+
+    expect(() => reportWindowSyncFailure("window.z", "plain")).not.toThrow();
+    await Promise.resolve();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

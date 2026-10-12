@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 491,
-    "Linux": 496,
-    "macOS": 494
+    "Windows": 494,
+    "Linux": 499,
+    "macOS": 497
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -210,7 +210,10 @@
       "services::workspace_layout_service::tests::current_layout_with_an_invalid_file_path_degrades_the_item",
       "services::workspace_layout_service::tests::current_layout_with_a_structurally_invalid_file_document_still_needs_reset",
       "models::workspace_layout::tests::degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest",
-      "services::workspace_layout_service::tests::applying_presets_saved_by_every_supported_layout_version"
+      "services::workspace_layout_service::tests::applying_presets_saved_by_every_supported_layout_version",
+      "services::diagnostics_service::tests::window_sync_codes_keep_only_dotted_lower_case_identifiers",
+      "services::diagnostics_service::tests::window_sync_free_text_drops_line_breaks_and_is_bounded",
+      "services::diagnostics_service::tests::window_sync_failure_line_is_one_line_tagged_with_the_window_label"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

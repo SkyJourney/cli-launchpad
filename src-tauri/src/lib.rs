@@ -270,6 +270,7 @@ pub fn run() {
             commands::cache::get_cache_stats,
             commands::cache::clear_cache,
             commands::diagnostics::export_diagnostics_to_path,
+            commands::diagnostics::report_window_sync_failure,
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
             commands::launch_history::get_launch_history_limit,

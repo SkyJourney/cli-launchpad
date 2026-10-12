@@ -21,3 +21,11 @@ pub async fn export_diagnostics_to_path(
     .await
     .map_err(|error| AppError::msg(format!("诊断导出任务异常：{error}")))?
 }
+
+/// Records a window synchronisation failure reported by the renderer. The window
+/// label comes from the calling window, not from the payload. The command is
+/// synchronous on purpose: it only formats text and writes to the logger.
+#[tauri::command]
+pub fn report_window_sync_failure(window: tauri::WebviewWindow, code: String, message: String) {
+    diagnostics_service::log_window_sync_failure(window.label(), &code, &message);
+}

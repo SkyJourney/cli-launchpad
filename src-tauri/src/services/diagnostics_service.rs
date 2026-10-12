@@ -94,6 +94,68 @@ fn now_ms() -> Result<i64> {
     )?)
 }
 
+const MAX_WINDOW_SYNC_LABEL_CHARS: usize = 128;
+const MAX_WINDOW_SYNC_CODE_CHARS: usize = 64;
+const MAX_WINDOW_SYNC_MESSAGE_CHARS: usize = 512;
+
+/// Records a window synchronisation failure reported by a renderer. Every field is
+/// cleaned first, so text supplied by the renderer cannot forge extra log lines.
+pub fn log_window_sync_failure(window_label: &str, code: &str, message: &str) {
+    log::warn!("{}", window_sync_failure_line(window_label, code, message));
+}
+
+fn window_sync_failure_line(window_label: &str, code: &str, message: &str) -> String {
+    format!(
+        "window sync failure window={} code={} message={}",
+        clean_text(window_label, MAX_WINDOW_SYNC_LABEL_CHARS),
+        clean_code(code),
+        clean_text(message, MAX_WINDOW_SYNC_MESSAGE_CHARS)
+    )
+}
+
+/// Codes are dotted lower-case identifiers; any other character becomes `_`.
+fn clean_code(code: &str) -> String {
+    let cleaned: String = code
+        .chars()
+        .take(MAX_WINDOW_SYNC_CODE_CHARS)
+        .map(|character| match character {
+            'a'..='z' | '0'..='9' | '_' | '.' => character,
+            _ => '_',
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Free text keeps its characters but loses control characters (including line
+/// breaks), and is cut to `max_chars` characters.
+fn clean_text(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .take(max_chars)
+        .map(|character| {
+            if character.is_control() || is_line_or_bidi_control(character) {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Unicode line separators and bidirectional controls can make a viewer show
+/// text on another line or in another order, so they are cleaned like controls.
+fn is_line_or_bidi_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +193,56 @@ mod tests {
         let text = fs::read_to_string(output).unwrap();
         assert!(text.contains("schemaVersion"));
         assert!(text.contains("started"));
+    }
+
+    #[test]
+    fn window_sync_codes_keep_only_dotted_lower_case_identifiers() {
+        assert_eq!(
+            clean_code("window.theme_sync_failed"),
+            "window.theme_sync_failed"
+        );
+        let cleaned = clean_code("Window Theme\n[INFO] forged");
+        assert!(cleaned.chars().all(|character| matches!(
+            character,
+            'a'..='z' | '0'..='9' | '_' | '.'
+        )));
+        assert_eq!(clean_code(""), "unknown");
+        assert_eq!(
+            clean_code(&"a".repeat(200)).chars().count(),
+            MAX_WINDOW_SYNC_CODE_CHARS
+        );
+    }
+
+    #[test]
+    fn window_sync_free_text_drops_line_breaks_and_is_bounded() {
+        assert_eq!(
+            clean_text(
+                "first\nforged [INFO] line\r\n",
+                MAX_WINDOW_SYNC_MESSAGE_CHARS
+            ),
+            "first forged [INFO] line"
+        );
+        assert_eq!(
+            clean_text("a\u{2028}b\u{202E}c", MAX_WINDOW_SYNC_MESSAGE_CHARS),
+            "a b c"
+        );
+        let long = "字".repeat(600);
+        assert_eq!(
+            clean_text(&long, MAX_WINDOW_SYNC_MESSAGE_CHARS)
+                .chars()
+                .count(),
+            MAX_WINDOW_SYNC_MESSAGE_CHARS
+        );
+    }
+
+    #[test]
+    fn window_sync_failure_line_is_one_line_tagged_with_the_window_label() {
+        let line =
+            window_sync_failure_line("main", "window.set_focus_failed", "无法聚焦\n[WARN] forged");
+        assert!(!line.contains('\n'), "{line}");
+        assert_eq!(
+            line,
+            "window sync failure window=main code=window.set_focus_failed message=无法聚焦 [WARN] forged"
+        );
     }
 }
