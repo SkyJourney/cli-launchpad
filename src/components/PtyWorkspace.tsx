@@ -121,8 +121,6 @@ import {
   saveWorkspaceLayout,
   grantContentWindowFile,
   revokeContentWindowFile,
-  openProjectFile as openProjectFileContent,
-  saveProjectTextFile,
   type Directory,
   type WorkspaceFileDocument,
   type PtySession,
@@ -151,23 +149,10 @@ import {
   ownerWindowOf,
 } from "../lib/workspaceOwnershipProjection";
 import {
-  createWorkspaceFileBuffer,
-  completeWorkspaceFileSave,
-  editWorkspaceFileBuffer,
-  beginWorkspaceFileSave,
-  failWorkspaceFileSave,
-  markWorkspaceFileIdentityChanged,
   isWorkspaceFileBufferNewer,
-  resolveWorkspaceFileSaveCommitDisposition,
   workspaceFileDocumentIdentityMatches,
-  markWorkspaceFileSaveConflict,
-  WorkspaceFileOperationFlights,
 } from "../lib/workspaceFileBuffer";
-import { closeWorkspaceFileState } from "../lib/workspaceFileClose";
-import {
-  formatAppError,
-  isProjectIdentityChangedError,
-} from "../lib/appErrors";
+import { formatAppError } from "../lib/appErrors";
 import {
   collectAppExitImpacts,
   type AppExitImpacts,
@@ -182,6 +167,7 @@ import {
   type WorkspaceContentHandoffPayloadByKind,
 } from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
+import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
 import {
   WorkspaceHostStore,
   WorkspaceHostStoreContext,
@@ -486,9 +472,6 @@ export function PtyWorkspaceProvider({
   const ratioSaveTimerRef = useRef<number | null>(null);
   const splitResizeInProgressRef = useRef(false);
   const persistLatestRef = useRef<(() => void) | null>(null);
-  const fileOperationGenerationsRef = useRef(new Map<string, number>());
-  const openingFileRequestsRef = useRef(new Map<string, Promise<void>>());
-  const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
   const detachedByInstanceRef = useRef(new Map<string, WebviewWindow>());
   const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
   const detachedFilesRef = useRef(new Map<string, WebviewWindow>());
@@ -496,6 +479,22 @@ export function PtyWorkspaceProvider({
     coordinator ?? new WorkspaceContentCoordinator(),
   );
   const ptyReturnWaitAbortRef = useRef<AbortController | null>(null);
+  // 文件领域：文件文档与缓冲的加载、编辑、保存、关闭经由领域对象完成（惰性初始化，闭包按调用时读取 ref）。
+  const [fileDomain] = useState(() =>
+    createFileDocumentsDomain(store, {
+      isRestoreInProgress: () => backupRestoreInProgressRef.current,
+      getHydrationEpoch: () => hydrationRequestRef.current,
+      isHandoffActive: (documentId) =>
+        isHandoffActive(
+          contentCoordinatorRef.current.get({ kind: "file", documentId }),
+        ),
+      getTranslate: () => tRef.current,
+      notify: {
+        error: (message, options) => toast.error(message, options),
+        warning: (message) => toast.warning(message),
+      },
+    }),
+  );
   useEffect(
     () => () => {
       ptyReturnWaitAbortRef.current?.abort();
@@ -565,15 +564,6 @@ export function PtyWorkspaceProvider({
   const upsertPtySession = useAppStore((state) => state.upsertPtySession);
   const removePtySession = useAppStore((state) => state.removePtySession);
   const activeView = useAppStore((state) => state.view);
-
-  const getFileOperationGeneration = (documentId: string) =>
-    fileOperationGenerationsRef.current.get(documentId) ?? 0;
-  const invalidateFileOperationGeneration = (documentId: string) => {
-    fileOperationGenerationsRef.current.set(
-      documentId,
-      getFileOperationGeneration(documentId) + 1,
-    );
-  };
 
   const createSaveQueue = useCallback(
     (revision: number) =>
@@ -678,10 +668,14 @@ export function PtyWorkspaceProvider({
         );
         const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
 
-        new Set([
-          ...store.getLive().documents.map((document) => document.id),
-          ...(restoredSnapshot.documents ?? []).map((document) => document.id),
-        ]).forEach(invalidateFileOperationGeneration);
+        fileDomain.invalidateLoads(
+          new Set([
+            ...store.getLive().documents.map((document) => document.id),
+            ...(restoredSnapshot.documents ?? []).map(
+              (document) => document.id,
+            ),
+          ]),
+        );
 
         // 释放旧文档必须读取提交前的文档集合，因此放在发布新状态之前。
         releaseFileDocuments(
@@ -890,10 +884,12 @@ export function PtyWorkspaceProvider({
           document,
         ]),
       );
-      new Set([
-        ...currentDocuments.map((document) => document.id),
-        ...restoredDocuments.map((document) => document.id),
-      ]).forEach(invalidateFileOperationGeneration);
+      fileDomain.invalidateLoads(
+        new Set([
+          ...currentDocuments.map((document) => document.id),
+          ...restoredDocuments.map((document) => document.id),
+        ]),
+      );
       const documentIdMap = new Map<string, string>();
       const normalizedDocuments = restoredDocuments.map((document) => {
         const currentDocument = currentDocumentByIdentity.get(
@@ -998,134 +994,61 @@ export function PtyWorkspaceProvider({
       directoryId: number,
       directoryPath: string,
       relativePath: string,
-    ): Promise<void> => {
-      if (backupRestoreInProgressRef.current) return Promise.resolve();
-      const identity = `${directoryId}:${relativePath}`;
-      const pending = openingFileRequestsRef.current.get(identity);
-      if (pending) return pending;
-      const operation = (async () => {
-        const hydrationAtStart = hydrationRequestRef.current;
-        let document = store
-          .getLive()
-          .documents.find(
-            (entry) =>
-              entry.directoryId === directoryId &&
-              entry.relativePath === relativePath,
-          );
-        if (!document) {
-          const loaded = createWorkspaceFileBuffer(
-            await openProjectFileContent(
-              directoryId,
-              directoryPath,
-              relativePath,
-            ),
-          );
-          if (hydrationAtStart !== hydrationRequestRef.current) {
+    ): Promise<void> =>
+      fileDomain.open(
+        { directoryId, directoryPath, relativePath },
+        async (document) => {
+          const detachedWindow =
+            detachedFilesRef.current.get(workspaceFileKey(document.id)) ??
+            pendingDetachedFilesRef.current.get(workspaceFileKey(document.id))
+              ?.window;
+          if (detachedWindow) {
+            await detachedWindow
+              .setFocus()
+              .catch((error: unknown) =>
+                reportWindowSyncFailure(
+                  "window.set_focus_failed",
+                  error,
+                  "无法聚焦独立工作区窗口",
+                ),
+              );
             return;
           }
-          document = {
-            id: crypto.randomUUID(),
-            directoryId,
-            directoryPath,
-            relativePath,
-          };
-          const nextDocuments = [...store.getLive().documents, document];
-          const nextBuffers = {
-            ...store.getLive().buffers,
-            [document.id]: loaded,
-          };
-          patchHost(
-            { documents: nextDocuments, buffers: nextBuffers },
-            "openProjectFile:add-document",
-          );
-        } else if (!store.getLive().buffers[document.id]) {
-          const generationAtStart = getFileOperationGeneration(document.id);
-          const loaded = createWorkspaceFileBuffer(
-            await openProjectFileContent(
-              directoryId,
-              directoryPath,
-              relativePath,
-            ),
-          );
-          const currentDocument = store
-            .getLive()
-            .documents.find((entry) => entry.id === document?.id);
-          if (
-            hydrationAtStart !== hydrationRequestRef.current ||
-            generationAtStart !== getFileOperationGeneration(document.id) ||
-            !currentDocument ||
-            currentDocument.directoryId !== directoryId ||
-            currentDocument.relativePath !== relativePath ||
-            store.getLive().buffers[document.id]
-          ) {
-            return;
-          }
-          const nextBuffers = {
-            ...store.getLive().buffers,
-            [document.id]: loaded,
-          };
-          patchHost({ buffers: nextBuffers }, "openProjectFile:load-buffer");
-        }
 
-        const detachedWindow =
-          detachedFilesRef.current.get(workspaceFileKey(document.id)) ??
-          pendingDetachedFilesRef.current.get(workspaceFileKey(document.id))
-            ?.window;
-        if (detachedWindow) {
-          await detachedWindow
-            .setFocus()
-            .catch((error: unknown) =>
-              reportWindowSyncFailure(
-                "window.set_focus_failed",
-                error,
-                "无法聚焦独立工作区窗口",
-              ),
-            );
-          return;
-        }
-
-        const ownerPane = listWorkspacePanes(store.getLive().tree).find(
-          (pane) =>
-            hasWorkspaceContent(pane, {
-              kind: "file",
-              documentId: document.id,
-            }),
-        );
-        const pane =
-          ownerPane ??
-          listWorkspacePanes(store.getLive().tree).find(
-            (entry) => entry.id === store.getLive().focusedPaneId,
-          ) ??
-          listWorkspacePanes(store.getLive().tree)[0];
-        patchHost({ focusedPaneId: pane.id }, "openProjectFile:focus");
-        contentCoordinatorRef.current.ensureAttached(
-          { kind: "file", documentId: document.id },
-          { kind: "pane", windowLabel: "main", paneId: pane.id },
-        );
-        commitTree(
-          hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
-            ? reduceWorkspaceTree(store.getLive().tree, {
-                type: "activate",
-                ref: { kind: "file", documentId: document.id },
-                paneId: pane.id,
-              })
-            : addWorkspaceFileToPane(
-                store.getLive().tree,
-                pane.id,
-                document.id,
-              ),
-        );
-      })();
-      openingFileRequestsRef.current.set(identity, operation);
-      const clearPending = () => {
-        if (openingFileRequestsRef.current.get(identity) === operation) {
-          openingFileRequestsRef.current.delete(identity);
-        }
-      };
-      void operation.then(clearPending, clearPending);
-      return operation;
-    },
-    [commitTree],
+          const ownerPane = listWorkspacePanes(store.getLive().tree).find(
+            (pane) =>
+              hasWorkspaceContent(pane, {
+                kind: "file",
+                documentId: document.id,
+              }),
+          );
+          const pane =
+            ownerPane ??
+            listWorkspacePanes(store.getLive().tree).find(
+              (entry) => entry.id === store.getLive().focusedPaneId,
+            ) ??
+            listWorkspacePanes(store.getLive().tree)[0];
+          patchHost({ focusedPaneId: pane.id }, "openProjectFile:focus");
+          contentCoordinatorRef.current.ensureAttached(
+            { kind: "file", documentId: document.id },
+            { kind: "pane", windowLabel: "main", paneId: pane.id },
+          );
+          commitTree(
+            hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
+              ? reduceWorkspaceTree(store.getLive().tree, {
+                  type: "activate",
+                  ref: { kind: "file", documentId: document.id },
+                  paneId: pane.id,
+                })
+              : addWorkspaceFileToPane(
+                  store.getLive().tree,
+                  pane.id,
+                  document.id,
+                ),
+          );
+        },
+      ),
+    [commitTree, fileDomain, patchHost, store],
   );
 
   const activateFile = useCallback(
@@ -1161,232 +1084,9 @@ export function PtyWorkspaceProvider({
     [commitTree, setFocusedPane],
   );
 
-  const loadFile = useCallback(
-    (documentId: string) =>
-      fileOperationFlightsRef.current.load(documentId, async () => {
-        if (store.getLive().buffers[documentId]) return;
-        const document = store
-          .getLive()
-          .documents.find((entry) => entry.id === documentId);
-        if (!document) return;
-        const generationAtStart = getFileOperationGeneration(documentId);
-        const loaded = createWorkspaceFileBuffer(
-          await openProjectFileContent(
-            document.directoryId,
-            document.directoryPath,
-            document.relativePath,
-          ),
-        );
-        const currentDocument = store
-          .getLive()
-          .documents.find((entry) => entry.id === documentId);
-        if (
-          !currentDocument ||
-          currentDocument.directoryId !== document.directoryId ||
-          currentDocument.relativePath !== document.relativePath ||
-          generationAtStart !== getFileOperationGeneration(documentId) ||
-          store.getLive().buffers[documentId]
-        ) {
-          return;
-        }
-        const next = { ...store.getLive().buffers, [documentId]: loaded };
-        patchHost({ buffers: next }, "loadFile:buffers");
-      }),
-    [],
-  );
-
-  const editFile = useCallback((documentId: string, content: string) => {
-    if (
-      backupRestoreInProgressRef.current ||
-      isHandoffActive(
-        contentCoordinatorRef.current.get({ kind: "file", documentId }),
-      )
-    ) {
-      return;
-    }
-    const buffer = store.getLive().buffers[documentId];
-    if (!buffer) return;
-    const next = {
-      ...store.getLive().buffers,
-      [documentId]: editWorkspaceFileBuffer(buffer, content),
-    };
-    patchHost({ buffers: next }, "editFile:buffers");
-  }, []);
-
-  const reloadFile = useCallback(
-    (documentId: string) =>
-      fileOperationFlightsRef.current.load(documentId, async () => {
-        await fileOperationFlightsRef.current.waitForSave(documentId);
-        const document = store
-          .getLive()
-          .documents.find((entry) => entry.id === documentId);
-        const startingBuffer = store.getLive().buffers[documentId];
-        if (!document || !startingBuffer) return;
-        const generationAtStart = getFileOperationGeneration(documentId);
-        try {
-          const loaded = createWorkspaceFileBuffer(
-            await openProjectFileContent(
-              document.directoryId,
-              document.directoryPath,
-              document.relativePath,
-            ),
-            startingBuffer.epoch + 1,
-          );
-          const currentDocument = store
-            .getLive()
-            .documents.find((entry) => entry.id === documentId);
-          const currentBuffer = store.getLive().buffers[documentId];
-          if (
-            !currentDocument ||
-            currentDocument.directoryId !== document.directoryId ||
-            currentDocument.relativePath !== document.relativePath ||
-            !currentBuffer ||
-            currentBuffer.epoch !== startingBuffer.epoch ||
-            currentBuffer.version !== startingBuffer.version ||
-            generationAtStart !== getFileOperationGeneration(documentId)
-          ) {
-            return;
-          }
-          const next = { ...store.getLive().buffers, [documentId]: loaded };
-          patchHost({ buffers: next }, "reloadFile:buffers");
-        } catch (reason) {
-          if (isProjectIdentityChangedError(reason)) {
-            const current = store.getLive().buffers[documentId];
-            if (current) {
-              const next = {
-                ...store.getLive().buffers,
-                [documentId]: markWorkspaceFileIdentityChanged(current),
-              };
-              patchHost({ buffers: next }, "reloadFile:buffers");
-            }
-            toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
-            return;
-          }
-          toast.error(formatAppError(reason, tRef.current));
-        }
-      }),
-    [],
-  );
-
-  const saveFile = useCallback(
-    (documentId: string) =>
-      fileOperationFlightsRef.current.save(documentId, async () => {
-        if (
-          backupRestoreInProgressRef.current ||
-          isHandoffActive(
-            contentCoordinatorRef.current.get({ kind: "file", documentId }),
-          )
-        ) {
-          return;
-        }
-        const document = store
-          .getLive()
-          .documents.find((entry) => entry.id === documentId);
-        const buffer = store.getLive().buffers[documentId];
-        if (
-          !document ||
-          !buffer ||
-          buffer.kind !== "text" ||
-          buffer.identityChanged === true ||
-          buffer.content === buffer.savedContent ||
-          buffer.saving
-        ) {
-          return;
-        }
-        const submitted = beginWorkspaceFileSave(buffer);
-        patchHost(
-          {
-            buffers: { ...store.getLive().buffers, [documentId]: submitted },
-          },
-          "saveFile:begin",
-        );
-        const saveCommitDisposition = () => {
-          const currentDocument = store
-            .getLive()
-            .documents.find((entry) => entry.id === documentId);
-          const currentBuffer = store.getLive().buffers[documentId];
-          return resolveWorkspaceFileSaveCommitDisposition(
-            currentBuffer,
-            submitted,
-            Boolean(
-              currentDocument &&
-              currentDocument.directoryId === document.directoryId &&
-              currentDocument.relativePath === document.relativePath,
-            ),
-          );
-        };
-        try {
-          const result = await saveProjectTextFile(
-            document.directoryId,
-            document.directoryPath,
-            document.relativePath,
-            submitted.content,
-            submitted.revision,
-          );
-          const disposition = saveCommitDisposition();
-          if (disposition === "discard-result") return;
-          if (disposition === "restore-saving-state") {
-            const current = store.getLive().buffers[documentId];
-            if (!current) return;
-            const next = {
-              ...store.getLive().buffers,
-              [documentId]: failWorkspaceFileSave(current, submitted),
-            };
-            patchHost({ buffers: next }, "saveFile:buffers");
-            return;
-          }
-          if (result.kind === "conflict") {
-            const current = store.getLive().buffers[documentId];
-            if (!current) return;
-            const next = {
-              ...store.getLive().buffers,
-              [documentId]: markWorkspaceFileSaveConflict(current, submitted),
-            };
-            patchHost({ buffers: next }, "saveFile:buffers");
-            toast.error(tRef.current("workspaceFiles.saveConflict"), {
-              action: {
-                label: tRef.current("workspaceFiles.reload"),
-                onClick: () => void reloadFile(documentId),
-              },
-            });
-            return;
-          }
-          const current = store.getLive().buffers[documentId];
-          if (!current) return;
-          const next = {
-            ...store.getLive().buffers,
-            [documentId]: completeWorkspaceFileSave(current, submitted, result),
-          };
-          patchHost({ buffers: next }, "saveFile:buffers");
-          if (result.warning === "permissionsNotRestored") {
-            toast.warning(
-              tRef.current("workspaceFiles.permissionsNotRestored"),
-            );
-          }
-        } catch (reason) {
-          if (saveCommitDisposition() === "discard-result") return;
-          const current = store.getLive().buffers[documentId];
-          if (!current) return;
-          if (isProjectIdentityChangedError(reason)) {
-            const next = {
-              ...store.getLive().buffers,
-              [documentId]: markWorkspaceFileIdentityChanged(current),
-            };
-            patchHost({ buffers: next }, "saveFile:buffers");
-            toast.error(tRef.current("workspaceFiles.projectIdentityChanged"));
-            return;
-          }
-          const next = {
-            ...store.getLive().buffers,
-            [documentId]: failWorkspaceFileSave(current, submitted),
-          };
-          patchHost({ buffers: next }, "saveFile:buffers");
-          toast.error(formatAppError(reason, tRef.current));
-        }
-      }),
-    [reloadFile],
-  );
-
+  const loadFile = fileDomain.load;
+  const editFile = fileDomain.edit;
+  const saveFile = fileDomain.save;
   const detachFile = useCallback(
     async (documentId: string) => {
       const content = { kind: "file", documentId } as const;
@@ -1415,7 +1115,7 @@ export function PtyWorkspaceProvider({
         lifecycleStarted = true;
         grantedWindowLabel = windowLabel;
         if (!store.getLive().buffers[documentId]) await loadFile(documentId);
-        await fileOperationFlightsRef.current.waitForSave(documentId);
+        await fileDomain.waitForSave(documentId);
         const fileBuffer = store.getLive().buffers[documentId];
         const fileDocument = store
           .getLive()
@@ -1757,22 +1457,9 @@ export function PtyWorkspaceProvider({
               target.content.kind === "file" ? [target.content.documentId] : [],
             );
             if (fileIds.length > 0) {
-              const next = closeWorkspaceFileState(
-                {
-                  tree: store.getLive().tree,
-                  documents: store.getLive().documents,
-                  buffers: store.getLive().buffers,
-                },
-                fileIds,
-              );
-              commitTree(next.tree);
-              patchHost(
-                { documents: next.documents, buffers: next.buffers },
-                "closeContents",
-              );
-              next.closedDocumentIds.forEach(invalidateFileOperationGeneration);
+              const { closedDocumentIds } = fileDomain.closeDocuments(fileIds);
               closedContents.push(
-                ...next.closedDocumentIds.map((documentId) => ({
+                ...closedDocumentIds.map((documentId) => ({
                   kind: "file" as const,
                   documentId,
                 })),
@@ -3291,11 +2978,10 @@ export function PtyWorkspaceProvider({
                   ) {
                     return;
                   }
-                  const next = {
-                    ...store.getLive().buffers,
-                    [content.documentId]: event.payload.fileBuffer,
-                  };
-                  patchHost({ buffers: next }, "handlePtyReturn:buffers");
+                  fileDomain.mergeBuffers(
+                    { [content.documentId]: event.payload.fileBuffer },
+                    "handlePtyReturn:buffers",
+                  );
                 },
               ),
           },
@@ -3554,12 +3240,8 @@ export function PtyWorkspaceProvider({
                           buffer: returnedBuffer,
                         }),
                         attach: async (handoffPayload) => {
-                          const nextBuffers = {
-                            ...store.getLive().buffers,
-                            [document.id]: handoffPayload.buffer,
-                          };
-                          patchHost(
-                            { buffers: nextBuffers },
+                          fileDomain.mergeBuffers(
+                            { [document.id]: handoffPayload.buffer },
                             "handlePtyReturn:buffers",
                           );
                         },
@@ -3890,7 +3572,7 @@ export function PtyWorkspaceProvider({
       }
     }
     if (nextBuffers !== store.getLive().buffers) {
-      patchHost({ buffers: nextBuffers }, "collectExitImpacts:buffers");
+      fileDomain.mergeBuffers(nextBuffers, "collectExitImpacts:buffers");
     }
 
     return collectAppExitImpacts({
@@ -3904,13 +3586,7 @@ export function PtyWorkspaceProvider({
   const getBackupRestoreBlockers = useCallback(async () => {
     backupRestoreInProgressRef.current = true;
     try {
-      await Promise.all(
-        store
-          .getLive()
-          .documents.map((document) =>
-            fileOperationFlightsRef.current.waitForSave(document.id),
-          ),
-      );
+      await fileDomain.waitForAllSaves();
       await saveQueueRef.current?.flush();
 
       const sessions = Object.values(useAppStore.getState().ptySessionsById);
@@ -3975,11 +3651,9 @@ export function PtyWorkspaceProvider({
     releaseFileDocuments(
       store.getLive().documents.map((document) => document.id),
     );
-    store
-      .getLive()
-      .documents.forEach((document) =>
-        invalidateFileOperationGeneration(document.id),
-      );
+    fileDomain.invalidateLoads(
+      store.getLive().documents.map((document) => document.id),
+    );
     saveQueueRef.current = null;
     detachedByInstanceRef.current.clear();
     detachedFilesRef.current.clear();
