@@ -54,7 +54,6 @@ import {
   MIN_WORKSPACE_PANE_WIDTH,
   minimumWorkspacePaneExtent,
   isUsableWorkspaceSplitSizes,
-  nextWorkspaceSessionSequence,
   removeEmptyWorkspacePane,
   remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
@@ -168,11 +167,14 @@ import {
 } from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
 import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
+import { createPtySlotsDomain } from "../workspace/domains/ptySlotsDomain";
+import { resetHostRuntime } from "../workspace/host/resetHostRuntime";
 import {
   WorkspaceHostStore,
   WorkspaceHostStoreContext,
   createInitialHostSnapshot,
   type HostSnapshot,
+  useWorkspaceSelector,
 } from "../workspace/host/workspaceHostStore";
 import { AnchoredPopover } from "./AnchoredPopover";
 import {
@@ -465,7 +467,8 @@ export function PtyWorkspaceProvider({
   const [portalTargets, setPortalTargets] = useState<
     Record<string, HTMLDivElement>
   >({});
-  const terminalRefs = useRef(new Map<string, PtyTerminalHandle>());
+  const [ptyDomain] = useState(() => createPtySlotsDomain());
+  const terminalRefs = ptyDomain.terminalRefs;
   const saveQueueRef = useRef<WorkspaceLayoutSaveQueue | null>(null);
   const backupRestoreInProgressRef = useRef(false);
   const hydrationRequestRef = useRef(0);
@@ -561,8 +564,6 @@ export function PtyWorkspaceProvider({
   const pendingDetachedFilesRef = useRef(
     new Map<string, PendingWorkspaceFileWindow>(),
   );
-  const upsertPtySession = useAppStore((state) => state.upsertPtySession);
-  const removePtySession = useAppStore((state) => state.removePtySession);
   const activeView = useAppStore((state) => state.view);
 
   const createSaveQueue = useCallback(
@@ -632,6 +633,39 @@ export function PtyWorkspaceProvider({
     }
   }, []);
 
+  // 结算挂起的 detach/return 承诺并销毁尚未附着的窗口（hydrate 与 rehydrate 共用）。
+  const rollbackPendingWindows = useCallback(() => {
+    clearPendingWorkspaceContentWindows(
+      pendingDetachedRef.current,
+      (pending) => {
+        contentCoordinatorRef.current.failHandoff(
+          { kind: "pty", slotId: pending.instanceId },
+          "detachCancelled",
+          pending.token,
+        );
+        pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
+        void pending.window.destroy().catch(() => undefined);
+      },
+    );
+    clearPendingWorkspaceContentWindows(
+      pendingDetachedFilesRef.current,
+      (pending) => {
+        contentCoordinatorRef.current.failHandoff(
+          { kind: "file", documentId: pending.documentId },
+          "detachCancelled",
+          pending.token,
+        );
+        pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
+        void pending.window.destroy().catch(() => undefined);
+      },
+    );
+  }, []);
+  // 只遗忘已附着窗口的句柄，从不调用 destroy()（已附着窗口可能有未保存编辑）。
+  const forgetWindowHandles = useCallback(() => {
+    detachedByInstanceRef.current.clear();
+    detachedFilesRef.current.clear();
+  }, []);
+
   const hydrateWorkspace = useCallback(async () => {
     const requestId = ++hydrationRequestRef.current;
     patchHost({ hydrationStatus: "loading" }, "hydrate:loading");
@@ -662,28 +696,46 @@ export function PtyWorkspaceProvider({
           ...restored,
           slots: markWorkspaceSlotsRestored(restored.slots, read.slotStates),
         });
-        contentCoordinatorRef.current.resetFromPanes(
-          listWorkspacePanes(restoredSnapshot.tree),
-          "main",
-        );
         const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
-
-        fileDomain.invalidateLoads(
-          new Set([
-            ...store.getLive().documents.map((document) => document.id),
-            ...(restoredSnapshot.documents ?? []).map(
-              (document) => document.id,
-            ),
-          ]),
-        );
-
-        // 释放旧文档必须读取提交前的文档集合，因此放在发布新状态之前。
-        releaseFileDocuments(
-          droppedFileDocumentIds(
-            store.getLive().documents,
-            restoredSnapshot.documents ?? [],
-          ),
-        );
+        // 协调器重建失败时与原实现一致：执行完其余步骤后进入 loadFailed，不发布半更新的状态。
+        const rebuild: { failed: boolean; error: unknown } = {
+          failed: false,
+          error: undefined,
+        };
+        resetHostRuntime("hydrate", {
+          rollbackPending: rollbackPendingWindows,
+          forgetWindowHandles,
+          releaseDocuments: () => {
+            // 释放旧文档必须读取提交前的文档集合，因此在发布新状态之前执行。
+            releaseFileDocuments(
+              droppedFileDocumentIds(
+                store.getLive().documents,
+                restoredSnapshot.documents ?? [],
+              ),
+            );
+            fileDomain.invalidateLoads(
+              new Set([
+                ...store.getLive().documents.map((document) => document.id),
+                ...(restoredSnapshot.documents ?? []).map(
+                  (document) => document.id,
+                ),
+              ]),
+            );
+          },
+          clearPtyRuntime: () => undefined,
+          rebuildCoordinator: () => {
+            try {
+              contentCoordinatorRef.current.resetFromPanes(
+                listWorkspacePanes(restoredSnapshot.tree),
+                "main",
+              );
+            } catch (error) {
+              rebuild.failed = true;
+              rebuild.error = error;
+            }
+          },
+        });
+        if (rebuild.failed) throw rebuild.error;
         restoredPatch = {
           slots: restoredSlots,
           documents: restoredSnapshot.documents ?? [],
@@ -691,32 +743,6 @@ export function PtyWorkspaceProvider({
           tree: restoredSnapshot.tree,
           focusedPaneId: restoredSnapshot.focusedPaneId,
         };
-        detachedByInstanceRef.current.clear();
-        detachedFilesRef.current.clear();
-        clearPendingWorkspaceContentWindows(
-          pendingDetachedRef.current,
-          (pending) => {
-            contentCoordinatorRef.current.failHandoff(
-              { kind: "pty", slotId: pending.instanceId },
-              "detachCancelled",
-              pending.token,
-            );
-            pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
-            void pending.window.destroy().catch(() => undefined);
-          },
-        );
-        clearPendingWorkspaceContentWindows(
-          pendingDetachedFilesRef.current,
-          (pending) => {
-            contentCoordinatorRef.current.failHandoff(
-              { kind: "file", documentId: pending.documentId },
-              "detachCancelled",
-              pending.token,
-            );
-            pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
-            void pending.window.destroy().catch(() => undefined);
-          },
-        );
       }
 
       saveQueueRef.current = createSaveQueue(revision);
@@ -963,7 +989,7 @@ export function PtyWorkspaceProvider({
     (): WorkspaceContentPresentationContext => ({
       directories: directories ?? [],
       ptySlots: store.getLive().slots,
-      ptySessionsById: useAppStore.getState().ptySessionsById,
+      ptySessionsById: store.getLive().ptySessionsById,
       fileDocuments: store.getLive().documents,
       fileBuffers: store.getLive().buffers,
       selectedDirectoryId: useAppStore.getState().selectedDirectoryId,
@@ -1245,26 +1271,26 @@ export function PtyWorkspaceProvider({
           dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
         });
       }
-      const removedSlot = store
-        .getLive()
-        .slots.find((slot) => slot.instanceId === instanceId);
       detachedByInstanceRef.current.delete(workspacePtyKey(instanceId));
-      const nextSlots = store
-        .getLive()
-        .slots.filter((slot) => slot.instanceId !== instanceId);
-      if (removedSlot?.sessionId) removePtySession(removedSlot.sessionId);
-      patchHost({ slots: nextSlots }, "removeSlot:slots");
-      const nextTree = reduceWorkspaceTree(store.getLive().tree, {
-        type: "close",
-        refs: [content],
-        origin: "window",
-      });
-      commitTree(nextTree);
-      if (!findWorkspacePane(nextTree, store.getLive().focusedPaneId)) {
-        setFocusedPane(listWorkspacePanes(nextTree)[0].id);
-      }
+      // 槽位移除与树关闭在同一次提交中发布。
+      const liveTree = store.getLive().tree;
+      store.commit((live) => {
+        const result = ptyDomain.removeSlot(live, instanceId);
+        const nextTree = reduceWorkspaceTree(liveTree, {
+          type: "close",
+          refs: [content],
+          origin: "window",
+        });
+        const focusedPaneId = findWorkspacePane(
+          nextTree,
+          result.next.focusedPaneId,
+        )
+          ? result.next.focusedPaneId
+          : listWorkspacePanes(nextTree)[0].id;
+        return { ...result.next, tree: nextTree, focusedPaneId };
+      }, "removeSlot");
     },
-    [commitTree, removePtySession, setFocusedPane],
+    [ptyDomain, store],
   );
 
   const confirmCloseImpacts = useCallback(
@@ -1301,7 +1327,7 @@ export function PtyWorkspaceProvider({
           ]),
         ).values(),
       ];
-      const ptySessionsById = useAppStore.getState().ptySessionsById;
+      const ptySessionsById = store.getLive().ptySessionsById;
       type WorkspaceCloseTarget = {
         content: WorkspacePaneContentRef;
         slot?: PtyWorkspaceSlot;
@@ -1546,45 +1572,37 @@ export function PtyWorkspaceProvider({
         toast.error(tRef.current("pty.projectUnavailable"));
         return;
       }
-      const currentSlots = store.getLive().slots;
-      const sequence = nextWorkspaceSessionSequence(
-        currentSlots,
-        directoryId,
+      const slot = ptyDomain.createSlot(
+        store.getLive().slots,
+        { id: directoryId, path: directory.path, name: directory.name },
         toolKey,
-      );
-      const slot: PtyWorkspaceSlot = {
-        instanceId: crypto.randomUUID(),
-        directoryId,
-        directoryPath: directory.path,
-        projectName: directory.name,
-        toolKey,
-        sequence,
-        title: { kind: "automatic" },
         resumeSessionId,
-      };
-      const nextSlots = [...currentSlots, slot];
-      patchHost({ slots: nextSlots }, "launchSession:slots");
-
-      const panes = listWorkspacePanes(store.getLive().tree);
+      );
       const targetPane =
         findWorkspacePane(
           store.getLive().tree,
           store.getLive().focusedPaneId,
-        ) ?? panes[0];
+        ) ?? listWorkspacePanes(store.getLive().tree)[0];
       contentCoordinatorRef.current.ensureAttached(
         { kind: "pty", slotId: slot.instanceId },
         { kind: "pane", windowLabel: "main", paneId: targetPane.id },
       );
-      commitTree(
-        addSessionToWorkspacePane(
-          store.getLive().tree,
-          targetPane.id,
-          slot.instanceId,
-        ),
-      );
-      setFocusedPane(targetPane.id);
+      // 槽位写入与入树、焦点在同一次提交中发布（槽位永远不在树外，见不变量 I5）。
+      const liveTree = store.getLive().tree;
+      store.commit((live) => {
+        const withSlot = ptyDomain.addSlot(live, slot);
+        return {
+          ...withSlot,
+          tree: addSessionToWorkspacePane(
+            liveTree,
+            targetPane.id,
+            slot.instanceId,
+          ),
+          focusedPaneId: targetPane.id,
+        };
+      }, "launchSession");
     },
-    [commitTree, directories, setFocusedPane],
+    [directories, ptyDomain, store],
   );
 
   const activateSession = useCallback(
@@ -1914,7 +1932,7 @@ export function PtyWorkspaceProvider({
       ) {
         throw new Error(tRef.current("pty.detachedMoveUnavailable"));
       }
-      const currentSession = useAppStore.getState().ptySessionsById[sessionId];
+      const currentSession = store.getLive().ptySessionsById[sessionId];
       if (currentSession?.state !== "running") {
         throw new Error(tRef.current("pty.detachedMoveNotRunning"));
       }
@@ -3437,17 +3455,12 @@ export function PtyWorkspaceProvider({
         removeSlot(instanceId);
         return;
       }
-      upsertPtySession(session);
-      const nextSlots = store
-        .getLive()
-        .slots.map((slot) =>
-          slot.instanceId === instanceId
-            ? { ...slot, sessionId: session.sessionId }
-            : slot,
-        );
-      patchHost({ slots: nextSlots }, "recordSession:slots");
+      store.commit(
+        (live) => ptyDomain.recordSession(live, instanceId, session),
+        "recordSession",
+      );
     },
-    [removeSlot, upsertPtySession],
+    [removeSlot, ptyDomain, store],
   );
 
   const getCurrentPresetLayout = useCallback(() => {
@@ -3589,10 +3602,7 @@ export function PtyWorkspaceProvider({
       await fileDomain.waitForAllSaves();
       await saveQueueRef.current?.flush();
 
-      const sessions = Object.values(useAppStore.getState().ptySessionsById);
-      const runningPtyCount = sessions.filter(
-        (session) => session.state === "running",
-      ).length;
+      const runningPtyCount = ptyDomain.runningSessions(store.getLive()).length;
       const impacts = await collectExitImpacts(runningPtyCount);
       const detachedWindowIdentities = new Set(
         contentCoordinatorRef.current
@@ -3621,12 +3631,7 @@ export function PtyWorkspaceProvider({
         .getLive()
         .documents.filter((document) => document.directoryId === directoryId)
         .length,
-      runningPtyCount: Object.values(
-        useAppStore.getState().ptySessionsById,
-      ).filter(
-        (session) =>
-          session.directoryId === directoryId && session.state === "running",
-      ).length,
+      runningPtyCount: ptyDomain.runningCountIn(store.getLive(), directoryId),
     };
   }, []);
 
@@ -3648,22 +3653,21 @@ export function PtyWorkspaceProvider({
 
   const rehydrateWorkspace = useCallback(async () => {
     backupRestoreInProgressRef.current = false;
-    releaseFileDocuments(
-      store.getLive().documents.map((document) => document.id),
-    );
-    fileDomain.invalidateLoads(
-      store.getLive().documents.map((document) => document.id),
-    );
+    resetHostRuntime("rehydrate", {
+      rollbackPending: rollbackPendingWindows,
+      forgetWindowHandles,
+      releaseDocuments: () => {
+        const ids = store.getLive().documents.map((document) => document.id);
+        releaseFileDocuments(ids);
+        fileDomain.invalidateLoads(ids);
+      },
+      clearPtyRuntime: () => ptyDomain.terminalRefs.current.clear(),
+      rebuildCoordinator: () => contentCoordinatorRef.current.reset(),
+    });
     saveQueueRef.current = null;
-    detachedByInstanceRef.current.clear();
-    detachedFilesRef.current.clear();
-    pendingDetachedRef.current.clear();
-    pendingDetachedFilesRef.current.clear();
-    terminalRefs.current.clear();
-    contentCoordinatorRef.current.reset();
-    useAppStore.getState().clearPtySessions();
     patchHost(
       {
+        ptySessionsById: {},
         slots: [],
         documents: [],
         buffers: {},
@@ -3933,7 +3937,9 @@ export function PtyWorkspaceRegion() {
     saveFile,
   } = usePtyWorkspace();
   const { data: directories } = useDirectories();
-  const ptySessionsById = useAppStore((state) => state.ptySessionsById);
+  const ptySessionsById = useWorkspaceSelector(
+    (snapshot) => snapshot.ptySessionsById,
+  );
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
 
   if (hydrationStatus === "loading") {

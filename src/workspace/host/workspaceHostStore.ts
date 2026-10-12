@@ -4,7 +4,7 @@ import {
   createWorkspacePane,
   type WorkspaceNode,
 } from "../../lib/ptyWorkspaceLayout";
-import type { WorkspaceFileDocument } from "../../lib/tauri";
+import type { PtySession, WorkspaceFileDocument } from "../../lib/tauri";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 
 export type HostHydrationStatus =
@@ -21,6 +21,7 @@ export interface HostSnapshot {
   documents: WorkspaceFileDocument[];
   buffers: Record<string, WorkspaceFileBuffer>;
   hydrationStatus: HostHydrationStatus;
+  ptySessionsById: Record<string, PtySession>;
 }
 
 const SNAPSHOT_FIELDS = [
@@ -31,6 +32,7 @@ const SNAPSHOT_FIELDS = [
   "documents",
   "buffers",
   "hydrationStatus",
+  "ptySessionsById",
 ] as const satisfies readonly (keyof HostSnapshot)[];
 
 function sameSnapshot(left: HostSnapshot, right: HostSnapshot): boolean {
@@ -46,6 +48,7 @@ export function createInitialHostSnapshot(initialPaneId: string): HostSnapshot {
     documents: [],
     buffers: {},
     hydrationStatus: "loading",
+    ptySessionsById: {},
   };
 }
 

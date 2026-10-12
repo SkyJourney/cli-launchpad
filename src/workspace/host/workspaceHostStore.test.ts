@@ -186,4 +186,24 @@ describe("WorkspaceHostStore", () => {
     expect(store.getSnapshot().treeRevision).toBe(5);
     expect(store.getLive().tree).toBe(transient);
   });
+
+  it("treats ptySessionsById as a snapshot field", () => {
+    const store = new WorkspaceHostStore(createInitialHostSnapshot("p1"));
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.commit(
+      (live) => ({ ...live, ptySessionsById: live.ptySessionsById }),
+      "same",
+    );
+    expect(listener).not.toHaveBeenCalled();
+    expect(store.commitCount).toBe(0);
+
+    store.commit(
+      (live) => ({ ...live, ptySessionsById: { ...live.ptySessionsById } }),
+      "new-object",
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(createInitialHostSnapshot("p9").ptySessionsById).toEqual({});
+  });
 });

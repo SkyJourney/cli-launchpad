@@ -5,7 +5,6 @@ import {
   type ResolvedTheme,
   type ThemeMode,
 } from "../lib/themes";
-import type { PtySession } from "../lib/tauri";
 
 export type { ThemeMode } from "../lib/themeMode";
 
@@ -69,7 +68,6 @@ interface AppState {
   sidebarOpen: boolean;
   contextPanelOpen: boolean;
   projectDialog: ProjectDialogState;
-  ptySessionsById: Record<string, PtySession>;
   setView: (view: ViewName) => void;
   setThemeMode: (mode: ThemeMode) => void;
   applyRemoteThemeMode: (mode: ThemeMode) => void;
@@ -79,9 +77,6 @@ interface AppState {
   setSidebarOpen: (open: boolean) => void;
   setContextPanelOpen: (open: boolean) => void;
   setProjectDialog: (dialog: ProjectDialogState) => void;
-  upsertPtySession: (session: PtySession) => void;
-  removePtySession: (sessionId: string) => void;
-  clearPtySessions: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -92,7 +87,6 @@ export const useAppStore = create<AppState>((set) => ({
   sidebarOpen: getStoredSidebarOpen(),
   contextPanelOpen: getStoredContextPanelOpen(),
   projectDialog: null,
-  ptySessionsById: {},
   setView: (view) => set({ view }),
   setThemeMode: (mode) => {
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
@@ -124,21 +118,4 @@ export const useAppStore = create<AppState>((set) => ({
     set({ contextPanelOpen: open });
   },
   setProjectDialog: (dialog) => set({ projectDialog: dialog }),
-  upsertPtySession: (session) =>
-    set((state) => {
-      return {
-        ptySessionsById: {
-          ...state.ptySessionsById,
-          [session.sessionId]: session,
-        },
-      };
-    }),
-  removePtySession: (sessionId) =>
-    set((state) => {
-      if (!state.ptySessionsById[sessionId]) return state;
-      const next = { ...state.ptySessionsById };
-      delete next[sessionId];
-      return { ptySessionsById: next };
-    }),
-  clearPtySessions: () => set({ ptySessionsById: {} }),
 }));

@@ -30,7 +30,20 @@ import {
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
-import { useAppStore } from "../store/appStore";
+import type { PtySession } from "../lib/tauri";
+
+function seedPtySession(host: WorkspaceHost, session: PtySession) {
+  host.store().commit(
+    (live) => ({
+      ...live,
+      ptySessionsById: {
+        ...live.ptySessionsById,
+        [session.sessionId]: session,
+      },
+    }),
+    "test:seed-session",
+  );
+}
 
 let host: WorkspaceHost | undefined;
 afterEach(async () => {
@@ -78,7 +91,7 @@ describe("backup restore coordination", () => {
     async (row) => {
       const { host: wsHost } = await mountRestoreHost();
       if (row === "running PTY") {
-        useAppStore.getState().upsertPtySession({
+        seedPtySession(wsHost, {
           sessionId: "s-run",
           directoryId: 1,
           toolKey: "claude",
@@ -301,7 +314,7 @@ describe("backup restore coordination", () => {
       detachedWindowCount: 0,
     });
 
-    useAppStore.getState().upsertPtySession({
+    seedPtySession(wsHost, {
       sessionId: "s-late",
       directoryId: 1,
       toolKey: "claude",
@@ -319,7 +332,7 @@ describe("backup restore coordination", () => {
     });
     await flush();
 
-    expect(useAppStore.getState().ptySessionsById["s-late"]?.state).toBe(
+    expect(wsHost.store().getSnapshot().ptySessionsById["s-late"]?.state).toBe(
       "running",
     );
   });

@@ -35,6 +35,7 @@ import { usePtyWorkspace } from "./PtyWorkspace";
 import { SearchInput } from "./SearchInput";
 import { ThemedScrollArea } from "./ThemedScrollArea";
 import { formatAppError } from "../lib/appErrors";
+import { useWorkspaceSelector } from "../workspace/host/workspaceHostStore";
 
 export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const { t } = useTranslation();
@@ -44,7 +45,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
-  const ptySessionsById = useAppStore((state) => state.ptySessionsById);
+  const ptySessionsById = useWorkspaceSelector(
+    (snapshot) => snapshot.ptySessionsById,
+  );
   const {
     slots,
     tree,

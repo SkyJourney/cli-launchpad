@@ -55,6 +55,10 @@ import { WorkspaceDataRestoreListener } from "../../components/WorkspaceDataRest
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import { WORKSPACE_CONTENT_WINDOW_EVENT } from "../../lib/workspaceContentWindowProtocol";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
+import {
+  useWorkspaceHostStore,
+  type WorkspaceHostStore,
+} from "../../workspace/host/workspaceHostStore";
 import { useAppStore } from "../../store/appStore";
 import { tauriMock } from "../tauriMock";
 import { installDomPolyfills } from "./domPolyfills";
@@ -99,6 +103,15 @@ export class CapturingBoundary extends Component<
 
 function Probe({ onValue }: { onValue: (value: WorkspaceContext) => void }) {
   onValue(usePtyWorkspace());
+  return null;
+}
+
+function StoreProbe({
+  onStore,
+}: {
+  onStore: (value: WorkspaceHostStore) => void;
+}) {
+  onStore(useWorkspaceHostStore());
   return null;
 }
 
@@ -309,6 +322,7 @@ export interface MountWorkspaceOptions {
 export interface WorkspaceHost {
   view: ReturnType<typeof render>;
   ctx: () => WorkspaceContext;
+  store: () => WorkspaceHostStore;
   errors: unknown[];
   backend: HostBackend;
   editor: {
@@ -331,11 +345,11 @@ export async function mountWorkspace(
   useAppStore.setState({
     view: "detail",
     selectedDirectoryId: DIRECTORY.id,
-    ptySessionsById: {},
   });
   clearLocalStorage();
   const errors: unknown[] = [];
   const context: { current: WorkspaceContext | null } = { current: null };
+  const storeRef: { current: WorkspaceHostStore | null } = { current: null };
   const queryClient = newQueryClient();
   const tree = (
     <QueryClientProvider client={queryClient}>
@@ -345,6 +359,7 @@ export async function mountWorkspace(
           listenerRetryDelaysMs={options.listenerRetryDelaysMs}
         >
           <Probe onValue={(value) => (context.current = value)} />
+          <StoreProbe onStore={(value) => (storeRef.current = value)} />
           <PtyWorkspaceRegion />
           {options.restoreListener ? <WorkspaceDataRestoreListener /> : null}
         </PtyWorkspaceProvider>
@@ -367,6 +382,10 @@ export async function mountWorkspace(
     ctx: () => {
       if (!context.current) throw new Error("workspace context unavailable");
       return context.current;
+    },
+    store: () => {
+      if (!storeRef.current) throw new Error("workspace store unavailable");
+      return storeRef.current;
     },
     errors,
     backend,
@@ -392,7 +411,6 @@ export async function mountApp(options: { backend?: HostBackend } = {}) {
   useAppStore.setState({
     view: "projects",
     selectedDirectoryId: null,
-    ptySessionsById: {},
   });
   clearLocalStorage();
   const errors: unknown[] = [];
