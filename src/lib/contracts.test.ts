@@ -113,21 +113,19 @@ describe("shared contracts", () => {
   it("accepts drag payloads exactly for the contract kinds", () => {
     for (const kind of contentKinds.kinds) {
       const raw = encodeWorkspaceContentDrag({
-        kind,
-        contentId: "x",
+        key: `${kind}:x`,
         sourcePaneId: "p",
         sourceWindowLabel: "main",
-      } as never);
-      expect(parseWorkspaceContentDrag(raw)?.kind).toBe(kind);
+      });
+      expect(parseWorkspaceContentDrag(raw)?.key).toBe(`${kind}:x`);
     }
     expect(
       parseWorkspaceContentDrag(
         encodeWorkspaceContentDrag({
-          kind: "markdownPreview",
-          contentId: "x",
+          key: "markdownPreview:x",
           sourcePaneId: "p",
           sourceWindowLabel: "main",
-        } as never),
+        }),
       ),
     ).toBeNull();
   });

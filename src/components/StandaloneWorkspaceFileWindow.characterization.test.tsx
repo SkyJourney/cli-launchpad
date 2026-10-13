@@ -170,8 +170,7 @@ describe("file window", () => {
     expect(plainType).toBe("text/plain");
     expect(plainPayload).toBe(payload);
     expect(parseWorkspaceContentDrag(payload)).toEqual({
-      kind: "file",
-      contentId: "doc-1",
+      key: "file:doc-1",
       sourceWindowLabel: FILE_LABEL,
     });
   });

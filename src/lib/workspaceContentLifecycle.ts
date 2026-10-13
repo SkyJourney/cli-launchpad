@@ -5,6 +5,7 @@ import type {
   WorkspacePaneContentRef,
 } from "./tauri";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
+import { workspaceContentKey } from "./workspaceContentKey";
 
 export interface WorkspacePaneOwner {
   kind: "pane";
@@ -169,18 +170,6 @@ export interface WorkspaceContentHandoffPayloadByKind {
   };
 }
 
-export type WorkspaceContentHandoffEnvelope = {
-  [Kind in keyof WorkspaceContentHandoffPayloadByKind]: {
-    apiVersion: 1;
-    transferId: string;
-    generation: number;
-    content: Extract<WorkspacePaneContentRef, { kind: Kind }>;
-    source: WorkspaceContentOwner;
-    target: WorkspaceContentOwner;
-    payload: WorkspaceContentHandoffPayloadByKind[Kind];
-  };
-}[keyof WorkspaceContentHandoffPayloadByKind];
-
 export function createWorkspaceContentLifecycle(
   content: ManagedWorkspacePaneContentRef,
   owner: WorkspacePaneOwner,
@@ -239,26 +228,7 @@ function sameContent(
   left: WorkspacePaneContentRef,
   right: WorkspacePaneContentRef,
 ): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "pty")
-    return (
-      left.slotId ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "pty" }>).slotId
-    );
-  if (left.kind === "file")
-    return (
-      left.documentId ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "file" }>).documentId
-    );
-  return (
-    left.originalKind ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>)
-        .originalKind &&
-    JSON.stringify(left.raw) ===
-      JSON.stringify(
-        (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>).raw,
-      )
-  );
+  return workspaceContentKey(left) === workspaceContentKey(right);
 }
 
 function sameOwner(

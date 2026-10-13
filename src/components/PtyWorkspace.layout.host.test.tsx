@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -284,6 +290,70 @@ describe("named layouts with detached contents", () => {
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：重启 hydration 只放回树，不创建任何窗口。
     expect(tauriMock.state.createdWindows).toHaveLength(0);
+    expect(host.errors).toEqual([]);
+  });
+});
+
+describe("unknown content persistence", () => {
+  it("keeps unknown content byte-for-byte until the user closes it", async () => {
+    const unknown = {
+      kind: "unknown" as const,
+      originalKind: "markdownPreview",
+      raw: { kind: "markdownPreview", source: "README.md", extra: { a: 1 } },
+    };
+    const backend = createBackend({
+      status: { status: "ready" },
+      revision: 2,
+      slotStates: [],
+      schemaVersion: 5,
+      updatedAtMs: null,
+      layout: {
+        schemaVersion: 5,
+        focusedPaneId: "p1",
+        slots: [],
+        documents: [],
+        detachedContents: [],
+        tree: {
+          kind: "pane",
+          id: "p1",
+          paneNumber: 1,
+          contents: [unknown],
+          activeContent: unknown,
+        },
+      },
+    } as never);
+    host = await mountWorkspace({ backend });
+    await flush();
+
+    // 挂载后 unknown 内容由占位界面承载，并给出关闭入口。
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("workspaceContent.unsupportedTitle");
+    const firstSave = savedLayouts(host)[0];
+    expect((firstSave.layout.tree as { contents: unknown[] }).contents).toEqual(
+      [unknown],
+    );
+    // 反向：unknown 标签不可拖动。
+    const unknownTab = document.querySelector<HTMLElement>(
+      '[data-workspace-content-key^="unknown:"]',
+    );
+    expect(unknownTab?.getAttribute("draggable") ?? null).not.toBe("true");
+
+    act(() => {
+      fireEvent.click(
+        within(alert).getByRole("button", {
+          name: "workspaceContent.closeUnsupported",
+        }),
+      );
+    });
+    await flush();
+
+    const saves = savedLayouts(host);
+    const p1 = saves[saves.length - 1].layout.tree as {
+      contents: unknown[];
+      activeContent: unknown;
+    };
+    expect(p1.contents).toEqual([]);
+    expect(p1.activeContent).toBeNull();
     expect(host.errors).toEqual([]);
   });
 });

@@ -1,26 +1,13 @@
+import { contentRefFromKey } from "./workspaceContentKey";
+
 export const WORKSPACE_CONTENT_DRAG_TYPE =
   "application/x-cli-launchpad-workspace-content";
 
 export type WorkspaceContentDragPayload =
-  | {
-      kind: "pty";
-      contentId: string;
-      sourcePaneId: string;
-      sourceWindowLabel: "main";
-    }
-  | {
-      kind: "file";
-      contentId: string;
-      sourcePaneId: string;
-      sourceWindowLabel: "main";
-    }
-  | {
-      kind: "pty" | "file";
-      contentId: string;
-      sourceWindowLabel: string;
-    };
+  | { key: string; sourceWindowLabel: "main"; sourcePaneId: string }
+  | { key: string; sourceWindowLabel: string };
 
-const DRAG_PREFIX = "cli-launchpad-content-v1:";
+const DRAG_PREFIX = "cli-launchpad-content-v2:";
 
 export function encodeWorkspaceContentDrag(
   payload: WorkspaceContentDragPayload,
@@ -36,11 +23,7 @@ export function parseWorkspaceContentDrag(
     const value: unknown = JSON.parse(raw.slice(DRAG_PREFIX.length));
     if (!value || typeof value !== "object") return null;
     const data = value as Record<string, unknown>;
-    if (
-      (data.kind !== "pty" && data.kind !== "file") ||
-      typeof data.contentId !== "string" ||
-      !data.contentId
-    ) {
+    if (typeof data.key !== "string" || !contentRefFromKey(data.key)) {
       return null;
     }
     if (data.sourceWindowLabel === "main") {
@@ -48,10 +31,9 @@ export function parseWorkspaceContentDrag(
         return null;
       }
       return {
-        kind: data.kind,
-        contentId: data.contentId,
-        sourcePaneId: data.sourcePaneId,
+        key: data.key,
         sourceWindowLabel: "main",
+        sourcePaneId: data.sourcePaneId,
       };
     }
     if (
@@ -63,11 +45,7 @@ export function parseWorkspaceContentDrag(
     ) {
       return null;
     }
-    return {
-      kind: data.kind,
-      contentId: data.contentId,
-      sourceWindowLabel: data.sourceWindowLabel,
-    };
+    return { key: data.key, sourceWindowLabel: data.sourceWindowLabel };
   } catch {
     return null;
   }

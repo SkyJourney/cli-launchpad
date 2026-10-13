@@ -26,6 +26,7 @@ export type {
   WorkspaceContentPresentationContext,
   WorkspaceContentRenderContext,
 } from "./workspaceContentAdapterRegistry";
+import { workspaceContentKey } from "../lib/workspaceContentKey";
 
 export function WorkspaceContentView({
   content,
@@ -88,7 +89,7 @@ export function WorkspaceContentView({
   };
   return (
     <WorkspaceContentErrorBoundary
-      key={workspaceContentErrorBoundaryKey(content)}
+      key={workspaceContentKey(content)}
       kind={content.kind}
       onClose={onCloseUnsupported}
     >
@@ -138,12 +139,6 @@ class WorkspaceContentErrorBoundary extends Component<
       this.props.children
     );
   }
-}
-
-function workspaceContentErrorBoundaryKey(content: WorkspacePaneContentRef) {
-  if (content.kind === "pty") return `pty:${content.slotId}`;
-  if (content.kind === "file") return `file:${content.documentId}`;
-  return `unknown:${content.originalKind}:${JSON.stringify(content.raw)}`;
 }
 
 function UnsupportedContentPlaceholder({

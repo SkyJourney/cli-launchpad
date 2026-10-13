@@ -13,10 +13,6 @@ import {
   getPtySessionWindowStatus,
   type PtySessionWindowStatus,
 } from "../lib/tauri";
-import {
-  encodePtySessionDrag,
-  PTY_SESSION_DRAG_TYPE,
-} from "../lib/ptySessionDrag";
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
 import {
@@ -478,18 +474,7 @@ export function StandalonePtyWindow({
         </button>
       }
       draggable={ready && !returning}
-      onDragStart={createDragStartHandler(
-        () => ready && !returning,
-        (dataTransfer) => {
-          dataTransfer.setData(
-            PTY_SESSION_DRAG_TYPE,
-            encodePtySessionDrag({
-              instanceId,
-              sourceWindowLabel: windowKit.windowLabel,
-            }),
-          );
-        },
-      )}
+      onDragStart={createDragStartHandler(() => ready && !returning)}
       title={
         <>
           {ToolIcon ? <ToolIcon size={16} /> : <TerminalIcon size={16} />}

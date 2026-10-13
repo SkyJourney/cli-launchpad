@@ -153,8 +153,7 @@ describe("pty window", () => {
     expect(plainWrites).toHaveLength(1);
     expect(plainWrites[0][1]).toBe(workspaceWrites[0][1]);
     expect(parseWorkspaceContentDrag(workspaceWrites[0][1])).toEqual({
-      kind: "pty",
-      contentId: "slot-1",
+      key: "pty:slot-1",
       sourceWindowLabel: PTY_LABEL,
     });
 

@@ -149,8 +149,7 @@ describe("useDetachedContentWindow", () => {
     expect(calls[0][0]).toBe("application/x-cli-launchpad-workspace-content");
     expect(calls[1]).toEqual(["text/plain", calls[0][1]]);
     expect(parseWorkspaceContentDrag(calls[0][1])).toEqual({
-      kind: "pty",
-      contentId: "slot-9",
+      key: "pty:slot-9",
       sourceWindowLabel: LABEL,
     });
   });

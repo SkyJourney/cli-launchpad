@@ -323,6 +323,8 @@ export interface WorkspaceHost {
   view: ReturnType<typeof render>;
   ctx: () => WorkspaceContext;
   store: () => WorkspaceHostStore;
+  /** 与宿主挂载时使用的查询客户端同一实例（测试中修改项目名等查询数据用）。 */
+  queryClient: QueryClient;
   errors: unknown[];
   backend: HostBackend;
   editor: {
@@ -391,6 +393,7 @@ export async function mountWorkspace(
     backend,
     editor: contributions.editor,
     coordinator: options.coordinator,
+    queryClient,
     dispose() {
       if (disposed) return;
       disposed = true;
