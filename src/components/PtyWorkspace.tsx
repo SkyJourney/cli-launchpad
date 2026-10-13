@@ -41,7 +41,6 @@ import {
 import {
   type WorkspaceNode,
   addWorkspaceFileToPane,
-  addSessionToWorkspacePane,
   canSplitWorkspacePane,
   createWorkspacePane,
   findWorkspacePane,
@@ -54,10 +53,8 @@ import {
   MIN_WORKSPACE_PANE_WIDTH,
   minimumWorkspacePaneExtent,
   isUsableWorkspaceSplitSizes,
-  removeEmptyWorkspacePane,
   remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
-  splitWorkspacePane,
   type SplitDirection,
   type WorkspacePane,
   workspaceSplitSizes,
@@ -161,13 +158,11 @@ import { workspaceContentKey } from "../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../lib/workspaceFileExitFlush";
 import type { WorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
 import { hasWorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
-import {
-  canChangeWorkspaceContentPane,
-  type WorkspaceContentHandoffPayloadByKind,
-} from "../lib/workspaceContentLifecycle";
+import { type WorkspaceContentHandoffPayloadByKind } from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
 import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
 import { createPtySlotsDomain } from "../workspace/domains/ptySlotsDomain";
+import { createWorkspaceCommandExecutor } from "../workspace/host/workspaceCommandExecutor";
 import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
 import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
 import {
@@ -1022,6 +1017,19 @@ export function PtyWorkspaceProvider({
     [getWorkspacePresentationContext],
   );
 
+  const syncProjectContextRef = useRef(syncProjectContext);
+  syncProjectContextRef.current = syncProjectContext;
+  const [executor] = useState(() =>
+    createWorkspaceCommandExecutor({
+      store,
+      coordinator: contentCoordinatorRef.current,
+      addSlot: ptyDomain.addSlot,
+      isRestoreInProgress: () => backupRestoreInProgressRef.current,
+      afterCommit: (ref) => syncProjectContextRef.current(ref),
+      newId: () => crypto.randomUUID(),
+    }),
+  );
+
   const openProjectFile = useCallback(
     (
       directoryId: number,
@@ -1048,56 +1056,24 @@ export function PtyWorkspaceProvider({
             return;
           }
 
-          const ownerPane = listWorkspacePanes(store.getLive().tree).find(
-            (pane) =>
-              hasWorkspaceContent(pane, {
-                kind: "file",
-                documentId: document.id,
-              }),
-          );
-          const pane =
-            ownerPane ??
-            listWorkspacePanes(store.getLive().tree).find(
-              (entry) => entry.id === store.getLive().focusedPaneId,
-            ) ??
-            listWorkspacePanes(store.getLive().tree)[0];
-          patchHost({ focusedPaneId: pane.id }, "openProjectFile:focus");
-          contentCoordinatorRef.current.ensureAttached(
-            { kind: "file", documentId: document.id },
-            { kind: "pane", windowLabel: "main", paneId: pane.id },
-          );
-          commitTree(
-            hasWorkspaceContent(pane, { kind: "file", documentId: document.id })
-              ? reduceWorkspaceTree(store.getLive().tree, {
-                  type: "activate",
-                  ref: { kind: "file", documentId: document.id },
-                  paneId: pane.id,
-                })
-              : addWorkspaceFileToPane(
-                  store.getLive().tree,
-                  pane.id,
-                  document.id,
-                ),
-          );
+          executor.execute({
+            type: "place",
+            ref: { kind: "file", documentId: document.id },
+          });
         },
       ),
-    [commitTree, fileDomain, patchHost, store],
+    [executor, fileDomain],
   );
 
   const activateFile = useCallback(
     (paneId: string, documentId: string) => {
-      const content = { kind: "file", documentId } as const;
-      commitTree(
-        reduceWorkspaceTree(store.getLive().tree, {
-          type: "activate",
-          ref: content,
-          paneId,
-        }),
-      );
-      setFocusedPane(paneId);
-      syncProjectContext(content);
+      executor.execute({
+        type: "activate",
+        ref: { kind: "file", documentId },
+        paneId,
+      });
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const activateUnsupportedContent = useCallback(
@@ -1105,16 +1081,9 @@ export function PtyWorkspaceProvider({
       paneId: string,
       content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
     ) => {
-      commitTree(
-        reduceWorkspaceTree(store.getLive().tree, {
-          type: "activate",
-          ref: content,
-          paneId,
-        }),
-      );
-      setFocusedPane(paneId);
+      executor.execute({ type: "activate", ref: content, paneId });
     },
-    [commitTree, setFocusedPane],
+    [executor],
   );
 
   const loadFile = fileDomain.load;
@@ -1259,12 +1228,9 @@ export function PtyWorkspaceProvider({
 
   const focusPane = useCallback(
     (paneId: string) => {
-      const pane = findWorkspacePane(store.getLive().tree, paneId);
-      if (!pane) return;
-      setFocusedPane(paneId);
-      if (pane.activeContent) syncProjectContext(pane.activeContent);
+      executor.execute({ type: "focus", paneId });
     },
-    [setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const removeSlot = useCallback(
@@ -1488,71 +1454,31 @@ export function PtyWorkspaceProvider({
         toolKey,
         resumeSessionId,
       );
-      const targetPane =
-        findWorkspacePane(
-          store.getLive().tree,
-          store.getLive().focusedPaneId,
-        ) ?? listWorkspacePanes(store.getLive().tree)[0];
-      contentCoordinatorRef.current.ensureAttached(
-        { kind: "pty", slotId: slot.instanceId },
-        { kind: "pane", windowLabel: "main", paneId: targetPane.id },
-      );
-      // 槽位写入与入树、焦点在同一次提交中发布（槽位永远不在树外，见不变量 I5）。
-      const liveTree = store.getLive().tree;
-      store.commit((live) => {
-        const withSlot = ptyDomain.addSlot(live, slot);
-        return {
-          ...withSlot,
-          tree: addSessionToWorkspacePane(
-            liveTree,
-            targetPane.id,
-            slot.instanceId,
-          ),
-          focusedPaneId: targetPane.id,
-        };
-      }, "launchSession");
+      executor.execute({ type: "launch", slot });
     },
-    [directories, ptyDomain, store],
+    [directories, executor, ptyDomain, store],
   );
 
   const activateSession = useCallback(
     (paneId: string, instanceId: string) => {
-      const content = { kind: "pty", slotId: instanceId } as const;
       try {
-        commitTree(
-          reduceWorkspaceTree(store.getLive().tree, {
-            type: "activate",
-            ref: content,
-            paneId,
-          }),
-        );
+        executor.execute({
+          type: "activate",
+          ref: { kind: "pty", slotId: instanceId },
+          paneId,
+        });
       } catch {
         return;
       }
-      setFocusedPane(paneId);
-      syncProjectContext(content);
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const splitPane = useCallback(
     (paneId: string, direction: SplitDirection) => {
-      const sourcePane = findWorkspacePane(store.getLive().tree, paneId);
-      if (!sourcePane) return;
-      if (sourcePane.activeContent)
-        syncProjectContext(sourcePane.activeContent);
-      const newPaneId = crypto.randomUUID();
-      const next = splitWorkspacePane(
-        store.getLive().tree,
-        paneId,
-        direction,
-        crypto.randomUUID(),
-        newPaneId,
-      );
-      commitTree(next);
-      setFocusedPane(newPaneId);
+      executor.execute({ type: "splitPane", paneId, direction });
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const splitAndMoveContent = useCallback(
@@ -1561,34 +1487,14 @@ export function PtyWorkspaceProvider({
       content: WorkspacePaneContentRef,
       direction: SplitDirection,
     ) => {
-      if (content.kind === "unknown") return;
-      const sourcePane = findWorkspacePane(store.getLive().tree, paneId);
-      if (!sourcePane || !hasWorkspaceContent(sourcePane, content)) return;
-      const ownerState = contentCoordinatorRef.current.ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: sourcePane.id,
-      });
-      if (!canChangeWorkspaceContentPane(ownerState)) return;
-      const newPaneId = crypto.randomUUID();
-      const next = reduceWorkspaceTree(store.getLive().tree, {
+      executor.execute({
         type: "split",
         ref: content,
-        toPaneId: newPaneId,
+        fromPaneId: paneId,
         direction,
-        splitId: crypto.randomUUID(),
       });
-      if (next === store.getLive().tree) return;
-      contentCoordinatorRef.current.ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: newPaneId,
-      });
-      commitTree(next);
-      setFocusedPane(newPaneId);
-      syncProjectContext(content);
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const splitAndMoveSession = useCallback(
@@ -1613,42 +1519,14 @@ export function PtyWorkspaceProvider({
       destinationPaneId: string,
       content: WorkspacePaneContentRef,
     ) => {
-      if (content.kind === "unknown") return;
-      const sourcePane = findWorkspacePane(store.getLive().tree, sourcePaneId);
-      const destinationPane = findWorkspacePane(
-        store.getLive().tree,
-        destinationPaneId,
-      );
-      if (
-        !sourcePane ||
-        !hasWorkspaceContent(sourcePane, content) ||
-        !destinationPane ||
-        sourcePaneId === destinationPaneId
-      ) {
-        return;
-      }
-      const ownerState = contentCoordinatorRef.current.ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: sourcePane.id,
-      });
-      if (!canChangeWorkspaceContentPane(ownerState)) return;
-      const next = reduceWorkspaceTree(store.getLive().tree, {
+      executor.execute({
         type: "move",
         ref: content,
+        fromPaneId: sourcePaneId,
         toPaneId: destinationPaneId,
       });
-      if (next === store.getLive().tree) return;
-      contentCoordinatorRef.current.ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: destinationPaneId,
-      });
-      commitTree(next);
-      setFocusedPane(destinationPaneId);
-      syncProjectContext(content);
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const moveSession = useCallback(
@@ -3299,29 +3177,9 @@ export function PtyWorkspaceProvider({
 
   const closeEmptyPane = useCallback(
     (paneId: string) => {
-      const pane = findWorkspacePane(store.getLive().tree, paneId);
-      if (!pane || pane.contents.length > 0) {
-        return;
-      }
-      const next = removeEmptyWorkspacePane(store.getLive().tree, paneId);
-      // Closing a pane changes the split topology. Remount the complete tree
-      // so every Allotment recalculates from the surviving tree dimensions,
-      // rather than retaining any cached sizes from the previous topology.
-      patchHost(
-        { tree: next, treeRevision: store.getLive().treeRevision + 1 },
-        "closeEmptyPane",
-      );
-      if (!findWorkspacePane(next, store.getLive().focusedPaneId)) {
-        const fallbackPaneId = listWorkspacePanes(next)[0].id;
-        setFocusedPane(fallbackPaneId);
-        const activeContent = findWorkspacePane(
-          next,
-          fallbackPaneId,
-        )?.activeContent;
-        if (activeContent) syncProjectContext(activeContent);
-      }
+      executor.execute({ type: "closeEmptyPane", paneId });
     },
-    [commitTree, setFocusedPane, syncProjectContext],
+    [executor],
   );
 
   const updateSplitRatio = useCallback(
