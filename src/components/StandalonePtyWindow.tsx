@@ -17,10 +17,7 @@ import {
   encodePtySessionDrag,
   PTY_SESSION_DRAG_TYPE,
 } from "../lib/ptySessionDrag";
-import {
-  encodeWorkspaceContentDrag,
-  WORKSPACE_CONTENT_DRAG_TYPE,
-} from "../lib/workspaceContentDrag";
+import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
 import {
   emitWorkspaceContentWindowEvent,
@@ -57,7 +54,6 @@ export function StandalonePtyWindow({
   const terminalRef = useRef<PtyTerminalHandle>(null);
   const ToolIcon = TOOLS.find((tool) => tool.key === toolKey)?.icon;
   const exitHandledRef = useRef(false);
-  const returnInProgressRef = useRef(false);
   const returnAttemptRef = useRef(0);
   const currentReturnTokenRef = useRef(handoffToken);
   const returnHandoffContextRef =
@@ -65,17 +61,25 @@ export function StandalonePtyWindow({
   const returnHandoffPayloadRef = useRef<
     { handoff: { token: string; sequence?: number } } | undefined
   >(undefined);
-  const returnTimeoutRef = useRef<number | null>(null);
   const handoffStartedRef = useRef(false);
   const closeAfterExitRef = useRef<() => void>(() => undefined);
   const closeAfterTransferRef = useRef<() => void>(() => undefined);
   const translationRef = useRef(t);
   translationRef.current = t;
+  const windowKit = useDetachedContentWindow("pty", instanceId);
+  const {
+    returning,
+    error,
+    setReturning,
+    setError,
+    isReturning,
+    returnTimer,
+    destroyWindow,
+    createDragStartHandler,
+  } = windowKit;
   const [ready, setReady] = useState(false);
   const readyRef = useRef(ready);
   readyRef.current = ready;
-  const [returning, setReturning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const reconcileWindowStatus = useCallback(async () => {
     let windowStatus: PtySessionWindowStatus;
@@ -103,10 +107,9 @@ export function StandalonePtyWindow({
 
   const requestReturn = useCallback(
     async (targetPaneId?: string) => {
-      if (returnInProgressRef.current) return;
+      if (isReturning()) return;
       const attempt = ++returnAttemptRef.current;
       const isCurrentAttempt = () => returnAttemptRef.current === attempt;
-      returnInProgressRef.current = true;
       returnHandoffContextRef.current = null;
       returnHandoffPayloadRef.current = undefined;
       setReturning(true);
@@ -118,9 +121,8 @@ export function StandalonePtyWindow({
       let handoffPayload:
         | { handoff: { token: string; sequence?: number } }
         | undefined;
-      returnTimeoutRef.current = window.setTimeout(() => {
+      returnTimer.arm(RETURN_HANDOFF_TIMEOUT_MS, () => {
         if (!isCurrentAttempt()) return;
-        returnTimeoutRef.current = null;
         const timeoutAttempt = ++returnAttemptRef.current;
         if (driverContext) {
           void rollbackWorkspaceContentHandoff(
@@ -136,10 +138,9 @@ export function StandalonePtyWindow({
               error: translationRef.current("pty.returnTimedOut"),
             }),
           );
-          returnInProgressRef.current = false;
           setReturning(false);
         });
-      }, RETURN_HANDOFF_TIMEOUT_MS);
+      });
       try {
         if (!terminal)
           throw new Error(translationRef.current("pty.terminalNotReady"));
@@ -203,17 +204,13 @@ export function StandalonePtyWindow({
         if (!isCurrentAttempt()) return;
         if (await reconcileWindowStatus()) return;
         if (!isCurrentAttempt()) return;
-        if (returnTimeoutRef.current !== null) {
-          window.clearTimeout(returnTimeoutRef.current);
-          returnTimeoutRef.current = null;
-        }
+        returnTimer.clear();
         returnAttemptRef.current += 1;
         setError(
           translationRef.current("pty.returnFailed", {
             error: formatAppError(reason, translationRef.current),
           }),
         );
-        returnInProgressRef.current = false;
         setReturning(false);
       }
     },
@@ -239,18 +236,10 @@ export function StandalonePtyWindow({
       if (exitHandledRef.current) return;
       exitHandledRef.current = true;
       returnAttemptRef.current += 1;
-      returnInProgressRef.current = false;
       setReturning(false);
-      if (returnTimeoutRef.current !== null) {
-        window.clearTimeout(returnTimeoutRef.current);
-        returnTimeoutRef.current = null;
-      }
+      returnTimer.clear();
       if (reportExit) await reportExited();
-      await getCurrentWindow()
-        .destroy()
-        .catch((reason) =>
-          console.error("Failed to destroy detached PTY window", reason),
-        );
+      await destroyWindow("Failed to destroy detached PTY window");
     },
     [reportExited],
   );
@@ -332,15 +321,8 @@ export function StandalonePtyWindow({
             returnAttemptRef.current += 1;
             returnHandoffContextRef.current = null;
             returnHandoffPayloadRef.current = undefined;
-            if (returnTimeoutRef.current !== null) {
-              window.clearTimeout(returnTimeoutRef.current);
-              returnTimeoutRef.current = null;
-            }
-            void currentWindow
-              .destroy()
-              .catch((reason) =>
-                console.error("Failed to destroy returned PTY window", reason),
-              );
+            returnTimer.clear();
+            void destroyWindow("Failed to destroy returned PTY window");
           }),
           listenWorkspaceContentWindowEvent("pty-return-failed", (event) => {
             if (
@@ -357,11 +339,7 @@ export function StandalonePtyWindow({
                   translationRef.current("pty.returnUnknownError"),
               }),
             );
-            if (returnTimeoutRef.current !== null) {
-              window.clearTimeout(returnTimeoutRef.current);
-              returnTimeoutRef.current = null;
-            }
-            returnInProgressRef.current = false;
+            returnTimer.clear();
             setReturning(false);
             const context = returnHandoffContextRef.current;
             if (context?.transferId === event.payload.token) {
@@ -466,16 +444,15 @@ export function StandalonePtyWindow({
             windowLabel: currentWindow.label,
             message: formatAppError(reason, translationRef.current),
           }).catch(() => undefined);
-          await currentWindow.destroy().catch(() => undefined);
+          await destroyWindow(
+            "Unable to destroy PTY window after handoff failure",
+          );
         }
       }
     };
     void setup();
     return () => {
       disposed = true;
-      if (returnTimeoutRef.current !== null) {
-        window.clearTimeout(returnTimeoutRef.current);
-      }
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, [handoffToken, instanceId, sessionId]);
@@ -501,25 +478,18 @@ export function StandalonePtyWindow({
         </button>
       }
       draggable={ready && !returning}
-      onDragStart={(event) => {
-        if (!ready || returning) {
-          event.preventDefault();
-          return;
-        }
-        event.dataTransfer.effectAllowed = "move";
-        const payload = encodeWorkspaceContentDrag({
-          kind: "pty",
-          contentId: instanceId,
-          sourceWindowLabel: getCurrentWindow().label,
-        });
-        const legacyPayload = encodePtySessionDrag({
-          instanceId,
-          sourceWindowLabel: getCurrentWindow().label,
-        });
-        event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
-        event.dataTransfer.setData(PTY_SESSION_DRAG_TYPE, legacyPayload);
-        event.dataTransfer.setData("text/plain", payload);
-      }}
+      onDragStart={createDragStartHandler(
+        () => ready && !returning,
+        (dataTransfer) => {
+          dataTransfer.setData(
+            PTY_SESSION_DRAG_TYPE,
+            encodePtySessionDrag({
+              instanceId,
+              sourceWindowLabel: windowKit.windowLabel,
+            }),
+          );
+        },
+      )}
       title={
         <>
           {ToolIcon ? <ToolIcon size={16} /> : <TerminalIcon size={16} />}

@@ -75,43 +75,41 @@ import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
 import { windowKindOf } from "./lib/windowKinds";
 import { RUST_EVENTS } from "./lib/eventNames";
+import {
+  readFileLaunchParams,
+  readPtyLaunchParams,
+} from "./workspace/windows/windowLaunchParams";
 
 export function App() {
   const { t } = useTranslation();
   useThemeSync();
   const windowKind = windowKindOf(getCurrentWindow().label);
-  const params = new URLSearchParams(window.location.search);
-  const sessionId = params.get("detachedSessionId");
-  const handoffToken = params.get("handoffToken");
-  const instanceId = params.get("instanceId");
-  const sourcePaneId = params.get("sourcePaneId");
-  const detachedToolKey = TOOLS.find(
-    (tool) => tool.key === params.get("detachedToolKey"),
-  )?.key;
-  const detachedFileId = params.get("detachedFileId");
-  const fileHandoffToken = params.get("fileHandoffToken");
-  const fileSourcePaneId = params.get("sourcePaneId");
-  if (windowKind === "workspaceContent" && detachedFileId && fileHandoffToken) {
+  const search = new URLSearchParams(window.location.search);
+  const fileParams =
+    windowKind === "workspaceContent" ? readFileLaunchParams(search) : null;
+  if (fileParams) {
     return (
       <Suspense fallback={null}>
         <StandaloneWorkspaceFileWindow
-          documentId={detachedFileId}
-          token={fileHandoffToken}
-          sourcePaneId={fileSourcePaneId ?? "unknown-pane"}
+          documentId={fileParams.documentId}
+          token={fileParams.handoffToken}
+          sourcePaneId={fileParams.sourcePaneId}
         />
       </Suspense>
     );
   }
-  if (windowKind === "terminal" && sessionId && handoffToken && instanceId) {
+  const ptyParams =
+    windowKind === "terminal" ? readPtyLaunchParams(search) : null;
+  if (ptyParams) {
     return (
       <Suspense fallback={null}>
         <StandalonePtyWindow
-          sessionId={sessionId}
-          handoffToken={handoffToken}
-          instanceId={instanceId}
-          sourcePaneId={sourcePaneId ?? "unknown-pane"}
-          toolKey={detachedToolKey}
-          title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
+          sessionId={ptyParams.sessionId}
+          handoffToken={ptyParams.handoffToken}
+          instanceId={ptyParams.instanceId}
+          sourcePaneId={ptyParams.sourcePaneId}
+          toolKey={ptyParams.toolKey}
+          title={ptyParams.title ?? t("pty.detachedDefaultTitle")}
         />
       </Suspense>
     );

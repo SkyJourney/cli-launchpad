@@ -163,6 +163,7 @@ import { useAppStore } from "../store/appStore";
 import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
 import { createPtySlotsDomain } from "../workspace/domains/ptySlotsDomain";
 import { createWorkspaceCommandExecutor } from "../workspace/host/workspaceCommandExecutor";
+import { writeWindowLaunchParams } from "../workspace/windows/windowLaunchParams";
 import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
 import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
 import {
@@ -1134,9 +1135,12 @@ export function PtyWorkspaceProvider({
         const childUrl = new URL(window.location.href);
         childUrl.search = "";
         childUrl.hash = "";
-        childUrl.searchParams.set("detachedFileId", documentId);
-        childUrl.searchParams.set("fileHandoffToken", token);
-        childUrl.searchParams.set("sourcePaneId", sourcePane.id);
+        writeWindowLaunchParams(childUrl.searchParams, {
+          kind: "file",
+          documentId,
+          handoffToken: token,
+          sourcePaneId: sourcePane.id,
+        });
         await new Promise<void>((resolve, reject) => {
           const child = createWorkspaceContentWindow({
             label: windowLabel,
@@ -1787,12 +1791,15 @@ export function PtyWorkspaceProvider({
       const childUrl = new URL(window.location.href);
       childUrl.search = "";
       childUrl.hash = "";
-      childUrl.searchParams.set("detachedSessionId", sessionId);
-      childUrl.searchParams.set("handoffToken", handoff.token);
-      childUrl.searchParams.set("instanceId", instanceId);
-      childUrl.searchParams.set("detachedTitle", title);
-      childUrl.searchParams.set("detachedToolKey", slot.toolKey);
-      childUrl.searchParams.set("sourcePaneId", sourcePane.id);
+      writeWindowLaunchParams(childUrl.searchParams, {
+        kind: "pty",
+        sessionId,
+        handoffToken: handoff.token,
+        instanceId,
+        title,
+        toolKey: slot.toolKey,
+        sourcePaneId: sourcePane.id,
+      });
 
       try {
         await new Promise<void>((resolve, reject) => {

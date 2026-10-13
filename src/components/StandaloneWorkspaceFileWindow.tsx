@@ -20,10 +20,6 @@ import {
   isProjectIdentityChangedError,
 } from "../lib/appErrors";
 import {
-  encodeWorkspaceContentDrag,
-  WORKSPACE_CONTENT_DRAG_TYPE,
-} from "../lib/workspaceContentDrag";
-import {
   WorkspaceContentView,
   tryGetWorkspaceContentAdapter,
 } from "./WorkspaceContentView";
@@ -40,6 +36,7 @@ import {
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { completeWorkspaceFileWindowSetup } from "../lib/workspaceFileWindowSetup";
+import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 
 export function StandaloneWorkspaceFileWindow({
   documentId,
@@ -53,10 +50,19 @@ export function StandaloneWorkspaceFileWindow({
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
+  const windowKit = useDetachedContentWindow("file", documentId);
+  const {
+    returning,
+    error,
+    setReturning,
+    setError,
+    isReturning,
+    returnTimer,
+    destroyWindow,
+    createDragStartHandler,
+  } = windowKit;
   const [fileDocument, setFileDocument] = useState<WorkspaceFileDocument>();
   const [fileBuffer, setFileBuffer] = useState<WorkspaceFileBuffer>();
-  const [returning, setReturning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const fileDocumentRef = useRef<WorkspaceFileDocument | undefined>(undefined);
   const currentBufferRef = useRef<WorkspaceFileBuffer | undefined>(undefined);
@@ -64,11 +70,8 @@ export function StandaloneWorkspaceFileWindow({
     typeof createWorkspaceFileBufferPublisher
   > | null>(null);
   const fileOperationFlightsRef = useRef(new WorkspaceFileOperationFlights());
-  const returningRef = useRef(false);
-  const returnTimeoutRef = useRef<number | null>(null);
   currentBufferRef.current = fileBuffer;
   fileDocumentRef.current = fileDocument;
-  returningRef.current = returning;
 
   if (bufferPublisherRef.current === null) {
     bufferPublisherRef.current = createWorkspaceFileBufferPublisher((payload) =>
@@ -112,40 +115,31 @@ export function StandaloneWorkspaceFileWindow({
 
   const requestReturn = useCallback(
     async (targetPaneId?: string) => {
-      if (!fileDocument || !currentBufferRef.current || returningRef.current)
-        return;
-      returningRef.current = true;
+      if (!fileDocument || !currentBufferRef.current || isReturning()) return;
       setReturning(true);
       setError(null);
       try {
         await fileOperationFlightsRef.current.waitForSave(documentId);
         await bufferPublisherRef.current?.flush();
       } catch (reason) {
-        returningRef.current = false;
         setReturning(false);
         setError(formatAppError(reason, tRef.current));
         return;
       }
       const buffer = currentBufferRef.current;
       if (!buffer || buffer.saving) {
-        returningRef.current = false;
         setReturning(false);
         setError(tRef.current("workspaceFiles.loadingFile"));
         return;
       }
-      if (returnTimeoutRef.current !== null) {
-        window.clearTimeout(returnTimeoutRef.current);
-      }
-      returnTimeoutRef.current = window.setTimeout(() => {
-        returnTimeoutRef.current = null;
-        returningRef.current = false;
+      returnTimer.arm(WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS, () => {
         setReturning(false);
         setError(
           tRef.current("pty.returnFailed", {
             error: tRef.current("pty.returnTimedOut"),
           }),
         );
-      }, WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS);
+      });
       await emitWorkspaceContentWindowEvent(
         "main",
         "workspace-file-window-return-requested",
@@ -158,11 +152,7 @@ export function StandaloneWorkspaceFileWindow({
           fileBuffer: buffer,
         },
       ).catch((reason) => {
-        if (returnTimeoutRef.current !== null) {
-          window.clearTimeout(returnTimeoutRef.current);
-          returnTimeoutRef.current = null;
-        }
-        returningRef.current = false;
+        returnTimer.clear();
         setReturning(false);
         setError(formatAppError(reason, tRef.current));
       });
@@ -175,7 +165,7 @@ export function StandaloneWorkspaceFileWindow({
   const saveFile = useCallback(
     () =>
       fileOperationFlightsRef.current.save(documentId, async () => {
-        if (returningRef.current || !fileDocument) return;
+        if (isReturning() || !fileDocument) return;
         const buffer = currentBufferRef.current;
         if (
           !buffer ||
@@ -234,7 +224,7 @@ export function StandaloneWorkspaceFileWindow({
       fileOperationFlightsRef.current.load(documentId, async () => {
         await fileOperationFlightsRef.current.waitForSave(documentId);
         const startingBuffer = currentBufferRef.current;
-        if (!fileDocument || !startingBuffer || returningRef.current) return;
+        if (!fileDocument || !startingBuffer || isReturning()) return;
         try {
           const loaded = createWorkspaceFileBuffer(
             await openGrantedFile(),
@@ -245,7 +235,7 @@ export function StandaloneWorkspaceFileWindow({
             current?.epoch !== startingBuffer.epoch ||
             current.version !== startingBuffer.version ||
             fileDocument.id !== documentId ||
-            returningRef.current
+            isReturning()
           ) {
             return;
           }
@@ -351,11 +341,8 @@ export function StandaloneWorkspaceFileWindow({
                 ) {
                   return;
                 }
-                if (returnTimeoutRef.current !== null) {
-                  window.clearTimeout(returnTimeoutRef.current);
-                  returnTimeoutRef.current = null;
-                }
-                void currentWindow.destroy();
+                returnTimer.clear();
+                void destroyWindow("Failed to destroy returned file window");
               },
             ),
             listenWorkspaceContentWindowEvent(
@@ -396,11 +383,7 @@ export function StandaloneWorkspaceFileWindow({
                 ) {
                   return;
                 }
-                if (returnTimeoutRef.current !== null) {
-                  window.clearTimeout(returnTimeoutRef.current);
-                  returnTimeoutRef.current = null;
-                }
-                returningRef.current = false;
+                returnTimer.clear();
                 setReturning(false);
                 setError(
                   event.payload.message ??
@@ -454,9 +437,6 @@ export function StandaloneWorkspaceFileWindow({
       disposed = true;
       stops.forEach((stop) => stop());
       bufferPublisherRef.current?.dispose();
-      if (returnTimeoutRef.current !== null) {
-        window.clearTimeout(returnTimeoutRef.current);
-      }
     };
   }, [documentId, sourcePaneId, token]);
 
@@ -485,7 +465,9 @@ export function StandaloneWorkspaceFileWindow({
               reason,
             ),
           )
-          .finally(() => currentWindow.destroy())
+          .finally(() =>
+            destroyWindow("Unable to destroy pre-ready file window"),
+          )
           .catch((reason) =>
             console.warn("Unable to destroy pre-ready file window", reason),
           );
@@ -504,20 +486,9 @@ export function StandaloneWorkspaceFileWindow({
         </button>
       }
       draggable={Boolean(fileBuffer) && !returning}
-      onDragStart={(event) => {
-        if (!fileDocument || !fileBuffer || returning) {
-          event.preventDefault();
-          return;
-        }
-        const payload = encodeWorkspaceContentDrag({
-          kind: "file",
-          contentId: documentId,
-          sourceWindowLabel: getCurrentWindow().label,
-        });
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
-        event.dataTransfer.setData("text/plain", payload);
-      }}
+      onDragStart={createDragStartHandler(
+        () => Boolean(fileDocument && fileBuffer) && !returning,
+      )}
       title={
         <>
           <FileText size={16} />
@@ -533,7 +504,7 @@ export function StandaloneWorkspaceFileWindow({
             fileBuffer={fileBuffer}
             readOnly={returning}
             onEditFile={(_id, content) => {
-              if (returningRef.current) return;
+              if (isReturning()) return;
               updateFileBuffer((current) =>
                 current ? editWorkspaceFileBuffer(current, content) : current,
               );
