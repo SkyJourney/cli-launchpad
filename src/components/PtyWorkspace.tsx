@@ -15,16 +15,13 @@ import {
   X,
 } from "lucide-react";
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type MutableRefObject,
   type ReactNode,
   type DragEvent as ReactDragEvent,
 } from "react";
@@ -144,10 +141,7 @@ import {
   workspaceFileDocumentIdentityMatches,
 } from "../lib/workspaceFileBuffer";
 import { formatAppError } from "../lib/appErrors";
-import {
-  collectAppExitImpacts,
-  type AppExitImpacts,
-} from "../lib/appExitImpacts";
+import { collectAppExitImpacts } from "../lib/appExitImpacts";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 import {
   contentRefFromKey,
@@ -156,13 +150,20 @@ import {
   workspaceContentKey,
 } from "../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../lib/workspaceFileExitFlush";
-import type { WorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
 import { hasWorkspaceDataRestoreBlockers } from "../lib/workspaceRestorePolicy";
 import { type WorkspaceContentHandoffPayloadByKind } from "../lib/workspaceContentLifecycle";
 import { useAppStore } from "../store/appStore";
 import { createFileDocumentsDomain } from "../workspace/domains/fileDocumentsDomain";
 import { createPtySlotsDomain } from "../workspace/domains/ptySlotsDomain";
 import { createWorkspaceCommandExecutor } from "../workspace/host/workspaceCommandExecutor";
+import {
+  PtyWorkspaceContext,
+  WorkspaceCommandsContext,
+  usePtyWorkspace,
+  type PtyWorkspaceContextValue,
+  type SplitResizePhase,
+  type WorkspaceCommands,
+} from "../workspace/host/workspaceContexts";
 import { writeWindowLaunchParams } from "../workspace/windows/windowLaunchParams";
 import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
 import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
@@ -211,7 +212,6 @@ import {
   WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
-import type { PtyTerminalHandle } from "./PtyTerminal";
 import {
   WorkspacePtySessionRegistry,
   type PtyWorkspaceSlot,
@@ -220,13 +220,7 @@ import { droppedFileDocumentIds } from "../lib/workspaceFileDocumentRelease";
 import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import "allotment/dist/style.css";
 
-type PtyWorkspaceHydrationStatus =
-  | "loading"
-  | "ready"
-  | "needsReset"
-  | "loadFailed";
-
-type SplitResizePhase = "change" | "dragEnd";
+export { usePtyWorkspace };
 
 interface DetachedWindowRecord {
   instanceId: string;
@@ -287,108 +281,6 @@ type ResolvedPaneContent =
   | {
       content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>;
     };
-
-interface PtyWorkspaceContextValue {
-  slots: PtyWorkspaceSlot[];
-  fileDocuments: WorkspaceFileDocument[];
-  fileBuffers: Record<string, WorkspaceFileBuffer>;
-  handoffFileIds: Set<string>;
-  detachedFileIds: Set<string>;
-  tree: WorkspaceNode;
-  workspaceTreeRevision: number;
-  focusedPaneId: string;
-  hydrationStatus: PtyWorkspaceHydrationStatus;
-  hydrationError: string | null;
-  layoutSaveError: string | null;
-  layoutResetError: string | null;
-  layoutResetPending: boolean;
-  portalTargets: Record<string, HTMLDivElement>;
-  terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;
-  launchSession: (
-    directoryId: number,
-    toolKey: ToolKey,
-    resumeSessionId?: string,
-  ) => void;
-  openProjectFile: (
-    directoryId: number,
-    directoryPath: string,
-    relativePath: string,
-  ) => Promise<void>;
-  loadFile: (documentId: string) => Promise<void>;
-  activateFile: (paneId: string, documentId: string) => void;
-  activateUnsupportedContent: (
-    paneId: string,
-    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-  ) => void;
-  editFile: (documentId: string, content: string) => void;
-  saveFile: (documentId: string) => Promise<void>;
-  closeContents: (
-    contents: WorkspacePaneContentRef[],
-    origin: "tab" | "menu" | "stack" | "window",
-    onApproved?: () => void,
-  ) => Promise<void>;
-  detachFile: (documentId: string) => Promise<void>;
-  focusPane: (paneId: string) => void;
-  activateSession: (paneId: string, instanceId: string) => void;
-  splitPane: (paneId: string, direction: SplitDirection) => void;
-  splitAndMoveSession: (
-    paneId: string,
-    instanceId: string,
-    direction: SplitDirection,
-  ) => void;
-  splitAndMoveFile: (
-    paneId: string,
-    documentId: string,
-    direction: SplitDirection,
-  ) => void;
-  moveSession: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    instanceId: string,
-  ) => void;
-  moveFile: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    documentId: string,
-  ) => void;
-  detachedInstanceIds: Set<string>;
-  closingContentKeys: Set<string>;
-  hasDetachedSessions: boolean;
-  isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
-  isManagedDetachedFileDrag: (
-    documentId: string,
-    windowLabel: string,
-  ) => boolean;
-  detachSession: (instanceId: string) => Promise<void>;
-  closeEmptyPane: (paneId: string) => void;
-  updateSplitRatio: (
-    splitId: string,
-    sizes: number[],
-    phase: SplitResizePhase,
-  ) => void;
-  retryHydration: () => void;
-  resetWorkspace: () => Promise<void>;
-  applyWorkspaceLayoutPreset: (presetId: string) => Promise<void>;
-  getCurrentPresetLayout: () => WorkspaceLayoutDocument;
-  removeSlot: (
-    instanceId: string,
-    options?: { disposeOwnerEnded?: boolean },
-  ) => void;
-  recordSession: (instanceId: string, session: PtySession | null) => void;
-  collectExitImpacts: (ptyCount: number) => Promise<AppExitImpacts>;
-  getBackupRestoreBlockers: () => Promise<WorkspaceDataRestoreBlockers>;
-  cancelBackupRestore: () => void;
-  resumeAfterFailedRestore: () => void;
-  rehydrateWorkspace: () => Promise<void>;
-  getDirectoryRemovalBlockers: (directoryId: number) => {
-    openFileCount: number;
-    runningPtyCount: number;
-  };
-}
-
-const PtyWorkspaceContext = createContext<PtyWorkspaceContextValue | null>(
-  null,
-);
 
 /**
  * @param coordinator 仅测试注入：宿主 harness 用它观察与断言内容归属状态。
@@ -3453,22 +3345,8 @@ export function PtyWorkspaceProvider({
     await hydrateWorkspace();
   }, [hydrateWorkspace, initialPaneId, releaseFileDocuments]);
 
-  const value = useMemo(
+  const commands = useMemo<WorkspaceCommands>(
     () => ({
-      slots,
-      fileDocuments,
-      fileBuffers,
-      handoffFileIds,
-      tree,
-      workspaceTreeRevision,
-      focusedPaneId,
-      hydrationStatus,
-      hydrationError,
-      layoutSaveError,
-      layoutResetError,
-      layoutResetPending,
-      portalTargets,
-      terminalRefs,
       launchSession,
       openProjectFile,
       loadFile,
@@ -3478,7 +3356,6 @@ export function PtyWorkspaceProvider({
       saveFile,
       closeContents,
       detachFile,
-      detachedFileIds,
       focusPane,
       activateSession,
       splitPane,
@@ -3486,9 +3363,6 @@ export function PtyWorkspaceProvider({
       splitAndMoveFile,
       moveSession,
       moveFile,
-      detachedInstanceIds,
-      closingContentKeys,
-      hasDetachedSessions: detachedInstanceIds.size > 0,
       isManagedDetachedDrag,
       isManagedDetachedFileDrag,
       detachSession,
@@ -3508,20 +3382,6 @@ export function PtyWorkspaceProvider({
       getDirectoryRemovalBlockers,
     }),
     [
-      slots,
-      fileDocuments,
-      fileBuffers,
-      handoffFileIds,
-      tree,
-      workspaceTreeRevision,
-      focusedPaneId,
-      hydrationStatus,
-      hydrationError,
-      layoutSaveError,
-      layoutResetError,
-      layoutResetPending,
-      portalTargets,
-      terminalRefs,
       launchSession,
       openProjectFile,
       loadFile,
@@ -3531,7 +3391,6 @@ export function PtyWorkspaceProvider({
       saveFile,
       closeContents,
       detachFile,
-      detachedFileIds,
       focusPane,
       activateSession,
       splitPane,
@@ -3539,8 +3398,6 @@ export function PtyWorkspaceProvider({
       splitAndMoveFile,
       moveSession,
       moveFile,
-      detachedInstanceIds,
-      closingContentKeys,
       isManagedDetachedDrag,
       isManagedDetachedFileDrag,
       detachSession,
@@ -3560,42 +3417,80 @@ export function PtyWorkspaceProvider({
       getDirectoryRemovalBlockers,
     ],
   );
+  const value = useMemo<PtyWorkspaceContextValue>(
+    () => ({
+      ...commands,
+      slots,
+      fileDocuments,
+      fileBuffers,
+      handoffFileIds,
+      detachedFileIds,
+      tree,
+      workspaceTreeRevision,
+      focusedPaneId,
+      hydrationStatus,
+      hydrationError,
+      layoutSaveError,
+      layoutResetError,
+      layoutResetPending,
+      portalTargets,
+      terminalRefs,
+      detachedInstanceIds,
+      closingContentKeys,
+      hasDetachedSessions: detachedInstanceIds.size > 0,
+    }),
+    [
+      commands,
+      slots,
+      fileDocuments,
+      fileBuffers,
+      handoffFileIds,
+      detachedFileIds,
+      tree,
+      workspaceTreeRevision,
+      focusedPaneId,
+      hydrationStatus,
+      hydrationError,
+      layoutSaveError,
+      layoutResetError,
+      layoutResetPending,
+      portalTargets,
+      terminalRefs,
+      detachedInstanceIds,
+      closingContentKeys,
+    ],
+  );
 
   return (
     <WorkspaceHostStoreContext.Provider value={store}>
-      <PtyWorkspaceContext.Provider value={value}>
-        {children}
-        {closeConfirmationImpacts && (
-          <WorkspaceContentCloseDialog
-            impacts={closeConfirmationImpacts}
-            onCancel={() => resolveCloseConfirmation(false)}
-            onConfirm={() => resolveCloseConfirmation(true)}
-          />
-        )}
-        {(hydrationStatus === "ready" || hydrationStatus === "needsReset") && (
-          <WorkspacePtySessionRegistry
-            slots={slots}
-            tree={tree}
-            focusedPaneId={focusedPaneId}
-            active={activeView === "detail"}
-            terminalRefs={terminalRefs}
-            onSessionChange={recordSession}
-            onPortalTarget={registerPortalTarget}
-            onFocusPane={focusPane}
-            detachedInstanceIds={detachedInstanceIds}
-          />
-        )}
-      </PtyWorkspaceContext.Provider>
+      <WorkspaceCommandsContext.Provider value={commands}>
+        <PtyWorkspaceContext.Provider value={value}>
+          {children}
+          {closeConfirmationImpacts && (
+            <WorkspaceContentCloseDialog
+              impacts={closeConfirmationImpacts}
+              onCancel={() => resolveCloseConfirmation(false)}
+              onConfirm={() => resolveCloseConfirmation(true)}
+            />
+          )}
+          {(hydrationStatus === "ready" ||
+            hydrationStatus === "needsReset") && (
+            <WorkspacePtySessionRegistry
+              slots={slots}
+              tree={tree}
+              focusedPaneId={focusedPaneId}
+              active={activeView === "detail"}
+              terminalRefs={terminalRefs}
+              onSessionChange={recordSession}
+              onPortalTarget={registerPortalTarget}
+              onFocusPane={focusPane}
+              detachedInstanceIds={detachedInstanceIds}
+            />
+          )}
+        </PtyWorkspaceContext.Provider>
+      </WorkspaceCommandsContext.Provider>
     </WorkspaceHostStoreContext.Provider>
   );
-}
-
-export function usePtyWorkspace() {
-  const workspace = useContext(PtyWorkspaceContext);
-  if (!workspace) {
-    throw new Error("PtyWorkspaceProvider is missing");
-  }
-  return workspace;
 }
 
 function WorkspaceContentCloseDialog({

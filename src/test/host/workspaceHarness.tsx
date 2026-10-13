@@ -59,6 +59,10 @@ import {
   useWorkspaceHostStore,
   type WorkspaceHostStore,
 } from "../../workspace/host/workspaceHostStore";
+import {
+  useWorkspaceCommands,
+  type WorkspaceCommands,
+} from "../../workspace/host/workspaceContexts";
 import { useAppStore } from "../../store/appStore";
 import { tauriMock } from "../tauriMock";
 import { installDomPolyfills } from "./domPolyfills";
@@ -112,6 +116,15 @@ function StoreProbe({
   onStore: (value: WorkspaceHostStore) => void;
 }) {
   onStore(useWorkspaceHostStore());
+  return null;
+}
+
+function CommandsProbe({
+  onCommands,
+}: {
+  onCommands: (value: WorkspaceCommands) => void;
+}) {
+  onCommands(useWorkspaceCommands());
   return null;
 }
 
@@ -323,6 +336,8 @@ export interface WorkspaceHost {
   view: ReturnType<typeof render>;
   ctx: () => WorkspaceContext;
   store: () => WorkspaceHostStore;
+  /** 读取宿主命令对象（CTX-1 用它检查命令成员的身份稳定性）。 */
+  commands: () => WorkspaceCommands;
   /** 与宿主挂载时使用的查询客户端同一实例（测试中修改项目名等查询数据用）。 */
   queryClient: QueryClient;
   errors: unknown[];
@@ -352,6 +367,7 @@ export async function mountWorkspace(
   const errors: unknown[] = [];
   const context: { current: WorkspaceContext | null } = { current: null };
   const storeRef: { current: WorkspaceHostStore | null } = { current: null };
+  const commandsRef: { current: WorkspaceCommands | null } = { current: null };
   const queryClient = newQueryClient();
   const tree = (
     <QueryClientProvider client={queryClient}>
@@ -362,6 +378,9 @@ export async function mountWorkspace(
         >
           <Probe onValue={(value) => (context.current = value)} />
           <StoreProbe onStore={(value) => (storeRef.current = value)} />
+          <CommandsProbe
+            onCommands={(value) => (commandsRef.current = value)}
+          />
           <PtyWorkspaceRegion />
           {options.restoreListener ? <WorkspaceDataRestoreListener /> : null}
         </PtyWorkspaceProvider>
@@ -388,6 +407,11 @@ export async function mountWorkspace(
     store: () => {
       if (!storeRef.current) throw new Error("workspace store unavailable");
       return storeRef.current;
+    },
+    commands: () => {
+      if (!commandsRef.current)
+        throw new Error("workspace commands unavailable");
+      return commandsRef.current;
     },
     errors,
     backend,
