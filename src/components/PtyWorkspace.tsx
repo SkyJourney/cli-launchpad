@@ -1,3 +1,11 @@
+import {
+  createContentWindowOrchestrator,
+  latestContentWindowDeps,
+  type ContentWindowDeps,
+  type DetachedWindowReadyEvent,
+  type PtyReturnRequestEvent,
+  type PtySessionOwnerLostEvent,
+} from "../workspace/windows/contentWindowOrchestrator";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -14,7 +22,7 @@ import { toast } from "sonner";
 import { useDirectories } from "../hooks/queries";
 import { abortableDelay } from "../lib/abortableDelay";
 import { RUST_EVENTS } from "../lib/eventNames";
-import { createWindowLabel, windowKindOf } from "../lib/windowKinds";
+import { windowKindOf } from "../lib/windowKinds";
 import {
   emitWorkspaceContentWindowEvent,
   listenWorkspaceContentWindowEvent,
@@ -31,13 +39,7 @@ import {
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../lib/ptyWorkspaceLayout";
-import {
-  matchesDetachedWindow,
-  nextOwnerQueryStep,
-  PTY_OWNER_QUERY_MAX_RETRIES,
-  PTY_OWNER_QUERY_RETRY_DELAY_MS,
-  resolveDetachedStartTimeoutAction,
-} from "../lib/ptySessionLifecycle";
+import { matchesDetachedWindow } from "../lib/ptySessionLifecycle";
 import { matchesWorkspaceFileWindow } from "../lib/workspaceFileWindow";
 import {
   LISTENER_REGISTRATION_RETRY_DELAYS_MS,
@@ -53,25 +55,16 @@ import {
   type PtyOwnerLostAttemptResult,
 } from "../lib/ptyOwnerLostRecovery";
 import {
-  clearPendingWorkspaceContentWindows,
   promotePendingWorkspaceContentWindow,
-  registerPendingWorkspaceContentWindow,
-  retainAsyncUnlisten,
   takePendingWorkspaceContentWindow,
-  type WorkspaceContentWindowRecord,
 } from "../lib/workspaceContentWindowRegistry";
-import {
-  advancePendingWindowStage,
-  initialPendingStage,
-  type PendingWindowStage,
-} from "../lib/workspaceContentPendingStage";
+import { advancePendingWindowStage } from "../lib/workspaceContentPendingStage";
 import {
   getPtySessionWindowStatus,
   getWorkspaceLayout,
   planApplyWorkspaceLayoutPreset,
   resetWorkspaceLayout,
   saveWorkspaceLayout,
-  grantContentWindowFile,
   revokeContentWindowFile,
   type Directory,
   type PtySession,
@@ -124,7 +117,7 @@ import {
   type SplitResizePhase,
   type WorkspaceCommands,
 } from "../workspace/host/workspaceContexts";
-import { writeWindowLaunchParams } from "../workspace/windows/windowLaunchParams";
+
 import { ImpactConfirmDialog } from "../workspace/views/ImpactConfirmDialog";
 import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
 import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
@@ -160,10 +153,8 @@ import {
 } from "../lib/workspaceContentClose";
 import {
   attachWorkspaceContentHandoff,
-  createWorkspaceContentWindow,
   prepareWorkspaceContentHandoff,
   rollbackWorkspaceContentHandoff,
-  WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 import {
@@ -180,51 +171,8 @@ export {
   WorkspaceLayoutControls,
 } from "../workspace/views/WorkspaceRegion";
 
-interface DetachedWindowRecord {
-  instanceId: string;
-  sessionId: string;
-  windowLabel: string;
-}
-
-interface PendingContentWindow<
-  K extends "pty" | "file",
-> extends WorkspaceContentWindowRecord {
-  kind: K;
-  stage: PendingWindowStage;
-  token: string;
-  window: WebviewWindow;
-  resolve: () => void;
-  reject: (reason: Error) => void;
-  handoffContext?: WorkspaceContentHandoffHookContext<K>;
-  handoffPayload?: WorkspaceContentHandoffPayloadByKind[K];
-}
-
-type PendingDetachedWindow = PendingContentWindow<"pty"> &
-  DetachedWindowRecord & {
-    handoffContext: WorkspaceContentHandoffHookContext<"pty">;
-    handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
-    /** 对账时 owner 查询已连续失败的次数；随 tracked 展开复制。 */
-    ownerQueryRetries?: number;
-  };
-
-interface DetachedWindowReadyEvent extends DetachedWindowRecord {}
-
-interface PtySessionOwnerLostEvent {
-  sessionId: string;
-}
-
 interface WorkspaceContentWindowLostEvent {
   windowLabel: string;
-}
-
-interface PtyReturnRequestEvent extends DetachedWindowRecord {
-  token: string;
-  targetPaneId?: string;
-}
-
-interface PendingWorkspaceFileWindow extends PendingContentWindow<"file"> {
-  documentId: string;
-  sourcePaneId?: string;
 }
 
 /**
@@ -315,13 +263,14 @@ export function PtyWorkspaceProvider({
   const ratioSaveTimerRef = useRef<number | null>(null);
   const splitResizeInProgressRef = useRef(false);
   const persistLatestRef = useRef<(() => void) | null>(null);
-  const detachedByInstanceRef = useRef(new Map<string, WebviewWindow>());
-  const pendingDetachedRef = useRef(new Map<string, PendingDetachedWindow>());
-  const detachedFilesRef = useRef(new Map<string, WebviewWindow>());
   const contentCoordinatorRef = useRef(
     coordinator ?? new WorkspaceContentCoordinator(),
   );
-  const ptyReturnWaitAbortRef = useRef<AbortController | null>(null);
+  // 窗口编排：句柄表、pending 表与返回等待中止器由 orchestrator 持有；依赖经 depsRef 读取最新值（R-FE-1）。
+  const depsRef = useRef<ContentWindowDeps | null>(null);
+  const [orchestrator] = useState(() =>
+    createContentWindowOrchestrator(latestContentWindowDeps(depsRef)),
+  );
   // 文件领域：文件文档与缓冲的加载、编辑、保存、关闭经由领域对象完成（惰性初始化，闭包按调用时读取 ref）。
   const [fileDomain] = useState(() =>
     createFileDocumentsDomain(store, {
@@ -338,13 +287,7 @@ export function PtyWorkspaceProvider({
       },
     }),
   );
-  useEffect(
-    () => () => {
-      ptyReturnWaitAbortRef.current?.abort();
-      ptyReturnWaitAbortRef.current = null;
-    },
-    [],
-  );
+  useEffect(() => () => orchestrator.abortReturnWait(), [orchestrator]);
   const subscribeContentCoordinator = useCallback(
     (listener: () => void) => contentCoordinatorRef.current.subscribe(listener),
     [],
@@ -400,9 +343,6 @@ export function PtyWorkspaceProvider({
           .map(workspaceContentKey),
       ),
     [contentCoordinatorRevision],
-  );
-  const pendingDetachedFilesRef = useRef(
-    new Map<string, PendingWorkspaceFileWindow>(),
   );
   const activeView = useAppStore((state) => state.view);
 
@@ -473,39 +413,6 @@ export function PtyWorkspaceProvider({
     }
   }, []);
 
-  // 结算挂起的 detach/return 承诺并销毁尚未附着的窗口（hydrate 与 rehydrate 共用）。
-  const rollbackPendingWindows = useCallback(() => {
-    clearPendingWorkspaceContentWindows(
-      pendingDetachedRef.current,
-      (pending) => {
-        contentCoordinatorRef.current.failHandoff(
-          { kind: "pty", slotId: pending.instanceId },
-          "detachCancelled",
-          pending.token,
-        );
-        pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
-        void pending.window.destroy().catch(() => undefined);
-      },
-    );
-    clearPendingWorkspaceContentWindows(
-      pendingDetachedFilesRef.current,
-      (pending) => {
-        contentCoordinatorRef.current.failHandoff(
-          { kind: "file", documentId: pending.documentId },
-          "detachCancelled",
-          pending.token,
-        );
-        pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
-        void pending.window.destroy().catch(() => undefined);
-      },
-    );
-  }, []);
-  // 只遗忘已附着窗口的句柄，从不调用 destroy()（已附着窗口可能有未保存编辑）。
-  const forgetWindowHandles = useCallback(() => {
-    detachedByInstanceRef.current.clear();
-    detachedFilesRef.current.clear();
-  }, []);
-
   const hydrateWorkspace = useCallback(async () => {
     const requestId = ++hydrationRequestRef.current;
     patchHost({ hydrationStatus: "loading" }, "hydrate:loading");
@@ -543,8 +450,8 @@ export function PtyWorkspaceProvider({
           error: undefined,
         };
         resetHostRuntime("hydrate", {
-          rollbackPending: rollbackPendingWindows,
-          forgetWindowHandles,
+          rollbackPending: orchestrator.rollbackPending,
+          forgetWindowHandles: orchestrator.forgetHandles,
           releaseDocuments: () => {
             // 释放旧文档必须读取提交前的文档集合，因此在发布新状态之前执行。
             releaseFileDocuments(
@@ -604,43 +511,7 @@ export function PtyWorkspaceProvider({
     void hydrateWorkspace();
     return () => {
       hydrationRequestRef.current += 1;
-      const cleanupError = new Error("工作区内容宿主已卸载");
-      clearPendingWorkspaceContentWindows(
-        pendingDetachedRef.current,
-        (pending) => {
-          void rollbackWorkspaceContentHandoff(
-            pending.handoffContext,
-            pending.handoffPayload,
-            cleanupError,
-          ).catch(() => undefined);
-          contentCoordinatorRef.current.failHandoff(
-            { kind: "pty", slotId: pending.instanceId },
-            "detachCancelled",
-            pending.token,
-          );
-          pending.reject(cleanupError);
-          void pending.window.destroy().catch(() => undefined);
-        },
-      );
-      clearPendingWorkspaceContentWindows(
-        pendingDetachedFilesRef.current,
-        (pending) => {
-          if (pending.handoffContext) {
-            void rollbackWorkspaceContentHandoff(
-              pending.handoffContext,
-              pending.handoffPayload,
-              cleanupError,
-            ).catch(() => undefined);
-          }
-          contentCoordinatorRef.current.failHandoff(
-            { kind: "file", documentId: pending.documentId },
-            "detachCancelled",
-            pending.token,
-          );
-          pending.reject(cleanupError);
-          void pending.window.destroy().catch(() => undefined);
-        },
-      );
+      orchestrator.disposeAll();
     };
   }, [hydrateWorkspace]);
 
@@ -878,8 +749,8 @@ export function PtyWorkspaceProvider({
         { directoryId, directoryPath, relativePath },
         async (document) => {
           const detachedWindow =
-            detachedFilesRef.current.get(fileContentKey(document.id)) ??
-            pendingDetachedFilesRef.current.get(fileContentKey(document.id))
+            orchestrator.state.handles.file.get(fileContentKey(document.id)) ??
+            orchestrator.state.pending.file.get(fileContentKey(document.id))
               ?.window;
           if (detachedWindow) {
             await detachedWindow
@@ -927,129 +798,6 @@ export function PtyWorkspaceProvider({
   const loadFile = fileDomain.load;
   const editFile = fileDomain.edit;
   const saveFile = fileDomain.save;
-  const detachFile = useCallback(
-    async (documentId: string) => {
-      const content = { kind: "file", documentId } as const;
-      if (isWindowOwned(contentCoordinatorRef.current.get(content))) {
-        return;
-      }
-      const sourcePane = listWorkspacePanes(store.getLive().tree).find((pane) =>
-        hasWorkspaceContent(pane, content),
-      );
-      if (!sourcePane)
-        throw new Error(tRef.current("workspaceFiles.loadingFile"));
-      const token = crypto.randomUUID();
-      const windowLabel = createWindowLabel("workspaceContent");
-      let grantedWindowLabel: string | undefined;
-      let lifecycleStarted = false;
-      try {
-        const lifecycle = contentCoordinatorRef.current.beginDetach(
-          content,
-          { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
-          { kind: "window", windowLabel },
-          token,
-        );
-        if (lifecycle?.outcome !== "changed") {
-          throw new Error(tRef.current("pty.detachedMoveUnavailable"));
-        }
-        lifecycleStarted = true;
-        grantedWindowLabel = windowLabel;
-        if (!store.getLive().buffers[documentId]) await loadFile(documentId);
-        await fileDomain.waitForSave(documentId);
-        const fileBuffer = store.getLive().buffers[documentId];
-        const fileDocument = store
-          .getLive()
-          .documents.find((document) => document.id === documentId);
-        if (!fileDocument || !fileBuffer || fileBuffer.saving) {
-          throw new Error(tRef.current("workspaceFiles.loadingFile"));
-        }
-        await grantContentWindowFile(
-          windowLabel,
-          fileDocument.directoryId,
-          fileDocument.directoryPath,
-          fileDocument.relativePath,
-        );
-        const childUrl = new URL(window.location.href);
-        childUrl.search = "";
-        childUrl.hash = "";
-        writeWindowLaunchParams(childUrl.searchParams, {
-          kind: "file",
-          documentId,
-          handoffToken: token,
-          sourcePaneId: sourcePane.id,
-        });
-        await new Promise<void>((resolve, reject) => {
-          const child = createWorkspaceContentWindow({
-            label: windowLabel,
-            url: `${childUrl.pathname}${childUrl.search}${childUrl.hash}`,
-            title:
-              fileDocument.relativePath.split("/").pop() ??
-              fileDocument.relativePath,
-          });
-          const failCreation = (reason: unknown) => {
-            const pending = takePendingWorkspaceContentWindow(
-              pendingDetachedFilesRef.current,
-              fileContentKey(documentId),
-              windowLabel,
-            );
-            if (!pending) return;
-            reject(new Error(formatAppError(reason, tRef.current)));
-          };
-          const cleanupCreationErrorListener = retainAsyncUnlisten(
-            () =>
-              child.once("tauri://error", (event) => {
-                failCreation(
-                  event.payload == null
-                    ? tRef.current("pty.detachedCreateFailed")
-                    : event.payload,
-                );
-              }),
-            failCreation,
-          );
-          registerPendingWorkspaceContentWindow({
-            pending: pendingDetachedFilesRef.current,
-            key: fileContentKey(documentId),
-            timeoutMs: WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
-            onTimeout: () => {
-              void child.destroy().catch(() => undefined);
-              reject(new Error(tRef.current("pty.detachedStartTimedOut")));
-            },
-            record: {
-              documentId,
-              token,
-              windowLabel,
-              sourcePaneId: sourcePane.id,
-              window: child,
-              cleanup: cleanupCreationErrorListener,
-              resolve,
-              reject,
-              kind: "file",
-              stage: initialPendingStage("file"),
-            },
-          });
-        });
-      } catch (reason) {
-        if (grantedWindowLabel) {
-          await revokeContentWindowFile(grantedWindowLabel).catch(
-            (revokeError) =>
-              console.warn(
-                "Unable to revoke failed file window grant",
-                revokeError,
-              ),
-          );
-        }
-        if (lifecycleStarted && token) {
-          contentCoordinatorRef.current.failHandoff(
-            content,
-            "detachFailed",
-            token,
-          );
-        }
-        throw reason;
-      }
-    },
-    [loadFile],
-  );
 
   const registerPortalTarget = useCallback(
     (instanceId: string, target: HTMLDivElement | null) => {
@@ -1085,7 +833,7 @@ export function PtyWorkspaceProvider({
           dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
         });
       }
-      detachedByInstanceRef.current.delete(ptyContentKey(instanceId));
+      orchestrator.state.handles.pty.delete(ptyContentKey(instanceId));
       // 槽位移除与树关闭在同一次提交中发布。
       const liveTree = store.getLive().tree;
       store.commit((live) => {
@@ -1152,6 +900,25 @@ export function PtyWorkspaceProvider({
       }),
     [store, fileDomain, ptyDomain, removeSlot, getWorkspacePresentationContext],
   );
+  // 窗口编排的依赖经 depsRef 写入，每次渲染更新（与 tRef 同款写法）。
+  depsRef.current = {
+    store,
+    getCoordinator: () => contentCoordinatorRef.current,
+    translate: tRef.current,
+    commitTree,
+    setFocusedPane,
+    removeSlot,
+    loadFile,
+    waitForFileSave: (documentId) => fileDomain.waitForSave(documentId),
+    terminalOf: (instanceId) => terminalRefs.current.get(instanceId),
+    titleOfPty: (instanceId) =>
+      presentWorkspaceContent(
+        { kind: "pty", slotId: instanceId },
+        getWorkspacePresentationContext(),
+      ).title,
+    openDirectory: (directoryId) =>
+      useAppStore.getState().openDirectory(directoryId),
+  };
 
   const closeContents = useCallback(
     async (
@@ -1388,324 +1155,9 @@ export function PtyWorkspaceProvider({
     [moveContent],
   );
 
-  const isManagedDetachedDrag = useCallback(
-    (instanceId: string, windowLabel: string) => {
-      const ownership = contentCoordinatorRef.current.get({
-        kind: "pty",
-        slotId: instanceId,
-      });
-      return (
-        ownership?.phase === "detached" &&
-        ownership.owner.kind === "window" &&
-        ownership.owner.windowLabel === windowLabel
-      );
-    },
-    [],
-  );
-  const isManagedDetachedFileDrag = useCallback(
-    (documentId: string, windowLabel: string) => {
-      const ownership = contentCoordinatorRef.current.get({
-        kind: "file",
-        documentId,
-      });
-      return (
-        ownership?.phase === "detached" &&
-        ownership.owner.kind === "window" &&
-        ownership.owner.windowLabel === windowLabel
-      );
-    },
-    [],
-  );
-
-  const reconcileTimedOutDetach = useCallback(
-    async (pending: PendingDetachedWindow) => {
-      const key = ptyContentKey(pending.instanceId);
-      const current = pendingDetachedRef.current.get(key);
-      if (current && current.windowLabel !== pending.windowLabel) return;
-      if (current) window.clearTimeout(current.timer);
-      let tracked: PendingDetachedWindow;
-      const timer = window.setTimeout(() => {
-        if (pendingDetachedRef.current.get(key) === tracked) {
-          pendingDetachedRef.current.delete(key);
-          void reconcileTimedOutDetach(tracked);
-        }
-      }, PTY_OWNER_QUERY_RETRY_DELAY_MS);
-      tracked = { ...(current ?? pending), timer };
-      pendingDetachedRef.current.set(key, tracked);
-
-      const [status, child] = await Promise.all([
-        getPtySessionWindowStatus(pending.sessionId).catch(() => null),
-        WebviewWindow.getByLabel(pending.windowLabel).catch(() => null),
-      ]);
-      if (pendingDetachedRef.current.get(key) !== tracked) return;
-      const action = resolveDetachedStartTimeoutAction(status, {
-        expectedChildLabel: pending.windowLabel,
-        childExists: Boolean(child),
-      });
-
-      let effectiveAction = action;
-      if (action === "retry-owner-query") {
-        const step = nextOwnerQueryStep(tracked.ownerQueryRetries ?? 0);
-        if (step.kind === "retry") {
-          tracked.ownerQueryRetries = step.retries;
-          console.warn(
-            `Unable to verify PTY detach owner for session ${pending.sessionId}; retry ${step.retries} of ${PTY_OWNER_QUERY_MAX_RETRIES} without closing either window.`,
-          );
-          return;
-        }
-        console.warn(
-          `Giving up verifying PTY detach owner for session ${pending.sessionId}; rolling the detach back.`,
-        );
-        effectiveAction = "cancel-source-handoff";
-      }
-
-      if (effectiveAction === "accept-detached-owner") {
-        if (!advancePendingWindowStage(tracked, "attachedAck")) return;
-        const ownership = contentCoordinatorRef.current.completeHandoff(
-          { kind: "pty", slotId: pending.instanceId },
-          "detachReady",
-          pending.token,
-        );
-        if (ownership?.outcome !== "changed") {
-          await rollbackWorkspaceContentHandoff(
-            pending.handoffContext,
-            pending.handoffPayload,
-            new Error(tRef.current("pty.detachedStateChanged")),
-          ).catch(() => undefined);
-          takePendingWorkspaceContentWindow(
-            pendingDetachedRef.current,
-            ptyContentKey(pending.instanceId),
-            pending.windowLabel,
-          );
-          pending.reject(new Error(tRef.current("pty.detachedStateChanged")));
-          return;
-        }
-        const promoted = takePendingWorkspaceContentWindow(
-          pendingDetachedRef.current,
-          ptyContentKey(pending.instanceId),
-          pending.windowLabel,
-        );
-        if (!promoted) return;
-        detachedByInstanceRef.current.set(
-          ptyContentKey(pending.instanceId),
-          pending.window,
-        );
-        const content = {
-          kind: "pty",
-          slotId: pending.instanceId,
-        } as const;
-        const nextTree = reduceWorkspaceTree(store.getLive().tree, {
-          type: "detach",
-          ref: content,
-        });
-        commitTree(nextTree);
-        if (!findWorkspacePane(nextTree, store.getLive().focusedPaneId)) {
-          setFocusedPane(listWorkspacePanes(nextTree)[0].id);
-        }
-        pending.resolve();
-        return;
-      }
-
-      takePendingWorkspaceContentWindow(
-        pendingDetachedRef.current,
-        ptyContentKey(pending.instanceId),
-        pending.windowLabel,
-      );
-      if (effectiveAction === "remove-ended-session") {
-        void pending.window.destroy().catch(() => undefined);
-        contentCoordinatorRef.current.failHandoff(
-          { kind: "pty", slotId: pending.instanceId },
-          "detachFailed",
-          pending.token,
-        );
-        pending.reject(new Error(tRef.current("pty.detachedStartFailed")));
-        removeSlot(pending.instanceId);
-        return;
-      }
-
-      const failureMessage =
-        effectiveAction === "reject-foreign-owner"
-          ? tRef.current("pty.detachedStateChanged")
-          : tRef.current("pty.detachedStartTimedOut");
-      await rollbackWorkspaceContentHandoff(
-        pending.handoffContext,
-        pending.handoffPayload,
-        new Error(failureMessage),
-      ).catch(() => undefined);
-      contentCoordinatorRef.current.failHandoff(
-        { kind: "pty", slotId: pending.instanceId },
-        "detachFailed",
-        pending.token,
-      );
-      void pending.window.destroy().catch(() => undefined);
-      pending.reject(new Error(failureMessage));
-    },
-    [commitTree, removeSlot, setFocusedPane],
-  );
-
-  const detachSession = useCallback(
-    async (instanceId: string) => {
-      const slot = store
-        .getLive()
-        .slots.find((candidate) => candidate.instanceId === instanceId);
-      const sessionId = slot?.sessionId;
-      if (
-        !slot ||
-        !sessionId ||
-        isWindowOwned(
-          contentCoordinatorRef.current.get({
-            kind: "pty",
-            slotId: instanceId,
-          }),
-        )
-      ) {
-        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
-      }
-      const currentSession = store.getLive().ptySessionsById[sessionId];
-      if (currentSession?.state !== "running") {
-        throw new Error(tRef.current("pty.detachedMoveNotRunning"));
-      }
-      const terminal = terminalRefs.current.get(instanceId);
-      if (!terminal) throw new Error(tRef.current("pty.terminalNotReady"));
-
-      const windowLabel = createWindowLabel("terminal");
-      const sourcePane = listWorkspacePanes(store.getLive().tree).find((pane) =>
-        hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
-      );
-      if (!sourcePane)
-        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
-      const content = { kind: "pty", slotId: instanceId } as const;
-      const source = {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: sourcePane.id,
-      } as const;
-      const target = { kind: "window", windowLabel } as const;
-      const ownerState = contentCoordinatorRef.current.ensureAttached(
-        content,
-        source,
-      );
-      if (ownerState.phase !== "attached") {
-        throw new Error(tRef.current("pty.terminating"));
-      }
-      let driverContext: WorkspaceContentHandoffHookContext<"pty"> = {
-        content,
-        source,
-        target,
-        transferId: crypto.randomUUID(),
-        capabilities: {
-          prepare: async () => ({ handoff: await terminal.captureHandoff() }),
-          attach: async (payload) => {
-            await terminal.attachHandoff(sessionId, payload.handoff.token);
-          },
-          rollback: async (payload) => {
-            if (payload) await terminal.cancelHandoff(payload.handoff.token);
-          },
-        },
-      };
-      const prepared = await prepareWorkspaceContentHandoff(driverContext);
-      driverContext = { ...driverContext, transferId: prepared.transferId };
-      const handoff = prepared.payload.handoff;
-      const lifecycle = contentCoordinatorRef.current.beginDetach(
-        content,
-        source,
-        target,
-        prepared.transferId,
-      );
-      if (lifecycle?.outcome !== "changed") {
-        await rollbackWorkspaceContentHandoff(
-          driverContext,
-          prepared.payload,
-          new Error(tRef.current("pty.detachedMoveUnavailable")),
-        ).catch(() => undefined);
-        throw new Error(tRef.current("pty.detachedMoveUnavailable"));
-      }
-      const detachedRecord = { instanceId, sessionId, windowLabel };
-      const title = presentWorkspaceContent(
-        { kind: "pty", slotId: instanceId },
-        getWorkspacePresentationContext(),
-      ).title;
-      const childUrl = new URL(window.location.href);
-      childUrl.search = "";
-      childUrl.hash = "";
-      writeWindowLaunchParams(childUrl.searchParams, {
-        kind: "pty",
-        sessionId,
-        handoffToken: handoff.token,
-        instanceId,
-        title,
-        toolKey: slot.toolKey,
-        sourcePaneId: sourcePane.id,
-      });
-
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const child = createWorkspaceContentWindow({
-            label: windowLabel,
-            url: `${childUrl.pathname}${childUrl.search}${childUrl.hash}`,
-            title,
-          });
-          const failCreation = (reason: unknown) => {
-            const pending = takePendingWorkspaceContentWindow(
-              pendingDetachedRef.current,
-              ptyContentKey(instanceId),
-              windowLabel,
-            );
-            if (!pending) return;
-            reject(new Error(formatAppError(reason, tRef.current)));
-          };
-          const cleanupCreationErrorListener = retainAsyncUnlisten(
-            () =>
-              child.once("tauri://error", (event) => {
-                failCreation(
-                  event.payload == null
-                    ? tRef.current("pty.detachedCreateFailed")
-                    : event.payload,
-                );
-              }),
-            failCreation,
-          );
-          registerPendingWorkspaceContentWindow({
-            pending: pendingDetachedRef.current,
-            key: ptyContentKey(instanceId),
-            timeoutMs: WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
-            onTimeout: (pending) => {
-              void reconcileTimedOutDetach(pending);
-            },
-            record: {
-              ...detachedRecord,
-              kind: "pty",
-              stage: initialPendingStage("pty"),
-              token: handoff.token,
-              resolve,
-              reject,
-              window: child,
-              cleanup: cleanupCreationErrorListener,
-              handoffContext: driverContext,
-              handoffPayload: prepared.payload,
-            },
-          });
-        });
-      } catch (reason) {
-        await rollbackWorkspaceContentHandoff(
-          driverContext,
-          prepared.payload,
-          reason,
-        ).catch(() => undefined);
-        contentCoordinatorRef.current.failHandoff(
-          { kind: "pty", slotId: instanceId },
-          "detachFailed",
-          prepared.transferId,
-        );
-        throw reason;
-      }
-    },
-    [directories, reconcileTimedOutDetach, terminalRefs],
-  );
-
   const handleDetachedReady = useCallback(
     (payload: DetachedWindowReadyEvent) => {
-      const pending = pendingDetachedRef.current.get(
+      const pending = orchestrator.state.pending.pty.get(
         ptyContentKey(payload.instanceId),
       );
       if (!pending || !matchesDetachedWindow(pending, payload)) {
@@ -1724,7 +1176,7 @@ export function PtyWorkspaceProvider({
           new Error(tRef.current("pty.detachedStateChanged")),
         ).catch(() => undefined);
         takePendingWorkspaceContentWindow(
-          pendingDetachedRef.current,
+          orchestrator.state.pending.pty,
           ptyContentKey(payload.instanceId),
           pending.windowLabel,
         );
@@ -1733,8 +1185,8 @@ export function PtyWorkspaceProvider({
         return;
       }
       promotePendingWorkspaceContentWindow({
-        pending: pendingDetachedRef.current,
-        detached: detachedByInstanceRef.current,
+        pending: orchestrator.state.pending.pty,
+        detached: orchestrator.state.handles.pty,
         key: ptyContentKey(payload.instanceId),
         expectedWindowLabel: pending.windowLabel,
         toDetached: (record) => record.window,
@@ -1755,7 +1207,7 @@ export function PtyWorkspaceProvider({
 
   const handleDetachedFailed = useCallback(
     (payload: DetachedWindowReadyEvent & { message?: string }) => {
-      const pending = pendingDetachedRef.current.get(
+      const pending = orchestrator.state.pending.pty.get(
         ptyContentKey(payload.instanceId),
       );
       if (!pending || !matchesDetachedWindow(pending, payload)) return;
@@ -1770,7 +1222,7 @@ export function PtyWorkspaceProvider({
         pending.token,
       );
       takePendingWorkspaceContentWindow(
-        pendingDetachedRef.current,
+        orchestrator.state.pending.pty,
         ptyContentKey(payload.instanceId),
         pending.windowLabel,
       );
@@ -1808,7 +1260,9 @@ export function PtyWorkspaceProvider({
       for (const content of lost) {
         if (content.kind !== "file") continue;
         coordinator.ownerEnded(content);
-        detachedFilesRef.current.delete(fileContentKey(content.documentId));
+        orchestrator.state.handles.file.delete(
+          fileContentKey(content.documentId),
+        );
         coordinator.ensureAttached(content, {
           kind: "pane",
           windowLabel: "main",
@@ -1857,7 +1311,7 @@ export function PtyWorkspaceProvider({
               );
               if (status?.state === "ended") {
                 const pending = takePendingWorkspaceContentWindow(
-                  pendingDetachedRef.current,
+                  orchestrator.state.pending.pty,
                   ptyContentKey(slot.instanceId),
                 );
                 pending?.reject(
@@ -1912,14 +1366,14 @@ export function PtyWorkspaceProvider({
           listWorkspacePanes(currentTree)[0];
         if (!targetPane) return;
         const pending = takePendingWorkspaceContentWindow(
-          pendingDetachedRef.current,
+          orchestrator.state.pending.pty,
           ptyContentKey(slot.instanceId),
         );
         pending?.reject(new Error(tRef.current("pty.detachedStartTimedOut")));
-        const detached = detachedByInstanceRef.current.get(
+        const detached = orchestrator.state.handles.pty.get(
           ptyContentKey(slot.instanceId),
         );
-        detachedByInstanceRef.current.delete(ptyContentKey(slot.instanceId));
+        orchestrator.state.handles.pty.delete(ptyContentKey(slot.instanceId));
         if (detached) void detached.destroy().catch(() => undefined);
         contentCoordinatorRef.current.ownerEnded(content);
         contentCoordinatorRef.current.ensureAttached(content, {
@@ -1979,7 +1433,7 @@ export function PtyWorkspaceProvider({
         fail(tRef.current("pty.detachedSessionMissing"));
         return;
       }
-      let detachedWindow = detachedByInstanceRef.current.get(key);
+      let detachedWindow = orchestrator.state.handles.pty.get(key);
       if (!detachedWindow || !knownWindowLabel) {
         try {
           const [windowStatus, detachedWindow] = await Promise.all([
@@ -1993,7 +1447,7 @@ export function PtyWorkspaceProvider({
             fail(tRef.current("pty.detachedStateChanged"));
             return;
           }
-          detachedByInstanceRef.current.set(key, detachedWindow);
+          orchestrator.state.handles.pty.set(key, detachedWindow);
         } catch (reason) {
           fail(
             tRef.current("pty.returnFailed", {
@@ -2003,7 +1457,7 @@ export function PtyWorkspaceProvider({
           return;
         }
       }
-      detachedWindow ??= detachedByInstanceRef.current.get(key);
+      detachedWindow ??= orchestrator.state.handles.pty.get(key);
       if (!detachedWindow) {
         fail(tRef.current("pty.detachedStateChanged"));
         return;
@@ -2076,9 +1530,9 @@ export function PtyWorkspaceProvider({
         | WorkspaceContentHandoffPayloadByKind["pty"]
         | undefined;
       try {
-        ptyReturnWaitAbortRef.current?.abort();
+        orchestrator.state.returnWaitAbort.current?.abort();
         const waitAbortController = new AbortController();
-        ptyReturnWaitAbortRef.current = waitAbortController;
+        orchestrator.state.returnWaitAbort.current = waitAbortController;
         const deadline = Date.now() + 10_000;
         let slot = store
           .getLive()
@@ -2100,8 +1554,10 @@ export function PtyWorkspaceProvider({
             );
           terminal = terminalRefs.current.get(payload.instanceId);
         }
-        if (ptyReturnWaitAbortRef.current === waitAbortController) {
-          ptyReturnWaitAbortRef.current = null;
+        if (
+          orchestrator.state.returnWaitAbort.current === waitAbortController
+        ) {
+          orchestrator.state.returnWaitAbort.current = null;
         }
         if (waitAbortController.signal.aborted) return;
         if (!slot || !terminal || store.getLive().hydrationStatus !== "ready") {
@@ -2175,7 +1631,9 @@ export function PtyWorkspaceProvider({
         }
         commitTree(plan.nextTree);
         setFocusedPane(plan.focusPaneId);
-        detachedByInstanceRef.current.delete(ptyContentKey(payload.instanceId));
+        orchestrator.state.handles.pty.delete(
+          ptyContentKey(payload.instanceId),
+        );
         useAppStore.getState().openDirectory(slot.directoryId);
         try {
           await detachedWindow.destroy();
@@ -2249,7 +1707,7 @@ export function PtyWorkspaceProvider({
             listenWorkspaceContentWindowEvent(
               "pty-detached-exited",
               (event) => {
-                const pending = pendingDetachedRef.current.get(
+                const pending = orchestrator.state.pending.pty.get(
                   ptyContentKey(event.payload.instanceId),
                 );
                 if (pending && matchesDetachedWindow(pending, event.payload)) {
@@ -2264,7 +1722,7 @@ export function PtyWorkspaceProvider({
                     pending.token,
                   );
                   takePendingWorkspaceContentWindow(
-                    pendingDetachedRef.current,
+                    orchestrator.state.pending.pty,
                     ptyContentKey(event.payload.instanceId),
                     pending.windowLabel,
                   );
@@ -2362,7 +1820,7 @@ export function PtyWorkspaceProvider({
               listenWorkspaceContentWindowEvent(
                 "workspace-file-window-ready",
                 async (event) => {
-                  const pending = pendingDetachedFilesRef.current.get(
+                  const pending = orchestrator.state.pending.file.get(
                     fileContentKey(event.payload.documentId),
                   );
                   if (
@@ -2438,7 +1896,7 @@ export function PtyWorkspaceProvider({
                       pending.token,
                     );
                     takePendingWorkspaceContentWindow(
-                      pendingDetachedFilesRef.current,
+                      orchestrator.state.pending.file,
                       fileContentKey(pending.documentId),
                       pending.windowLabel,
                     );
@@ -2474,7 +1932,7 @@ export function PtyWorkspaceProvider({
                       pending.token,
                     );
                     takePendingWorkspaceContentWindow(
-                      pendingDetachedFilesRef.current,
+                      orchestrator.state.pending.file,
                       fileContentKey(pending.documentId),
                       pending.windowLabel,
                     );
@@ -2492,7 +1950,7 @@ export function PtyWorkspaceProvider({
               listenWorkspaceContentWindowEvent(
                 "workspace-file-window-attached",
                 (event) => {
-                  const pending = pendingDetachedFilesRef.current.get(
+                  const pending = orchestrator.state.pending.file.get(
                     fileContentKey(event.payload.documentId),
                   );
                   if (
@@ -2524,7 +1982,7 @@ export function PtyWorkspaceProvider({
                       ).catch(() => undefined);
                     }
                     takePendingWorkspaceContentWindow(
-                      pendingDetachedFilesRef.current,
+                      orchestrator.state.pending.file,
                       fileContentKey(pending.documentId),
                       pending.windowLabel,
                     );
@@ -2535,8 +1993,8 @@ export function PtyWorkspaceProvider({
                     return;
                   }
                   promotePendingWorkspaceContentWindow({
-                    pending: pendingDetachedFilesRef.current,
-                    detached: detachedFilesRef.current,
+                    pending: orchestrator.state.pending.file,
+                    detached: orchestrator.state.handles.file,
                     key: fileContentKey(pending.documentId),
                     expectedWindowLabel: pending.windowLabel,
                     toDetached: (record) => record.window,
@@ -2557,7 +2015,7 @@ export function PtyWorkspaceProvider({
               listenWorkspaceContentWindowEvent(
                 "workspace-file-window-attach-failed",
                 (event) => {
-                  const pending = pendingDetachedFilesRef.current.get(
+                  const pending = orchestrator.state.pending.file.get(
                     fileContentKey(event.payload.documentId),
                   );
                   if (
@@ -2582,7 +2040,7 @@ export function PtyWorkspaceProvider({
                     pending.token,
                   );
                   takePendingWorkspaceContentWindow(
-                    pendingDetachedFilesRef.current,
+                    orchestrator.state.pending.file,
                     fileContentKey(pending.documentId),
                     pending.windowLabel,
                   );
@@ -2680,7 +2138,7 @@ export function PtyWorkspaceProvider({
                     documentId: event.payload.documentId,
                   } as const;
                   const key = fileContentKey(content.documentId);
-                  let managedWindow = detachedFilesRef.current.get(key);
+                  let managedWindow = orchestrator.state.handles.file.get(key);
                   if (!managedWindow) {
                     try {
                       managedWindow =
@@ -2801,7 +2259,7 @@ export function PtyWorkspaceProvider({
                     });
                     return;
                   }
-                  detachedFilesRef.current.set(key, managedWindow);
+                  orchestrator.state.handles.file.set(key, managedWindow);
                   const returnTargetPaneId = resolveWorkspaceReturnPaneId(
                     store.getLive().tree,
                     {
@@ -2952,7 +2410,7 @@ export function PtyWorkspaceProvider({
                     }
                     commitTree(plan.nextTree);
                     setFocusedPane(plan.focusPaneId);
-                    detachedFilesRef.current.delete(
+                    orchestrator.state.handles.file.delete(
                       fileContentKey(document.id),
                     );
                     await revokeContentWindowFile(
@@ -3117,30 +2575,11 @@ export function PtyWorkspaceProvider({
   }, [directories]);
 
   const collectExitImpacts = useCallback(async (ptyCount: number) => {
-    const managedWindows = new Map<
-      string,
-      { documentId: string; token: string; windowLabel: string }
-    >();
-    for (const content of contentCoordinatorRef.current.listWindowOwned()) {
-      if (content.kind !== "file") continue;
-      const state = contentCoordinatorRef.current.get(content);
-      if (!state) continue;
-      const owner = ownerWindowOf(state);
-      if (owner && owner.windowToken) {
-        managedWindows.set(content.documentId, {
-          documentId: content.documentId,
-          token: owner.windowToken,
-          windowLabel: owner.windowLabel,
-        });
-      }
-    }
-    for (const pending of pendingDetachedFilesRef.current.values()) {
-      managedWindows.set(pending.documentId, {
-        documentId: pending.documentId,
-        token: pending.token,
-        windowLabel: pending.windowLabel,
-      });
-    }
+    const managedWindows = new Map(
+      orchestrator
+        .listManagedFileWindows()
+        .map((managed) => [managed.documentId, managed] as const),
+    );
 
     const flushResults = await Promise.all(
       [...managedWindows.values()].map(async (managed) => ({
@@ -3264,8 +2703,8 @@ export function PtyWorkspaceProvider({
   const rehydrateWorkspace = useCallback(async () => {
     backupRestoreInProgressRef.current = false;
     resetHostRuntime("rehydrate", {
-      rollbackPending: rollbackPendingWindows,
-      forgetWindowHandles,
+      rollbackPending: orchestrator.rollbackPending,
+      forgetWindowHandles: orchestrator.forgetHandles,
       releaseDocuments: () => {
         const ids = store.getLive().documents.map((document) => document.id);
         releaseFileDocuments(ids);
@@ -3300,7 +2739,7 @@ export function PtyWorkspaceProvider({
       editFile,
       saveFile,
       closeContents,
-      detachFile,
+      detachFile: orchestrator.detachFile,
       focusPane,
       activateSession,
       splitPane,
@@ -3308,9 +2747,9 @@ export function PtyWorkspaceProvider({
       splitAndMoveFile,
       moveSession,
       moveFile,
-      isManagedDetachedDrag,
-      isManagedDetachedFileDrag,
-      detachSession,
+      isManagedDetachedDrag: orchestrator.isManagedDetachedDrag,
+      isManagedDetachedFileDrag: orchestrator.isManagedDetachedFileDrag,
+      detachSession: orchestrator.detachSession,
       closeEmptyPane,
       updateSplitRatio,
       retryHydration,
@@ -3335,7 +2774,6 @@ export function PtyWorkspaceProvider({
       editFile,
       saveFile,
       closeContents,
-      detachFile,
       focusPane,
       activateSession,
       splitPane,
@@ -3343,9 +2781,6 @@ export function PtyWorkspaceProvider({
       splitAndMoveFile,
       moveSession,
       moveFile,
-      isManagedDetachedDrag,
-      isManagedDetachedFileDrag,
-      detachSession,
       closeEmptyPane,
       updateSplitRatio,
       retryHydration,

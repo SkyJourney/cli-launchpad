@@ -347,9 +347,9 @@ describe("native API permissions by window kind", () => {
           expect(projectSources[path]).not.toMatch(guard);
         }
       }
-      expect(projectSources["src/components/PtyWorkspace.tsx"]).toContain(
-        use.guardIdentifier,
-      );
+      expect(
+        projectSources["src/workspace/windows/contentWindowOrchestrator.ts"],
+      ).toContain(use.guardIdentifier);
       expect(main).toContain("src/components/PtyWorkspace.tsx");
     }
     for (const path of MAIN_ONLY_MODULES) {
