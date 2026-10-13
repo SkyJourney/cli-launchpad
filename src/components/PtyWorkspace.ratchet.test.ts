@@ -6,6 +6,18 @@
 import { describe, expect, it } from "vitest";
 import hostSource from "./PtyWorkspace.tsx?raw";
 
+const viewSources = import.meta.glob("../workspace/views/*.tsx", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+
+// Baseline: kind-branch count of PtyWorkspace.tsx at the start of m6-052 was 48;
+// after the view split the host plus views total 48 (no branch removed, only moved).
+// Rule: never increase; lower the constant when branches are removed.
+const KIND_BRANCH_BASELINE = 48;
+const KIND_BRANCH_PATTERN = /kind === "|"slot" in/g;
+
 const HANDLE_TABLE_PREDICATE =
   /detached(?:Files|ByInstance)Ref\.current\.has\(/g;
 
@@ -17,5 +29,15 @@ describe("PtyWorkspace ratchet", () => {
     expect(sample.match(HANDLE_TABLE_PREDICATE) ?? []).toHaveLength(2);
 
     expect(hostSource.match(HANDLE_TABLE_PREDICATE) ?? []).toHaveLength(0);
+  });
+
+  it("does not grow kind branches in the host", () => {
+    const sources = [hostSource, ...Object.values(viewSources)];
+    const count = sources.reduce(
+      (sum, source) => sum + (source.match(KIND_BRANCH_PATTERN) ?? []).length,
+      0,
+    );
+    expect(Object.keys(viewSources).length).toBeGreaterThanOrEqual(6);
+    expect(count).toBeLessThanOrEqual(KIND_BRANCH_BASELINE);
   });
 });
