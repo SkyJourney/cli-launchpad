@@ -227,6 +227,10 @@ interface PendingWorkspaceFileWindow extends PendingContentWindow<"file"> {
   sourcePaneId?: string;
 }
 
+/**
+ * @param coordinator 仅测试注入：宿主 harness 用它观察与断言内容归属状态。
+ * 生产代码（`App.tsx`）不传该属性，行为与注入前完全一致。
+ */
 export function PtyWorkspaceProvider({
   children,
   coordinator,

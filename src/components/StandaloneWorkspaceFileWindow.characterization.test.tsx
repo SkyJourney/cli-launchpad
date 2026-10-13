@@ -185,4 +185,26 @@ describe("file window", () => {
     expect(tauriMock.state.eventListeners).toHaveLength(0);
     expect(attached.errors).toEqual([]);
   });
+
+  it("clears the return timer on unmount so no timeout is pending after dispose", async () => {
+    const attached = await attachFileWindow();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    await act(async () => {
+      fireEvent.click(returnButton());
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // 返回请求已发出，计时器已挂起。
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    attached.dispose();
+    // 卸载后返回计时器必须已清：没有待执行的计时器，推进时间也不会触发超时。
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(attached.errors).toEqual([]);
+  });
 });

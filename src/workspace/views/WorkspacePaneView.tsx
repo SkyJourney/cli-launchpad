@@ -40,7 +40,7 @@ import { WorkspaceContentTab } from "../../components/WorkspaceContentTab";
 import { WorkspaceContentContextMenu } from "../../components/WorkspaceContentContextMenu";
 import { partitionVisibleTabs } from "../../lib/workspaceTabLayout";
 import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
-import { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
+import type { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
 import { beginWorkspaceSessionDrag } from "./viewHelpers";
 import { PaneContentStack } from "./PaneContentStack";
 
@@ -56,11 +56,6 @@ export type ResolvedPaneContent =
   | {
       content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>;
     };
-
-/**
- * @param coordinator 仅测试注入：宿主 harness 用它观察与断言内容归属状态。
- * 生产代码（`App.tsx`）不传该属性，行为与注入前完全一致。
- */
 
 export function WorkspacePaneView({
   pane,

@@ -19,6 +19,8 @@ import { tauriMock } from "../test/tauriMock";
 import { resetFakeTerminals } from "../test/host/hostMocks";
 import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
 import {
+  detachFileToWindow,
+  detachPtyToWindow,
   flush,
   launchPty,
   mountWorkspace,
@@ -27,6 +29,10 @@ import {
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
+import {
+  encodeWorkspaceContentDrag,
+  WORKSPACE_CONTENT_DRAG_TYPE,
+} from "../lib/workspaceContentDrag";
 
 let host: WorkspaceHost | undefined;
 
@@ -159,5 +165,172 @@ describe("pane drag and drop", () => {
       },
     );
     expect(host!.errors).toEqual([]);
+  });
+});
+
+describe("detached content return drops", () => {
+  const OTHER_WINDOW = "workspace-content-00000000-0000-4000-8000-000000000000";
+
+  function returnDropEvents(type: string, target: string) {
+    return tauriMock.state.emittedEvents.filter(
+      (event) =>
+        event.target === target &&
+        (event.payload as { type?: string }).type === type,
+    );
+  }
+
+  it("returning a detached PTY onto a pane emits a return-drop to its window only", async () => {
+    host = await mountWorkspace({
+      coordinator: new WorkspaceContentCoordinator(),
+    });
+    const [onlyPane] = listWorkspacePanes(host.ctx().tree);
+    act(() => {
+      host!.ctx().splitPane(onlyPane.id, "horizontal");
+    });
+    await flush();
+    const paneB = listWorkspacePanes(host.ctx().tree).find(
+      (p) => p.id !== onlyPane.id,
+    )!;
+    const { slot } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+
+    const dataTransfer = makeDataTransfer();
+    dataTransfer.setData(
+      WORKSPACE_CONTENT_DRAG_TYPE,
+      encodeWorkspaceContentDrag({
+        key: `pty:${slot.instanceId}`,
+        sourceWindowLabel: windowLabel,
+      }),
+    );
+    await act(async () => {
+      fireEvent.drop(paneElement(paneB.paneNumber), { dataTransfer });
+    });
+    await flush();
+
+    expect(
+      returnDropEvents("pty-return-drop-requested", windowLabel),
+    ).toHaveLength(1);
+    expect(
+      returnDropEvents("pty-return-drop-requested", windowLabel)[0].payload,
+    ).toMatchObject({
+      payload: { instanceId: slot.instanceId, targetPaneId: paneB.id },
+    });
+
+    // 反向：来自未分离窗口的同类载荷不发出回传事件。
+    const foreign = makeDataTransfer();
+    foreign.setData(
+      WORKSPACE_CONTENT_DRAG_TYPE,
+      encodeWorkspaceContentDrag({
+        key: `pty:${slot.instanceId}`,
+        sourceWindowLabel: OTHER_WINDOW,
+      }),
+    );
+    await act(async () => {
+      fireEvent.drop(paneElement(paneB.paneNumber), { dataTransfer: foreign });
+    });
+    await flush();
+    expect(
+      tauriMock.state.emittedEvents.filter(
+        (e) =>
+          (e.payload as { type?: string }).type === "pty-return-drop-requested",
+      ),
+    ).toHaveLength(1);
+    expect(host.errors).toEqual([]);
+  });
+
+  it("returning a detached file onto a pane emits a return-drop to its window only", async () => {
+    host = await mountWorkspace({
+      coordinator: new WorkspaceContentCoordinator(),
+    });
+    const doc = await openFile(host);
+    const [onlyPane] = listWorkspacePanes(host.ctx().tree);
+    act(() => {
+      host!.ctx().splitPane(onlyPane.id, "horizontal");
+    });
+    await flush();
+    const paneB = listWorkspacePanes(host.ctx().tree).find(
+      (p) => p.id !== onlyPane.id,
+    )!;
+    const { windowLabel } = await detachFileToWindow(host, doc.id);
+
+    const dataTransfer = makeDataTransfer();
+    dataTransfer.setData(
+      WORKSPACE_CONTENT_DRAG_TYPE,
+      encodeWorkspaceContentDrag({
+        key: `file:${doc.id}`,
+        sourceWindowLabel: windowLabel,
+      }),
+    );
+    await act(async () => {
+      fireEvent.drop(paneElement(paneB.paneNumber), { dataTransfer });
+    });
+    await flush();
+
+    const events = returnDropEvents(
+      "workspace-file-window-return-drop-requested",
+      windowLabel,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({
+      payload: { documentId: doc.id, targetPaneId: paneB.id },
+    });
+
+    // 反向：未分离窗口的文件载荷不发出回传事件。
+    const foreign = makeDataTransfer();
+    foreign.setData(
+      WORKSPACE_CONTENT_DRAG_TYPE,
+      encodeWorkspaceContentDrag({
+        key: `file:${doc.id}`,
+        sourceWindowLabel: OTHER_WINDOW,
+      }),
+    );
+    await act(async () => {
+      fireEvent.drop(paneElement(paneB.paneNumber), { dataTransfer: foreign });
+    });
+    await flush();
+    expect(
+      tauriMock.state.emittedEvents.filter(
+        (e) =>
+          (e.payload as { type?: string }).type ===
+          "workspace-file-window-return-drop-requested",
+      ),
+    ).toHaveLength(1);
+    expect(host.errors).toEqual([]);
+  });
+
+  it("rejects a payload in the previous format and changes nothing", async () => {
+    host = await mountWorkspace({
+      coordinator: new WorkspaceContentCoordinator(),
+    });
+    const doc = await openFile(host);
+    const [onlyPane] = listWorkspacePanes(host.ctx().tree);
+    act(() => {
+      host!.ctx().splitPane(onlyPane.id, "horizontal");
+    });
+    await flush();
+    const paneB = listWorkspacePanes(host.ctx().tree).find(
+      (p) => p.id !== onlyPane.id,
+    )!;
+    const before = host.ctx().tree;
+    const dataTransfer = makeDataTransfer();
+    dataTransfer.setData(
+      WORKSPACE_CONTENT_DRAG_TYPE,
+      'cli-launchpad-content-v1:{"kind":"file","contentId":"' +
+        doc.id +
+        '","sourcePaneId":"' +
+        onlyPane.id +
+        '","sourceWindowLabel":"main"}',
+    );
+    await act(async () => {
+      fireEvent.drop(paneElement(paneB.paneNumber), { dataTransfer });
+    });
+    await flush();
+
+    expect(host.ctx().tree).toBe(before);
+    expect(
+      listWorkspacePanes(host.ctx().tree).find((p) => p.id === paneB.id)!
+        .contents,
+    ).toEqual([]);
+    expect(host.errors).toEqual([]);
   });
 });

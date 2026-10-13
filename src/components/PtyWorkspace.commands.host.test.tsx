@@ -217,12 +217,17 @@ describe("workspace commands", () => {
     expect(h.ctx().focusedPaneId).toBe(paneA.id);
     expect(h.ctx().workspaceTreeRevision).toBe(revisionBefore + 1);
 
+    // 反向：非空 pane 不会被关闭，树对象与修订号都不变。
+    const treeBeforeNonEmpty = h.ctx().tree;
+    const revisionBeforeNonEmpty = h.ctx().workspaceTreeRevision;
     act(() => {
       h.ctx().closeEmptyPane(paneA.id);
     });
     await flush();
 
     expect(panes()).toHaveLength(1);
+    expect(h.ctx().tree).toBe(treeBeforeNonEmpty);
+    expect(h.ctx().workspaceTreeRevision).toBe(revisionBeforeNonEmpty);
     expect(() => assertWorkspaceInvariants(h)).not.toThrow();
     expect(h.errors).toEqual([]);
   });

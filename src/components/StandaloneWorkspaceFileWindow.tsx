@@ -467,9 +467,6 @@ export function StandaloneWorkspaceFileWindow({
           )
           .finally(() =>
             destroyWindow("Unable to destroy pre-ready file window"),
-          )
-          .catch((reason) =>
-            console.warn("Unable to destroy pre-ready file window", reason),
           );
       }}
       onCloseRequested={() => void requestReturnRef.current()}
