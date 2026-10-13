@@ -62,6 +62,12 @@ describe("workspace commands context", () => {
     );
     expect(unstable).toEqual([]);
     expect(WORKSPACE_COMMAND_KEYS).toHaveLength(33);
+    // 函数值键必须恰好等于命令清单：漏列或误列都会在这里失败。
+    const ctx = host.ctx() as unknown as Record<string, unknown>;
+    const functionKeys = Object.keys(ctx)
+      .filter((key) => typeof ctx[key] === "function")
+      .sort();
+    expect(functionKeys).toEqual([...WORKSPACE_COMMAND_KEYS].sort());
     // 反向：状态确实变化了（焦点、树与槽位都已改变）。
     expect(host.ctx().focusedPaneId).not.toBe(focusBefore);
     expect(host.ctx().slots).toHaveLength(1);

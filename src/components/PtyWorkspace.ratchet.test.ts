@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import hostSource from "./PtyWorkspace.tsx?raw";
 
-const viewSources = import.meta.glob("../workspace/views/*.tsx", {
+const viewSources = import.meta.glob("../workspace/views/*.{ts,tsx}", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -38,6 +38,10 @@ describe("PtyWorkspace ratchet", () => {
       0,
     );
     expect(Object.keys(viewSources).length).toBeGreaterThanOrEqual(6);
+    // 反向：视图辅助模块也必须被扫描（否则其中的 kind 分支会漏计）。
+    expect(
+      Object.keys(viewSources).some((path) => path.endsWith("/viewHelpers.ts")),
+    ).toBe(true);
     expect(count).toBeLessThanOrEqual(KIND_BRANCH_BASELINE);
   });
 });

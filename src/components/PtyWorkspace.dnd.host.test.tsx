@@ -142,6 +142,17 @@ describe("pane drag and drop", () => {
       host!.ctx().moveSession(paneB.id, paneA.id, slot.instanceId);
     });
     await flush();
+    // 前置条件：拖动之前 PTY 必须已经在 paneA、不在 paneB；否则移动是空操作，下面的断言会平凡地通过。
+    expect(panes().find((p) => p.id === paneA.id)!.contents).toContainEqual({
+      kind: "pty",
+      slotId: slot.instanceId,
+    });
+    expect(panes().find((p) => p.id === paneB.id)!.contents).not.toContainEqual(
+      {
+        kind: "pty",
+        slotId: slot.instanceId,
+      },
+    );
     const dataTransfer = makeDataTransfer();
 
     await act(async () => {

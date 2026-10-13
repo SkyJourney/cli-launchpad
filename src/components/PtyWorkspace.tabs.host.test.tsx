@@ -117,6 +117,33 @@ describe("tab overflow measurement", () => {
     expect(unobservedRenderedKeys()).toEqual([]);
   });
 
+  it("creates the tab resize observer once and keeps it across re-renders", async () => {
+    // 每次构造 FakeResizeObserver 都会调用 instances.add；监视它即可计数构造次数，
+    // 不依赖全局 ResizeObserver 的替换时序（挂载时 installDomPolyfills 会重新安装）。
+    installed = geometry.install({
+      stripWidth: 400,
+      widthOf: (text) => 10 * (text?.length ?? 0),
+    });
+    const addSpy = vi.spyOn(FakeResizeObserver.instances, "add");
+    try {
+      host = await mountWorkspace({
+        coordinator: new WorkspaceContentCoordinator(),
+      });
+      await openFile(host, "a.txt");
+      await flush();
+      const afterFirstRender = addSpy.mock.calls.length;
+      // 反向：挂载后至少构造过一个观察器，否则计数无意义。
+      expect(afterFirstRender).toBeGreaterThan(0);
+
+      await openFile(host, "b.txt");
+      await openFile(host, "c.txt");
+      await flush();
+      expect(addSpy.mock.calls.length).toBe(afterFirstRender);
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+
   it("re-partitions when an observed tab's title width changes", async () => {
     installObservers();
     installed = geometry.install({
@@ -131,33 +158,48 @@ describe("tab overflow measurement", () => {
     await openFile(host, "c.txt");
     triggerAll();
 
+    // 1) 宽度收窄：分区必须重算，溢出入口出现。
     act(() => {
       installed?.setStripWidth(60);
     });
     triggerAll();
+    await flush();
+    expect(overflowButton()).not.toBeNull();
+
+    // 2) 宽度放宽：三个文件可以全部放下，溢出入口消失。
     act(() => {
       installed?.setStripWidth(400);
     });
     triggerAll();
+    await flush();
+    expect(overflowButton()).toBeNull();
 
+    // 3) 标题变宽：PTY 标签的实测宽度增大，分区随之重算，溢出入口重新出现。
     const { slot } = await launchPty(host);
-    host.queryClient.setQueryData(qk.directories(), [
-      { ...DIRECTORY, name: "Renamed project with a much longer name" },
-    ]);
     await flush();
     const ptyKey = `pty:${slot.instanceId}`;
     const ptyElement = document.querySelector<HTMLElement>(
       `[data-workspace-content-key="${ptyKey}"]`,
     );
-    for (const observer of liveObservers()) {
-      if (ptyElement && observer.observed.has(ptyElement)) {
-        observer.trigger([ptyElement]);
-      }
-    }
+    if (!ptyElement) throw new Error("PTY tab is not rendered");
+    const widthBefore = ptyElement.getBoundingClientRect().width;
+    host.queryClient.setQueryData(qk.directories(), [
+      { ...DIRECTORY, name: "Renamed project with a much longer name" },
+    ]);
+    await flush();
+    const observers = liveObservers().filter((observer) =>
+      observer.observed.has(ptyElement),
+    );
+    // 反向：PTY 标签必须已被存活的观察器观察，否则下面的触发无意义。
+    expect(observers.length).toBeGreaterThan(0);
+    for (const observer of observers) observer.trigger([ptyElement]);
     await flush();
 
-    expect(renderedTabKeys()).toContain(ptyKey);
-    // 反向：没有任何已渲染的标签元素未被存活的观察器观察。
+    expect(ptyElement.getBoundingClientRect().width).toBeGreaterThan(
+      widthBefore,
+    );
+    expect(overflowButton()).not.toBeNull();
+    // 反向：没有任何已渲染的标签元素未被观察。
     expect(unobservedRenderedKeys()).toEqual([]);
   });
 });
