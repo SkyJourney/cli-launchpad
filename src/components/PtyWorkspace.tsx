@@ -19,12 +19,9 @@ import { useDirectories } from "../hooks/queries";
 
 import {
   type WorkspaceNode,
-  createWorkspacePane,
   findWorkspacePane,
   listWorkspacePanes,
-  listWorkspacePaneContents,
   hasWorkspaceContent,
-  remapWorkspaceFileIds,
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../lib/ptyWorkspaceLayout";
@@ -33,35 +30,16 @@ import { LISTENER_REGISTRATION_RETRY_DELAYS_MS } from "../lib/workspaceContentLi
 import { type IsolatedRegistrationFailure } from "../lib/retryPolicy";
 
 import {
-  getWorkspaceLayout,
-  planApplyWorkspaceLayoutPreset,
-  resetWorkspaceLayout,
-  saveWorkspaceLayout,
-  type Directory,
   type PtySession,
   type ToolKey,
-  type WorkspaceLayoutSlot,
   type WorkspacePaneContentRef,
 } from "../lib/tauri";
-import {
-  createWorkspaceLayoutDocument,
-  isWorkspaceApplyStateCurrent,
-  markWorkspaceSlotsRestored,
-  removeEndedWorkspaceSlots,
-  rehomeDetachedWorkspaceContents,
-  restoreCurrentWorkspaceFilesAfterPreset,
-  restoreWorkspaceLayoutApplyPlan,
-  restoreWorkspaceRuntimeSnapshot,
-  UnsupportedWorkspaceLayoutVersionError,
-  WorkspaceLayoutSaveQueue,
-  listPersistedDetachedContents,
-} from "../lib/workspaceLayoutPersistence";
 import {
   isHandoffActive,
   isWindowOwned,
 } from "../lib/workspaceOwnershipProjection";
 import { isWorkspaceFileBufferNewer } from "../lib/workspaceFileBuffer";
-import { formatAppError } from "../lib/appErrors";
+
 import { collectAppExitImpacts } from "../lib/appExitImpacts";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 import {
@@ -94,6 +72,17 @@ import {
   requestFileWindowFlush,
 } from "../workspace/windows/protocolHandlers.file";
 import { createPtyProtocolHandlers } from "../workspace/windows/protocolHandlers.pty";
+import {
+  createWorkspacePersistence,
+  latestPersistenceDeps,
+  type RuntimeResetNext,
+  type WorkspacePersistenceDeps,
+} from "../workspace/persistence/workspacePersistence";
+import { useWorkspacePersistence } from "../workspace/persistence/useWorkspacePersistence";
+import type {
+  HostResetReason,
+  HostRuntimeSteps,
+} from "../workspace/host/resetHostRuntime";
 import { ImpactConfirmDialog } from "../workspace/views/ImpactConfirmDialog";
 import { createFileContentDomain } from "../workspace/domains/fileContentDomain";
 import { createPtyContentDomain } from "../workspace/domains/ptyContentDomain";
@@ -103,7 +92,7 @@ import {
   workspaceDomainKinds,
 } from "../workspace/domains/workspaceDomainTable";
 import { collectWorkspaceImpacts } from "../workspace/impacts/workspaceImpacts";
-import { resetHostRuntime } from "../workspace/host/resetHostRuntime";
+
 import {
   WorkspaceHostStore,
   WorkspaceHostStoreContext,
@@ -124,10 +113,7 @@ import {
   type WorkspaceContentDisposalImpact,
 } from "../lib/workspaceContentClose";
 
-import {
-  WorkspacePtySessionRegistry,
-  type PtyWorkspaceSlot,
-} from "./WorkspacePtySessionRegistry";
+import { WorkspacePtySessionRegistry } from "./WorkspacePtySessionRegistry";
 import { droppedFileDocumentIds } from "../lib/workspaceFileDocumentRelease";
 import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import "allotment/dist/style.css";
@@ -170,10 +156,6 @@ export function PtyWorkspaceProvider({
     [],
   );
   const { data: directories } = useDirectories();
-  const [hydrationError, setHydrationError] = useState<string | null>(null);
-  const [layoutSaveError, setLayoutSaveError] = useState<string | null>(null);
-  const [layoutResetError, setLayoutResetError] = useState<string | null>(null);
-  const [layoutResetPending, setLayoutResetPending] = useState(false);
   const [closeConfirmationImpacts, setCloseConfirmationImpacts] = useState<
     WorkspaceContentDisposalImpact[] | null
   >(null);
@@ -210,12 +192,7 @@ export function PtyWorkspaceProvider({
   >({});
   const [ptyDomain] = useState(() => createPtySlotsDomain());
   const terminalRefs = ptyDomain.terminalRefs;
-  const saveQueueRef = useRef<WorkspaceLayoutSaveQueue | null>(null);
-  const backupRestoreInProgressRef = useRef(false);
-  const hydrationRequestRef = useRef(0);
-  const ratioSaveTimerRef = useRef<number | null>(null);
   const splitResizeInProgressRef = useRef(false);
-  const persistLatestRef = useRef<(() => void) | null>(null);
   const contentCoordinatorRef = useRef(
     coordinator ?? new WorkspaceContentCoordinator(),
   );
@@ -227,8 +204,8 @@ export function PtyWorkspaceProvider({
   // 文件领域：文件文档与缓冲的加载、编辑、保存、关闭经由领域对象完成（惰性初始化，闭包按调用时读取 ref）。
   const [fileDomain] = useState(() =>
     createFileDocumentsDomain(store, {
-      isRestoreInProgress: () => backupRestoreInProgressRef.current,
-      getHydrationEpoch: () => hydrationRequestRef.current,
+      isRestoreInProgress: () => persistence.restoreLatch.active,
+      getHydrationEpoch: () => persistence.hydrationEpoch(),
       isHandoffActive: (documentId) =>
         isHandoffActive(
           contentCoordinatorRef.current.get({ kind: "file", documentId }),
@@ -299,53 +276,6 @@ export function PtyWorkspaceProvider({
   );
   const activeView = useAppStore((state) => state.view);
 
-  const createSaveQueue = useCallback(
-    (revision: number) =>
-      new WorkspaceLayoutSaveQueue(
-        revision,
-        saveWorkspaceLayout,
-        (reason) => setLayoutSaveError(formatAppError(reason, tRef.current)),
-        () => setLayoutSaveError(null),
-      ),
-    [],
-  );
-
-  const persistWorkspaceSnapshot = useCallback(
-    (treeOverride?: WorkspaceNode) => {
-      if (store.getLive().hydrationStatus !== "ready") return;
-      if (backupRestoreInProgressRef.current) return;
-      const queue = saveQueueRef.current;
-      if (!queue) return;
-
-      const snapshotTree = treeOverride ?? store.getLive().tree;
-      // 快照构造不得把异常抛进 effect：根边界只能兜底成重载提示（丢失未保存缓冲），
-      // 所以这里降级为一次可自愈的保存错误，下一次状态变化会重新保存。
-      try {
-        const persistedSlots: WorkspaceLayoutSlot[] = store
-          .getLive()
-          .slots.map((slot) => toWorkspaceLayoutSlot(slot, directories ?? []));
-        queue.enqueue(
-          createWorkspaceLayoutDocument({
-            tree: snapshotTree,
-            focusedPaneId: store.getLive().focusedPaneId,
-            slots: persistedSlots,
-            documents: store.getLive().documents,
-            detachedContents: listPersistedDetachedContents(
-              contentCoordinatorRef.current.listWindowOwned(),
-              snapshotTree,
-            ),
-          }),
-        );
-      } catch (reason) {
-        setLayoutSaveError(formatAppError(reason, tRef.current));
-        console.error("[workspace.layout_snapshot_invalid]", reason);
-      }
-    },
-    [directories],
-  );
-
-  persistLatestRef.current = () => persistWorkspaceSnapshot();
-
   const releaseFileDocuments = useCallback((documentIds: readonly string[]) => {
     if (documentIds.length === 0) return;
     const dispose = tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose;
@@ -366,278 +296,74 @@ export function PtyWorkspaceProvider({
     }
   }, []);
 
-  const hydrateWorkspace = useCallback(async () => {
-    const requestId = ++hydrationRequestRef.current;
-    patchHost({ hydrationStatus: "loading" }, "hydrate:loading");
-    setHydrationError(null);
-    setLayoutResetError(null);
-    saveQueueRef.current = null;
-
-    try {
-      const read = await getWorkspaceLayout();
-      if (requestId !== hydrationRequestRef.current) return;
-      const revision = read.revision ?? 0;
-
-      if (read.status.status === "needsReset") {
-        setHydrationError(read.status.reason);
-        patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
+  // 布局持久化：hydrate 与保存只经显式入口（挂载、重试、恢复、拖拽结束、卸载）触发；依赖经 persistenceDepsRef 读取最新值（R-FE-1）。
+  const directoriesRef = useRef(directories);
+  directoriesRef.current = directories;
+  const persistenceDepsRef = useRef<WorkspacePersistenceDeps | null>(null);
+  const [persistence] = useState(() =>
+    createWorkspacePersistence(
+      latestPersistenceDeps(persistenceDepsRef, store),
+    ),
+  );
+  const {
+    hydrationError,
+    layoutSaveError,
+    layoutResetError,
+    layoutResetPending,
+  } = useSyncExternalStore(
+    persistence.subscribeStatus,
+    persistence.getStatus,
+    persistence.getStatus,
+  );
+  // hydrate 与 rehydrate 共用的运行期重置步骤（与 m6-048 的两处 resetHostRuntime 第二实参逐项等价）。
+  const buildRuntimeSteps = (
+    reason: HostResetReason,
+    next: RuntimeResetNext | null,
+  ): HostRuntimeSteps => ({
+    rollbackPending: orchestrator.rollbackPending,
+    forgetWindowHandles: orchestrator.forgetHandles,
+    releaseDocuments: () => {
+      if (reason === "hydrate" && next) {
+        // 释放旧文档必须读取提交前的文档集合，因此在发布新状态之前执行。
+        releaseFileDocuments(
+          droppedFileDocumentIds(store.getLive().documents, next.documents),
+        );
+        fileDomain.invalidateLoads(
+          new Set([
+            ...store.getLive().documents.map((document) => document.id),
+            ...next.documents.map((document) => document.id),
+          ]),
+        );
         return;
       }
-
-      let restoredPatch: Partial<HostSnapshot> = {};
-      if (read.status.status === "ready") {
-        if (!read.layout) {
-          throw new Error(tRef.current("pty.layoutDataMissing"));
-        }
-        const restored = rehomeDetachedWorkspaceContents(
-          restoreWorkspaceRuntimeSnapshot(read.layout),
-        );
-        const restoredSnapshot = removeEndedWorkspaceSlots({
-          ...restored,
-          slots: markWorkspaceSlotsRestored(restored.slots, read.slotStates),
-        });
-        const restoredSlots: PtyWorkspaceSlot[] = restoredSnapshot.slots;
-        // 协调器重建失败时与原实现一致：执行完其余步骤后进入 loadFailed，不发布半更新的状态。
-        const rebuild: { failed: boolean; error: unknown } = {
-          failed: false,
-          error: undefined,
-        };
-        resetHostRuntime("hydrate", {
-          rollbackPending: orchestrator.rollbackPending,
-          forgetWindowHandles: orchestrator.forgetHandles,
-          releaseDocuments: () => {
-            // 释放旧文档必须读取提交前的文档集合，因此在发布新状态之前执行。
-            releaseFileDocuments(
-              droppedFileDocumentIds(
-                store.getLive().documents,
-                restoredSnapshot.documents ?? [],
-              ),
-            );
-            fileDomain.invalidateLoads(
-              new Set([
-                ...store.getLive().documents.map((document) => document.id),
-                ...(restoredSnapshot.documents ?? []).map(
-                  (document) => document.id,
-                ),
-              ]),
-            );
-          },
-          clearPtyRuntime: () => undefined,
-          rebuildCoordinator: () => {
-            try {
-              contentCoordinatorRef.current.resetFromPanes(
-                listWorkspacePanes(restoredSnapshot.tree),
-                "main",
-              );
-            } catch (error) {
-              rebuild.failed = true;
-              rebuild.error = error;
-            }
-          },
-        });
-        if (rebuild.failed) throw rebuild.error;
-        restoredPatch = {
-          slots: restoredSlots,
-          documents: restoredSnapshot.documents ?? [],
-          buffers: {},
-          tree: restoredSnapshot.tree,
-          focusedPaneId: restoredSnapshot.focusedPaneId,
-        };
-      }
-
-      saveQueueRef.current = createSaveQueue(revision);
-      setLayoutSaveError(null);
-      patchHost({ ...restoredPatch, hydrationStatus: "ready" }, "hydrated");
-    } catch (reason) {
-      if (requestId !== hydrationRequestRef.current) return;
-      if (reason instanceof UnsupportedWorkspaceLayoutVersionError) {
-        setHydrationError(reason.message);
-        patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
-        return;
-      }
-      setHydrationError(formatAppError(reason, tRef.current));
-      patchHost({ hydrationStatus: "loadFailed" }, "hydrate:loadFailed");
-    }
-  }, [createSaveQueue, releaseFileDocuments, store]);
-
-  useEffect(() => {
-    void hydrateWorkspace();
-    return () => {
-      hydrationRequestRef.current += 1;
-      orchestrator.disposeAll();
-    };
-  }, [hydrateWorkspace]);
-
-  useEffect(() => {
-    if (hydrationStatus === "ready") persistWorkspaceSnapshot();
-  }, [
-    detachedInstanceIds,
-    focusedPaneId,
-    hydrationStatus,
-    persistWorkspaceSnapshot,
-    slots,
-    fileDocuments,
-    tree,
-  ]);
-
-  useEffect(
-    () => () => {
-      if (ratioSaveTimerRef.current !== null) {
-        window.clearTimeout(ratioSaveTimerRef.current);
-      }
-      if (store.getLive().hydrationStatus === "ready") {
-        persistLatestRef.current?.();
-        const queue = saveQueueRef.current;
-        void queue?.flush();
-        queue?.dispose();
-      }
+      const ids = store.getLive().documents.map((document) => document.id);
+      releaseFileDocuments(ids);
+      fileDomain.invalidateLoads(ids);
     },
-    [],
-  );
-
-  const retryHydration = useCallback(() => {
-    void hydrateWorkspace();
-  }, [hydrateWorkspace]);
-
-  const resetWorkspace = useCallback(async () => {
-    if (store.getLive().hydrationStatus !== "needsReset") return;
-    setLayoutResetPending(true);
-    setLayoutResetError(null);
-    try {
-      const revision = await resetWorkspaceLayout();
-      saveQueueRef.current = createSaveQueue(revision);
-      setHydrationError(null);
-      setLayoutSaveError(null);
-      patchHost({ hydrationStatus: "ready" }, "resetWorkspace:ready");
-    } catch (reason) {
-      setLayoutResetError(formatAppError(reason, tRef.current));
-      throw reason;
-    } finally {
-      setLayoutResetPending(false);
-    }
-  }, [createSaveQueue]);
-
-  const applyWorkspaceLayoutPreset = useCallback(
-    async (presetId: string) => {
-      if (store.getLive().hydrationStatus !== "ready") return;
-      const protectedContents = contentCoordinatorRef.current.listWindowOwned();
-      const expectedState = {
-        tree: store.getLive().tree,
-        slots: store.getLive().slots,
-        focusedPaneId: store.getLive().focusedPaneId,
-        detachedContents: protectedContents,
-      };
-      let activeTree = expectedState.tree;
-      const detachedContents =
-        contentCoordinatorRef.current.listInPhases("detached");
-      for (const content of detachedContents) {
-        activeTree = reduceWorkspaceTree(activeTree, {
-          type: "detach",
-          ref: content,
-        });
-      }
-      const activePanes = listWorkspacePanes(activeTree);
-      const activeLayout = createWorkspaceLayoutDocument({
-        tree: activeTree,
-        focusedPaneId: activePanes.some(
-          (pane) => pane.id === store.getLive().focusedPaneId,
-        )
-          ? store.getLive().focusedPaneId
-          : activePanes[0].id,
-        slots: store
-          .getLive()
-          .slots.map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
-        documents: store.getLive().documents,
-        detachedContents: listPersistedDetachedContents(
-          contentCoordinatorRef.current.listWindowOwned(),
-          activeTree,
-        ),
-      });
-      const plan = await planApplyWorkspaceLayoutPreset(presetId, activeLayout);
-      if (
-        !isWorkspaceApplyStateCurrent(expectedState, {
-          tree: store.getLive().tree,
-          slots: store.getLive().slots,
-          focusedPaneId: store.getLive().focusedPaneId,
-          detachedContents: contentCoordinatorRef.current.listWindowOwned(),
-        })
-      ) {
-        throw new Error(tRef.current("pty.layoutChangedDuringApply"));
-      }
-      const restored = restoreWorkspaceLayoutApplyPlan(plan);
-      const restoredSlots: PtyWorkspaceSlot[] = restored.slots;
-      const restoredDocuments = [...(restored.documents ?? [])];
-      const currentDocuments = store.getLive().documents;
-      const currentDocumentByIdentity = new Map(
-        currentDocuments.map((document) => [
-          `${document.directoryId}:${document.relativePath}`,
-          document,
-        ]),
-      );
-      fileDomain.invalidateLoads(
-        new Set([
-          ...currentDocuments.map((document) => document.id),
-          ...restoredDocuments.map((document) => document.id),
-        ]),
-      );
-      const documentIdMap = new Map<string, string>();
-      const normalizedDocuments = restoredDocuments.map((document) => {
-        const currentDocument = currentDocumentByIdentity.get(
-          `${document.directoryId}:${document.relativePath}`,
-        );
-        if (!currentDocument) return document;
-        documentIdMap.set(document.id, currentDocument.id);
-        return currentDocument;
-      });
-      let restoredTree = remapWorkspaceFileIds(restored.tree, documentIdMap);
-      restoredDocuments.splice(
-        0,
-        restoredDocuments.length,
-        ...normalizedDocuments,
-      );
-      const detachedNow =
-        contentCoordinatorRef.current.listInPhases("detached");
-      const detachingNow =
-        contentCoordinatorRef.current.listInPhases("detaching");
-      const restoredFiles = restoreCurrentWorkspaceFilesAfterPreset({
-        tree: restoredTree,
-        focusedPaneId: restored.focusedPaneId,
-        restoredDocuments,
-        currentDocuments,
-        detachedContents: restored.detachedContents,
-        currentlyDetachedContents: detachedNow,
-        detachingContents: detachingNow,
-      });
-      restoredTree = restoredFiles.tree;
-      const nextDocuments = restoredFiles.documents;
-
-      // 必须在上面的状态一致性检查之后登记，否则检查失败时 coordinator 已被污染。
-      for (const pane of listWorkspacePanes(restoredTree)) {
-        for (const content of pane.contents) {
-          if (content.kind === "unknown") continue;
-          contentCoordinatorRef.current.ensureAttached(content, {
-            kind: "pane",
-            windowLabel: "main",
-            paneId: pane.id,
-          });
-        }
-      }
-
-      releaseFileDocuments(
-        droppedFileDocumentIds(currentDocuments, nextDocuments),
-      );
-      patchHost(
-        {
-          slots: restoredSlots,
-          documents: nextDocuments,
-          tree: restoredTree,
-          focusedPaneId: restored.focusedPaneId,
-        },
-        "applyWorkspaceLayoutPreset:apply",
-      );
-    },
-    [directories, releaseFileDocuments, store],
-  );
+    clearPtyRuntime:
+      reason === "rehydrate"
+        ? () => ptyDomain.terminalRefs.current.clear()
+        : () => undefined,
+    rebuildCoordinator:
+      reason === "hydrate" && next
+        ? () =>
+            contentCoordinatorRef.current.resetFromPanes(
+              listWorkspacePanes(next.tree),
+              "main",
+            )
+        : () => contentCoordinatorRef.current.reset(),
+  });
+  persistenceDepsRef.current = {
+    store,
+    getCoordinator: () => contentCoordinatorRef.current,
+    getDirectories: () => directoriesRef.current,
+    translate: tRef.current,
+    initialPaneId,
+    runtimeSteps: buildRuntimeSteps,
+    invalidateDocuments: (ids) => fileDomain.invalidateLoads(ids),
+    releaseDocuments: (ids) => releaseFileDocuments(ids),
+  };
+  useWorkspacePersistence(persistence, orchestrator);
 
   const commitTree = useCallback(
     (next: WorkspaceNode) => patchHost({ tree: next }, "commitTree"),
@@ -686,7 +412,7 @@ export function PtyWorkspaceProvider({
       store,
       coordinator: contentCoordinatorRef.current,
       addSlot: ptyDomain.addSlot,
-      isRestoreInProgress: () => backupRestoreInProgressRef.current,
+      isRestoreInProgress: () => persistence.restoreLatch.active,
       afterCommit: (ref) => syncProjectContextRef.current(ref),
       newId: () => crypto.randomUUID(),
     }),
@@ -1005,7 +731,7 @@ export function PtyWorkspaceProvider({
 
   const launchSession = useCallback(
     (directoryId: number, toolKey: ToolKey, resumeSessionId?: string) => {
-      if (backupRestoreInProgressRef.current) return;
+      if (persistence.restoreLatch.active) return;
       const directory = directories?.find((entry) => entry.id === directoryId);
       if (!directory) {
         toast.error(tRef.current("pty.projectUnavailable"));
@@ -1150,23 +876,15 @@ export function PtyWorkspaceProvider({
 
       if (phase === "dragEnd") {
         splitResizeInProgressRef.current = false;
-        if (ratioSaveTimerRef.current !== null) {
-          window.clearTimeout(ratioSaveTimerRef.current);
-          ratioSaveTimerRef.current = null;
-        }
+        persistence.cancelResizePersist();
         commitTree(nextTree);
         return;
       }
 
       splitResizeInProgressRef.current = true;
-      if (ratioSaveTimerRef.current === null) {
-        ratioSaveTimerRef.current = window.setTimeout(() => {
-          ratioSaveTimerRef.current = null;
-          persistWorkspaceSnapshot();
-        }, 500);
-      }
+      persistence.schedulePersistAfterResize();
     },
-    [commitTree, persistWorkspaceSnapshot],
+    [commitTree, persistence],
   );
 
   const recordSession = useCallback(
@@ -1183,49 +901,6 @@ export function PtyWorkspaceProvider({
     },
     [removeSlot, ptyDomain, store],
   );
-
-  const getCurrentPresetLayout = useCallback(() => {
-    let presetTree = store.getLive().tree;
-    const protectedContents = contentCoordinatorRef.current.listWindowOwned();
-    for (const content of protectedContents) {
-      presetTree = reduceWorkspaceTree(presetTree, {
-        type: "detach",
-        ref: content,
-      });
-    }
-    const presetPanes = listWorkspacePanes(presetTree);
-    const paneSlotIds = new Set(
-      presetPanes.flatMap((pane) =>
-        listWorkspacePaneContents(pane, "pty").flatMap((content) =>
-          content.kind === "pty" ? [content.slotId] : [],
-        ),
-      ),
-    );
-    const paneFileIds = new Set(
-      presetPanes.flatMap((pane) =>
-        listWorkspacePaneContents(pane, "file").flatMap((content) =>
-          content.kind === "file" ? [content.documentId] : [],
-        ),
-      ),
-    );
-    const currentFocusedPaneId = store.getLive().focusedPaneId;
-    return createWorkspaceLayoutDocument({
-      tree: presetTree,
-      focusedPaneId: presetPanes.some(
-        (pane) => pane.id === currentFocusedPaneId,
-      )
-        ? currentFocusedPaneId
-        : presetPanes[0].id,
-      slots: store
-        .getLive()
-        .slots.filter((slot) => paneSlotIds.has(slot.instanceId))
-        .map((slot) => toWorkspaceLayoutSlot(slot, directories ?? [])),
-      documents: store
-        .getLive()
-        .documents.filter((document) => paneFileIds.has(document.id)),
-      detachedContents: [],
-    });
-  }, [directories]);
 
   const collectExitImpacts = useCallback(async (ptyCount: number) => {
     const managedWindows = new Map(
@@ -1277,10 +952,10 @@ export function PtyWorkspaceProvider({
   }, []);
 
   const getBackupRestoreBlockers = useCallback(async () => {
-    backupRestoreInProgressRef.current = true;
+    persistence.restoreLatch.active = true;
     try {
       await fileDomain.waitForAllSaves();
-      await saveQueueRef.current?.flush();
+      await persistence.flush();
 
       const runningPtyCount = ptyDomain.runningSessions(store.getLive()).length;
       const impacts = await collectExitImpacts(runningPtyCount);
@@ -1296,11 +971,11 @@ export function PtyWorkspaceProvider({
         detachedWindowCount: detachedWindowIdentities.size,
       };
       if (hasWorkspaceDataRestoreBlockers(blockers)) {
-        backupRestoreInProgressRef.current = false;
+        persistence.restoreLatch.active = false;
       }
       return blockers;
     } catch (reason) {
-      backupRestoreInProgressRef.current = false;
+      persistence.restoreLatch.active = false;
       throw reason;
     }
   }, [collectExitImpacts]);
@@ -1325,40 +1000,11 @@ export function PtyWorkspaceProvider({
     // 只有在替换数据库之前失败（守卫拒绝、恢复前的错误）才会返回 Err，此时数据库
     // 内容未变，内存状态仍与之一致。这里只解除持久化冻结，不重新加载工作区：
     // rehydrate 会清空 PTY 会话表，恢复检查之后启动的运行中 PTY 会因此失去前端句柄。
-    backupRestoreInProgressRef.current = false;
+    persistence.restoreLatch.active = false;
     // 冻结期间的变更只是被跳过、没有丢弃（状态保留），解冻后立即保存，
     // 否则在下一次状态变化前它们都不会落盘。
-    persistLatestRef.current?.();
+    persistence.schedulePersist();
   }, []);
-
-  const rehydrateWorkspace = useCallback(async () => {
-    backupRestoreInProgressRef.current = false;
-    resetHostRuntime("rehydrate", {
-      rollbackPending: orchestrator.rollbackPending,
-      forgetWindowHandles: orchestrator.forgetHandles,
-      releaseDocuments: () => {
-        const ids = store.getLive().documents.map((document) => document.id);
-        releaseFileDocuments(ids);
-        fileDomain.invalidateLoads(ids);
-      },
-      clearPtyRuntime: () => ptyDomain.terminalRefs.current.clear(),
-      rebuildCoordinator: () => contentCoordinatorRef.current.reset(),
-    });
-    saveQueueRef.current = null;
-    patchHost(
-      {
-        ptySessionsById: {},
-        slots: [],
-        documents: [],
-        buffers: {},
-        tree: createWorkspacePane(initialPaneId),
-        focusedPaneId: initialPaneId,
-        treeRevision: store.getLive().treeRevision + 1,
-      },
-      "rehydrateWorkspace:reset",
-    );
-    await hydrateWorkspace();
-  }, [hydrateWorkspace, initialPaneId, releaseFileDocuments]);
 
   const commands = useMemo<WorkspaceCommands>(
     () => ({
@@ -1383,17 +1029,17 @@ export function PtyWorkspaceProvider({
       detachSession: orchestrator.detachSession,
       closeEmptyPane,
       updateSplitRatio,
-      retryHydration,
-      resetWorkspace,
-      applyWorkspaceLayoutPreset,
-      getCurrentPresetLayout,
+      retryHydration: persistence.retryHydration,
+      resetWorkspace: persistence.resetWorkspace,
+      applyWorkspaceLayoutPreset: persistence.applyPreset,
+      getCurrentPresetLayout: persistence.currentPresetLayout,
       removeSlot,
       recordSession,
       collectExitImpacts,
       getBackupRestoreBlockers,
       cancelBackupRestore,
       resumeAfterFailedRestore,
-      rehydrateWorkspace,
+      rehydrateWorkspace: persistence.rehydrate,
       getDirectoryRemovalBlockers,
     }),
     [
@@ -1414,17 +1060,13 @@ export function PtyWorkspaceProvider({
       moveFile,
       closeEmptyPane,
       updateSplitRatio,
-      retryHydration,
-      resetWorkspace,
-      applyWorkspaceLayoutPreset,
-      getCurrentPresetLayout,
+      persistence,
       removeSlot,
       recordSession,
       collectExitImpacts,
       getBackupRestoreBlockers,
       cancelBackupRestore,
       resumeAfterFailedRestore,
-      rehydrateWorkspace,
       getDirectoryRemovalBlockers,
     ],
   );
@@ -1502,22 +1144,4 @@ export function PtyWorkspaceProvider({
       </WorkspaceCommandsContext.Provider>
     </WorkspaceHostStoreContext.Provider>
   );
-}
-
-function toWorkspaceLayoutSlot(
-  slot: PtyWorkspaceSlot,
-  directories: Directory[],
-): WorkspaceLayoutSlot {
-  const directory = directories.find((entry) => entry.id === slot.directoryId);
-  return {
-    instanceId: slot.instanceId,
-    directoryId: slot.directoryId,
-    directoryPath: directory?.path ?? slot.directoryPath,
-    projectName: directory?.name ?? slot.projectName,
-    toolKey: slot.toolKey,
-    sequence: slot.sequence,
-    sessionId: slot.sessionId ?? null,
-    resumeSessionId: slot.resumeSessionId ?? null,
-    title: { ...slot.title },
-  };
 }
