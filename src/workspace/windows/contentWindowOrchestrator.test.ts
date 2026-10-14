@@ -84,6 +84,7 @@ function makeFixture(options: { withFile?: boolean } = {}) {
     removeSlot: vi.fn(),
     loadFile: vi.fn(async () => undefined),
     waitForFileSave: vi.fn(async () => undefined),
+    mergeFileBuffers: vi.fn(),
     terminalOf: () => undefined,
     titleOfPty: () => "title",
     openDirectory: vi.fn(),
@@ -353,5 +354,26 @@ describe("contentWindowOrchestrator", () => {
     ).toBe("attached");
     expect(f.ports.grantFile).toHaveBeenCalledTimes(1);
     expect(f.orchestrator.state.pending.file.size).toBe(0);
+  });
+  it("abortReturnWait aborts the return wait and the lifecycle signal and installs a fresh lifecycle controller", () => {
+    const f = makeFixture();
+    const first = f.orchestrator.state.lifecycleAbort.current;
+    const returnWait = new AbortController();
+    f.orchestrator.state.returnWaitAbort.current = returnWait;
+    expect(first.signal.aborted).toBe(false);
+
+    f.orchestrator.abortReturnWait();
+
+    expect(returnWait.signal.aborted).toBe(true);
+    expect(f.orchestrator.state.returnWaitAbort.current).toBeNull();
+    expect(first.signal.aborted).toBe(true);
+    const second = f.orchestrator.state.lifecycleAbort.current;
+    expect(second).not.toBe(first);
+    expect(second.signal.aborted).toBe(false);
+
+    f.orchestrator.abortReturnWait();
+    expect(second.signal.aborted).toBe(true);
+    expect(f.orchestrator.state.lifecycleAbort.current).not.toBe(second);
+    expect(f.ports.createWindow).not.toHaveBeenCalled();
   });
 });

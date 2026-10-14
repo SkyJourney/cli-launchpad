@@ -1,5 +1,7 @@
 import type { TFunction } from "i18next";
 import type { PtyTerminalHandle } from "../../components/PtyTerminal";
+import type { IsolatedRegistrationFailure } from "../../lib/retryPolicy";
+import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { createWindowLabel } from "../../lib/windowKinds";
@@ -118,6 +120,8 @@ export interface ContentWindowState {
   };
   /** PTY 返回流程的等待中止器。 */
   returnWaitAbort: { current: AbortController | null };
+  /** Aborted when the host unmounts; replaced by a fresh controller right after, so a remount starts clean. */
+  lifecycleAbort: { current: AbortController };
 }
 
 export function createContentWindowState(): ContentWindowState {
@@ -125,6 +129,7 @@ export function createContentWindowState(): ContentWindowState {
     handles: { pty: new Map(), file: new Map() },
     pending: { pty: new Map(), file: new Map() },
     returnWaitAbort: { current: null },
+    lifecycleAbort: { current: new AbortController() },
   };
 }
 
@@ -146,6 +151,10 @@ export interface ContentWindowDeps {
   removeSlot: (instanceId: string) => void;
   loadFile: (documentId: string) => Promise<void>;
   waitForFileSave: (documentId: string) => Promise<void>;
+  mergeFileBuffers: (
+    entries: Record<string, WorkspaceFileBuffer>,
+    reason: string,
+  ) => void;
   terminalOf: (instanceId: string) => PtyTerminalHandle | undefined;
   titleOfPty: (instanceId: string) => string;
   openDirectory: (directoryId: number) => void;
@@ -198,6 +207,8 @@ export function latestContentWindowDeps(ref: {
     removeSlot: (instanceId) => current().removeSlot(instanceId),
     loadFile: (documentId) => current().loadFile(documentId),
     waitForFileSave: (documentId) => current().waitForFileSave(documentId),
+    mergeFileBuffers: (entries, reason) =>
+      current().mergeFileBuffers(entries, reason),
     terminalOf: (instanceId) => current().terminalOf(instanceId),
     titleOfPty: (instanceId) => current().titleOfPty(instanceId),
     openDirectory: (directoryId) => current().openDirectory(directoryId),
@@ -205,6 +216,12 @@ export function latestContentWindowDeps(ref: {
       return ref.current?.ports;
     },
   };
+}
+
+/** 监听外壳：监听组需要的重试间隔与失败报告，由宿主注入。 */
+export interface ProtocolListenerShell {
+  retryDelaysMs: readonly number[];
+  onFailed: (group: string, failed: IsolatedRegistrationFailure[]) => void;
 }
 
 export function createContentWindowOrchestrator(
@@ -734,6 +751,8 @@ export function createContentWindowOrchestrator(
   const abortReturnWait = () => {
     state.returnWaitAbort.current?.abort();
     state.returnWaitAbort.current = null;
+    state.lifecycleAbort.current.abort();
+    state.lifecycleAbort.current = new AbortController();
   };
 
   return {
