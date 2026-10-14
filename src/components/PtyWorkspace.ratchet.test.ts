@@ -4,19 +4,38 @@
 // 归属判断只读 coordinator。
 // m6-052 会向本文件追加内容类型分支数（FE-T56 第一用例）。
 import { describe, expect, it } from "vitest";
+import contentKinds from "../../contracts/content-kinds.json";
 import hostSource from "./PtyWorkspace.tsx?raw";
 
-const viewSources = import.meta.glob("../workspace/views/*.{ts,tsx}", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
+const workspaceSources = import.meta.glob(
+  [
+    "../workspace/**/*.ts",
+    "../workspace/**/*.tsx",
+    "!../workspace/**/*.test.ts",
+    "!../workspace/**/*.test.tsx",
+  ],
+  { query: "?raw", import: "default", eager: true },
+) as Record<string, string>;
 
-// Baseline: kind-branch count of PtyWorkspace.tsx at the start of m6-052 was 48;
-// after the view split the host plus views total 48 (no branch removed, only moved).
-// Rule: never increase; lower the constant when branches are removed.
-const KIND_BRANCH_BASELINE = 48;
+// B-G3 target: the host file holds at most as many kind branches as the domain
+// table has entries (contracts/content-kinds.json). m6-052 recorded 48 for
+// host plus views; m6-098 narrowed this constant to the host file alone.
+const KIND_BRANCH_BASELINE = 2;
+// Total across the host and everything under src/workspace at the start of
+// m6-098 (never increase; lower when branches go away). It is 48 (host plus
+// views at the end of m6-052) plus 6 branches that already existed outside
+// that scope: fileDocumentsDomain 1, workspaceCommandExecutor 3,
+// useDetachedContentWindow 1, windowLaunchParams 1. Moving code out of the host
+// must never hide branches, so host plus everything else stays within it.
+const KIND_BRANCH_TOTAL_AT_M6_052 = 54;
+// Measured at the end of m6-098 (never increase; lower when branches go away).
+const HOST_KIND_BRANCHES_AT_M6_098 = 0;
+const KIND_BRANCH_OUTSIDE_HOST_BASELINE = 54;
+const WORKSPACE_SOURCE_COUNT_FLOOR = 36;
+const HOST_MAX_LINES = 400;
 const KIND_BRANCH_PATTERN = /kind === "|"slot" in/g;
+const countKindBranches = (source: string): number =>
+  (source.match(KIND_BRANCH_PATTERN) ?? []).length;
 
 const HANDLE_TABLE_PREDICATE =
   /detached(?:Files|ByInstance)Ref\.current\.has\(/g;
@@ -32,16 +51,35 @@ describe("PtyWorkspace ratchet", () => {
   });
 
   it("does not grow kind branches in the host", () => {
-    const sources = [hostSource, ...Object.values(viewSources)];
-    const count = sources.reduce(
-      (sum, source) => sum + (source.match(KIND_BRANCH_PATTERN) ?? []).length,
-      0,
-    );
-    expect(Object.keys(viewSources).length).toBeGreaterThanOrEqual(6);
+    expect(KIND_BRANCH_BASELINE).toBe(contentKinds.kinds.length);
+    const count = countKindBranches(hostSource);
+    expect(count).toBeLessThanOrEqual(KIND_BRANCH_BASELINE);
+    expect(count).toBeLessThanOrEqual(HOST_KIND_BRANCHES_AT_M6_098);
+  });
+
+  it("does not grow kind branches outside the host", () => {
+    const sources = Object.values(workspaceSources);
+    expect(sources.length).toBeGreaterThanOrEqual(WORKSPACE_SOURCE_COUNT_FLOOR);
     // 反向：视图辅助模块也必须被扫描（否则其中的 kind 分支会漏计）。
     expect(
-      Object.keys(viewSources).some((path) => path.endsWith("/viewHelpers.ts")),
+      Object.keys(workspaceSources).some((path) =>
+        path.endsWith("/viewHelpers.ts"),
+      ),
     ).toBe(true);
-    expect(count).toBeLessThanOrEqual(KIND_BRANCH_BASELINE);
+    const outside = sources.reduce(
+      (sum, source) => sum + countKindBranches(source),
+      0,
+    );
+    expect(outside).toBeLessThanOrEqual(KIND_BRANCH_OUTSIDE_HOST_BASELINE);
+    expect(countKindBranches(hostSource) + outside).toBeLessThanOrEqual(
+      KIND_BRANCH_TOTAL_AT_M6_052,
+    );
+  });
+
+  it("keeps PtyWorkspace.tsx an assembly file of at most 400 lines", () => {
+    const lineCount = hostSource.endsWith("\n")
+      ? hostSource.split("\n").length - 1
+      : hostSource.split("\n").length;
+    expect(lineCount).toBeLessThanOrEqual(HOST_MAX_LINES);
   });
 });

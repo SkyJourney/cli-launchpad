@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import themeSyncSource from "../hooks/useThemeSync.ts?raw";
-import workspaceSource from "../components/PtyWorkspace.tsx?raw";
+import workspaceSource from "../workspace/host/useWorkspaceFacade.ts?raw";
 import { reportWindowSyncFailure } from "./windowSyncDiagnostics";
 
 const { toastError, reportWindowSyncFailureToBackend } = vi.hoisted(() => ({
