@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdout, Command};
@@ -44,7 +44,7 @@ async fn request_inner(executable: &str, method: &str, params: Value) -> Result<
     // completion, an early error, or the outer timeout dropping this future) ends every
     // descendant, which the direct child's kill alone would not (a `.cmd` shim's `cmd.exe`).
     let mut supervised = spawn_supervised(&mut command, WINDOWS_CREATE_NO_WINDOW)
-        .context("无法启动 Codex App Server")?;
+        .map_err(|error| anyhow!("无法启动 Codex App Server：{error}"))?;
     let mut stdin = supervised
         .child_mut()
         .stdin

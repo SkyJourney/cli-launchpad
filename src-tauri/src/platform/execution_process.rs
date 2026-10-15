@@ -1048,18 +1048,23 @@ mod tests {
             observed.pending,
             "the child must not have run any code yet: {observed:?}"
         );
-        // Extra creation flags are accepted and kept.
+        tree.terminate().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), child.wait())
+            .await
+            .expect("the tree's process ends after terminate")
+            .unwrap();
+
+        // Extra creation flags are accepted (a tree holds one process group on Unix, so the
+        // second child gets its own tree).
+        let flagged_tree = ProcessTree::new().unwrap();
         let mut flagged = long_command();
-        let mut flagged_child = tree
+        let mut flagged_child = flagged_tree
             .spawn_attached(&mut flagged, 0x0800_0000)
             .expect("spawn with an extra creation flag");
-
-        tree.terminate().unwrap();
-        for process in [&mut child, &mut flagged_child] {
-            tokio::time::timeout(Duration::from_secs(3), process.wait())
-                .await
-                .expect("the tree's processes end after terminate")
-                .unwrap();
-        }
+        flagged_tree.terminate().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), flagged_child.wait())
+            .await
+            .expect("the flagged child ends after terminate")
+            .unwrap();
     }
 }
