@@ -22,7 +22,8 @@ pub struct ProjectRef {
 impl ProjectRef {
     /// Re-checks right before use that the opened directory is still the one on disk. Filesystem
     /// access: never call it under a lock. Reopens by path, so it also fails when the directory
-    /// is gone.
+    /// is gone. Best effort: a directory deleted and recreated at once can get the same inode
+    /// number back, which `dev/ino` cannot tell apart.
     // m6-057a: the PTY launch path that calls this arrives in m6-057b.
     #[cfg(test)]
     pub fn verify_unchanged(&self) -> Result<(), AppError> {
@@ -372,8 +373,6 @@ mod tests {
         let parent = tempdir().unwrap();
         let project_path = parent.path().join("project");
         std::fs::create_dir(&project_path).unwrap();
-        // Keep another directory alive so the old inode is not reused immediately.
-        std::fs::create_dir(parent.path().join("placeholder")).unwrap();
         let record = directory_repo::add(
             &connection,
             "project",
@@ -387,7 +386,9 @@ mod tests {
             .unwrap();
         drop(root);
 
-        std::fs::remove_dir(&project_path).unwrap();
+        // Move the opened directory away (it stays alive, so its inode cannot be reused) and put a
+        // different directory at the same path.
+        std::fs::rename(&project_path, parent.path().join("project-old")).unwrap();
         std::fs::create_dir(&project_path).unwrap();
 
         let error = project
