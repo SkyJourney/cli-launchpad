@@ -173,7 +173,7 @@ export interface ContentWindowOrchestrator {
   rollbackPending(): void;
   forgetHandles(): void;
   disposeAll(): void;
-  abortReturnWait(): void;
+  abortReturnWait(): void; // 仅卸载时调用：同时中止 owner-lost 生命周期信号并换新控制器，运行中途不得调用
   listManagedFileWindows(): ManagedFileWindow[];
 }
 
