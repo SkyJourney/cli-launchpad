@@ -1,7 +1,7 @@
 use tauri::{ipc::Channel, Manager, State, WebviewWindow};
 
 use crate::{
-    bounded, budgets,
+    blocking, bounded, budgets,
     models::window_kind::{CallerWindow, WindowKind},
     models::{
         pty_session::{
@@ -87,6 +87,7 @@ pub async fn create_pty_session(
 }
 
 #[tauri::command]
+// sync: 纯内存：入队，不等待写线程
 pub fn write_pty_session(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -97,16 +98,22 @@ pub fn write_pty_session(
 }
 
 #[tauri::command]
-pub fn resize_pty_session(
+pub async fn resize_pty_session(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
     size: PtySizeUpdate,
 ) -> Result<(), AppError> {
-    state.resize(&session_id, window.label(), size)
+    let manager = state.inner().clone();
+    let label = window.label().to_string();
+    blocking("pty.resize", budgets::PTY_CONTROL, move || {
+        manager.resize(&session_id, &label, size)
+    })
+    .await
 }
 
 #[tauri::command]
+// sync: 纯内存：释放流控额度
 pub fn acknowledge_pty_output(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -117,6 +124,7 @@ pub fn acknowledge_pty_output(
 }
 
 #[tauri::command]
+// sync: 纯内存：只记日志
 pub fn report_pty_frontend_stage(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -127,15 +135,21 @@ pub fn report_pty_frontend_stage(
 }
 
 #[tauri::command]
-pub fn terminate_pty_session(
+pub async fn terminate_pty_session(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
 ) -> Result<(), AppError> {
-    state.terminate(&session_id, window.label())
+    let manager = state.inner().clone();
+    let label = window.label().to_string();
+    blocking("pty.terminate", budgets::PTY_CONTROL, move || {
+        manager.terminate(&session_id, &label)
+    })
+    .await
 }
 
 #[tauri::command]
+// sync: 纯内存：状态机转移与流控暂停
 pub fn begin_pty_handoff(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -145,6 +159,7 @@ pub fn begin_pty_handoff(
 }
 
 #[tauri::command]
+// sync: 纯内存：保存快照
 pub fn stage_pty_handoff_snapshot(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -157,28 +172,39 @@ pub fn stage_pty_handoff_snapshot(
 }
 
 #[tauri::command]
-pub fn complete_pty_handoff(
+pub async fn complete_pty_handoff(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
     token: String,
     on_event: Channel<PtyEvent>,
 ) -> Result<PtySession, AppError> {
-    state.complete_handoff(&session_id, window.label(), &token, on_event)
+    let manager = state.inner().clone();
+    let label = window.label().to_string();
+    blocking("pty.complete_handoff", budgets::PTY_CONTROL, move || {
+        manager.complete_handoff(&session_id, &label, &token, on_event)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn finalize_pty_handoff(
+pub async fn finalize_pty_handoff(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
     token: String,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
-    state.finalize_handoff(&session_id, window.label(), &token, size)
+    let manager = state.inner().clone();
+    let label = window.label().to_string();
+    blocking("pty.finalize_handoff", budgets::PTY_CONTROL, move || {
+        manager.finalize_handoff(&session_id, &label, &token, size)
+    })
+    .await
 }
 
 #[tauri::command]
+// sync: 纯内存：状态机转移
 pub fn cancel_pty_handoff(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
@@ -189,6 +215,7 @@ pub fn cancel_pty_handoff(
 }
 
 #[tauri::command]
+// sync: 纯内存：读取路由快照
 pub fn get_pty_session_window_status(
     state: State<'_, PtySessionManager>,
     caller: CallerWindow,
@@ -199,7 +226,7 @@ pub fn get_pty_session_window_status(
 }
 
 #[tauri::command]
-pub fn reattach_pty_session(
+pub async fn reattach_pty_session(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
@@ -208,14 +235,12 @@ pub fn reattach_pty_session(
     sequence: u64,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
-    state.reattach(
-        &session_id,
-        window.label(),
-        on_event,
-        snapshot,
-        sequence,
-        size,
-    )
+    let manager = state.inner().clone();
+    let label = window.label().to_string();
+    blocking("pty.reattach", budgets::PTY_CONTROL, move || {
+        manager.reattach(&session_id, &label, on_event, snapshot, sequence, size)
+    })
+    .await
 }
 
 #[tauri::command]

@@ -14,6 +14,9 @@ pub const EXECUTABLE_PROBE: Duration = Duration::from_secs(10);
 pub const INSTALL_PLAN: Duration = Duration::from_secs(10);
 /// External awaits before a PTY launch (session file ownership check, executable resolution).
 pub const PTY_LAUNCH_PREPARE: Duration = Duration::from_secs(20);
+/// PTY control commands that call the OS or move large IPC payloads (resize, terminate, re-attach,
+/// hand-off completion and finalization).
+pub const PTY_CONTROL: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {
@@ -28,6 +31,7 @@ mod tests {
             ("EXECUTABLE_PROBE", EXECUTABLE_PROBE),
             ("INSTALL_PLAN", INSTALL_PLAN),
             ("PTY_LAUNCH_PREPARE", PTY_LAUNCH_PREPARE),
+            ("PTY_CONTROL", PTY_CONTROL),
         ] {
             assert!(budget > Duration::ZERO, "{name} must be positive");
             assert!(

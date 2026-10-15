@@ -5,16 +5,17 @@ use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::session_service::RestoreGeneration;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
-    update_close_behavior_state, with_connection, AppError, CacheDb, CloseBehaviorState, Db,
+    blocking, blocking_unbounded, budgets, update_close_behavior_state, with_connection, AppError,
+    CacheDb, CloseBehaviorState, Db,
 };
 
 #[tauri::command]
 pub async fn list_backups(paths: State<'_, StoragePaths>) -> Result<Vec<BackupManifest>, AppError> {
     let paths = paths.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || backup_service::list(&paths))
-        .await
-        .map_err(|error| AppError::msg(format!("备份列表任务异常：{error}")))?
-        .map_err(AppError::from)
+    blocking("backup.list", budgets::FILE_OPERATION, move || {
+        backup_service::list(&paths).map_err(AppError::from)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -24,7 +25,7 @@ pub async fn create_backup(
 ) -> Result<BackupManifest, AppError> {
     let db = state.inner().clone();
     let paths = paths.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking_unbounded("backup.create", move || {
         with_connection(&db, |connection| {
             Ok(backup_service::create(
                 connection,
@@ -34,7 +35,6 @@ pub async fn create_backup(
         })
     })
     .await
-    .map_err(|error| AppError::msg(format!("备份创建任务异常：{error}")))?
 }
 
 struct TauriRestoreNotifier(tauri::AppHandle);
@@ -64,7 +64,7 @@ pub async fn restore_backup(
     let generation = generation.inner().clone();
     let paths = paths.inner().clone();
     let app = app.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
+    let outcome = blocking_unbounded("backup.restore", move || {
         let notifier = TauriRestoreNotifier(app);
         backup_service::restore_with_runtime_invalidation(
             &db,
@@ -76,8 +76,7 @@ pub async fn restore_backup(
             &generation,
         )
     })
-    .await
-    .map_err(|error| AppError::msg(format!("备份恢复任务异常：{error}")))??;
+    .await?;
 
     if let Some(warning) = &outcome.cache_warning {
         log::warn!("backup restore: {warning}");

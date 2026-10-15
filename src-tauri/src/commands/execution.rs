@@ -9,7 +9,7 @@ use crate::services::{
     execution_service::ExecutionTaskManager,
     install_service,
 };
-use crate::{with_conn, AppError, Db};
+use crate::{AppError, Db};
 
 #[tauri::command]
 pub async fn start_execution_task(
@@ -37,21 +37,25 @@ pub async fn start_execution_task(
 }
 
 #[tauri::command]
-pub fn list_execution_tasks(state: State<'_, Db>) -> Result<Vec<ExecutionTask>, AppError> {
-    with_conn(&state, |connection| {
-        Ok(execution_task_repo::list_recent(connection)?)
-    })
+pub async fn list_execution_tasks(state: State<'_, Db>) -> Result<Vec<ExecutionTask>, AppError> {
+    state
+        .call("exec.list", |connection| {
+            Ok(execution_task_repo::list_recent(connection)?)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn get_execution_task(
+pub async fn get_execution_task(
     state: State<'_, Db>,
     task_id: String,
 ) -> Result<ExecutionTaskDetail, AppError> {
-    with_conn(&state, |connection| {
-        execution_task_repo::detail(connection, &task_id)?
-            .ok_or_else(|| AppError::msg("执行任务不存在"))
-    })
+    state
+        .call("exec.get_detail", move |connection| {
+            execution_task_repo::detail(connection, &task_id)?
+                .ok_or_else(|| AppError::msg("执行任务不存在"))
+        })
+        .await
 }
 
 #[tauri::command]
@@ -64,19 +68,23 @@ pub async fn cancel_execution_task(
 }
 
 #[tauri::command]
-pub fn clear_execution_task(state: State<'_, Db>, task_id: String) -> Result<(), AppError> {
-    with_conn(&state, |connection| {
-        if execution_task_repo::delete_finished(connection, &task_id)? {
-            Ok(())
-        } else {
-            Err(AppError::msg("执行中的任务不能清理，或任务不存在"))
-        }
-    })
+pub async fn clear_execution_task(state: State<'_, Db>, task_id: String) -> Result<(), AppError> {
+    state
+        .call("exec.clear_task", move |connection| {
+            if execution_task_repo::delete_finished(connection, &task_id)? {
+                Ok(())
+            } else {
+                Err(AppError::msg("执行中的任务不能清理，或任务不存在"))
+            }
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn clear_execution_history(state: State<'_, Db>) -> Result<usize, AppError> {
-    with_conn(&state, |connection| {
-        Ok(execution_task_repo::clear_finished(connection)?)
-    })
+pub async fn clear_execution_history(state: State<'_, Db>) -> Result<usize, AppError> {
+    state
+        .call("exec.clear_history", |connection| {
+            Ok(execution_task_repo::clear_finished(connection)?)
+        })
+        .await
 }

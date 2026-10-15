@@ -138,6 +138,7 @@ pub async fn save_granted_text_file(
 
 // Pure in-memory registry operation: allowed to stay synchronous (R-RS-1).
 #[tauri::command]
+// sync: 纯内存：授权表删除，不访问文件系统
 pub fn revoke_content_window_file(
     caller: WebviewWindow,
     grants: State<'_, ContentWindowGrantRegistry>,

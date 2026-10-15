@@ -1752,6 +1752,285 @@ fn execution_service_has_no_synchronous_database_access() {
     );
 }
 
+// ---- m6-059: command execution policy (which commands may stay synchronous, which are migrated)
+
+/// Commands that may stay synchronous: pure in-memory work or UI operations that must run on the
+/// main thread. Each carries a `// sync:` reason comment between its attribute and its `fn`.
+const SYNC_COMMANDS: [&str; 11] = [
+    "acknowledge_pty_output",
+    "report_pty_frontend_stage",
+    "get_pty_session_window_status",
+    "write_pty_session",
+    "begin_pty_handoff",
+    "stage_pty_handoff_snapshot",
+    "cancel_pty_handoff",
+    "set_tray_menu_labels",
+    "revoke_content_window_file",
+    "report_window_sync_failure",
+    "take_startup_notices",
+];
+
+/// Removes every `#[cfg(test)]` item (a braced block or a `;`-terminated item).
+fn strip_cfg_test_items(source: &str) -> String {
+    let mut out = String::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("#[cfg(test)]") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + "#[cfg(test)]".len()..];
+        let brace = after.find('{');
+        let semicolon = after.find(';');
+        match (brace, semicolon) {
+            (Some(b), Some(s)) if s < b => rest = &after[s + 1..],
+            (Some(b), _) => {
+                let mut depth = 0usize;
+                let mut end = after.len();
+                for (index, character) in after[b..].char_indices() {
+                    match character {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = b + index + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                rest = &after[end..];
+            }
+            (None, Some(s)) => rest = &after[s + 1..],
+            (None, None) => rest = "",
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+struct CommandInfo {
+    name: String,
+    is_async: bool,
+    sync_reason: Option<String>,
+    /// Signature and body.
+    text: String,
+}
+
+fn tauri_commands(source: &str) -> Vec<CommandInfo> {
+    let stripped = strip_cfg_test_items(source);
+    let lines: Vec<&str> = stripped.lines().collect();
+    let mut commands = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index].trim() != "#[tauri::command]" {
+            index += 1;
+            continue;
+        }
+        let mut sync_reason = None;
+        let mut cursor = index + 1;
+        while cursor < lines.len() {
+            let line = lines[cursor].trim();
+            if let Some(reason) = line.strip_prefix("// sync:") {
+                sync_reason = Some(reason.trim().to_string());
+            } else if line.starts_with("pub fn ") || line.starts_with("pub async fn ") {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor >= lines.len() {
+            break;
+        }
+        let header = lines[cursor].trim();
+        let is_async = header.starts_with("pub async fn ");
+        let name = header
+            .trim_start_matches("pub async fn ")
+            .trim_start_matches("pub fn ")
+            .split('(')
+            .next()
+            .unwrap()
+            .trim()
+            .to_string();
+        let mut text = String::new();
+        let mut depth = 0usize;
+        let mut opened = false;
+        for line in &lines[cursor..] {
+            for character in line.chars() {
+                match character {
+                    '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            text.push_str(line);
+            text.push('\n');
+            if opened && depth == 0 {
+                break;
+            }
+        }
+        commands.push(CommandInfo {
+            name,
+            is_async,
+            sync_reason,
+            text,
+        });
+        index = cursor + 1;
+    }
+    commands
+}
+
+fn command_files() -> Vec<(String, String)> {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&directory).expect("commands directory") {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if path.extension().is_some_and(|extension| extension == "rs") && name != "mod.rs" {
+            let text = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
+            files.push((name, text));
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Whether a command's text touches storage, the filesystem or blocking primitives.
+fn touches_storage(text: &str) -> bool {
+    ["Db>", "std::fs", "canonicalize", "spawn_blocking", ".call("]
+        .iter()
+        .any(|needle| text.contains(needle))
+}
+
+#[test]
+fn sync_commands_are_the_documented_in_memory_whitelist() {
+    let mut sync_names = Vec::new();
+    for (file, source) in command_files() {
+        for command in tauri_commands(&source) {
+            if command.is_async {
+                continue;
+            }
+            assert!(
+                SYNC_COMMANDS.contains(&command.name.as_str()),
+                "{file}: `{}` is synchronous but not on the whitelist",
+                command.name
+            );
+            let reason = command.sync_reason.as_deref().unwrap_or("");
+            assert!(
+                !reason.is_empty(),
+                "{file}: `{}` needs a `// sync: <reason>` comment",
+                command.name
+            );
+            assert!(
+                !touches_storage(&command.text),
+                "{file}: synchronous `{}` must not touch storage or blocking primitives",
+                command.name
+            );
+            sync_names.push(command.name);
+        }
+    }
+    sync_names.sort();
+    let mut expected: Vec<String> = SYNC_COMMANDS.iter().map(|name| name.to_string()).collect();
+    expected.sort();
+    assert_eq!(sync_names, expected);
+
+    // The check can see a violation: a synchronous command that reaches the database.
+    assert!(touches_storage(
+        "pub fn f(state: State<'_, Db>) -> Result<(), AppError> { Ok(()) }"
+    ));
+}
+
+#[test]
+fn migrated_commands_use_call_or_blocking() {
+    const MIGRATED: &[(&str, &str)] = &[
+        ("app_setting.rs", "get_close_behavior"),
+        ("app_setting.rs", "set_close_behavior"),
+        ("directory.rs", "list_directories"),
+        ("directory.rs", "add_directory"),
+        ("directory.rs", "update_directory"),
+        ("directory.rs", "set_directory_pinned"),
+        ("directory.rs", "reorder_directories"),
+        ("directory.rs", "open_project_directory"),
+        ("directory.rs", "remove_directory"),
+        ("launch_history.rs", "list_launch_history"),
+        ("launch_history.rs", "clear_launch_history"),
+        ("launch_history.rs", "get_launch_history_limit"),
+        ("launch_history.rs", "set_launch_history_limit"),
+        ("workspace_layout.rs", "list_workspace_layout_presets"),
+        ("workspace_layout.rs", "create_workspace_layout_preset"),
+        ("workspace_layout.rs", "update_workspace_layout_preset"),
+        ("workspace_layout.rs", "rename_workspace_layout_preset"),
+        ("workspace_layout.rs", "delete_workspace_layout_preset"),
+        ("workspace_layout.rs", "reset_workspace_layout"),
+        ("execution.rs", "list_execution_tasks"),
+        ("execution.rs", "get_execution_task"),
+        ("execution.rs", "clear_execution_task"),
+        ("execution.rs", "clear_execution_history"),
+        ("pty_session.rs", "resize_pty_session"),
+        ("pty_session.rs", "terminate_pty_session"),
+        ("pty_session.rs", "reattach_pty_session"),
+        ("pty_session.rs", "complete_pty_handoff"),
+        ("pty_session.rs", "finalize_pty_handoff"),
+    ];
+    const PTY_CONTROL_COMMANDS: &[&str] = &[
+        "resize_pty_session",
+        "terminate_pty_session",
+        "reattach_pty_session",
+        "complete_pty_handoff",
+        "finalize_pty_handoff",
+    ];
+    let files = command_files();
+    for (file, name) in MIGRATED {
+        let source = &files
+            .iter()
+            .find(|(candidate, _)| candidate == file)
+            .unwrap_or_else(|| panic!("{file} is missing"))
+            .1;
+        let command = tauri_commands(source)
+            .into_iter()
+            .find(|command| command.name == *name)
+            .unwrap_or_else(|| panic!("{file}: command `{name}` not found"));
+        assert!(command.is_async, "{file}: `{name}` must be async");
+        assert!(
+            command.text.contains(".call(") || command.text.contains("blocking("),
+            "{file}: `{name}` must use Db::call, CacheDb::call or blocking"
+        );
+        for legacy in [
+            "with_conn(",
+            "with_cache(",
+            "with_connection(",
+            "with_cache_connection(",
+            "spawn_blocking(",
+        ] {
+            assert!(
+                !command.text.contains(legacy),
+                "{file}: `{name}` still uses `{legacy}`"
+            );
+        }
+        if PTY_CONTROL_COMMANDS.contains(name) {
+            assert!(
+                command.text.contains("budgets::PTY_CONTROL"),
+                "{file}: `{name}` must use the PTY_CONTROL budget"
+            );
+        }
+    }
+
+    // `cancel_execution_task` delegates to the execution manager (whose database access is async
+    // inside the manager), so only its asynchrony is pinned here.
+    let execution = &files
+        .iter()
+        .find(|(candidate, _)| candidate == "execution.rs")
+        .unwrap()
+        .1;
+    let cancel = tauri_commands(execution)
+        .into_iter()
+        .find(|command| command.name == "cancel_execution_task")
+        .expect("cancel_execution_task exists");
+    assert!(cancel.is_async);
+}
+
 #[test]
 fn main_window_label_matches_every_tauri_config() {
     let main = crate::models::window_kind::main_window_label();

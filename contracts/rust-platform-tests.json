@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 592,
-    "Linux": 599,
-    "macOS": 597
+    "Windows": 597,
+    "Linux": 604,
+    "macOS": 602
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -310,7 +310,12 @@
       "services::app_lifecycle::tests::one_confirmation_finishing_does_not_unlock_another_that_is_still_terminating",
       "services::execution_service::tests::settling_a_task_waits_for_an_in_flight_status_transition",
       "services::execution_service::tests::pump_output_coalesces_reads_delivered_one_chunk_at_a_time",
-      "services::execution_service::tests::confirm_is_refused_once_exit_cleanup_started_cancelling"
+      "services::execution_service::tests::confirm_is_refused_once_exit_cleanup_started_cancelling",
+      "contracts::sync_commands_are_the_documented_in_memory_whitelist",
+      "contracts::migrated_commands_use_call_or_blocking",
+      "runtime::tests::db_with_sync_runs_the_closure_and_returns_its_result",
+      "runtime::tests::db_with_sync_maps_a_poisoned_lock_to_db_poisoned",
+      "runtime::tests::cache_db_with_sync_runs_the_closure_and_returns_its_result"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

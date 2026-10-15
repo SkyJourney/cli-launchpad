@@ -35,6 +35,30 @@ async fn run_on_blocking_pool<T: Send + 'static>(
 }
 
 impl Db {
+    /// Wraps a connection (the constructor to use outside tests).
+    pub fn new(connection: Connection) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(connection)))
+    }
+
+    /// Synchronous access for code that is NOT on an async worker: PTY monitor threads,
+    /// functions already running inside `spawn_blocking`/`blocking`, and application setup.
+    /// Poisoning maps to `db.poisoned` like `call`. Never call this from an `async fn`.
+    pub fn with_sync<T>(
+        &self,
+        op: &'static str,
+        f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let mut connection = self.0.lock().map_err(|_| {
+            AppError::coded_with_params(DB_POISONED, "数据库连接锁中毒", json!({ "op": op }))
+        })?;
+        f(&mut connection)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_for_test(&self) -> std::sync::Arc<std::sync::Mutex<Connection>> {
+        std::sync::Arc::clone(&self.0)
+    }
+
     /// The only entry point for business database access.
     pub async fn call<T: Send + 'static>(
         &self,
@@ -53,6 +77,23 @@ impl Db {
 }
 
 impl CacheDb {
+    /// Wraps a connection (the constructor to use outside tests).
+    pub fn new(connection: Connection) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(connection)))
+    }
+
+    /// Synchronous access with the same rules as `Db::with_sync`.
+    pub fn with_sync<T>(
+        &self,
+        op: &'static str,
+        f: impl FnOnce(&Connection) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let connection = self.0.lock().map_err(|_| {
+            AppError::coded_with_params(DB_POISONED, "缓存数据库连接锁中毒", json!({ "op": op }))
+        })?;
+        f(&connection)
+    }
+
     /// The only entry point for cache database access.
     pub async fn call<T: Send + 'static>(
         &self,
@@ -414,5 +455,68 @@ mod tests {
         assert_eq!(value["code"], "blocking.timeout");
         assert_eq!(value["params"]["op"], "test.slow");
         assert_eq!(value["params"]["budgetMs"], 50);
+    }
+
+    #[test]
+    fn db_with_sync_runs_the_closure_and_returns_its_result() {
+        let db = Db::new(Connection::open_in_memory().unwrap());
+        db.with_sync("test.create", |c| {
+            c.execute("create table t(x integer)", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+        db.with_sync("test.insert", |c| {
+            c.execute("insert into t values (7)", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let value = db
+            .with_sync("test.read", |c| {
+                Ok(c.query_row("select x from t", [], |r| r.get::<_, i64>(0))?)
+            })
+            .unwrap();
+        assert_eq!(value, 7);
+
+        let error = db
+            .with_sync("test.fail", |_| -> Result<(), AppError> {
+                Err(AppError::coded("test.failure", "boom"))
+            })
+            .unwrap_err();
+        assert_eq!(code_of(&error), "test.failure");
+    }
+
+    #[test]
+    fn db_with_sync_maps_a_poisoned_lock_to_db_poisoned() {
+        let db = Db::new(Connection::open_in_memory().unwrap());
+        let shared = db.shared_for_test();
+        let _ = std::thread::spawn(move || {
+            let _guard = shared.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+
+        let error = db.with_sync("test.poisoned", |_| Ok(())).unwrap_err();
+
+        assert_eq!(code_of(&error), "db.poisoned");
+    }
+
+    #[test]
+    fn cache_db_with_sync_runs_the_closure_and_returns_its_result() {
+        let cache = CacheDb::new(Connection::open_in_memory().unwrap());
+
+        let value = cache
+            .with_sync("test.read", |c| {
+                Ok(c.query_row("select 41 + 1", [], |r| r.get::<_, i64>(0))?)
+            })
+            .unwrap();
+        assert_eq!(value, 42);
+
+        let error = cache
+            .with_sync("test.fail", |_| -> Result<(), AppError> {
+                Err(AppError::coded("test.failure", "boom"))
+            })
+            .unwrap_err();
+        assert_eq!(code_of(&error), "test.failure");
     }
 }

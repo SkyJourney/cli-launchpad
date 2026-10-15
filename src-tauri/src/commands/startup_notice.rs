@@ -8,6 +8,7 @@ use crate::AppError;
 /// Only the main window's capability grants `allow-take-startup-notices`;
 /// the caller check below is defense in depth.
 #[tauri::command]
+// sync: 纯内存：取出并清空启动通知
 pub fn take_startup_notices(
     caller: CallerWindow,
     notices: State<'_, StartupNotices>,

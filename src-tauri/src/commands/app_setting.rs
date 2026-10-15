@@ -3,30 +3,33 @@ use tauri::State;
 use crate::db::app_setting_repo;
 use crate::models::app_setting::CloseBehavior;
 use crate::models::window_kind::{CallerWindow, WindowKind};
-use crate::{
-    update_close_behavior_state, with_conn, AppError, CloseBehaviorState, Db, TrayMenuLabelsState,
-};
+use crate::{update_close_behavior_state, AppError, CloseBehaviorState, Db, TrayMenuLabelsState};
 
 #[tauri::command]
-pub fn get_close_behavior(state: State<'_, Db>) -> Result<CloseBehavior, AppError> {
-    with_conn(&state, |conn| {
-        Ok(app_setting_repo::get_close_behavior(conn)?)
-    })
+pub async fn get_close_behavior(state: State<'_, Db>) -> Result<CloseBehavior, AppError> {
+    state
+        .call("app_setting.get_close_behavior", |conn| {
+            Ok(app_setting_repo::get_close_behavior(conn)?)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn set_close_behavior(
+pub async fn set_close_behavior(
     state: State<'_, Db>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     close_behavior: CloseBehavior,
 ) -> Result<(), AppError> {
-    with_conn(&state, |conn| {
-        Ok(app_setting_repo::set_close_behavior(conn, close_behavior)?)
-    })?;
+    state
+        .call("app_setting.set_close_behavior", move |conn| {
+            Ok(app_setting_repo::set_close_behavior(conn, close_behavior)?)
+        })
+        .await?;
     update_close_behavior_state(&close_behavior_state, close_behavior)
 }
 
 #[tauri::command]
+// sync: UI 操作：托盘菜单项文案只能在主线程更新
 pub fn set_tray_menu_labels(
     caller: CallerWindow,
     state: State<'_, TrayMenuLabelsState>,
