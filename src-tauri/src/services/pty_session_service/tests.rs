@@ -1113,7 +1113,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
 #[test]
 fn handoff_target_equal_to_source_is_rejected() {
     // PD-09（已确认）：交接目标等于源窗口必须被拒绝，错误码 pty.handoff_target_is_source。
-    // 当前代码返回 Ok（T2-N13），由 m6-037 实现拒绝逻辑后去掉 #[ignore]。
+    // T2-N13：m6-037 起 complete_handoff 拒绝目标等于源（错误码 pty.handoff_target_is_source）。
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
     let h = manager.begin_handoff(&s, "main").unwrap();
@@ -1557,7 +1557,7 @@ fn send_event_does_not_hold_the_route_lock_while_sending() {
     entered
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("the delivery must have entered the channel callback");
-    let route_is_free = session.route_lock_is_free();
+    let route_is_free = session.route_and_handoff_lock_is_free();
     let report = {
         let manager = manager.clone();
         let s = s.clone();
@@ -1609,7 +1609,7 @@ fn reattach_replay_does_not_hold_the_route_lock() {
     entered
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("the snapshot must be in flight");
-    let route_is_free = session.route_lock_is_free();
+    let route_is_free = session.route_and_handoff_lock_is_free();
     let report = {
         let manager = manager.clone();
         let s = s.clone();
@@ -1653,7 +1653,7 @@ fn complete_handoff_snapshot_delivery_does_not_hold_the_route_lock() {
     entered
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("the snapshot must be in flight");
-    let handoff_is_free = session.handoff_lock_is_free();
+    let handoff_is_free = session.route_and_handoff_lock_is_free();
     let cancelled = {
         let manager = manager.clone();
         let s = s.clone();
@@ -1895,7 +1895,8 @@ fn a_second_reattach_during_replay_is_rejected_immediately() {
             manager.reattach(&s, "main", second, snapshot(), 3, size())
         })
     };
-    let has_channel_meanwhile = session.route_lock_is_free() && manager.test_route(&s).has_channel;
+    let has_channel_meanwhile =
+        session.route_and_handoff_lock_is_free() && manager.test_route(&s).has_channel;
     for _ in 0..3 {
         release.send(()).unwrap();
     }

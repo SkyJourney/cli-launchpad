@@ -1643,8 +1643,16 @@ fn service_code_does_not_branch_on_window_label_literals() {
             include_str!("../services/pty_session_service/flow.rs"),
         ),
         (
+            "pty_session_service/handoff.rs",
+            include_str!("../services/pty_session_service/handoff.rs"),
+        ),
+        (
             "pty_session_service/input.rs",
             include_str!("../services/pty_session_service/input.rs"),
+        ),
+        (
+            "pty_session_service/persistence.rs",
+            include_str!("../services/pty_session_service/persistence.rs"),
         ),
         (
             "pty_session_service/ports.rs",

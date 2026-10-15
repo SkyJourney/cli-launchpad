@@ -41,17 +41,13 @@ pub(super) struct Bound {
     pub(super) sink: Arc<dyn PtyEventSink>,
 }
 
+#[derive(Default)]
 pub(super) enum HandoffState {
+    #[default]
     Idle,
     Paused(Paused),
     Staged(Staged),
     Bound(Bound),
-}
-
-impl Default for HandoffState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// What `complete` must deliver to the target window before it can be bound.

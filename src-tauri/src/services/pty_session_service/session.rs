@@ -221,11 +221,7 @@ impl ManagedSession {
 
 #[cfg(test)]
 impl ManagedSession {
-    pub(super) fn route_lock_is_free(&self) -> bool {
-        self.route_and_handoff.try_lock().is_ok()
-    }
-
-    pub(super) fn handoff_lock_is_free(&self) -> bool {
+    pub(super) fn route_and_handoff_lock_is_free(&self) -> bool {
         self.route_and_handoff.try_lock().is_ok()
     }
 }
