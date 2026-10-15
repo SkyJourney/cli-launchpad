@@ -2910,3 +2910,78 @@ fn pty_diagnostics_thread_logs_at_debug_level() {
     .unwrap();
     assert!(info_body.contains("log::info!"));
 }
+
+// ---- m6-060: child processes are created only through the supervised primitives
+
+/// Files that may contain `.spawn()` or `kill_on_drop(` in production code, each with the reason.
+/// PTY children are created by `portable_pty` and match neither string.
+const SPAWN_ALLOWED_FILES: &[(&str, &str)] = &[
+    (
+        "platform/process.rs",
+        "implementation of the supervised primitives (run_bounded and friends)",
+    ),
+    (
+        "platform/execution_process.rs",
+        "implementation of the attached creation (spawn_attached)",
+    ),
+    (
+        "platform/opener.rs",
+        "deliberately detached one-shot launch: opening the file manager",
+    ),
+    (
+        "services/execution_service.rs",
+        "streaming install/update tasks use their own process tree and reserved slot",
+    ),
+];
+
+/// The legacy-spawn patterns a file must not contain unless it is on the allow list.
+fn spawn_violations(source: &str) -> Vec<&'static str> {
+    ["kill_on_drop(", ".spawn()", ".output()", ".status()"]
+        .into_iter()
+        .filter(|needle| source.contains(needle))
+        .collect()
+}
+
+#[test]
+fn codex_app_server_uses_the_shared_supervised_primitive() {
+    let sources = production_sources();
+    let source = &sources
+        .iter()
+        .find(|(path, _)| path == "services/cli_adapters/codex/app_server.rs")
+        .expect("app_server.rs exists")
+        .1;
+
+    assert!(source.contains("spawn_supervised("));
+    for forbidden in ["kill_on_drop(", "AppServerTreeGuard", "ProcessTree::new("] {
+        assert!(
+            !source.contains(forbidden),
+            "app_server.rs must not contain `{forbidden}`: the process tree belongs to Supervised"
+        );
+    }
+
+    // The scan can see a violation.
+    assert!(spawn_violations("fn f(){ cmd.kill_on_drop(true); }").contains(&"kill_on_drop("));
+}
+
+#[test]
+fn child_processes_are_spawned_only_through_the_supervised_primitives() {
+    let sources = production_sources();
+    for (path, reason) in SPAWN_ALLOWED_FILES {
+        assert!(!reason.trim().is_empty(), "{path} needs a reason");
+    }
+
+    let mut using: Vec<&str> = sources
+        .iter()
+        .filter(|(_, text)| !spawn_violations(text).is_empty())
+        .map(|(path, _)| path.as_str())
+        .collect();
+    using.sort();
+    let mut allowed: Vec<&str> = SPAWN_ALLOWED_FILES.iter().map(|(path, _)| *path).collect();
+    allowed.sort();
+    // Equality covers both directions: no spawn site outside the list, and no listed file that
+    // no longer spawns (the list cannot rot).
+    assert_eq!(using, allowed);
+
+    // The scan can see a violation in an ordinary service file.
+    assert!(!spawn_violations("fn start() { Command::new(\"x\").spawn().unwrap(); }").is_empty());
+}

@@ -204,6 +204,7 @@ mod windows {
         SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
 
     use super::*;
 
@@ -285,6 +286,88 @@ mod windows {
             Ok(())
         }
 
+        /// Creates the child already attached to this tree (m6-060): the child belongs to the tree
+        /// before it has run any code of its own. `windows_creation_flags` are the extra creation
+        /// flags to keep (for example `CREATE_NO_WINDOW`); they replace whatever the command had.
+        pub fn spawn_attached(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+        ) -> io::Result<Child> {
+            self.spawn_attached_inner(command, windows_creation_flags, |_| {})
+        }
+
+        /// `spawn_attached` for a blocking `std::process::Command`.
+        pub fn spawn_attached_std(
+            &self,
+            command: &mut std::process::Command,
+            windows_creation_flags: u32,
+        ) -> io::Result<std::process::Child> {
+            use std::os::windows::process::CommandExt;
+
+            self.configure_std(command)?;
+            command.creation_flags(CREATE_SUSPENDED | windows_creation_flags);
+            let mut child = command.spawn()?;
+            if let Err(error) = self.attach_std(&child) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            if let Err(error) = resume_main_thread(child.id()) {
+                let _ = self.terminate();
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            Ok(child)
+        }
+
+        /// Test hook: `before_release` runs with the child's pid after it joined the tree and
+        /// before it is allowed to run.
+        #[cfg(test)]
+        pub(crate) fn spawn_attached_with_hook(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+            before_release: impl FnOnce(u32),
+        ) -> io::Result<Child> {
+            self.spawn_attached_inner(command, windows_creation_flags, before_release)
+        }
+
+        fn spawn_attached_inner(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+            before_release: impl FnOnce(u32),
+        ) -> io::Result<Child> {
+            self.configure(command)?;
+            // The extra flags replace the command's own creation flags, so the caller passes the
+            // ones it needs (for example `CREATE_NO_WINDOW`); `CREATE_SUSPENDED` is ours.
+            command.creation_flags(CREATE_SUSPENDED | windows_creation_flags);
+            let mut child = command.spawn()?;
+            let Some(pid) = child.id() else {
+                let _ = child.start_kill();
+                return Err(io::Error::other("子进程 ID 不可用"));
+            };
+            if let Err(error) = self.attach(&child) {
+                let _ = child.start_kill();
+                return Err(error);
+            }
+            before_release(pid);
+            if let Err(error) = resume_main_thread(pid) {
+                // A child that stays suspended would live forever: end the whole tree.
+                let _ = self.terminate();
+                let _ = child.start_kill();
+                return Err(error);
+            }
+            Ok(child)
+        }
+
+        #[cfg(test)]
+        pub(crate) fn job_handle(&self) -> HANDLE {
+            self.job
+        }
+
         pub fn terminate(&self) -> io::Result<()> {
             if unsafe { TerminateJobObject(self.job, 1) } == 0 {
                 return Err(io::Error::last_os_error());
@@ -302,6 +385,66 @@ mod windows {
             unsafe {
                 CloseHandle(self.job);
             }
+        }
+    }
+
+    /// Lets the main thread of a process that was created suspended run.
+    fn resume_main_thread(pid: u32) -> io::Result<()> {
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+
+        let thread_id = main_thread_id(pid)?;
+        // SAFETY: the handle returned by `OpenThread` is checked for null, used only for
+        // `ResumeThread`, and closed exactly once.
+        unsafe {
+            let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id);
+            if thread.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let previous = ResumeThread(thread);
+            let result = if previous == u32::MAX {
+                Err(io::Error::last_os_error())
+            } else if previous == 0 {
+                // Not suspended: this is not the creation-suspended main thread, so the real one
+                // may still be stuck. Fail so the caller ends the tree instead of hanging.
+                Err(io::Error::other("被枚举到的线程未处于挂起状态"))
+            } else {
+                Ok(())
+            };
+            CloseHandle(thread);
+            result
+        }
+    }
+
+    /// The id of the first thread that belongs to `pid` (a process created suspended has exactly
+    /// one thread).
+    pub(super) fn main_thread_id(pid: u32) -> io::Result<u32> {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        };
+
+        // SAFETY: the snapshot handle is checked, closed exactly once, and `entry.dwSize` is set
+        // before the first call as the API requires.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = size_of::<THREADENTRY32>() as u32;
+            let mut found = None;
+            let mut more = Thread32First(snapshot, &mut entry);
+            while more != 0 {
+                if entry.th32OwnerProcessID == pid {
+                    found = Some(entry.th32ThreadID);
+                    break;
+                }
+                more = Thread32Next(snapshot, &mut entry);
+            }
+            CloseHandle(snapshot);
+            found.ok_or_else(|| io::Error::other("未找到被挂起子进程的主线程"))
         }
     }
 
@@ -562,6 +705,65 @@ mod unix {
             Ok(())
         }
 
+        /// Creates the child already attached to this tree (m6-060): the child belongs to the tree
+        /// before it has run any code of its own. `windows_creation_flags` are the extra creation
+        /// flags to keep (for example `CREATE_NO_WINDOW`); they replace whatever the command had.
+        pub fn spawn_attached(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+        ) -> io::Result<Child> {
+            self.spawn_attached_inner(command, windows_creation_flags, |_| {})
+        }
+
+        /// `spawn_attached` for a blocking `std::process::Command`.
+        pub fn spawn_attached_std(
+            &self,
+            command: &mut std::process::Command,
+            windows_creation_flags: u32,
+        ) -> io::Result<std::process::Child> {
+            let _ = windows_creation_flags;
+            self.configure_std(command)?;
+            let mut child = command.spawn()?;
+            if let Err(error) = self.attach_std(&child) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            Ok(child)
+        }
+
+        /// Test hook: `before_release` runs with the child's pid after it joined the tree and
+        /// before it is allowed to run.
+        #[cfg(test)]
+        pub(crate) fn spawn_attached_with_hook(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+            before_release: impl FnOnce(u32),
+        ) -> io::Result<Child> {
+            self.spawn_attached_inner(command, windows_creation_flags, before_release)
+        }
+
+        fn spawn_attached_inner(
+            &self,
+            command: &mut tokio::process::Command,
+            windows_creation_flags: u32,
+            before_release: impl FnOnce(u32),
+        ) -> io::Result<Child> {
+            let _ = windows_creation_flags;
+            self.configure(command)?;
+            let mut child = command.spawn()?;
+            if let Err(error) = self.attach(&child) {
+                let _ = child.start_kill();
+                return Err(error);
+            }
+            if let Some(pid) = child.id() {
+                before_release(pid);
+            }
+            Ok(child)
+        }
+
         pub fn attach_pty(&self, child: &dyn PtyChild, master: &dyn MasterPty) -> io::Result<()> {
             let pid = master
                 .process_group_leader()
@@ -743,3 +945,121 @@ mod unix {
 pub use unix::ProcessTree;
 #[cfg(windows)]
 pub use windows::ProcessTree;
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[cfg(windows)]
+    fn long_command() -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(crate::platform::detect::system32(
+            "WindowsPowerShell\\v1.0\\powershell.exe",
+        ));
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 30",
+        ]);
+        command
+    }
+
+    #[cfg(unix)]
+    fn long_command() -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        command
+    }
+
+    /// What the hook can observe about the not-yet-released child.
+    #[derive(Debug)]
+    struct Observation {
+        /// Windows: the child is a member of the tree's job.
+        in_tree: bool,
+        /// Windows: the main thread's previous suspend count (1 while it has not run).
+        /// Unix: whether the child already leads its own process group.
+        pending: bool,
+    }
+
+    #[cfg(windows)]
+    fn observe(tree: &ProcessTree, pid: u32) -> Observation {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, OpenThread, ResumeThread, SuspendThread,
+            PROCESS_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
+        };
+
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            assert!(!process.is_null(), "OpenProcess failed for {pid}");
+            let mut in_job = 0;
+            assert_ne!(
+                IsProcessInJob(process, tree.job_handle(), &mut in_job),
+                0,
+                "IsProcessInJob failed"
+            );
+            CloseHandle(process);
+
+            let thread_id = super::windows::main_thread_id(pid).expect("main thread of the child");
+            let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id);
+            assert!(!thread.is_null(), "OpenThread failed");
+            // Suspending adds one to the count; the returned previous count is 1 only if the main
+            // thread was still suspended from creation. Undo our own suspension immediately.
+            let previous = SuspendThread(thread);
+            ResumeThread(thread);
+            CloseHandle(thread);
+            Observation {
+                in_tree: in_job != 0,
+                pending: previous == 1,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn observe(_tree: &ProcessTree, pid: u32) -> Observation {
+        let leads_group = unsafe { libc::getpgid(pid as i32) } == pid as i32;
+        Observation {
+            in_tree: leads_group,
+            pending: leads_group,
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_attached_places_the_child_in_the_tree_before_it_runs() {
+        let tree = ProcessTree::new().unwrap();
+        let mut command = long_command();
+        let mut observed = None;
+
+        let mut child = tree
+            .spawn_attached_with_hook(&mut command, 0, |pid| {
+                observed = Some(observe(&tree, pid));
+            })
+            .expect("spawn the child attached to the tree");
+
+        let observed = observed.expect("the hook ran with the child's pid");
+        assert!(
+            observed.in_tree,
+            "the child must already be in the tree: {observed:?}"
+        );
+        assert!(
+            observed.pending,
+            "the child must not have run any code yet: {observed:?}"
+        );
+        // Extra creation flags are accepted and kept.
+        let mut flagged = long_command();
+        let mut flagged_child = tree
+            .spawn_attached(&mut flagged, 0x0800_0000)
+            .expect("spawn with an extra creation flag");
+
+        tree.terminate().unwrap();
+        for process in [&mut child, &mut flagged_child] {
+            tokio::time::timeout(Duration::from_secs(3), process.wait())
+                .await
+                .expect("the tree's processes end after terminate")
+                .unwrap();
+        }
+    }
+}

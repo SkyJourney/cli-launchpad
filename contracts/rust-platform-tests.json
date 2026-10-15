@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 600,
-    "Linux": 607,
-    "macOS": 605
+    "Windows": 608,
+    "Linux": 615,
+    "macOS": 613
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -318,7 +318,15 @@
       "runtime::tests::cache_db_with_sync_runs_the_closure_and_returns_its_result",
       "contracts::no_direct_database_lock_outside_the_runtime_module",
       "contracts::with_sync_is_confined_to_the_allowed_files",
-      "contracts::pty_diagnostics_thread_logs_at_debug_level"
+      "contracts::pty_diagnostics_thread_logs_at_debug_level",
+      "platform::execution_process::tests::spawn_attached_places_the_child_in_the_tree_before_it_runs",
+      "platform::process::tests::spawn_attached_child_runs_to_completion_after_release",
+      "platform::process::tests::spawn_attached_std_child_runs_to_completion_after_release",
+      "platform::process::tests::dropping_a_supervised_handle_terminates_the_tree",
+      "platform::process::tests::supervised_shutdown_terminates_and_reaps_within_the_grace",
+      "platform::process::tests::dropping_the_run_bounded_future_terminates_the_tree",
+      "contracts::codex_app_server_uses_the_shared_supervised_primitive",
+      "contracts::child_processes_are_spawned_only_through_the_supervised_primitives"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

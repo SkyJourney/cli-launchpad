@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdout, Command};
 
-use crate::platform::execution_process::ProcessTree;
+use crate::platform::process::{spawn_supervised, WINDOWS_CREATE_NO_WINDOW};
 
 const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_RESPONSE_LINES: usize = 2_000;
@@ -35,28 +35,23 @@ pub(crate) async fn request(
 }
 
 async fn request_inner(executable: &str, method: &str, params: Value) -> Result<Value> {
-    let tree = ProcessTree::new().context("无法创建 Codex App Server 进程树")?;
     let mut command = app_server_command(executable);
-    tree.configure(&mut command)
-        .context("无法配置 Codex App Server 进程树")?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let mut child = command.spawn().context("无法启动 Codex App Server")?;
-    let guard = AppServerTreeGuard::new(tree);
-    if let Err(error) = guard.attach(&child) {
-        guard.shutdown();
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        return Err(error).context("无法把 Codex App Server 加入进程树");
-    }
-    let mut stdin = child
+        .stderr(Stdio::null());
+    // The server belongs to its process tree before it runs, and dropping `supervised` (normal
+    // completion, an early error, or the outer timeout dropping this future) ends every
+    // descendant, which the direct child's kill alone would not (a `.cmd` shim's `cmd.exe`).
+    let mut supervised = spawn_supervised(&mut command, WINDOWS_CREATE_NO_WINDOW)
+        .context("无法启动 Codex App Server")?;
+    let mut stdin = supervised
+        .child_mut()
         .stdin
         .take()
         .ok_or_else(|| anyhow!("无法连接 Codex App Server stdin"))?;
-    let stdout = child
+    let stdout = supervised
+        .child_mut()
         .stdout
         .take()
         .ok_or_else(|| anyhow!("无法连接 Codex App Server stdout"))?;
@@ -92,44 +87,12 @@ async fn request_inner(executable: &str, method: &str, params: Value) -> Result<
 
     let result = read_response(&mut reader, 1).await;
     drop(stdin);
-    guard.shutdown();
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    let _ = supervised.shutdown(Duration::from_millis(500)).await;
     result
 }
 
 fn app_server_command(executable: &str) -> Command {
     crate::platform::process::cli_command(Path::new(executable), ["app-server", "--stdio"])
-}
-
-/// Owns the process tree of one short-lived App Server connection. Dropping
-/// it (normal completion, an early error, or the outer timeout dropping the
-/// whole future) terminates every descendant, which `kill_on_drop` alone does
-/// not: it only kills the direct child, e.g. the `cmd.exe` in front of a
-/// `.cmd` shim.
-struct AppServerTreeGuard {
-    tree: ProcessTree,
-}
-
-impl AppServerTreeGuard {
-    fn new(tree: ProcessTree) -> Self {
-        Self { tree }
-    }
-
-    fn attach(&self, child: &tokio::process::Child) -> std::io::Result<()> {
-        self.tree.attach(child)
-    }
-
-    fn shutdown(&self) {
-        let _ = self.tree.terminate();
-        let _ = self.tree.force_kill();
-    }
-}
-
-impl Drop for AppServerTreeGuard {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
 }
 
 async fn write_message(stdin: &mut tokio::process::ChildStdin, value: &Value) -> Result<()> {
@@ -290,15 +253,19 @@ mod tests {
 
     #[test]
     fn tree_guard_drop_without_an_attached_process_is_harmless() {
-        let tree = ProcessTree::new().unwrap();
-        let guard = AppServerTreeGuard::new(tree);
-        drop(guard);
+        use crate::platform::execution_process::ProcessTree;
 
+        // A tree that never got a process: dropping it is harmless.
         let tree = ProcessTree::new().unwrap();
-        let guard = AppServerTreeGuard::new(tree);
-        guard.shutdown();
-        guard.shutdown();
-        drop(guard);
+        drop(tree);
+
+        // Signalling it twice (nothing attached) only reports an error, and the drop is harmless.
+        let tree = ProcessTree::new().unwrap();
+        let _ = tree.terminate();
+        let _ = tree.force_kill();
+        let _ = tree.terminate();
+        let _ = tree.force_kill();
+        drop(tree);
     }
 
     #[cfg(any(unix, windows))]
