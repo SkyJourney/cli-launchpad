@@ -1,3 +1,10 @@
+//! Lock rules for a PTY session (m6-055)
+//! Order:   registry (lookup only; clone the Arc out and release) -> route_and_handoff -> terminal -> flow.state
+//! Leaves:  process_tree and killer are held for a single call and never nested with another lock
+//! Never while holding any of these locks: Channel/PtyEventSink::send, thread::sleep,
+//!          database access, filesystem access, waiting for a child process
+//! Allowed: MasterPty::resize under the terminal lock (it is the resource that lock protects)
+
 use std::sync::{
     atomic::{AtomicBool, AtomicU64},
     mpsc::SyncSender,
@@ -9,11 +16,13 @@ use portable_pty::{ChildKiller, MasterPty};
 use super::{
     flow::OutputFlow,
     handoff::HandoffState,
+    ports::PtyEventSink,
     route::{buffer_owner_lost_event, ensure_route_owner, pty_event_buffer_size, EventRoute},
+    to_pty_size,
 };
 use crate::{
     models::{
-        pty_session::{PtyEvent, PtySession},
+        pty_session::{PtyEvent, PtySession, PtySizeUpdate},
         tool::ToolKey,
         window_kind::{is_main_label, is_terminal_label},
     },
@@ -21,20 +30,52 @@ use crate::{
     AppError,
 };
 
+/// The PTY master together with the size last applied to it. One lock guards both so that
+/// "compare, resize, remember" is a single critical section.
+pub(super) struct TerminalState {
+    pub(super) master: Box<dyn MasterPty + Send>,
+    pub(super) last_size: (u16, u16),
+}
+
+const MAX_SEND_ATTEMPTS: usize = 3;
+
+/// What `send_event` decided under the lock and executes outside of it.
+struct SendPlan {
+    epoch: u64,
+    /// The owner channel and whether the owner is a terminal window.
+    owner: Option<(Arc<dyn PtyEventSink>, bool)>,
+    mirror: Option<Arc<dyn PtyEventSink>>,
+}
+
+/// The mirror that must receive the event: any mirror once the owner is lost, otherwise only
+/// the main window's mirror.
+fn mirror_sink(route: &EventRoute, owner_lost_mode: bool) -> Option<Arc<dyn PtyEventSink>> {
+    route
+        .mirror
+        .as_ref()
+        .filter(|(label, _)| owner_lost_mode || is_main_label(label))
+        .map(|(_, mirror)| Arc::clone(mirror))
+}
+
+/// The event route and the handoff state are decided together (finalize reads and writes
+/// both, reclaim clears both), so one lock guards them.
+pub(super) struct RouteAndHandoff {
+    pub(super) route: EventRoute,
+    pub(super) handoff: HandoffState,
+}
+
 pub(super) struct ManagedSession {
     pub(super) session_id: String,
     pub(super) directory_id: i64,
     pub(super) tool_key: ToolKey,
     pub(super) working_directory: String,
     pub(super) started_at_ms: i64,
-    pub(super) master: Mutex<Box<dyn MasterPty + Send>>,
-    pub(super) last_size: Mutex<(u16, u16)>,
+    pub(super) terminal: Mutex<TerminalState>,
     pub(super) writer: SyncSender<Vec<u8>>,
     pub(super) killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pub(super) process_tree: Mutex<Option<ProcessTree>>,
     pub(super) flow: Arc<OutputFlow>,
-    pub(super) event_route: Mutex<EventRoute>,
-    pub(super) handoff: Mutex<HandoffState>,
+    pub(super) route_and_handoff: Mutex<RouteAndHandoff>,
     pub(super) first_output_logged: AtomicBool,
     pub(super) output_chunks: AtomicU64,
     pub(super) output_bytes: AtomicU64,
@@ -44,70 +85,92 @@ pub(super) struct ManagedSession {
 }
 
 impl ManagedSession {
+    /// Delivers one event to the owner (and the main-window mirror). The route is read and
+    /// updated under the lock, but the delivery itself never happens under it: a failure is
+    /// applied afterwards only if the route did not change meanwhile (`epoch`).
     pub(super) fn send_event(&self, event: PtyEvent) -> Result<(), String> {
         let buffer_size = pty_event_buffer_size(&event);
-        let mut mirror_after_owner_loss = false;
-        let mirror_to_main;
-        {
-            let mut route = self
-                .event_route
-                .lock()
-                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
-            if let Some(channel) = route.channel.as_ref() {
-                if let Err(error) = channel.send(event.clone()) {
-                    if is_terminal_label(&route.window_label) {
-                        route.channel = None;
-                        route.owner_lost = true;
-                        if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
+        for _ in 0..MAX_SEND_ATTEMPTS {
+            // Phase 1: decide under the lock, no IPC.
+            let mut plan = {
+                let mut guard = self
+                    .route_and_handoff
+                    .lock()
+                    .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
+                let route = &mut guard.route;
+                let epoch = route.epoch;
+                let owner = route.channel.as_ref().map(Arc::clone);
+                match owner {
+                    Some(channel) => SendPlan {
+                        epoch,
+                        owner: Some((channel, is_terminal_label(&route.window_label))),
+                        mirror: mirror_sink(route, false),
+                    },
+                    None if route.owner_lost => {
+                        if !buffer_owner_lost_event(route, event.clone(), buffer_size) {
                             return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
                         }
-                        mirror_after_owner_loss = true;
+                        SendPlan {
+                            epoch,
+                            owner: None,
+                            mirror: mirror_sink(route, true),
+                        }
+                    }
+                    None => return Err("PTY 输出通道不可用：当前没有所有者通道".to_string()),
+                }
+            };
+
+            // Phase 2: IPC without any lock.
+            if let Some((owner, owner_is_terminal)) = plan.owner.take() {
+                if let Err(error) = owner.send(event.clone()) {
+                    // Phase 3: apply the failure under the lock, only if the route did not change.
+                    let mut guard = self
+                        .route_and_handoff
+                        .lock()
+                        .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
+                    let route = &mut guard.route;
+                    if route.epoch != plan.epoch {
+                        // The route changed while sending: plan again against the new route.
+                        continue;
+                    }
+                    if owner_is_terminal {
+                        route.channel = None;
+                        route.owner_lost = true;
+                        route.epoch += 1;
+                        plan.epoch = route.epoch;
+                        if !buffer_owner_lost_event(route, event.clone(), buffer_size) {
+                            return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
+                        }
+                        plan.mirror = mirror_sink(route, true);
                         self.flow.pause_indefinitely();
                     } else {
                         return Err(format!("PTY 输出通道不可用：{error}"));
                     }
                 }
-            } else if route.owner_lost {
-                if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
-                    return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
-                }
-                mirror_after_owner_loss = true;
-            } else {
-                return Err("PTY 输出通道不可用：当前没有所有者通道".to_string());
             }
-            mirror_to_main = mirror_after_owner_loss
-                || route
-                    .mirror
-                    .as_ref()
-                    .is_some_and(|(label, _)| is_main_label(label));
-        }
 
-        if mirror_to_main {
-            let mut route = self
-                .event_route
-                .lock()
-                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
-            let mirror_allowed = mirror_after_owner_loss
-                || route
-                    .mirror
-                    .as_ref()
-                    .is_some_and(|(label, _)| is_main_label(label));
-            if mirror_allowed {
-                if let Some((_, mirror)) = route.mirror.as_ref() {
-                    if mirror.send(event).is_err() {
-                        route.mirror = None;
+            // Mirror delivery, still without a lock.
+            if let Some(mirror) = plan.mirror.take() {
+                if mirror.send(event).is_err() {
+                    if let Ok(mut guard) = self.route_and_handoff.lock() {
+                        if guard.route.epoch == plan.epoch {
+                            guard.route.mirror = None;
+                            guard.route.epoch += 1;
+                        }
                     }
                 }
             }
+            return Ok(());
         }
-        Ok(())
+        Err("PTY 输出通道不可用：路由在发送期间多次变化".to_string())
     }
 
     pub(super) fn is_output_observer(&self, window_label: &str) -> Result<bool, AppError> {
-        let route = self
-            .event_route
+        let guard = self
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        let route = &guard.route;
         Ok(route.window_label == window_label
             || route
                 .mirror
@@ -117,11 +180,29 @@ impl ManagedSession {
     }
 
     pub(super) fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
-        let route = self
-            .event_route
+        let guard = self
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        ensure_route_owner(&route, window_label)
+        ensure_route_owner(&guard.route, window_label)
+    }
+
+    /// Applies `size` through the terminal lock. Returns Ok(true) if the PTY was resized,
+    /// Ok(false) if the size was already current.
+    pub(super) fn apply_size(&self, size: PtySizeUpdate) -> Result<bool, AppError> {
+        let mut terminal = self
+            .terminal
+            .lock()
+            .map_err(|_| AppError::msg("PTY 终端锁中毒"))?;
+        if terminal.last_size == (size.cols, size.rows) {
+            return Ok(false);
+        }
+        terminal
+            .master
+            .resize(to_pty_size(size))
+            .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
+        terminal.last_size = (size.cols, size.rows);
+        Ok(true)
     }
 
     pub(super) fn metadata(&self) -> PtySession {
@@ -135,5 +216,16 @@ impl ManagedSession {
             ended_at_ms: None,
             exit_code: None,
         }
+    }
+}
+
+#[cfg(test)]
+impl ManagedSession {
+    pub(super) fn route_lock_is_free(&self) -> bool {
+        self.route_and_handoff.try_lock().is_ok()
+    }
+
+    pub(super) fn handoff_lock_is_free(&self) -> bool {
+        self.route_and_handoff.try_lock().is_ok()
     }
 }

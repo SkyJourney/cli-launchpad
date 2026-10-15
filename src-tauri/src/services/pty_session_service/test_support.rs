@@ -88,21 +88,27 @@ impl PtySessionManager {
             tool_key: ToolKey::Claude,
             working_directory: "C:/project".to_string(),
             started_at_ms: 0,
-            master: Mutex::new(pair.master),
-            last_size: Mutex::new((80, 24)),
+            terminal: Mutex::new(TerminalState {
+                master: pair.master,
+                last_size: (80, 24),
+            }),
             writer,
             killer: Mutex::new(Box::new(FakeKiller(Arc::clone(&kills)))),
             process_tree: Mutex::new(None),
             flow: Arc::new(OutputFlow::new()),
-            event_route: Mutex::new(EventRoute {
-                window_label: owner_label.to_string(),
-                channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
-                mirror: None,
-                owner_lost: false,
-                buffered_events: VecDeque::new(),
-                buffered_bytes: 0,
+            route_and_handoff: Mutex::new(RouteAndHandoff {
+                route: EventRoute {
+                    window_label: owner_label.to_string(),
+                    channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
+                    mirror: None,
+                    owner_lost: false,
+                    buffered_events: VecDeque::new(),
+                    buffered_bytes: 0,
+                    epoch: 0,
+                    reattaching: false,
+                },
+                handoff: HandoffState::Idle,
             }),
-            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -125,7 +131,7 @@ impl PtySessionManager {
 
     pub(crate) fn test_route(&self, session_id: &str) -> TestRoute {
         let session = self.get(session_id).expect("test session must exist");
-        let route = session.event_route.lock().unwrap();
+        let route = session.route_guard();
         TestRoute {
             window_label: route.window_label.clone(),
             owner_lost: route.owner_lost,
@@ -137,7 +143,7 @@ impl PtySessionManager {
     /// 会话上是否还有未结束的交接记录（测试用只读 helper）。
     pub(crate) fn has_pending_handoff(&self, session_id: &str) -> bool {
         let session = self.get(session_id).expect("test session must exist");
-        let state = session.handoff.lock().unwrap();
+        let state = session.handoff_guard();
         !state.is_idle()
     }
 
@@ -172,21 +178,27 @@ impl PtySessionManager {
             tool_key: ToolKey::Claude,
             working_directory: "C:/project".to_string(),
             started_at_ms: 0,
-            master: Mutex::new(pair.master),
-            last_size: Mutex::new((80, 24)),
+            terminal: Mutex::new(TerminalState {
+                master: pair.master,
+                last_size: (80, 24),
+            }),
             writer,
             killer: Mutex::new(child.clone_killer()),
             process_tree: Mutex::new(Some(process_tree)),
             flow: Arc::new(OutputFlow::new()),
-            event_route: Mutex::new(EventRoute {
-                window_label: owner_label.to_string(),
-                channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
-                mirror: None,
-                owner_lost: false,
-                buffered_events: VecDeque::new(),
-                buffered_bytes: 0,
+            route_and_handoff: Mutex::new(RouteAndHandoff {
+                route: EventRoute {
+                    window_label: owner_label.to_string(),
+                    channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
+                    mirror: None,
+                    owner_lost: false,
+                    buffered_events: VecDeque::new(),
+                    buffered_bytes: 0,
+                    epoch: 0,
+                    reattaching: false,
+                },
+                handoff: HandoffState::Idle,
             }),
-            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -428,5 +440,98 @@ impl PtyEventSink for FakeSink {
         }
         self.events.lock().unwrap().push(event);
         Ok(())
+    }
+}
+
+/// 发送时阻塞的通道替身：返回 (channel, entered_rx, release_tx)。回调每次开始时向 `entered_rx`
+/// 发一个单元，然后最多等 10 秒从 `release_tx` 取一个放行单元。
+#[cfg(test)]
+pub(crate) fn blocking_channel() -> (Channel<PtyEvent>, Receiver<()>, mpsc::SyncSender<()>) {
+    let (entered_tx, entered_rx) = mpsc::sync_channel::<()>(16);
+    let (release_tx, release_rx) = mpsc::sync_channel::<()>(16);
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let channel = Channel::new(move |_body| {
+        let _ = entered_tx.try_send(());
+        let _ = release_rx
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(10));
+        Ok(())
+    });
+    (channel, entered_rx, release_tx)
+}
+
+/// 在返回 `Err("closed")` 之前先调用 `before_failing` 的通道替身。
+#[cfg(test)]
+pub(crate) fn failing_channel_with(
+    before_failing: impl Fn() + Send + Sync + 'static,
+) -> Channel<PtyEvent> {
+    Channel::new(move |_| {
+        before_failing();
+        Err(tauri::Error::Anyhow(anyhow!("closed")))
+    })
+}
+
+/// 在新线程里运行 `f`，最多等 `seconds` 秒；`None` 表示没有在时限内完成（线程被遗弃）。
+#[cfg(test)]
+pub(crate) fn run_with_timeout<R: Send + 'static>(
+    seconds: u64,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> Option<R> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(f());
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(seconds))
+        .ok()
+}
+
+/// 测试用的路由守卫：解引用到 `EventRoute`。
+#[cfg(test)]
+pub(super) struct RouteGuard<'a>(std::sync::MutexGuard<'a, RouteAndHandoff>);
+
+#[cfg(test)]
+impl std::ops::Deref for RouteGuard<'_> {
+    type Target = EventRoute;
+    fn deref(&self) -> &EventRoute {
+        &self.0.route
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for RouteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut EventRoute {
+        &mut self.0.route
+    }
+}
+
+/// 测试用的交接守卫：解引用到 `HandoffState`。
+#[cfg(test)]
+pub(super) struct HandoffGuard<'a>(std::sync::MutexGuard<'a, RouteAndHandoff>);
+
+#[cfg(test)]
+impl std::ops::Deref for HandoffGuard<'_> {
+    type Target = HandoffState;
+    fn deref(&self) -> &HandoffState {
+        &self.0.handoff
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for HandoffGuard<'_> {
+    fn deref_mut(&mut self) -> &mut HandoffState {
+        &mut self.0.handoff
+    }
+}
+
+#[cfg(test)]
+impl ManagedSession {
+    pub(super) fn route_guard(&self) -> RouteGuard<'_> {
+        RouteGuard(self.route_and_handoff.lock().unwrap())
+    }
+
+    pub(super) fn handoff_guard(&self) -> HandoffGuard<'_> {
+        HandoffGuard(self.route_and_handoff.lock().unwrap())
     }
 }

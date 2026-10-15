@@ -5,7 +5,7 @@ use tauri::ipc::Channel;
 use super::{
     ports::PtyEventSink,
     route::{pty_event_sequence, reclaim_event_route, session_window_status},
-    to_pty_size, validate_handoff_snapshot, validate_size, PtySessionManager,
+    validate_handoff_snapshot, validate_size, PtySessionManager,
 };
 use crate::{
     models::{
@@ -24,72 +24,71 @@ impl PtySessionManager {
         session_id: &str,
         window_label: &str,
     ) -> Result<PtySessionWindowStatusReport, AppError> {
-        self.registry.with_map(|sessions| {
-            let Some(session) = sessions.get(session_id) else {
-                return Ok(PtySessionWindowStatusReport {
-                    status: session_window_status(None, window_label, true),
-                    owner_window_label: None,
-                });
-            };
-            if session.flow.is_closed() {
-                return Ok(PtySessionWindowStatusReport {
-                    status: PtySessionWindowStatus::Ended,
-                    owner_window_label: None,
-                });
-            }
-            let route = session
-                .event_route
-                .lock()
-                .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-            Ok(PtySessionWindowStatusReport {
-                status: session_window_status(Some(&route.window_label), window_label, false),
-                owner_window_label: Some(route.window_label.clone()),
-            })
-        })?
+        // The table lock is released as soon as the session is found; only the session's own
+        // lock is taken below.
+        let Some(session) = self.registry.find(session_id)? else {
+            return Ok(PtySessionWindowStatusReport {
+                status: session_window_status(None, window_label, true),
+                owner_window_label: None,
+            });
+        };
+        if session.flow.is_closed() {
+            return Ok(PtySessionWindowStatusReport {
+                status: PtySessionWindowStatus::Ended,
+                owner_window_label: None,
+            });
+        }
+        let guard = session
+            .route_and_handoff
+            .lock()
+            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+        let route = &guard.route;
+        Ok(PtySessionWindowStatusReport {
+            status: session_window_status(Some(&route.window_label), window_label, false),
+            owner_window_label: Some(route.window_label.clone()),
+        })
     }
 
     pub fn reclaim_window(&self, window_label: &str) -> Vec<String> {
         if is_main_label(window_label) {
             return Vec::new();
         }
-        let result = self.registry.with_map(|sessions| {
-            let mut reclaimed = Vec::new();
-            for session in sessions.values() {
-                let mut pending_cleared = false;
-                if let Ok(mut state) = session.handoff.lock() {
-                    pending_cleared = state.clear_for_window(window_label);
-                }
-
-                let Ok(mut route) = session.event_route.lock() else {
-                    log::error!(
-                        "PTY event route lock poisoned while reclaiming session_id={}",
-                        session.session_id
-                    );
-                    continue;
-                };
-                if reclaim_event_route(&mut route, window_label) {
-                    if !session.flow.is_closed() {
-                        session.flow.pause_indefinitely();
-                    }
-                    reclaimed.push(session.session_id.clone());
-                } else if pending_cleared {
-                    session.flow.resume();
-                }
-            }
-
-            reclaimed
-        });
-        match result {
-            Ok(reclaimed) => reclaimed,
+        let sessions = match self.registry.snapshot() {
+            Ok(sessions) => sessions,
             Err(_) => {
                 log::error!(
                     "PTY session table lock poisoned while reclaiming window={window_label}"
                 );
-                Vec::new()
+                return Vec::new();
+            }
+        };
+        let mut reclaimed = Vec::new();
+        for session in &sessions {
+            let Ok(mut guard) = session.route_and_handoff.lock() else {
+                log::error!(
+                    "PTY event route lock poisoned while reclaiming session_id={}",
+                    session.session_id
+                );
+                continue;
+            };
+            let pending_cleared = guard.handoff.clear_for_window(window_label);
+            if reclaim_event_route(&mut guard.route, window_label) {
+                if !session.flow.is_closed() {
+                    session.flow.pause_indefinitely();
+                }
+                reclaimed.push(session.session_id.clone());
+            } else if pending_cleared {
+                session.flow.resume();
             }
         }
+        reclaimed
     }
 
+    /// Takes terminal control back into the main window after the previous owner was lost.
+    ///
+    /// Three phases keep every delivery out of the lock: (A) validate and mark the route as
+    /// `reattaching` under the lock, (B) replay the snapshot and the backlog without it, and
+    /// (C) catch up with the events that were buffered meanwhile and commit under the lock.
     pub fn reattach(
         &self,
         session_id: &str,
@@ -104,52 +103,92 @@ impl PtySessionManager {
         }
         validate_handoff_snapshot(&snapshot)?;
         validate_size(size)?;
-        let channel: Arc<dyn PtyEventSink> = Arc::new(channel);
+        let sink: Arc<dyn PtyEventSink> = Arc::new(channel);
         let session = self.get(session_id)?;
-        let mut route = session
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if !route.owner_lost || !is_main_label(&route.window_label) || route.channel.is_some() {
-            return Err(AppError::msg("终端当前不处于可重新接管状态"));
-        }
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size != (size.cols, size.rows) {
-            session
-                .master
+        let after_snapshot = |events: &std::collections::VecDeque<PtyEvent>, skip: usize| {
+            events
+                .iter()
+                .skip(skip)
+                .filter(|event| {
+                    pty_event_sequence(event)
+                        .map_or(true, |event_sequence| event_sequence > sequence)
+                })
+                .cloned()
+                .collect::<Vec<PtyEvent>>()
+        };
+        // A rejected replay leaves the buffer as it was; the route accepts a new reattach.
+        let abort = |error: AppError| {
+            if let Ok(mut guard) = session.route_and_handoff.lock() {
+                guard.route.reattaching = false;
+            }
+            error
+        };
+
+        // Phase A (locked, no IPC).
+        let (backlog, mut delivered) = {
+            let mut guard = session
+                .route_and_handoff
                 .lock()
-                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-                .resize(to_pty_size(size))
-                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-            *last_size = (size.cols, size.rows);
+                .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+            let route = &mut guard.route;
+            if !route.owner_lost
+                || !is_main_label(&route.window_label)
+                || route.channel.is_some()
+                || route.reattaching
+            {
+                return Err(AppError::msg("终端当前不处于可重新接管状态"));
+            }
+            session.apply_size(size)?;
+            session.flow.acknowledge(sequence)?;
+            route.reattaching = true;
+            (
+                after_snapshot(&route.buffered_events, 0),
+                route.buffered_events.len(),
+            )
+        };
+
+        // Phase B (no lock): the snapshot first, then the buffered events in order.
+        sink.send(PtyEvent::Snapshot {
+            session_id: session_id.to_string(),
+            sequence,
+            data: snapshot.data,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+        })
+        .map_err(|error| abort(AppError::msg(format!("发送终端画面快照失败：{error}"))))?;
+        for event in backlog {
+            sink.send(event)
+                .map_err(|error| abort(AppError::msg(format!("恢复终端输出失败：{error}"))))?;
         }
-        drop(last_size);
-        session.flow.acknowledge(sequence)?;
-        channel
-            .send(PtyEvent::Snapshot {
-                session_id: session_id.to_string(),
-                sequence,
-                data: snapshot.data,
-                cols: snapshot.cols,
-                rows: snapshot.rows,
-            })
-            .map_err(|error| AppError::msg(format!("发送终端画面快照失败：{error}")))?;
-        for event in route.buffered_events.iter().filter(|event| {
-            pty_event_sequence(event).map_or(true, |event_sequence| event_sequence > sequence)
-        }) {
-            channel
-                .send(event.clone())
-                .map_err(|error| AppError::msg(format!("恢复终端输出失败：{error}")))?;
+
+        // Phase C: events that arrived during the replay are buffered; send them in order
+        // and commit under the lock once nothing new is waiting.
+        loop {
+            let tail = {
+                let mut guard = session
+                    .route_and_handoff
+                    .lock()
+                    .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+                let route = &mut guard.route;
+                if route.buffered_events.len() == delivered {
+                    route.buffered_events.clear();
+                    route.buffered_bytes = 0;
+                    route.channel = Some(sink);
+                    route.mirror = None;
+                    route.owner_lost = false;
+                    route.reattaching = false;
+                    route.epoch += 1;
+                    break;
+                }
+                let tail = after_snapshot(&route.buffered_events, delivered);
+                delivered = route.buffered_events.len();
+                tail
+            };
+            for event in tail {
+                sink.send(event)
+                    .map_err(|error| abort(AppError::msg(format!("恢复终端输出失败：{error}"))))?;
+            }
         }
-        route.buffered_events.clear();
-        route.buffered_bytes = 0;
-        route.channel = Some(channel);
-        route.mirror = None;
-        route.owner_lost = false;
-        drop(route);
         session.flow.resume();
         Ok(session.metadata())
     }

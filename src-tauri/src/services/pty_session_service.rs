@@ -34,7 +34,7 @@ use ports::{
 use process::{stop_spawned_child, Terminator, TreeTerminateError};
 use registry::SessionRegistry;
 use route::EventRoute;
-use session::ManagedSession;
+use session::{ManagedSession, RouteAndHandoff, TerminalState};
 
 use crate::models::window_kind::{is_main_label, main_window_label, WindowKind, WindowLabel};
 use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
@@ -224,21 +224,27 @@ impl PtySessionManager {
             tool_key,
             working_directory: payload.directory.clone(),
             started_at_ms: now,
-            master: Mutex::new(pair.master),
-            last_size: Mutex::new((size.cols, size.rows)),
+            terminal: Mutex::new(TerminalState {
+                master: pair.master,
+                last_size: (size.cols, size.rows),
+            }),
             writer: writer_sender,
             killer: Mutex::new(killer),
             process_tree: Mutex::new(Some(process_tree)),
             flow: Arc::new(OutputFlow::new()),
-            event_route: Mutex::new(EventRoute {
-                window_label: window_label.to_string(),
-                channel: Some(Arc::new(on_event) as Arc<dyn PtyEventSink>),
-                mirror: None,
-                owner_lost: false,
-                buffered_events: VecDeque::new(),
-                buffered_bytes: 0,
+            route_and_handoff: Mutex::new(RouteAndHandoff {
+                route: EventRoute {
+                    window_label: window_label.to_string(),
+                    channel: Some(Arc::new(on_event) as Arc<dyn PtyEventSink>),
+                    mirror: None,
+                    owner_lost: false,
+                    buffered_events: VecDeque::new(),
+                    buffered_bytes: 0,
+                    epoch: 0,
+                    reattaching: false,
+                },
+                handoff: HandoffState::Idle,
             }),
-            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -328,26 +334,14 @@ impl PtySessionManager {
         validate_size(size)?;
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size == (size.cols, size.rows) {
-            return Ok(());
+        if session.apply_size(size)? {
+            log::info!(
+                "PTY resized session_id={} cols={} rows={}",
+                session.session_id,
+                size.cols,
+                size.rows
+            );
         }
-        session
-            .master
-            .lock()
-            .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-            .resize(to_pty_size(size))
-            .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-        *last_size = (size.cols, size.rows);
-        log::info!(
-            "PTY resized session_id={} cols={} rows={}",
-            session.session_id,
-            size.cols,
-            size.rows
-        );
         Ok(())
     }
 
@@ -433,11 +427,11 @@ impl PtySessionManager {
     ) -> Result<PtyHandoff, AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut state = session
-            .handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        state.begin(&session.flow, window_label)
+        guard.handoff.begin(&session.flow, window_label)
     }
 
     pub fn stage_handoff_snapshot(
@@ -451,11 +445,13 @@ impl PtySessionManager {
         validate_handoff_snapshot(&snapshot)?;
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut state = session
-            .handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        state.stage(&session.flow, window_label, token, sequence, snapshot)
+        guard
+            .handoff
+            .stage(&session.flow, window_label, token, sequence, snapshot)
     }
 
     pub fn complete_handoff(
@@ -470,15 +466,27 @@ impl PtySessionManager {
         }
         let sink: Arc<dyn PtyEventSink> = Arc::new(on_event);
         let session = self.get(session_id)?;
-        let mut state = session
-            .handoff
-            .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        // The three calls run under one guard, like the inline code did; m6-055 moves the
-        // delivery out of the lock.
-        let plan = state.check_complete(&session.flow, session_id, target_window_label, token)?;
+        let plan = {
+            let mut guard = session
+                .route_and_handoff
+                .lock()
+                .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            guard
+                .handoff
+                .check_complete(&session.flow, session_id, target_window_label, token)?
+        };
+        // The snapshot goes out with no lock held; `bind` re-validates the token and liveness,
+        // so a cancel, an expiry or a reclaim in between is reported as such.
         deliver_snapshot(&plan, sink.as_ref())?;
-        state.bind(&session.flow, target_window_label, token, sink)?;
+        {
+            let mut guard = session
+                .route_and_handoff
+                .lock()
+                .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            guard
+                .handoff
+                .bind(&session.flow, target_window_label, token, sink)?;
+        }
         Ok(session.metadata())
     }
 
@@ -494,41 +502,29 @@ impl PtySessionManager {
         }
         validate_size(size)?;
         let session = self.get(session_id)?;
-        let mut state = session
-            .handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        state.check_finalize(&session.flow, target_window_label, token)?;
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size != (size.cols, size.rows) {
-            session
-                .master
-                .lock()
-                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-                .resize(to_pty_size(size))
-                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-            *last_size = (size.cols, size.rows);
-        }
-        drop(last_size);
-        let mut route = session
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        let source_window_label = state
+        guard
+            .handoff
+            .check_finalize(&session.flow, target_window_label, token)?;
+        session.apply_size(size)?;
+        let source_window_label = guard
+            .handoff
             .bound_source()
             .expect("check_finalize guarantees a bound handoff")
             .to_string();
         // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
         // `cancel` or `reclaim_window` can still clean it up.
-        if route.window_label != source_window_label {
+        if guard.route.window_label != source_window_label {
             return Err(AppError::msg("终端控制权已经转移"));
         }
-        let bound = state
+        let bound = guard
+            .handoff
             .commit_finalize()
             .expect("check_finalize guarantees a bound handoff");
+        let route = &mut guard.route;
         route.window_label = target_window_label.to_string();
         route.mirror = if is_main_label(target_window_label) {
             None
@@ -545,7 +541,8 @@ impl PtySessionManager {
         };
         route.channel = Some(bound.sink);
         route.owner_lost = false;
-        drop(route);
+        route.epoch += 1;
+        drop(guard);
         session.flow.resume();
         Ok(session.metadata())
     }
@@ -558,11 +555,11 @@ impl PtySessionManager {
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut state = session
-            .handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        state.cancel(&session.flow, window_label, token)
+        guard.handoff.cancel(&session.flow, window_label, token)
     }
 
     pub fn active_count(&self) -> usize {

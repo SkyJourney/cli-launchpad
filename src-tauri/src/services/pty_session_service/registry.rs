@@ -7,9 +7,7 @@ use super::session::ManagedSession;
 use crate::AppError;
 
 /// Owner of the session table. Lookups clone the `Arc` out and release the
-/// table lock immediately; `with_map` is a transitional escape hatch for
-/// code that still inspects sessions while holding the table lock
-/// (m6-055 removes it).
+/// table lock immediately; nothing inspects a session while holding it.
 pub(super) struct SessionRegistry {
     inner: Mutex<HashMap<String, Arc<ManagedSession>>>,
 }
@@ -74,15 +72,10 @@ impl SessionRegistry {
             .unwrap_or(0)
     }
 
-    pub(super) fn with_map<R>(
-        &self,
-        f: impl FnOnce(&HashMap<String, Arc<ManagedSession>>) -> R,
-    ) -> Result<R, AppError> {
-        let sessions = self
-            .inner
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?;
-        Ok(f(&sessions))
+    /// Test seam: true when nobody holds the table lock right now.
+    #[cfg(test)]
+    pub(super) fn is_unlocked(&self) -> bool {
+        self.inner.try_lock().is_ok()
     }
 }
 

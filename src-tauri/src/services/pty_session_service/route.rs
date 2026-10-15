@@ -19,6 +19,11 @@ pub(super) struct EventRoute {
     pub(super) owner_lost: bool,
     pub(super) buffered_events: VecDeque<PtyEvent>,
     pub(super) buffered_bytes: usize,
+    /// Bumped whenever the owner, the channel, the mirror or the owner-lost state changes, so a
+    /// delivery that happened outside the lock can tell the route moved on.
+    pub(super) epoch: u64,
+    /// A reattach is replaying the backlog outside the lock; new events keep being buffered.
+    pub(super) reattaching: bool,
 }
 
 pub(super) fn pty_event_buffer_size(event: &PtyEvent) -> usize {
@@ -60,14 +65,19 @@ pub(super) fn buffer_owner_lost_event(
 }
 
 pub(super) fn reclaim_event_route(route: &mut EventRoute, window_label: &str) -> bool {
+    let had_mirror = route.mirror.is_some();
     route.mirror = route
         .mirror
         .take()
         .filter(|(label, _)| label != window_label);
+    if had_mirror && route.mirror.is_none() {
+        route.epoch += 1;
+    }
     if route.window_label == window_label {
         route.window_label = main_window_label().to_string();
         route.channel = None;
         route.owner_lost = true;
+        route.epoch += 1;
         true
     } else {
         false

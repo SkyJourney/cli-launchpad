@@ -2,8 +2,8 @@ use super::handoff::*;
 use super::input::*;
 use super::route::*;
 use super::test_support::{
-    long_running_test_command, quick_exit_test_command, spawn_test_child, wait_until, FakeSink,
-    FakeStore,
+    blocking_channel, failing_channel_with, long_running_test_command, quick_exit_test_command,
+    run_with_timeout, spawn_test_child, wait_until, FakeSink, FakeStore,
 };
 use super::*;
 use crate::models::pty_session::{PtySessionWindowStatus, PtySessionWindowStatusReport};
@@ -40,6 +40,8 @@ fn ensure_route_owner_rejects_non_owner() {
         owner_lost: false,
         buffered_events: VecDeque::new(),
         buffered_bytes: 0,
+        epoch: 0,
+        reattaching: false,
     };
 
     assert!(ensure_route_owner(&route, "main").is_err());
@@ -58,6 +60,8 @@ fn destroying_the_current_owner_reclaims_an_open_session_for_main() {
         owner_lost: false,
         buffered_events: VecDeque::new(),
         buffered_bytes: 0,
+        epoch: 0,
+        reattaching: false,
     };
 
     assert!(reclaim_event_route(&mut route, "terminal-child"));
@@ -75,6 +79,8 @@ fn destroying_a_non_owner_does_not_reclaim_the_session() {
         owner_lost: false,
         buffered_events: VecDeque::new(),
         buffered_bytes: 0,
+        epoch: 0,
+        reattaching: false,
     };
 
     assert!(!reclaim_event_route(&mut route, "terminal-mirror"));
@@ -91,6 +97,8 @@ fn owner_lost_output_buffer_rejects_data_over_the_limit() {
         owner_lost: true,
         buffered_events: VecDeque::new(),
         buffered_bytes: 0,
+        epoch: 0,
+        reattaching: false,
     };
     let event = PtyEvent::Output {
         session_id: "session-1".to_string(),
@@ -404,7 +412,7 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
     let s3 = ts3.session_id.clone();
     let session_3 = manager.get(&s3).unwrap();
     let (mirror_3, _mirror_sink_3) = recording_channel();
-    session_3.event_route.lock().unwrap().mirror = Some((
+    session_3.route_guard().mirror = Some((
         "main".to_string(),
         Arc::new(mirror_3) as Arc<dyn PtyEventSink>,
     ));
@@ -415,7 +423,7 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
     let s4 = ts4.session_id.clone();
     let session_4 = manager.get(&s4).unwrap();
     let (mirror_4, _mirror_sink_4) = recording_channel();
-    session_4.event_route.lock().unwrap().mirror =
+    session_4.route_guard().mirror =
         Some((T5.to_string(), Arc::new(mirror_4) as Arc<dyn PtyEventSink>));
 
     // 失主路径：所有者窗口被销毁，会话被回收给 main 并无限期暂停输出。
@@ -440,18 +448,18 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
 
     // 交接目标窗被销毁：待决交接被清除，输出恢复，所有者仍是 main。
     assert_eq!(manager.reclaim_window(T2), Vec::<String>::new());
-    assert!(session_2.handoff.lock().unwrap().is_idle());
+    assert!(session_2.handoff_guard().is_idle());
     assert!(!session_2.flow.is_paused_at(handoff.sequence));
     assert!(!is_paused(&session_2));
     assert_eq!(manager.test_route(&s2).window_label, "main");
 
     // 镜像窗是 main：main 永远不会被回收，镜像保持。
     assert_eq!(manager.reclaim_window("main"), Vec::<String>::new());
-    assert!(session_3.event_route.lock().unwrap().mirror.is_some());
+    assert!(session_3.route_guard().mirror.is_some());
 
     // 镜像窗 T5 被销毁：只清掉镜像，所有者 T4 不变。
     assert_eq!(manager.reclaim_window(T5), Vec::<String>::new());
-    assert!(session_4.event_route.lock().unwrap().mirror.is_none());
+    assert!(session_4.route_guard().mirror.is_none());
     assert_eq!(manager.test_route(&s4).window_label, T4);
 
     // 无关标签：任何路由都不变。
@@ -465,8 +473,8 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
         .map(|id| manager.test_route(id))
         .collect();
     assert_eq!(before, after);
-    assert!(session_3.event_route.lock().unwrap().mirror.is_some());
-    assert!(session_4.event_route.lock().unwrap().mirror.is_none());
+    assert!(session_3.route_guard().mirror.is_some());
+    assert!(session_4.route_guard().mirror.is_none());
 }
 
 #[test]
@@ -500,7 +508,7 @@ fn reattach_replays_only_buffered_events_after_snapshot_sequence() {
         }
     );
     {
-        let route = session.event_route.lock().unwrap();
+        let route = session.route_guard();
         assert_eq!(route.buffered_bytes, 0);
         assert!(route.mirror.is_none());
     }
@@ -671,7 +679,7 @@ fn owner_channel_failure_buffers_until_reattach_and_bounds_memory() {
         .send_event(output(&s1, 2, &"x".repeat(MAX_OWNER_LOST_BUFFER_BYTES)))
         .unwrap_err();
     assert!(error.contains("输出缓冲区已满"), "{error}");
-    assert!(session_1.event_route.lock().unwrap().buffered_bytes <= MAX_OWNER_LOST_BUFFER_BYTES);
+    assert!(session_1.route_guard().buffered_bytes <= MAX_OWNER_LOST_BUFFER_BYTES);
 
     // 子场景 3：退出事件不受输出上限限制，仍被缓冲。
     session_1
@@ -682,7 +690,7 @@ fn owner_channel_failure_buffers_until_reattach_and_bounds_memory() {
         })
         .unwrap();
     assert!(matches!(
-        session_1.event_route.lock().unwrap().buffered_events.back(),
+        session_1.route_guard().buffered_events.back(),
         Some(PtyEvent::Exited { .. })
     ));
 
@@ -701,7 +709,7 @@ fn owner_channel_failure_buffers_until_reattach_and_bounds_memory() {
     let s5 = ts5.session_id.clone();
     let session_5 = manager.get(&s5).unwrap();
     let (mirror, sink_m) = recording_channel();
-    session_5.event_route.lock().unwrap().mirror = Some((
+    session_5.route_guard().mirror = Some((
         "main".to_string(),
         Arc::new(mirror) as Arc<dyn PtyEventSink>,
     ));
@@ -895,11 +903,11 @@ fn finalized_handoff_rejects_source_cancel_in_manager() {
     };
     assert_eq!(manager.test_route(&s1), after_finalize);
     {
-        let route = session.event_route.lock().unwrap();
+        let route = session.route_guard();
         let (label, _) = route.mirror.as_ref().expect("source keeps a mirror");
         assert_eq!(label, "main");
     }
-    assert!(session.handoff.lock().unwrap().is_idle());
+    assert!(session.handoff_guard().is_idle());
     assert!(!is_paused(&session));
 
     // 源窗口（main）在交接完成后不能再取消；新所有者取消是无操作，路由不变。
@@ -1145,10 +1153,7 @@ fn handoff_target_rejection_keeps_the_pending_handoff_usable() {
         .as_str()
         .unwrap()
         .contains("目标窗口与源窗口相同"));
-    assert!(!matches!(
-        &*session.handoff.lock().unwrap(),
-        HandoffState::Bound(_)
-    ));
+    assert!(!matches!(&*session.handoff_guard(), HandoffState::Bound(_)));
 
     manager
         .complete_handoff(&s, T1, &h.token, recording_channel().0)
@@ -1423,7 +1428,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
         .unwrap();
     manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
     // Simulates "control was transferred meanwhile": the route now belongs to another window.
-    session.event_route.lock().unwrap().window_label = T9.to_string();
+    session.route_guard().window_label = T9.to_string();
 
     let result = manager.finalize_handoff(&s, T1, &h.token, size());
 
@@ -1432,7 +1437,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
     assert!(manager.has_pending_handoff(&s));
     // ... and so is its channel: once the route belongs to the source again, the very same
     // handoff can still be finalized.
-    session.event_route.lock().unwrap().window_label = "main".to_string();
+    session.route_guard().window_label = "main".to_string();
     manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
     assert_eq!(manager.test_route(&s).window_label, T1);
     assert!(manager.test_route(&s).has_channel);
@@ -1446,7 +1451,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
         .stage_handoff_snapshot(&s2, "main", &h2.token, h2.sequence, snapshot())
         .unwrap();
     manager.complete_handoff(&s2, T1, &h2.token, ch()).unwrap();
-    session2.event_route.lock().unwrap().window_label = T9.to_string();
+    session2.route_guard().window_label = T9.to_string();
     assert_rejected(
         manager.finalize_handoff(&s2, T1, &h2.token, size()),
         "终端控制权已经转移",
@@ -1455,4 +1460,489 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
     assert!(!manager.reclaim_window(T1).contains(&s2));
     assert!(!manager.has_pending_handoff(&s2));
     assert!(!is_paused(&session2));
+}
+
+// ---- m6-055: lock rules
+
+/// Checks `is_free` every 5 ms for 300 ms; the tested thread must still be blocked meanwhile.
+fn poll_free(is_free: impl Fn() -> bool, still_running: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+    while std::time::Instant::now() < deadline {
+        assert!(still_running(), "the tested thread finished too early");
+        assert!(is_free(), "the lock under test is being held");
+        thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn window_status_report_does_not_hold_the_registry_lock() {
+    let manager = PtySessionManager::default();
+    let (channel, _sink) = recording_channel();
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+    let hold = session.route_guard();
+    assert!(manager.registry_handle().is_unlocked());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let tested = {
+        let manager = manager.clone();
+        let s = s.clone();
+        thread::spawn(move || {
+            let report = manager.window_status_report(&s, "main");
+            let _ = done_tx.send(report);
+        })
+    };
+
+    poll_free(
+        || manager.registry_handle().is_unlocked(),
+        || done_rx.try_recv().is_err() && !tested.is_finished(),
+    );
+    drop(hold);
+
+    let report = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the report must finish once the route is free")
+        .unwrap();
+    assert_eq!(report.status, PtySessionWindowStatus::OwnedByAnotherWindow);
+    assert_eq!(report.owner_window_label.as_deref(), Some(T1));
+}
+
+#[test]
+fn reclaim_window_does_not_hold_the_registry_lock() {
+    let manager = PtySessionManager::default();
+    let (channel, _sink) = recording_channel();
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+    let hold = session.route_guard();
+    assert!(manager.registry_handle().is_unlocked());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let tested = {
+        let manager = manager.clone();
+        thread::spawn(move || {
+            let reclaimed = manager.reclaim_window(T1);
+            let _ = done_tx.send(reclaimed);
+        })
+    };
+
+    poll_free(
+        || manager.registry_handle().is_unlocked(),
+        || !tested.is_finished(),
+    );
+    drop(hold);
+
+    let reclaimed = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("reclaim_window must finish once the route is free");
+    assert_eq!(reclaimed, vec![s.clone()]);
+    let route = manager.test_route(&s);
+    assert!(route.owner_lost);
+    assert_eq!(route.window_label, "main");
+}
+
+#[test]
+fn send_event_does_not_hold_the_route_lock_while_sending() {
+    let manager = PtySessionManager::default();
+    let (channel, entered, release) = blocking_channel();
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let session = Arc::clone(&session);
+        let s = s.clone();
+        thread::spawn(move || {
+            let _ = done_tx.send(session.send_event(output(&s, 1, "a")));
+        });
+    }
+
+    entered
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the delivery must have entered the channel callback");
+    let route_is_free = session.route_lock_is_free();
+    let report = {
+        let manager = manager.clone();
+        let s = s.clone();
+        run_with_timeout(1, move || manager.window_status_report(&s, "main"))
+    };
+    release.send(()).unwrap();
+
+    assert!(route_is_free, "the route lock is held while sending");
+    let report = report
+        .expect("window_status_report must not wait for the delivery")
+        .unwrap();
+    assert_eq!(report.status, PtySessionWindowStatus::OwnedByAnotherWindow);
+    let result = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("send_event must finish after the release");
+    assert_eq!(result, Ok(()));
+}
+
+/// An owner-lost session with three acknowledged outputs and backlog events 2, 3, 4.
+fn owner_lost_session_with_backlog(manager: &PtySessionManager) -> (String, Arc<ManagedSession>) {
+    let (channel, _sink) = recording_channel();
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+    for _ in 0..3 {
+        session.flow.reserve(1).unwrap();
+    }
+    assert_eq!(manager.reclaim_window(T1), vec![s.clone()]);
+    for (sequence, data) in [(2, "b2"), (3, "b3"), (4, "b4")] {
+        session.send_event(output(&s, sequence, data)).unwrap();
+    }
+    (s, session)
+}
+
+#[test]
+fn reattach_replay_does_not_hold_the_route_lock() {
+    let manager = PtySessionManager::default();
+    let (s, session) = owner_lost_session_with_backlog(&manager);
+    let (channel, entered, release) = blocking_channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let manager = manager.clone();
+        let s = s.clone();
+        thread::spawn(move || {
+            let result = manager.reattach(&s, "main", channel, snapshot(), 3, size());
+            let _ = done_tx.send(result.map(|_| ()));
+        });
+    }
+
+    entered
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the snapshot must be in flight");
+    let route_is_free = session.route_lock_is_free();
+    let report = {
+        let manager = manager.clone();
+        let s = s.clone();
+        run_with_timeout(1, move || manager.window_status_report(&s, "main"))
+    };
+    for _ in 0..3 {
+        release.send(()).unwrap();
+    }
+
+    assert!(route_is_free, "the route lock is held while replaying");
+    let report = report
+        .expect("window_status_report must not wait for the replay")
+        .unwrap();
+    assert_eq!(report.status, PtySessionWindowStatus::Running);
+    assert_eq!(report.owner_window_label.as_deref(), Some("main"));
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("reattach must finish after the releases")
+        .unwrap();
+}
+
+#[test]
+fn complete_handoff_snapshot_delivery_does_not_hold_the_route_lock() {
+    // S3: cancelled while the snapshot is in flight.
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    let (channel, entered, release) = blocking_channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let manager = manager.clone();
+        let s = s.clone();
+        let token = h.token.clone();
+        thread::spawn(move || {
+            let _ = done_tx.send(manager.complete_handoff(&s, T1, &token, channel));
+        });
+    }
+    entered
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the snapshot must be in flight");
+    let handoff_is_free = session.handoff_lock_is_free();
+    let cancelled = {
+        let manager = manager.clone();
+        let s = s.clone();
+        let token = h.token.clone();
+        run_with_timeout(1, move || manager.cancel_handoff(&s, "main", &token))
+    };
+    release.send(()).unwrap();
+
+    assert!(handoff_is_free, "the handoff lock is held while delivering");
+    assert!(
+        cancelled.is_some(),
+        "cancel_handoff must not block on the delivery"
+    );
+    let result = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("complete_handoff must finish after the release");
+    assert_rejected(result, "终端窗口交接已过期");
+
+    // S3b: not cancelled: the same delivery binds the target and sends exactly one snapshot.
+    let (s2, _session2) = main_owned_session(&manager);
+    let h2 = manager.begin_handoff(&s2, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s2, "main", &h2.token, h2.sequence, snapshot())
+        .unwrap();
+    let (channel2, entered2, release2) = blocking_channel();
+    release2.send(()).unwrap();
+    manager
+        .complete_handoff(&s2, T1, &h2.token, channel2)
+        .unwrap();
+    assert!(manager.has_pending_handoff(&s2));
+    assert!(entered2.try_recv().is_ok(), "one snapshot was delivered");
+    assert!(entered2.try_recv().is_err(), "and only one");
+}
+
+#[test]
+fn send_failure_while_the_owner_is_reclaimed_is_buffered_not_lost() {
+    let manager = PtySessionManager::default();
+    let manager_in_callback = manager.clone();
+    let channel = failing_channel_with(move || {
+        manager_in_callback.reclaim_window(T1);
+    });
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+
+    let result = {
+        let session = Arc::clone(&session);
+        let s = s.clone();
+        run_with_timeout(5, move || session.send_event(output(&s, 1, "a")))
+    };
+
+    assert_eq!(result, Some(Ok(())));
+    assert_eq!(
+        manager.test_route(&s),
+        TestRoute {
+            window_label: "main".into(),
+            owner_lost: true,
+            has_channel: false,
+            buffered_events: 1,
+        }
+    );
+    {
+        let flow = session.flow.state.lock().unwrap();
+        assert!(flow.paused && flow.pause_deadline.is_none());
+    }
+
+    // The route moves to a new, healthy owner while the old owner's delivery is failing: the
+    // failure must not be applied to the new route, and the event goes to the new owner.
+    let manager = PtySessionManager::default();
+    let (new_owner, new_owner_records) = recording_channel();
+    let new_owner_slot = Arc::new(Mutex::new(Some(new_owner)));
+    let session_id_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let channel = {
+        let manager = manager.clone();
+        let new_owner_slot = Arc::clone(&new_owner_slot);
+        let session_id_slot = Arc::clone(&session_id_slot);
+        failing_channel_with(move || {
+            let s = session_id_slot.lock().unwrap().clone().unwrap();
+            let Some(target) = new_owner_slot.lock().unwrap().take() else {
+                return;
+            };
+            let h = manager.begin_handoff(&s, T1).unwrap();
+            manager
+                .stage_handoff_snapshot(&s, T1, &h.token, h.sequence, snapshot())
+                .unwrap();
+            manager.complete_handoff(&s, T2, &h.token, target).unwrap();
+            manager.finalize_handoff(&s, T2, &h.token, size()).unwrap();
+        })
+    };
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    *session_id_slot.lock().unwrap() = Some(s.clone());
+    let session = manager.get(&s).unwrap();
+
+    let result = {
+        let session = Arc::clone(&session);
+        let s = s.clone();
+        run_with_timeout(5, move || session.send_event(output(&s, 1, "a")))
+    };
+
+    assert_eq!(result, Some(Ok(())));
+    assert_eq!(
+        manager.test_route(&s),
+        TestRoute {
+            window_label: T2.into(),
+            owner_lost: false,
+            has_channel: true,
+            buffered_events: 0,
+        }
+    );
+    let outputs: Vec<serde_json::Value> = new_owner_records
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "output")
+        .cloned()
+        .collect();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0]["sequence"], 1);
+}
+
+#[test]
+fn events_arriving_during_replay_are_delivered_in_order_after_the_backlog() {
+    let manager = PtySessionManager::default();
+    let (s, session) = owner_lost_session_with_backlog(&manager);
+    let records: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel::<()>(16);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(16);
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let first = Arc::new(AtomicBool::new(true));
+    let channel = {
+        let records = Arc::clone(&records);
+        Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                records
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&json).unwrap());
+            }
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered_tx.try_send(());
+                let _ = release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(10));
+            }
+            Ok(())
+        })
+    };
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let manager = manager.clone();
+        let s = s.clone();
+        thread::spawn(move || {
+            let result = manager.reattach(&s, "main", channel, snapshot(), 3, size());
+            let _ = done_tx.send(result.map(|_| ()));
+        });
+    }
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the snapshot must be in flight");
+
+    // An event arrives while the snapshot is still being delivered.
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    {
+        let session = Arc::clone(&session);
+        let s = s.clone();
+        thread::spawn(move || {
+            let _ = event_tx.send(session.send_event(output(&s, 5, "b5")));
+        });
+    }
+    // With the route lock free it returns at once; with the lock held it waits for the replay.
+    let arrived_during_replay = event_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .is_ok();
+    release_tx.send(()).unwrap();
+
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("reattach must finish")
+        .unwrap();
+    if !arrived_during_replay {
+        event_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the queued event is delivered after the replay")
+            .unwrap();
+    }
+    let recorded = records.lock().unwrap().clone();
+    let shape: Vec<(String, u64)> = recorded
+        .iter()
+        .map(|event| {
+            (
+                event["type"].as_str().unwrap().to_string(),
+                event["sequence"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("snapshot".to_string(), 3),
+            ("output".to_string(), 4),
+            ("output".to_string(), 5),
+        ]
+    );
+    assert_eq!(
+        manager.test_route(&s),
+        TestRoute {
+            window_label: "main".into(),
+            owner_lost: false,
+            has_channel: true,
+            buffered_events: 0,
+        }
+    );
+    assert!(!is_paused(&session));
+}
+
+#[test]
+fn a_second_reattach_during_replay_is_rejected_immediately() {
+    let manager = PtySessionManager::default();
+    let (s, session) = owner_lost_session_with_backlog(&manager);
+    let (blocking, entered, release) = blocking_channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    {
+        let manager = manager.clone();
+        let s = s.clone();
+        thread::spawn(move || {
+            let result = manager.reattach(&s, "main", blocking, snapshot(), 3, size());
+            let _ = done_tx.send(result.map(|_| ()));
+        });
+    }
+    entered
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the first replay must be in flight");
+    let (second, second_records) = recording_channel();
+
+    let second_result = {
+        let manager = manager.clone();
+        let s = s.clone();
+        run_with_timeout(1, move || {
+            manager.reattach(&s, "main", second, snapshot(), 3, size())
+        })
+    };
+    let has_channel_meanwhile = session.route_lock_is_free() && manager.test_route(&s).has_channel;
+    for _ in 0..3 {
+        release.send(()).unwrap();
+    }
+
+    let second_result = second_result.expect("the second reattach must not wait for the replay");
+    assert_rejected(second_result, "终端当前不处于可重新接管状态");
+    assert!(second_records.lock().unwrap().is_empty());
+    assert!(!has_channel_meanwhile);
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the first reattach must finish")
+        .unwrap();
+    assert!(second_records.lock().unwrap().is_empty());
+}
+
+#[test]
+fn resize_applies_once_and_skips_equal_sizes_through_the_terminal_lock() {
+    let manager = PtySessionManager::default();
+    let (channel, _sink) = recording_channel();
+    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let session = manager.get(&s).unwrap();
+    let wide = PtySizeUpdate {
+        cols: 100,
+        rows: 30,
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+
+    manager.resize(&s, T1, wide).unwrap();
+
+    assert_eq!(session.terminal.lock().unwrap().last_size, (100, 30));
+    let current = session.terminal.lock().unwrap().master.get_size().unwrap();
+    assert_eq!((current.cols, current.rows), (100, 30));
+    manager.resize(&s, T1, wide).unwrap();
+    let again = session.terminal.lock().unwrap().master.get_size().unwrap();
+    assert_eq!((again.cols, again.rows), (100, 30));
+    assert_rejected(manager.resize(&s, "main", wide), "另一个窗口控制");
+    assert_rejected(
+        manager.resize(
+            &s,
+            T1,
+            PtySizeUpdate {
+                cols: 0,
+                rows: 30,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+        ),
+        "PTY 尺寸必须至少为 1 列和 1 行",
+    );
 }
