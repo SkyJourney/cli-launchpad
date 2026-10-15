@@ -22,6 +22,9 @@ pub(super) struct OutputFlowState {
     pub(super) paused: bool,
     pub(super) pause_deadline: Option<std::time::Instant>,
     pub(super) closed: bool,
+    /// Set while the application waits for sessions to exit: the reader is not blocked by
+    /// back-pressure, but the flow stays open (see `terminate_all_within`).
+    pub(super) exiting: bool,
 }
 
 impl OutputFlow {
@@ -61,6 +64,9 @@ impl OutputFlow {
                     Err(_) => return false,
                 };
                 continue;
+            }
+            if state.exiting {
+                return true;
             }
             if state.pending_bytes < OUTPUT_HIGH_WATERMARK {
                 return true;
@@ -170,6 +176,23 @@ impl OutputFlow {
             self.changed.notify_all();
         }
         Ok(())
+    }
+
+    /// The application is waiting for the sessions to exit: a reader blocked by back-pressure
+    /// must not keep the process from finishing, but the flow is not closed (the session may
+    /// survive the wait, see `PtySessionManager::terminate_all_within`).
+    pub(super) fn begin_exit(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.exiting = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// The wait ended with the session still alive: back-pressure applies again.
+    pub(super) fn cancel_exit(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.exiting = false;
+        }
     }
 
     pub(super) fn close(&self) {

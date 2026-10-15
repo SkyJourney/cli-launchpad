@@ -99,7 +99,7 @@ impl PtySessionManager {
             working_directory: "C:/project".to_string(),
             started_at_ms: 0,
             terminal: Mutex::new(TerminalState {
-                master: pair.master,
+                master: Some(pair.master),
                 last_size: (80, 24),
             }),
             writer,
@@ -125,6 +125,7 @@ impl PtySessionManager {
             acknowledgement_calls: AtomicU64::new(0),
             last_acknowledged_sequence: AtomicU64::new(0),
             termination_requested: AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
         });
         self.registry.insert(session).unwrap();
         TestSession {
@@ -189,7 +190,7 @@ impl PtySessionManager {
             working_directory: "C:/project".to_string(),
             started_at_ms: 0,
             terminal: Mutex::new(TerminalState {
-                master: pair.master,
+                master: Some(pair.master),
                 last_size: (80, 24),
             }),
             writer,
@@ -215,6 +216,7 @@ impl PtySessionManager {
             acknowledgement_calls: AtomicU64::new(0),
             last_acknowledged_sequence: AtomicU64::new(0),
             termination_requested: AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
         });
         self.registry.insert(session).unwrap();
 
@@ -231,6 +233,82 @@ impl PtySessionManager {
             })
             .expect("spawn test monitor");
         TestChildSession { session_id, exited }
+    }
+
+    /// A session backed by a real PTY child, built like the production launch: the session owns
+    /// the real master and process tree. Returns the child (for `spawn_child_monitor`) and a
+    /// reader that also answers the ConPTY cursor position request (for `spawn_output_reader`).
+    pub(crate) fn insert_test_session_with_real_pty(
+        &self,
+        owner_label: &str,
+        channel: Option<Channel<PtyEvent>>,
+        command: CommandBuilder,
+    ) -> (
+        String,
+        Box<dyn PtyChild + Send + Sync>,
+        Box<dyn std::io::Read + Send>,
+    ) {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty must succeed for PTY manager tests");
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .expect("spawn PTY test child");
+        drop(pair.slave);
+        let process_tree = ProcessTree::new().expect("create process tree");
+        attach_pty_or_terminate(&process_tree, &mut child, &*pair.master)
+            .expect("attach PTY child to the process tree");
+        let reader = dsr_answering_reader(
+            pair.master
+                .try_clone_reader()
+                .expect("clone the PTY reader"),
+            pair.master.take_writer().expect("take the PTY writer"),
+        );
+        let (writer, _input) = pty_input_channel();
+        let session_id = Uuid::new_v4().to_string();
+        let session = Arc::new(ManagedSession {
+            session_id: session_id.clone(),
+            directory_id: 1,
+            tool_key: ToolKey::Claude,
+            working_directory: "C:/project".to_string(),
+            started_at_ms: 0,
+            terminal: Mutex::new(TerminalState {
+                master: Some(pair.master),
+                last_size: (80, 24),
+            }),
+            writer,
+            killer: Mutex::new(child.clone_killer()),
+            process_tree: Mutex::new(Some(process_tree)),
+            flow: Arc::new(OutputFlow::new()),
+            route_and_handoff: Mutex::new(RouteAndHandoff {
+                route: EventRoute {
+                    window_label: owner_label.to_string(),
+                    channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
+                    mirror: None,
+                    owner_lost: false,
+                    buffered_events: VecDeque::new(),
+                    buffered_bytes: 0,
+                    epoch: 0,
+                    reattaching: false,
+                },
+                handoff: HandoffState::Idle,
+            }),
+            first_output_logged: AtomicBool::new(false),
+            output_chunks: AtomicU64::new(0),
+            output_bytes: AtomicU64::new(0),
+            acknowledgement_calls: AtomicU64::new(0),
+            last_acknowledged_sequence: AtomicU64::new(0),
+            termination_requested: AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
+        });
+        self.registry.insert(session).unwrap();
+        (session_id, child, reader)
     }
 }
 
@@ -464,6 +542,34 @@ pub(crate) fn spawn_test_child(
         }
     });
     (child, pair.master)
+}
+
+/// Wraps a PTY reader so the cursor position request ConPTY issues at startup is answered
+/// through `writer` (without the answer a child can block before it ever runs). The data is
+/// passed through unchanged.
+#[cfg(test)]
+pub(crate) fn dsr_answering_reader(
+    reader: Box<dyn std::io::Read + Send>,
+    writer: Box<dyn std::io::Write + Send>,
+) -> Box<dyn std::io::Read + Send> {
+    struct Answering {
+        reader: Box<dyn std::io::Read + Send>,
+        writer: Box<dyn std::io::Write + Send>,
+    }
+    impl std::io::Read for Answering {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.reader.read(buffer)?;
+            if buffer[..read]
+                .windows(DSR_REQUEST.len())
+                .any(|window| window == DSR_REQUEST)
+            {
+                let _ = self.writer.write_all(DSR_REPLY);
+                let _ = self.writer.flush();
+            }
+            Ok(read)
+        }
+    }
+    Box::new(Answering { reader, writer })
 }
 
 /// 在截止时间之前轮询条件（10 ms 间隔）；超时返回 false。

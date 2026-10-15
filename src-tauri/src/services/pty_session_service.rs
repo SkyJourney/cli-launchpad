@@ -294,7 +294,7 @@ impl PtySessionManager {
             working_directory: payload.directory.clone(),
             started_at_ms: now,
             terminal: Mutex::new(TerminalState {
-                master: pair.master,
+                master: Some(pair.master),
                 last_size: (size.cols, size.rows),
             }),
             writer: writer_sender,
@@ -320,6 +320,7 @@ impl PtySessionManager {
             acknowledgement_calls: AtomicU64::new(0),
             last_acknowledged_sequence: AtomicU64::new(0),
             termination_requested: std::sync::atomic::AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
         });
         // Register first, then write the row: if the row cannot be written the registration is
         // undone, so "the row says running but memory does not know it" can only come from a
@@ -641,6 +642,19 @@ impl PtySessionManager {
     }
 
     pub fn terminate_all(&self) -> Result<(), AppError> {
+        self.terminate_all_within(
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_millis(750),
+        )
+    }
+
+    /// `terminate_all` with explicit bounds: sessions get `total` to exit, and are force-killed
+    /// after `force_after`.
+    pub(crate) fn terminate_all_within(
+        &self,
+        total: std::time::Duration,
+        force_after: std::time::Duration,
+    ) -> Result<(), AppError> {
         let sessions: Vec<Arc<ManagedSession>> = self.registry.snapshot()?;
         let mut termination_errors = Vec::new();
         for session in &sessions {
@@ -657,11 +671,13 @@ impl PtySessionManager {
                     session.leader_kill();
                 }
             }
-            session.flow.close();
+            // Lift back-pressure for a reader that is blocked on it, but keep the flow open:
+            // a session that does not exit in time must keep working (m6-060b, S1C-L01).
+            session.flow.begin_exit();
         }
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let force_deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+        let deadline = std::time::Instant::now() + total;
+        let force_deadline = std::time::Instant::now() + force_after;
         let mut forced = false;
         while self.active_count() > 0 && std::time::Instant::now() < deadline {
             if !forced && std::time::Instant::now() >= force_deadline {
@@ -673,6 +689,10 @@ impl PtySessionManager {
             thread::sleep(std::time::Duration::from_millis(25));
         }
         if self.active_count() > 0 {
+            // The application keeps running with the survivors: back-pressure applies again.
+            for session in &sessions {
+                session.flow.cancel_exit();
+            }
             return Err(AppError::msg(
                 "部分 PTY 会话未能在限定时间内退出，应用继续保持运行",
             ));
@@ -690,10 +710,18 @@ impl PtySessionManager {
 fn spawn_output_reader(
     session: Arc<ManagedSession>,
     mut reader: Box<dyn Read + Send>,
-) -> std::io::Result<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
     thread::Builder::new()
         .name(format!("pty-output-{}", session.session_id))
         .spawn(move || {
+            /// Marks the reader as finished on every exit path, including a panic.
+            struct ReaderDone(Arc<ManagedSession>);
+            impl Drop for ReaderDone {
+                fn drop(&mut self) {
+                    self.0.reader_done.store(true, Ordering::Release);
+                }
+            }
+            let _done = ReaderDone(Arc::clone(&session));
             let mut buffer = vec![0_u8; READ_CHUNK_BYTES];
             loop {
                 if !session.flow.wait_for_capacity() {
@@ -751,7 +779,6 @@ fn spawn_output_reader(
                 }
             }
         })
-        .map(|_| ())
 }
 
 fn spawn_session_diagnostics(session: Arc<ManagedSession>) -> std::io::Result<()> {
@@ -810,6 +837,18 @@ fn spawn_child_monitor(
             // process group/job prevents descendants from outliving the owner.
             Terminator::MONITOR.stop_tree(&session, &thread::sleep);
             session.flow.close();
+            // The reader normally ends by itself once the pipe closes. Where the pipe stays open
+            // until the terminal is released (Windows ConPTY), give it a short moment and then
+            // release the master so the reader thread, which holds the session, can end.
+            let reader_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while !session.reader_done.load(Ordering::Acquire)
+                && std::time::Instant::now() < reader_deadline
+            {
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if !session.reader_done.load(Ordering::Acquire) {
+                session.release_terminal();
+            }
 
             if let Err(error) = store.finish(&session.session_id, state, now_ms(), exit_code) {
                 log::error!(

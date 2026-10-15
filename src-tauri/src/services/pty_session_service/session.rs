@@ -33,7 +33,8 @@ use crate::{
 /// The PTY master together with the size last applied to it. One lock guards both so that
 /// "compare, resize, remember" is a single critical section.
 pub(super) struct TerminalState {
-    pub(super) master: Box<dyn MasterPty + Send>,
+    /// `None` once `release_terminal` dropped it (the session has ended).
+    pub(super) master: Option<Box<dyn MasterPty + Send>>,
     pub(super) last_size: (u16, u16),
 }
 
@@ -82,6 +83,8 @@ pub(super) struct ManagedSession {
     pub(super) acknowledgement_calls: AtomicU64,
     pub(super) last_acknowledged_sequence: AtomicU64,
     pub(super) termination_requested: std::sync::atomic::AtomicBool,
+    /// Set by the output reader thread when it leaves (EOF, error, closed flow).
+    pub(super) reader_done: AtomicBool,
 }
 
 impl ManagedSession {
@@ -197,12 +200,46 @@ impl ManagedSession {
         if terminal.last_size == (size.cols, size.rows) {
             return Ok(false);
         }
-        terminal
+        let master = terminal
             .master
+            .as_ref()
+            .ok_or_else(|| AppError::msg("PTY 终端已释放"))?;
+        master
             .resize(to_pty_size(size))
             .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
         terminal.last_size = (size.cols, size.rows);
         Ok(true)
+    }
+
+    /// Drops the PTY master after the child has exited. Windows ConPTY only closes the output
+    /// pipe when the pseudoconsole is closed, so a reader thread that still blocks in `read`
+    /// (and holds this session) would otherwise live forever.
+    ///
+    /// The master is taken under the lock and dropped outside of it, on a detached thread:
+    /// before Windows 11 24H2 `ClosePseudoConsole` waits until the output pipe is drained, and
+    /// neither the terminal lock nor the monitor thread may be held up by that.
+    pub(super) fn release_terminal(&self) {
+        let master = match self.terminal.lock() {
+            Ok(mut terminal) => terminal.master.take(),
+            Err(_) => {
+                log::error!(
+                    "PTY terminal lock poisoned, master not released session_id={}",
+                    self.session_id
+                );
+                None
+            }
+        };
+        let Some(master) = master else {
+            return;
+        };
+        let session_id = self.session_id.clone();
+        let spawned = std::thread::Builder::new()
+            .name(format!("pty-release-{session_id}"))
+            .spawn(move || drop(master));
+        if let Err(error) = spawned {
+            // The master moved into the failed closure is dropped by `spawn`'s error path.
+            log::warn!("unable to release the PTY master on a thread session_id={session_id} error={error}");
+        }
     }
 
     pub(super) fn metadata(&self) -> PtySession {

@@ -1928,10 +1928,26 @@ fn resize_applies_once_and_skips_equal_sizes_through_the_terminal_lock() {
     manager.resize(&s, T1, wide).unwrap();
 
     assert_eq!(session.terminal.lock().unwrap().last_size, (100, 30));
-    let current = session.terminal.lock().unwrap().master.get_size().unwrap();
+    let current = session
+        .terminal
+        .lock()
+        .unwrap()
+        .master
+        .as_ref()
+        .unwrap()
+        .get_size()
+        .unwrap();
     assert_eq!((current.cols, current.rows), (100, 30));
     manager.resize(&s, T1, wide).unwrap();
-    let again = session.terminal.lock().unwrap().master.get_size().unwrap();
+    let again = session
+        .terminal
+        .lock()
+        .unwrap()
+        .master
+        .as_ref()
+        .unwrap()
+        .get_size()
+        .unwrap();
     assert_eq!((again.cols, again.rows), (100, 30));
     assert_rejected(manager.resize(&s, "main", wide), "另一个窗口控制");
     assert_rejected(
@@ -2245,4 +2261,118 @@ fn create_verifies_the_directory_identity_before_spawning() {
         .query_row("select count(*) from pty_sessions", [], |row| row.get(0))
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+#[test]
+fn terminate_all_keeps_output_flowing_for_sessions_that_survive() {
+    use super::flow::OUTPUT_HIGH_WATERMARK;
+
+    let manager = PtySessionManager::default();
+    let survivor = manager.insert_test_session("main", None);
+    let session = manager.get(&survivor.session_id).unwrap();
+    // Over the high watermark: `wait_for_capacity` blocks until back-pressure is lifted.
+    session.flow.reserve(OUTPUT_HIGH_WATERMARK + 4096).unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let waiter_flow = Arc::clone(&session.flow);
+    thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let _ = result_tx.send(waiter_flow.wait_for_capacity());
+    });
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the waiter started");
+
+    // The survivor never exits (no monitor thread, a killer that does nothing).
+    let error = manager
+        .terminate_all_within(
+            std::time::Duration::from_millis(400),
+            std::time::Duration::from_millis(50),
+        )
+        .expect_err("a session that does not exit makes terminate_all fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("部分 PTY 会话未能在限定时间内退出"),
+        "{error}"
+    );
+    // The exit wait lifted back-pressure for the blocked reader instead of closing the flow.
+    assert_eq!(
+        result_rx.recv_timeout(std::time::Duration::from_secs(1)),
+        Ok(true),
+        "the reader blocked by back-pressure is released during the exit wait"
+    );
+    // The application keeps running: the surviving session's output must keep flowing.
+    assert!(!session.flow.is_closed(), "the flow must stay open");
+    assert!(
+        session.flow.reserve(1).is_some(),
+        "output can still reserve a sequence"
+    );
+    assert!(
+        !session.flow.state.lock().unwrap().exiting,
+        "cancel_exit restores back-pressure after the wait"
+    );
+    assert_eq!(manager.active_count(), 1);
+
+    // Reverse: sessions that do exit are all gone and the call succeeds.
+    let manager = PtySessionManager::default();
+    let _first = manager.insert_test_session_with_child("main", None);
+    let _second = manager.insert_test_session_with_child("main", None);
+    manager
+        .terminate_all_within(
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_millis(750),
+        )
+        .expect("sessions that exit let terminate_all succeed");
+    assert_eq!(manager.active_count(), 0);
+}
+
+#[test]
+fn reader_receives_eof_after_the_child_exits_without_dropping_the_master() {
+    let manager = PtySessionManager::default();
+    let (channel, events) = recording_channel();
+    // The session owns the real master, exactly like a production launch; the test never drops
+    // it: the monitor must release the terminal for the reader to end.
+    let (session_id, child, reader) = manager.insert_test_session_with_real_pty(
+        "main",
+        Some(channel),
+        quick_exit_test_command(0),
+    );
+    let session = manager.get(&session_id).unwrap();
+    let reader_thread = spawn_output_reader(Arc::clone(&session), reader).expect("spawn reader");
+    let (store, finished) = FakeStore::new();
+    spawn_child_monitor(
+        Arc::clone(&session),
+        child,
+        store,
+        manager.registry_handle(),
+    )
+    .expect("spawn monitor");
+
+    finished
+        .recv_timeout(MONITOR_TIMEOUT)
+        .expect("the monitor persists the exit");
+
+    assert!(
+        wait_until(std::time::Duration::from_secs(5), || {
+            reader_thread.is_finished()
+        }),
+        "the reader thread must end after the child exited, without anyone dropping the session"
+    );
+    assert!(
+        session.reader_done.load(Ordering::Acquire),
+        "the reader marks itself done"
+    );
+    let sequences: Vec<u64> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "output")
+        .filter_map(|event| event["sequence"].as_u64())
+        .collect();
+    assert!(
+        sequences.windows(2).all(|pair| pair[0] < pair[1]),
+        "output sequences are strictly increasing: {sequences:?}"
+    );
 }
