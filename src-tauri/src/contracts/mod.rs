@@ -1633,46 +1633,49 @@ fn macos_window_config_repeats_the_base_window_fields() {
 
 #[test]
 fn service_code_does_not_branch_on_window_label_literals() {
-    // Removes every `#[cfg(test)]` item (its first brace block), wherever it appears,
-    // so production code placed after a test helper is still checked.
-    fn production(source: &str) -> String {
-        let mut out = String::new();
-        let mut rest = source;
-        while let Some(at) = rest.find("#[cfg(test)]") {
-            out.push_str(&rest[..at]);
-            let item = &rest[at..];
-            let open = item.find('{').expect("cfg(test) item has a body");
-            let mut depth = 0usize;
-            let mut end = None;
-            for (i, ch) in item[open..].char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(open + i + 1);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            rest = &item[end.expect("balanced braces")..];
-        }
-        out.push_str(rest);
-        out
-    }
     for (name, source) in [
         (
             "pty_session_service.rs",
             include_str!("../services/pty_session_service.rs"),
         ),
         (
+            "pty_session_service/flow.rs",
+            include_str!("../services/pty_session_service/flow.rs"),
+        ),
+        (
+            "pty_session_service/input.rs",
+            include_str!("../services/pty_session_service/input.rs"),
+        ),
+        (
+            "pty_session_service/ports.rs",
+            include_str!("../services/pty_session_service/ports.rs"),
+        ),
+        (
+            "pty_session_service/process.rs",
+            include_str!("../services/pty_session_service/process.rs"),
+        ),
+        (
+            "pty_session_service/registry.rs",
+            include_str!("../services/pty_session_service/registry.rs"),
+        ),
+        (
+            "pty_session_service/route.rs",
+            include_str!("../services/pty_session_service/route.rs"),
+        ),
+        (
+            "pty_session_service/session.rs",
+            include_str!("../services/pty_session_service/session.rs"),
+        ),
+        (
+            "pty_session_service/window.rs",
+            include_str!("../services/pty_session_service/window.rs"),
+        ),
+        (
             "content_window_grants.rs",
             include_str!("../services/content_window_grants.rs"),
         ),
     ] {
-        let source = production(source);
+        let source = production_text(source);
         for forbidden in [
             "\"main\"",
             "starts_with(\"terminal-\")",

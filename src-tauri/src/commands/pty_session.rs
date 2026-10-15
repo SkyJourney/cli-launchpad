@@ -24,7 +24,6 @@ pub async fn create_pty_session(
     state: State<'_, PtySessionManager>,
     db: State<'_, Db>,
     lifecycle: State<'_, AppLifecycle>,
-    app: tauri::AppHandle,
     directory_id: i64,
     tool_key: ToolKey,
     resume_session_id: Option<String>,
@@ -70,7 +69,6 @@ pub async fn create_pty_session(
         let _start_permit = start_permit;
         manager.create(
             &database,
-            &app,
             directory_id,
             tool_key,
             &payload,

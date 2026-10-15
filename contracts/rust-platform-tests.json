@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 494,
-    "Linux": 499,
-    "macOS": 497
+    "Windows": 505,
+    "Linux": 510,
+    "macOS": 508
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -213,7 +213,18 @@
       "services::workspace_layout_service::tests::applying_presets_saved_by_every_supported_layout_version",
       "services::diagnostics_service::tests::window_sync_codes_keep_only_dotted_lower_case_identifiers",
       "services::diagnostics_service::tests::window_sync_free_text_drops_line_breaks_and_is_bounded",
-      "services::diagnostics_service::tests::window_sync_failure_line_is_one_line_tagged_with_the_window_label"
+      "services::diagnostics_service::tests::window_sync_failure_line_is_one_line_tagged_with_the_window_label",
+      "services::pty_session_service::tests::terminate_all_terminates_real_pty_process_trees",
+      "services::exit_cleanup::tests::real_pty_sessions_are_gone_after_cleanup",
+      "services::pty_session_service::registry::tests::registry_get_returns_the_session_or_the_documented_error",
+      "services::pty_session_service::registry::tests::registry_remove_is_idempotent_and_len_tracks_membership",
+      "services::pty_session_service::registry::tests::registry_snapshot_returns_every_session_without_holding_the_lock",
+      "services::pty_session_service::process::tests::terminator_waits_outside_every_session_lock",
+      "services::pty_session_service::process::tests::tree_terminate_distinguishes_a_poisoned_lock_from_a_failed_terminate",
+      "services::pty_session_service::process::tests::force_terminate_kills_the_leader_even_without_a_process_tree",
+      "services::pty_session_service::tests::child_monitor_persists_exit_once_removes_the_session_and_delivers_exited",
+      "services::pty_session_service::tests::child_monitor_reports_terminated_when_termination_was_requested",
+      "services::pty_session_service::tests::child_monitor_survives_a_persistence_failure"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

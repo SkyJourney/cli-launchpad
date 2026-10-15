@@ -1,0 +1,389 @@
+use super::*;
+use std::sync::mpsc::{self, Receiver};
+
+use anyhow::anyhow;
+use portable_pty::ChildKiller;
+
+/// 测试用的 `ChildKiller`：只记录 `kill` 被调用的次数，不触碰任何进程。
+#[cfg(test)]
+#[derive(Debug)]
+struct FakeKiller(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl ChildKiller for FakeKiller {
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(FakeKiller(Arc::clone(&self.0)))
+    }
+}
+
+/// 把发往通道的 JSON 事件记录下来的通道替身。
+#[cfg(test)]
+pub(crate) fn recording_channel() -> (Channel<PtyEvent>, Arc<Mutex<Vec<serde_json::Value>>>) {
+    let sink: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&sink);
+    let channel = Channel::new(move |body| {
+        if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+            writer
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&json).unwrap());
+        }
+        Ok(())
+    });
+    (channel, sink)
+}
+
+/// 每次发送都失败的通道替身，用来模拟所有者窗口已销毁。
+#[cfg(test)]
+pub(crate) fn failing_channel() -> Channel<PtyEvent> {
+    Channel::new(|_| Err(tauri::Error::Anyhow(anyhow!("closed"))))
+}
+
+/// `insert_test_session` 的返回值。不暴露私有的 `ManagedSession`（会触发
+/// `private_interfaces` 警告）：同模块的测试用 `PtySessionManager::get` 取会话。
+#[cfg(test)]
+pub(crate) struct TestSession {
+    pub session_id: String,
+    pub input: Receiver<Vec<u8>>,
+    pub kills: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TestRoute {
+    pub window_label: String,
+    pub owner_lost: bool,
+    pub has_channel: bool,
+    pub buffered_events: usize,
+}
+
+#[cfg(test)]
+impl PtySessionManager {
+    /// 不启动子进程、不启动输入写线程，直接把一个带通道的会话放进会话表。
+    pub(crate) fn insert_test_session(
+        &self,
+        owner_label: &str,
+        channel: Option<Channel<PtyEvent>>,
+    ) -> TestSession {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty must succeed for PTY manager tests");
+        drop(pair.slave);
+        let kills = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (writer, input) = pty_input_channel();
+        let session_id = Uuid::new_v4().to_string();
+        let session = Arc::new(ManagedSession {
+            session_id: session_id.clone(),
+            directory_id: 1,
+            tool_key: ToolKey::Claude,
+            working_directory: "C:/project".to_string(),
+            started_at_ms: 0,
+            master: Mutex::new(pair.master),
+            last_size: Mutex::new((80, 24)),
+            writer,
+            killer: Mutex::new(Box::new(FakeKiller(Arc::clone(&kills)))),
+            process_tree: Mutex::new(None),
+            flow: Arc::new(OutputFlow::new()),
+            event_route: Mutex::new(EventRoute {
+                window_label: owner_label.to_string(),
+                channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
+                mirror: None,
+                owner_lost: false,
+                buffered_events: VecDeque::new(),
+                buffered_bytes: 0,
+            }),
+            pending_handoff: Mutex::new(None),
+            first_output_logged: AtomicBool::new(false),
+            output_chunks: AtomicU64::new(0),
+            output_bytes: AtomicU64::new(0),
+            acknowledgement_calls: AtomicU64::new(0),
+            last_acknowledged_sequence: AtomicU64::new(0),
+            termination_requested: AtomicBool::new(false),
+        });
+        self.registry.insert(session).unwrap();
+        TestSession {
+            session_id,
+            input,
+            kills,
+        }
+    }
+
+    /// Test seam: forgets a session registered with `insert_test_session`.
+    pub(crate) fn remove_test_session(&self, session_id: &str) {
+        self.registry.remove(session_id);
+    }
+
+    pub(crate) fn test_route(&self, session_id: &str) -> TestRoute {
+        let session = self.get(session_id).expect("test session must exist");
+        let route = session.event_route.lock().unwrap();
+        TestRoute {
+            window_label: route.window_label.clone(),
+            owner_lost: route.owner_lost,
+            has_channel: route.channel.is_some(),
+            buffered_events: route.buffered_events.len(),
+        }
+    }
+
+    /// 与 `insert_test_session` 相同，但会话背后是真实的 PTY 子进程：真实 killer、真实进程树，
+    /// 并有一个只等待子进程退出的监控线程。`exited` 在 `child.wait()` 返回之后才置位。
+    pub(crate) fn insert_test_session_with_child(
+        &self,
+        owner_label: &str,
+        channel: Option<Channel<PtyEvent>>,
+    ) -> TestChildSession {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty must succeed for PTY manager tests");
+        let mut child = pair
+            .slave
+            .spawn_command(long_running_test_command())
+            .expect("spawn PTY test child");
+        drop(pair.slave);
+        let process_tree = ProcessTree::new().expect("create process tree");
+        attach_pty_or_terminate(&process_tree, &mut child, &*pair.master)
+            .expect("attach PTY child to the process tree");
+        let (writer, _input) = pty_input_channel();
+        let session_id = Uuid::new_v4().to_string();
+        let session = Arc::new(ManagedSession {
+            session_id: session_id.clone(),
+            directory_id: 1,
+            tool_key: ToolKey::Claude,
+            working_directory: "C:/project".to_string(),
+            started_at_ms: 0,
+            master: Mutex::new(pair.master),
+            last_size: Mutex::new((80, 24)),
+            writer,
+            killer: Mutex::new(child.clone_killer()),
+            process_tree: Mutex::new(Some(process_tree)),
+            flow: Arc::new(OutputFlow::new()),
+            event_route: Mutex::new(EventRoute {
+                window_label: owner_label.to_string(),
+                channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
+                mirror: None,
+                owner_lost: false,
+                buffered_events: VecDeque::new(),
+                buffered_bytes: 0,
+            }),
+            pending_handoff: Mutex::new(None),
+            first_output_logged: AtomicBool::new(false),
+            output_chunks: AtomicU64::new(0),
+            output_bytes: AtomicU64::new(0),
+            acknowledgement_calls: AtomicU64::new(0),
+            last_acknowledged_sequence: AtomicU64::new(0),
+            termination_requested: AtomicBool::new(false),
+        });
+        self.registry.insert(session).unwrap();
+
+        let exited = Arc::new(AtomicBool::new(false));
+        let registry = self.registry_handle();
+        let monitor_exited = Arc::clone(&exited);
+        let monitor_id = session_id.clone();
+        thread::Builder::new()
+            .name(format!("pty-test-monitor-{session_id}"))
+            .spawn(move || {
+                let _ = child.wait();
+                monitor_exited.store(true, Ordering::SeqCst);
+                registry.remove(&monitor_id);
+            })
+            .expect("spawn test monitor");
+        TestChildSession { session_id, exited }
+    }
+}
+
+/// `insert_test_session_with_child` 的返回值。
+#[cfg(test)]
+pub(crate) struct TestChildSession {
+    pub session_id: String,
+    /// 监控线程在 `child.wait()` 返回之后置位。
+    pub exited: Arc<AtomicBool>,
+}
+
+#[cfg(test)]
+pub(crate) fn long_running_test_command() -> CommandBuilder {
+    #[cfg(windows)]
+    {
+        let mut command = CommandBuilder::new(crate::platform::detect::system32(
+            "WindowsPowerShell\\v1.0\\powershell.exe",
+        ));
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 60",
+        ]);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "sleep 60"]);
+        command
+    }
+}
+
+/// 记录 `finish` 调用的 `PtySessionStore` 替身。`fail_finish` 为 true 时记录之后返回错误。
+#[cfg(test)]
+pub(crate) struct FakeStore {
+    pub inserted: Mutex<Vec<String>>,
+    pub finished: Mutex<Vec<(String, String, Option<i64>)>>,
+    pub fail_finish: AtomicBool,
+    notify: Mutex<Option<mpsc::SyncSender<()>>>,
+}
+
+#[cfg(test)]
+impl FakeStore {
+    /// 返回替身与一个“每次 finish 之后收到一条通知”的接收端。
+    pub(crate) fn new() -> (Arc<Self>, Receiver<()>) {
+        let (sender, receiver) = mpsc::sync_channel(16);
+        let store = Arc::new(Self {
+            inserted: Mutex::new(Vec::new()),
+            finished: Mutex::new(Vec::new()),
+            fail_finish: AtomicBool::new(false),
+            notify: Mutex::new(Some(sender)),
+        });
+        (store, receiver)
+    }
+}
+
+#[cfg(test)]
+impl PtySessionStore for FakeStore {
+    fn insert_running(
+        &self,
+        session_id: &str,
+        _directory_id: i64,
+        _tool_key: ToolKey,
+        _working_directory: &str,
+        _started_at_ms: i64,
+    ) -> Result<(), AppError> {
+        self.inserted.lock().unwrap().push(session_id.to_string());
+        Ok(())
+    }
+
+    fn finish(
+        &self,
+        session_id: &str,
+        state: &str,
+        _ended_at_ms: i64,
+        exit_code: Option<i64>,
+    ) -> Result<(), AppError> {
+        self.finished
+            .lock()
+            .unwrap()
+            .push((session_id.to_string(), state.to_string(), exit_code));
+        if let Some(notify) = self.notify.lock().unwrap().as_ref() {
+            let _ = notify.try_send(());
+        }
+        if self.fail_finish.load(Ordering::SeqCst) {
+            return Err(AppError::msg("injected persistence failure"));
+        }
+        Ok(())
+    }
+}
+
+/// 立即以给定退出码结束的真实子进程命令。
+#[cfg(test)]
+pub(crate) fn quick_exit_test_command(code: i32) -> CommandBuilder {
+    #[cfg(windows)]
+    {
+        let mut command = CommandBuilder::new(crate::platform::detect::system32(
+            "WindowsPowerShell\\v1.0\\powershell.exe",
+        ));
+        command.args([
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            format!("exit {code}"),
+        ]);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c".to_string(), format!("exit {code}")]);
+        command
+    }
+}
+
+/// 终端启动时 ConPTY 发出的光标位置请求（ESC [ 6 n）与终端应答（ESC [ 1 ; 1 R）。
+#[cfg(test)]
+const DSR_REQUEST: &[u8] = &[0x1b, 0x5b, 0x36, 0x6e];
+#[cfg(test)]
+const DSR_REPLY: &[u8] = &[0x1b, 0x5b, 0x31, 0x3b, 0x31, 0x52];
+
+/// 在新的 PTY 上启动真实子进程。返回的 master 必须由调用者保持存活直到子进程结束。
+#[cfg(test)]
+pub(crate) fn spawn_test_child(
+    command: CommandBuilder,
+) -> (
+    Box<dyn PtyChild + Send + Sync>,
+    Box<dyn portable_pty::MasterPty + Send>,
+) {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("openpty must succeed for PTY manager tests");
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .expect("spawn PTY test child");
+    drop(pair.slave);
+    // Like the production terminal (xterm), keep reading the output and answer the
+    // cursor position request ConPTY issues at startup; without both a child can
+    // block before it ever runs.
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("clone the PTY reader");
+    let mut writer = pair.master.take_writer().expect("take the PTY writer");
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        while let Ok(read) = std::io::Read::read(&mut reader, &mut buffer) {
+            if read == 0 {
+                break;
+            }
+            if buffer[..read]
+                .windows(DSR_REQUEST.len())
+                .any(|window| window == DSR_REQUEST)
+            {
+                let _ = std::io::Write::write_all(&mut writer, DSR_REPLY);
+                let _ = std::io::Write::flush(&mut writer);
+            }
+        }
+    });
+    (child, pair.master)
+}
+
+/// 在截止时间之前轮询条件（10 ms 间隔）；超时返回 false。
+#[cfg(test)]
+pub(crate) fn wait_until(
+    timeout: std::time::Duration,
+    mut condition: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    condition()
+}

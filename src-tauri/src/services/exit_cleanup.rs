@@ -412,4 +412,31 @@ mod tests {
         assert!(run_event[exit_index..].contains("on_run_event_exit("));
         assert_eq!(LIB_RS.matches("on_run_event_exit(").count(), 1);
     }
+
+    #[test]
+    fn real_pty_sessions_are_gone_after_cleanup() {
+        use crate::services::pty_session_service::PtySessionManager;
+        let manager = PtySessionManager::default();
+        let real = manager.insert_test_session_with_child("main", None);
+        let targets: Vec<Arc<dyn ExitCleanupTarget>> = vec![Arc::new(manager.clone())];
+
+        let report = run_exit_cleanup(&targets, Duration::from_secs(5));
+
+        assert!(
+            report.failed.is_empty(),
+            "failed targets: {:?}",
+            report.failed
+        );
+        assert!(!report.timed_out);
+        assert!(report
+            .terminated
+            .iter()
+            .any(|(name, count)| *name == "pty_sessions" && *count == 1));
+        assert_eq!(manager.active_count(), 0);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !real.exited.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "child process must have exited");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
