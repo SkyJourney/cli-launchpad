@@ -1111,15 +1111,18 @@ mod tests {
         let stored = "/projects/l2-demo";
         let directory = directory_repo::add(&connection, "项目", stored, None).unwrap();
 
-        let mut same_identity = vec![
+        #[cfg(windows)]
+        let same_identity = vec![
+            stored.to_string(),
+            format!("{stored}{}", std::path::MAIN_SEPARATOR),
+            stored.to_uppercase(),
+            format!(r"\\?\{stored}"),
+        ];
+        #[cfg(not(windows))]
+        let same_identity = vec![
             stored.to_string(),
             format!("{stored}{}", std::path::MAIN_SEPARATOR),
         ];
-        #[cfg(windows)]
-        {
-            same_identity.push(stored.to_uppercase());
-            same_identity.push(format!(r"\\?\{stored}"));
-        }
         for path in same_identity {
             let mut slot = layout_with_slot(directory.id, &path, "项目", None)
                 .slots
