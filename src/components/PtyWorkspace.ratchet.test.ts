@@ -2,7 +2,8 @@
 // 基线来源：2026-10-06 的统计值 7（`detachedFilesRef` / `detachedByInstanceRef` 的 `.has(` 判据），
 // 由 m6-019 清零。规则：目标值为 0，不得上调；窗口句柄表只允许用于取窗口对象和增删条目，
 // 归属判断只读 coordinator。
-// m6-052 会向本文件追加内容类型分支数（FE-T56 第一用例）。
+// 后续目标向本文件追加了：内容类型分支数（m6-052、m6-098：宿主与宿主以外分别只减不增）、
+// 宿主行数上限（m6-098）、窗口编排与协议处理文件的行数上限（B17 收尾）。
 import { describe, expect, it } from "vitest";
 import contentKinds from "../../contracts/content-kinds.json";
 import hostSource from "./PtyWorkspace.tsx?raw";
@@ -33,6 +34,22 @@ const HOST_KIND_BRANCHES_AT_M6_098 = 0;
 const KIND_BRANCH_OUTSIDE_HOST_BASELINE = 54;
 const WORKSPACE_SOURCE_COUNT_FLOOR = 36;
 const HOST_MAX_LINES = 400;
+// m6-092 与 m6-097 的文档没有为 src/workspace/windows 设行数上限，三个文件在 B17
+// 结束时超过 500 行。上限取 B17 结束时的实测值（只减不增；拆分或瘦身后调低），
+// 防止它们在后续目标中继续膨胀。
+const WINDOW_FILE_MAX_LINES = {
+  "../workspace/windows/contentWindowOrchestrator.ts": 773,
+  "../workspace/windows/protocolHandlers.file.ts": 846,
+  "../workspace/windows/protocolHandlers.pty.ts": 606,
+} as const;
+const windowSources = import.meta.glob(
+  [
+    "../workspace/windows/contentWindowOrchestrator.ts",
+    "../workspace/windows/protocolHandlers.file.ts",
+    "../workspace/windows/protocolHandlers.pty.ts",
+  ],
+  { query: "?raw", import: "default", eager: true },
+) as Record<string, string>;
 const KIND_BRANCH_PATTERN = /kind === "|"slot" in/g;
 const countKindBranches = (source: string): number =>
   (source.match(KIND_BRANCH_PATTERN) ?? []).length;
@@ -81,5 +98,20 @@ describe("PtyWorkspace ratchet", () => {
       ? hostSource.split("\n").length - 1
       : hostSource.split("\n").length;
     expect(lineCount).toBeLessThanOrEqual(HOST_MAX_LINES);
+  });
+
+  it("does not grow the window orchestration and protocol files", () => {
+    // 反向：三个文件都必须被扫描到，改名或移动后不能静默通过。
+    expect(Object.keys(windowSources).sort()).toEqual(
+      Object.keys(WINDOW_FILE_MAX_LINES).sort(),
+    );
+    for (const [path, source] of Object.entries(windowSources)) {
+      const lineCount = source.endsWith("\n")
+        ? source.split("\n").length - 1
+        : source.split("\n").length;
+      const max =
+        WINDOW_FILE_MAX_LINES[path as keyof typeof WINDOW_FILE_MAX_LINES];
+      expect(lineCount, path).toBeLessThanOrEqual(max);
+    }
   });
 });

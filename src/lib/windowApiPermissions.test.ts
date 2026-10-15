@@ -14,7 +14,8 @@ import {
 
 type Capability = { permissions: Array<string | { identifier: string }> };
 // 只豁免“该文件对该权限规则的命中”，不是整文件排除。
-// createWorkspaceContentWindow（内含 new WebviewWindow）只由 PtyWorkspace.tsx 调用，
+// createWorkspaceContentWindow（内含 new WebviewWindow）只由主窗口的窗口编排器
+// （src/workspace/windows/contentWindowOrchestrator.ts）调用，
 // 子窗口只使用同文件的 prepare/attach/rollback 三个函数。
 const MAIN_ONLY_USES = [
   {
