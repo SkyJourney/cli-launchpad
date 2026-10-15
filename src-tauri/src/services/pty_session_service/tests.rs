@@ -1,9 +1,10 @@
+use super::handoff::*;
 use super::input::*;
 use super::route::*;
 use super::test_support::{
-    long_running_test_command, quick_exit_test_command, spawn_test_child, wait_until, FakeStore,
+    long_running_test_command, quick_exit_test_command, spawn_test_child, wait_until, FakeSink,
+    FakeStore,
 };
-use super::window::*;
 use super::*;
 use crate::models::pty_session::{PtySessionWindowStatus, PtySessionWindowStatusReport};
 use std::io::Write;
@@ -108,18 +109,18 @@ fn owner_lost_output_buffer_rejects_data_over_the_limit() {
 
 #[test]
 fn destroying_a_window_clears_handoffs_that_use_it_as_source_or_target() {
-    let transfer = PendingHandoff {
+    let transfer = HandoffState::Bound(Bound {
         token: "token".to_string(),
-        source_window_label: "main".to_string(),
+        source: "main".to_string(),
         sequence: 1,
-        snapshot: None,
-        target_window_label: Some("terminal-child".to_string()),
-        target_channel: None,
-    };
+        snapshot: snapshot(),
+        target: "terminal-child".to_string(),
+        sink: Arc::new(FakeSink::new()),
+    });
 
-    assert!(handoff_references_window(&transfer, "main"));
-    assert!(handoff_references_window(&transfer, "terminal-child"));
-    assert!(!handoff_references_window(&transfer, "terminal-other"));
+    assert!(transfer.references_window("main"));
+    assert!(transfer.references_window("terminal-child"));
+    assert!(!transfer.references_window("terminal-other"));
 }
 
 #[test]
@@ -439,7 +440,7 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
 
     // 交接目标窗被销毁：待决交接被清除，输出恢复，所有者仍是 main。
     assert_eq!(manager.reclaim_window(T2), Vec::<String>::new());
-    assert!(session_2.pending_handoff.lock().unwrap().is_none());
+    assert!(session_2.handoff.lock().unwrap().is_idle());
     assert!(!session_2.flow.is_paused_at(handoff.sequence));
     assert!(!is_paused(&session_2));
     assert_eq!(manager.test_route(&s2).window_label, "main");
@@ -898,7 +899,7 @@ fn finalized_handoff_rejects_source_cancel_in_manager() {
         let (label, _) = route.mirror.as_ref().expect("source keeps a mirror");
         assert_eq!(label, "main");
     }
-    assert!(session.pending_handoff.lock().unwrap().is_none());
+    assert!(session.handoff.lock().unwrap().is_idle());
     assert!(!is_paused(&session));
 
     // 源窗口（main）在交接完成后不能再取消；新所有者取消是无操作，路由不变。
@@ -1144,14 +1145,10 @@ fn handoff_target_rejection_keeps_the_pending_handoff_usable() {
         .as_str()
         .unwrap()
         .contains("目标窗口与源窗口相同"));
-    assert!(session
-        .pending_handoff
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .target_window_label
-        .is_none());
+    assert!(!matches!(
+        &*session.handoff.lock().unwrap(),
+        HandoffState::Bound(_)
+    ));
 
     manager
         .complete_handoff(&s, T1, &h.token, recording_channel().0)
@@ -1333,4 +1330,129 @@ fn child_monitor_survives_a_persistence_failure() {
 
     assert_eq!(store.finished.lock().unwrap().len(), 1);
     assert_eq!(manager.active_count(), 0);
+}
+
+fn snapshot_with(data: &str) -> PtyTerminalSnapshot {
+    PtyTerminalSnapshot {
+        data: data.to_string(),
+        cols: 80,
+        rows: 24,
+    }
+}
+
+fn snapshot_events(events: &Arc<Mutex<Vec<serde_json::Value>>>) -> Vec<serde_json::Value> {
+    events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "snapshot")
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn restaging_before_complete_overwrites_the_snapshot() {
+    let manager = PtySessionManager::default();
+    let (s, _session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("A"))
+        .unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("B"))
+        .unwrap();
+    let (target, events) = recording_channel();
+
+    manager.complete_handoff(&s, T1, &h.token, target).unwrap();
+
+    let snapshots = snapshot_events(&events);
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["data"], "B");
+    assert_eq!(snapshots[0]["sequence"], h.sequence);
+}
+
+#[test]
+fn stage_after_complete_keeps_the_binding_and_finalize_still_succeeds() {
+    let manager = PtySessionManager::default();
+    let (s, _session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("A"))
+        .unwrap();
+    let (target, events) = recording_channel();
+    manager.complete_handoff(&s, T1, &h.token, target).unwrap();
+
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("C"))
+        .unwrap();
+    manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
+
+    assert_eq!(manager.test_route(&s).window_label, T1);
+    assert!(!manager.has_pending_handoff(&s));
+    assert_eq!(snapshot_events(&events).len(), 1);
+}
+
+#[test]
+fn expired_handoff_is_cleared_and_output_resumes_without_a_new_begin() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    // Same way RS-T16 case 10 makes the pause lapse.
+    session.flow.state.lock().unwrap().pause_deadline =
+        Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+    let (target, events) = recording_channel();
+
+    let result = manager.complete_handoff(&s, T1, &h.token, target);
+
+    assert_rejected(result, "终端窗口交接超时，请重试");
+    assert!(!manager.has_pending_handoff(&s));
+    assert!(!is_paused(&session));
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn finalize_route_mismatch_keeps_the_bound_state() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
+    // Simulates "control was transferred meanwhile": the route now belongs to another window.
+    session.event_route.lock().unwrap().window_label = T9.to_string();
+
+    let result = manager.finalize_handoff(&s, T1, &h.token, size());
+
+    assert_rejected(result, "终端控制权已经转移");
+    // The bound target must not have been consumed: the handoff is still there ...
+    assert!(manager.has_pending_handoff(&s));
+    // ... and so is its channel: once the route belongs to the source again, the very same
+    // handoff can still be finalized.
+    session.event_route.lock().unwrap().window_label = "main".to_string();
+    manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
+    assert_eq!(manager.test_route(&s).window_label, T1);
+    assert!(manager.test_route(&s).has_channel);
+    assert!(!manager.has_pending_handoff(&s));
+
+    // A second session: after the mismatch, destroying the bound target window can still
+    // clean the handoff up and resume the output.
+    let (s2, session2) = main_owned_session(&manager);
+    let h2 = manager.begin_handoff(&s2, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s2, "main", &h2.token, h2.sequence, snapshot())
+        .unwrap();
+    manager.complete_handoff(&s2, T1, &h2.token, ch()).unwrap();
+    session2.event_route.lock().unwrap().window_label = T9.to_string();
+    assert_rejected(
+        manager.finalize_handoff(&s2, T1, &h2.token, size()),
+        "终端控制权已经转移",
+    );
+    assert!(manager.has_pending_handoff(&s2));
+    assert!(!manager.reclaim_window(T1).contains(&s2));
+    assert!(!manager.has_pending_handoff(&s2));
+    assert!(!is_paused(&session2));
 }

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 505,
-    "Linux": 510,
-    "macOS": 508
+    "Windows": 522,
+    "Linux": 527,
+    "macOS": 525
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -224,7 +224,24 @@
       "services::pty_session_service::process::tests::force_terminate_kills_the_leader_even_without_a_process_tree",
       "services::pty_session_service::tests::child_monitor_persists_exit_once_removes_the_session_and_delivers_exited",
       "services::pty_session_service::tests::child_monitor_reports_terminated_when_termination_was_requested",
-      "services::pty_session_service::tests::child_monitor_survives_a_persistence_failure"
+      "services::pty_session_service::tests::child_monitor_survives_a_persistence_failure",
+      "services::pty_session_service::handoff::tests::begin_from_idle_pauses_the_flow_and_returns_a_fresh_token",
+      "services::pty_session_service::handoff::tests::begin_while_a_live_handoff_exists_is_rejected_and_keeps_the_state",
+      "services::pty_session_service::handoff::tests::begin_after_the_pause_lapsed_replaces_the_stale_handoff",
+      "services::pty_session_service::handoff::tests::stage_requires_matching_token_source_and_sequence",
+      "services::pty_session_service::handoff::tests::stage_after_expiry_returns_to_idle_and_resumes_the_flow",
+      "services::pty_session_service::handoff::tests::restaging_overwrites_the_snapshot_while_staged_or_bound",
+      "services::pty_session_service::handoff::tests::complete_checks_run_in_the_documented_order",
+      "services::pty_session_service::handoff::tests::complete_after_expiry_returns_to_idle_and_resumes_the_flow",
+      "services::pty_session_service::handoff::tests::check_finalize_requires_a_bound_target_matching_the_token",
+      "services::pty_session_service::handoff::tests::finalize_after_expiry_returns_to_idle_and_resumes_the_flow",
+      "services::pty_session_service::handoff::tests::cancel_matrix_matches_the_design",
+      "services::pty_session_service::handoff::tests::clear_for_window_matches_source_or_bound_target_only",
+      "services::pty_session_service::handoff::tests::transition_table_matches_the_design",
+      "services::pty_session_service::tests::finalize_route_mismatch_keeps_the_bound_state",
+      "services::pty_session_service::tests::restaging_before_complete_overwrites_the_snapshot",
+      "services::pty_session_service::tests::stage_after_complete_keeps_the_binding_and_finalize_still_succeeds",
+      "services::pty_session_service::tests::expired_handoff_is_cleared_and_output_resumes_without_a_new_begin"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

@@ -102,7 +102,7 @@ impl PtySessionManager {
                 buffered_events: VecDeque::new(),
                 buffered_bytes: 0,
             }),
-            pending_handoff: Mutex::new(None),
+            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -132,6 +132,13 @@ impl PtySessionManager {
             has_channel: route.channel.is_some(),
             buffered_events: route.buffered_events.len(),
         }
+    }
+
+    /// 会话上是否还有未结束的交接记录（测试用只读 helper）。
+    pub(crate) fn has_pending_handoff(&self, session_id: &str) -> bool {
+        let session = self.get(session_id).expect("test session must exist");
+        let state = session.handoff.lock().unwrap();
+        !state.is_idle()
     }
 
     /// 与 `insert_test_session` 相同，但会话背后是真实的 PTY 子进程：真实 killer、真实进程树，
@@ -179,7 +186,7 @@ impl PtySessionManager {
                 buffered_events: VecDeque::new(),
                 buffered_bytes: 0,
             }),
-            pending_handoff: Mutex::new(None),
+            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -386,4 +393,40 @@ pub(crate) fn wait_until(
         thread::sleep(std::time::Duration::from_millis(10));
     }
     condition()
+}
+
+/// 记录事件的 `PtyEventSink` 替身；`fail_next_with` 让下一次 `send` 返回该文本的错误（一次性）。
+#[cfg(test)]
+pub(crate) struct FakeSink {
+    events: Mutex<Vec<PtyEvent>>,
+    fail_with: Mutex<Option<String>>,
+}
+
+#[cfg(test)]
+impl FakeSink {
+    pub(crate) fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            fail_with: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn events(&self) -> Vec<PtyEvent> {
+        self.events.lock().unwrap().clone()
+    }
+
+    pub(crate) fn fail_next_with(&self, message: &str) {
+        *self.fail_with.lock().unwrap() = Some(message.to_string());
+    }
+}
+
+#[cfg(test)]
+impl PtyEventSink for FakeSink {
+    fn send(&self, event: PtyEvent) -> Result<(), String> {
+        if let Some(message) = self.fail_with.lock().unwrap().take() {
+            return Err(message);
+        }
+        self.events.lock().unwrap().push(event);
+        Ok(())
+    }
 }

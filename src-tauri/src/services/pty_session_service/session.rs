@@ -8,8 +8,8 @@ use portable_pty::{ChildKiller, MasterPty};
 
 use super::{
     flow::OutputFlow,
+    handoff::HandoffState,
     route::{buffer_owner_lost_event, ensure_route_owner, pty_event_buffer_size, EventRoute},
-    PendingHandoff,
 };
 use crate::{
     models::{
@@ -34,7 +34,7 @@ pub(super) struct ManagedSession {
     pub(super) process_tree: Mutex<Option<ProcessTree>>,
     pub(super) flow: Arc<OutputFlow>,
     pub(super) event_route: Mutex<EventRoute>,
-    pub(super) pending_handoff: Mutex<Option<PendingHandoff>>,
+    pub(super) handoff: Mutex<HandoffState>,
     pub(super) first_output_logged: AtomicBool,
     pub(super) output_chunks: AtomicU64,
     pub(super) output_bytes: AtomicU64,

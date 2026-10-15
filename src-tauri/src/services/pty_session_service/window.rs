@@ -5,7 +5,7 @@ use tauri::ipc::Channel;
 use super::{
     ports::PtyEventSink,
     route::{pty_event_sequence, reclaim_event_route, session_window_status},
-    to_pty_size, validate_handoff_snapshot, validate_size, PendingHandoff, PtySessionManager,
+    to_pty_size, validate_handoff_snapshot, validate_size, PtySessionManager,
 };
 use crate::{
     models::{
@@ -56,14 +56,8 @@ impl PtySessionManager {
             let mut reclaimed = Vec::new();
             for session in sessions.values() {
                 let mut pending_cleared = false;
-                if let Ok(mut pending) = session.pending_handoff.lock() {
-                    if pending
-                        .as_ref()
-                        .is_some_and(|transfer| handoff_references_window(transfer, window_label))
-                    {
-                        *pending = None;
-                        pending_cleared = true;
-                    }
+                if let Ok(mut state) = session.handoff.lock() {
+                    pending_cleared = state.clear_for_window(window_label);
                 }
 
                 let Ok(mut route) = session.event_route.lock() else {
@@ -159,9 +153,4 @@ impl PtySessionManager {
         session.flow.resume();
         Ok(session.metadata())
     }
-}
-
-pub(super) fn handoff_references_window(transfer: &PendingHandoff, window_label: &str) -> bool {
-    transfer.source_window_label == window_label
-        || transfer.target_window_label.as_deref() == Some(window_label)
 }

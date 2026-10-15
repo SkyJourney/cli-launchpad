@@ -15,6 +15,7 @@ use tauri::ipc::Channel;
 use uuid::Uuid;
 
 mod flow;
+mod handoff;
 mod input;
 mod ports;
 mod process;
@@ -24,6 +25,7 @@ mod session;
 mod window;
 
 use flow::OutputFlow;
+use handoff::{deliver_snapshot, HandoffState};
 use input::{enqueue_pty_input, pty_input_channel, start_pty_input_writer};
 use ports::{
     DbLaunchHistorySink, DbPtySessionStore, LaunchHistorySink, LaunchRecord, PtyEventSink,
@@ -65,15 +67,6 @@ impl Default for PtySessionManager {
             registry: Arc::new(SessionRegistry::new()),
         }
     }
-}
-
-struct PendingHandoff {
-    token: String,
-    source_window_label: String,
-    sequence: u64,
-    snapshot: Option<PtyTerminalSnapshot>,
-    target_window_label: Option<String>,
-    target_channel: Option<Arc<dyn PtyEventSink>>,
 }
 
 fn is_supported_workspace_window(window_label: &str) -> bool {
@@ -245,7 +238,7 @@ impl PtySessionManager {
                 buffered_events: VecDeque::new(),
                 buffered_bytes: 0,
             }),
-            pending_handoff: Mutex::new(None),
+            handoff: Mutex::new(HandoffState::Idle),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
@@ -440,28 +433,11 @@ impl PtySessionManager {
     ) -> Result<PtyHandoff, AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        let mut state = session
+            .handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        if let Some(transfer) = pending.as_ref() {
-            if session.flow.is_paused_at(transfer.sequence) {
-                return Err(AppError::msg("该终端正在进行窗口交接"));
-            }
-            *pending = None;
-            session.flow.resume();
-        }
-        let sequence = session.flow.pause()?;
-        let token = Uuid::new_v4().to_string();
-        *pending = Some(PendingHandoff {
-            token: token.clone(),
-            source_window_label: window_label.to_string(),
-            sequence,
-            snapshot: None,
-            target_window_label: None,
-            target_channel: None,
-        });
-        Ok(PtyHandoff { token, sequence })
+        state.begin(&session.flow, window_label)
     }
 
     pub fn stage_handoff_snapshot(
@@ -475,23 +451,11 @@ impl PtySessionManager {
         validate_handoff_snapshot(&snapshot)?;
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        let mut state = session
+            .handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| {
-                transfer.token == token
-                    && transfer.source_window_label == window_label
-                    && transfer.sequence == sequence
-            })
-            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
-        if !session.flow.is_paused_at(sequence) {
-            return Err(AppError::msg("终端输出已恢复，请重新发起窗口交接"));
-        }
-        transfer.snapshot = Some(snapshot);
-        Ok(())
+        state.stage(&session.flow, window_label, token, sequence, snapshot)
     }
 
     pub fn complete_handoff(
@@ -504,45 +468,17 @@ impl PtySessionManager {
         if !is_supported_workspace_window(target_window_label) {
             return Err(AppError::msg("目标窗口不允许接管终端"));
         }
-        let on_event: Arc<dyn PtyEventSink> = Arc::new(on_event);
+        let sink: Arc<dyn PtyEventSink> = Arc::new(on_event);
         let session = self.get(session_id)?;
-        let mut pending = session
-            .pending_handoff
+        let mut state = session
+            .handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| transfer.token == token)
-            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
-        if transfer.source_window_label == target_window_label {
-            return Err(AppError::coded(
-                crate::error_codes::PTY_HANDOFF_TARGET_IS_SOURCE,
-                "目标窗口与源窗口相同，无法交接终端",
-            ));
-        }
-        if !session.flow.is_paused_at(transfer.sequence) {
-            return Err(AppError::msg("终端窗口交接超时，请重试"));
-        }
-        let snapshot = transfer
-            .snapshot
-            .clone()
-            .ok_or_else(|| AppError::msg("终端画面尚未准备好"))?;
-        if transfer.target_channel.is_some() {
-            return Err(AppError::msg("目标窗口已经准备接管此终端"));
-        }
-        let sequence = transfer.sequence;
-        let event = PtyEvent::Snapshot {
-            session_id: session_id.to_string(),
-            sequence,
-            data: snapshot.data,
-            cols: snapshot.cols,
-            rows: snapshot.rows,
-        };
-        on_event
-            .send(event)
-            .map_err(|error| AppError::msg(format!("新窗口终端尚未就绪：{error}")))?;
-        transfer.target_window_label = Some(target_window_label.to_string());
-        transfer.target_channel = Some(on_event);
+        // The three calls run under one guard, like the inline code did; m6-055 moves the
+        // delivery out of the lock.
+        let plan = state.check_complete(&session.flow, session_id, target_window_label, token)?;
+        deliver_snapshot(&plan, sink.as_ref())?;
+        state.bind(&session.flow, target_window_label, token, sink)?;
         Ok(session.metadata())
     }
 
@@ -558,23 +494,11 @@ impl PtySessionManager {
         }
         validate_size(size)?;
         let session = self.get(session_id)?;
-        let mut pending = session
-            .pending_handoff
+        let mut state = session
+            .handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| {
-                transfer.token == token
-                    && transfer.target_window_label.as_deref() == Some(target_window_label)
-            })
-            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?;
-        if !session.flow.is_paused_at(transfer.sequence) {
-            return Err(AppError::msg("终端窗口交接超时，请重试"));
-        }
-        if transfer.target_channel.is_none() {
-            return Err(AppError::msg("目标窗口尚未准备好"));
-        }
+        state.check_finalize(&session.flow, target_window_label, token)?;
         let mut last_size = session
             .last_size
             .lock()
@@ -589,21 +513,26 @@ impl PtySessionManager {
             *last_size = (size.cols, size.rows);
         }
         drop(last_size);
-        let channel = transfer
-            .target_channel
-            .take()
-            .ok_or_else(|| AppError::msg("目标窗口尚未准备好"))?;
         let mut route = session
             .event_route
             .lock()
             .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if route.window_label != transfer.source_window_label {
+        let source_window_label = state
+            .bound_source()
+            .expect("check_finalize guarantees a bound handoff")
+            .to_string();
+        // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
+        // `cancel` or `reclaim_window` can still clean it up.
+        if route.window_label != source_window_label {
             return Err(AppError::msg("终端控制权已经转移"));
         }
+        let bound = state
+            .commit_finalize()
+            .expect("check_finalize guarantees a bound handoff");
         route.window_label = target_window_label.to_string();
         route.mirror = if is_main_label(target_window_label) {
             None
-        } else if is_main_label(&transfer.source_window_label) {
+        } else if is_main_label(&source_window_label) {
             route
                 .channel
                 .take()
@@ -614,10 +543,9 @@ impl PtySessionManager {
                 .take()
                 .filter(|(label, _)| is_main_label(label))
         };
-        route.channel = Some(channel);
+        route.channel = Some(bound.sink);
         route.owner_lost = false;
         drop(route);
-        *pending = None;
         session.flow.resume();
         Ok(session.metadata())
     }
@@ -630,19 +558,11 @@ impl PtySessionManager {
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        let mut state = session
+            .handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let Some(transfer) = pending.as_ref() else {
-            return Ok(());
-        };
-        if transfer.token != token || transfer.source_window_label != window_label {
-            return Err(AppError::msg("终端窗口交接令牌无效"));
-        }
-        *pending = None;
-        session.flow.resume();
-        Ok(())
+        state.cancel(&session.flow, window_label, token)
     }
 
     pub fn active_count(&self) -> usize {

@@ -116,7 +116,7 @@ mod tests {
             assert!(session.process_tree.try_lock().is_ok());
             assert!(session.killer.try_lock().is_ok());
             assert!(session.event_route.try_lock().is_ok());
-            assert!(session.pending_handoff.try_lock().is_ok());
+            assert!(session.handoff.try_lock().is_ok());
             observed.set(observed.get() + 1);
         });
 
