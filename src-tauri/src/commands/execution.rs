@@ -15,6 +15,7 @@ use crate::{with_conn, AppError, Db};
 pub async fn start_execution_task(
     app: AppHandle,
     manager: State<'_, ExecutionTaskManager>,
+    db: State<'_, Db>,
     tool_key: ToolKey,
     kind: InstallKind,
     expected_fingerprint: String,
@@ -32,7 +33,7 @@ pub async fn start_execution_task(
     })?;
     // Held across the start so the admission covers the whole registration.
     let _start_permit = lifecycle.admit(Operation::ExecStart)?;
-    manager.start(&app, plan)
+    manager.start(db.inner(), &app, plan).await
 }
 
 #[tauri::command]
@@ -54,12 +55,12 @@ pub fn get_execution_task(
 }
 
 #[tauri::command]
-pub fn cancel_execution_task(
+pub async fn cancel_execution_task(
     app: AppHandle,
     manager: State<'_, ExecutionTaskManager>,
     task_id: String,
 ) -> Result<ExecutionTask, AppError> {
-    manager.cancel(&app, &task_id)
+    manager.cancel(&app, &task_id).await
 }
 
 #[tauri::command]

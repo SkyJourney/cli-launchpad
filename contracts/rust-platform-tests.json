@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 575,
-    "Linux": 581,
-    "macOS": 579
+    "Windows": 591,
+    "Linux": 597,
+    "macOS": 595
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -294,7 +294,23 @@
       "services::exit_cleanup::tests::exit_waits_for_an_in_flight_start_and_then_terminates_the_late_session",
       "runtime::tests::bounded_returns_the_future_result_within_the_budget",
       "runtime::tests::bounded_reports_blocking_timeout_with_the_operation_and_budget",
-      "contracts::create_pty_session_prepares_before_admitting_and_bounds_external_awaits"
+      "contracts::create_pty_session_prepares_before_admitting_and_bounds_external_awaits",
+      "services::execution_service::tests::reserve_blocks_a_second_start_for_the_same_tool_and_counts_as_active",
+      "services::execution_service::tests::dropping_an_unconfirmed_reservation_releases_the_slot",
+      "services::execution_service::tests::confirm_moves_the_reservation_into_the_active_table_with_a_cancel_sender",
+      "services::execution_service::tests::confirm_is_refused_after_exit_cleanup_cleared_the_reservation",
+      "services::execution_service::tests::reserve_and_persist_does_not_hold_the_active_lock_while_writing",
+      "services::execution_service::tests::a_failed_insert_rolls_the_reservation_back",
+      "services::execution_service::tests::coalescer_merges_small_chunks_until_the_size_limit",
+      "services::execution_service::tests::coalescer_flushes_after_the_interval_even_when_small",
+      "services::execution_service::tests::coalescer_take_returns_the_remainder_exactly_once",
+      "services::execution_service::tests::pump_output_appends_one_coalesced_chunk_through_the_sink",
+      "services::execution_service::tests::pump_output_flushes_on_the_interval_before_the_stream_ends",
+      "contracts::execution_service_has_no_synchronous_database_access",
+      "services::app_lifecycle::tests::one_confirmation_finishing_does_not_unlock_another_that_is_still_terminating",
+      "services::execution_service::tests::settling_a_task_waits_for_an_in_flight_status_transition",
+      "services::execution_service::tests::pump_output_coalesces_reads_delivered_one_chunk_at_a_time",
+      "services::execution_service::tests::confirm_is_refused_once_exit_cleanup_started_cancelling"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

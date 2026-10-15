@@ -18,7 +18,9 @@ pub struct AppExitGate {
 #[derive(Default)]
 struct PendingRequest {
     id: Option<String>,
-    terminating: bool,
+    /// Confirmations currently terminating sessions for `id` (a count, not a flag, so one
+    /// finishing confirmation cannot unlock another that is still terminating).
+    terminating: usize,
 }
 
 /// Held while a confirmed exit terminates sessions; releases the lock on every path.
@@ -29,7 +31,7 @@ struct TerminationLock<'a> {
 impl Drop for TerminationLock<'_> {
     fn drop(&mut self) {
         if let Ok(mut pending) = self.gate.pending_request.lock() {
-            pending.terminating = false;
+            pending.terminating = pending.terminating.saturating_sub(1);
         }
     }
 }
@@ -77,7 +79,7 @@ impl AppExitGate {
     /// returned unchanged, so the confirmation that already started can still complete.
     pub fn begin_request(&self) -> ExitRequest {
         if let Ok(mut pending) = self.pending_request.lock() {
-            if pending.terminating {
+            if pending.terminating > 0 {
                 if let Some(id) = pending.id.clone() {
                     return ExitRequest { id };
                 }
@@ -116,7 +118,7 @@ impl AppExitGate {
             }
             Some(_) => {}
         }
-        pending.terminating = true;
+        pending.terminating += 1;
         Ok(TerminationLock { gate: self })
     }
 
@@ -1488,14 +1490,11 @@ mod tests {
         use super::Operation;
         let lifecycle = lifecycle();
         let permit = lifecycle.admit(Operation::PtyStart).unwrap();
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let began = Instant::now();
         let dropper = std::thread::spawn(move || {
-            started_tx.send(()).unwrap();
             std::thread::sleep(Duration::from_millis(100));
             drop(permit);
         });
-        started_rx.recv().unwrap();
-        let began = Instant::now();
 
         let drained = lifecycle.wait_for_starts(Duration::from_secs(5));
 
@@ -1667,5 +1666,24 @@ mod tests {
         let newer = gate.begin_request();
         assert_ne!(newer.id, request.id);
         assert_eq!(gate.pending_request_id(), Some(newer.id));
+    }
+
+    #[test]
+    fn one_confirmation_finishing_does_not_unlock_another_that_is_still_terminating() {
+        let gate = AppExitGate::default();
+        let request = gate.begin_request();
+
+        let result = confirm_exit_with(&gate, &request.id, || {
+            // A second confirmation of the same request starts and finishes meanwhile.
+            drop(gate.lock_for_termination(&request.id).unwrap());
+            let during = gate.begin_request();
+            assert_eq!(
+                during.id, request.id,
+                "the first confirmation is still terminating"
+            );
+            Ok::<(), AppError>(())
+        });
+
+        assert!(result.is_ok());
     }
 }

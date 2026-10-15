@@ -1664,11 +1664,18 @@ fn create_pty_session_prepares_before_admitting_and_bounds_external_awaits() {
     /// Every marker must appear, in this order, and nothing may be awaited between the start
     /// permit and the blocking launch.
     fn check_order(body: &str) -> Result<(), String> {
+        // Whitespace is normalized so rustfmt line breaks do not matter.
+        let body = body
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace("( ", "(");
+        let body = body.as_str();
         let mut at = 0;
         for marker in [
             "ProjectDirectory::open_ref(",
-            "\"pty.session_belongs\"",
-            "\"pty.resolve_payload\"",
+            "bounded(\"pty.session_belongs\"",
+            "bounded(\"pty.resolve_payload\"",
             "admit(Operation::PtyStart)",
             "spawn_blocking(",
         ] {
@@ -1696,10 +1703,53 @@ fn create_pty_session_prepares_before_admitting_and_bounds_external_awaits() {
     assert_eq!(check_order(body), Ok(()));
 
     // The check can see a violation: the permit taken before the payload is resolved.
-    let misordered = "ProjectDirectory::open_ref( \"pty.session_belongs\" admit(Operation::PtyStart)                       \"pty.resolve_payload\" spawn_blocking(";
+    let misordered = "ProjectDirectory::open_ref(bounded(\"pty.session_belongs\" admit(Operation::PtyStart)                       bounded(\"pty.resolve_payload\" spawn_blocking(";
     assert!(check_order(misordered).is_err());
-    let awaited = "ProjectDirectory::open_ref( \"pty.session_belongs\" \"pty.resolve_payload\"                    admit(Operation::PtyStart) x.await spawn_blocking(";
+    let awaited = "ProjectDirectory::open_ref(bounded(\"pty.session_belongs\" bounded(\"pty.resolve_payload\"                    admit(Operation::PtyStart) x.await spawn_blocking(";
+    // An external await without `bounded(` is a violation too.
+    let unbounded = "ProjectDirectory::open_ref(\"pty.session_belongs\" bounded(\"pty.resolve_payload\"                      admit(Operation::PtyStart) spawn_blocking(";
+    assert!(check_order(unbounded).is_err());
     assert!(check_order(awaited).is_err());
+}
+
+#[test]
+fn execution_service_has_no_synchronous_database_access() {
+    // Whitespace is stripped first so rustfmt line breaks (`state\n.0\n.lock()`) cannot hide a use.
+    fn squash(source: &str) -> String {
+        source.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+    fn violations(source: &str) -> Vec<&'static str> {
+        let source = squash(source);
+        [
+            "with_db(",
+            "fnwith_db",
+            ".0.lock()",
+            "with_connection(",
+            "with_conn(",
+        ]
+        .into_iter()
+        .filter(|needle| source.contains(needle))
+        .collect()
+    }
+
+    // The scan must be able to see a violation at all, including a formatted-apart one.
+    assert!(violations("fn f() { with_db(app, |c| Ok(())) }").contains(&"with_db("));
+    assert!(violations("let c = state\n    .0\n    .lock();").contains(&".0.lock()"));
+
+    let source = production_text(include_str!("../services/execution_service.rs"));
+    // The exit cleanup target runs on the exit thread and keeps its one synchronous connection
+    // use until m6-059 introduces the synchronous Db entry point.
+    let scanned = source
+        .split("pub struct ExecutionExitCleanup")
+        .next()
+        .unwrap();
+    assert_eq!(violations(scanned), Vec::<&str>::new());
+    let squashed = squash(scanned);
+    let calls = squashed.matches("db.call(").count() + squashed.matches("db_call(").count();
+    assert!(
+        calls >= 3,
+        "database access goes through Db::call, found {calls}"
+    );
 }
 
 #[test]
