@@ -342,6 +342,32 @@ mod windows {
         }
 
         #[tokio::test]
+        async fn dropping_the_job_kills_attached_processes() {
+            let mut command = tokio::process::Command::new(crate::platform::detect::system32(
+                "WindowsPowerShell\\v1.0\\powershell.exe",
+            ));
+            command
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 30",
+                ])
+                .creation_flags(CREATE_NO_WINDOW);
+            let mut child = command.spawn().expect("spawn harmless test process");
+            let tree = ProcessTree::new().expect("create job object");
+            tree.attach(&child).expect("attach process to job");
+            assert!(child.try_wait().unwrap().is_none(), "alive before the drop");
+
+            drop(tree);
+
+            tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .expect("closing the job handle must end the process (KILL_ON_JOB_CLOSE)")
+                .expect("wait for process");
+        }
+
+        #[tokio::test]
         async fn job_object_terminate_kills_grandchild_processes() {
             let directory = tempfile::tempdir().unwrap();
             let pid_file = directory.path().join("pid.txt");
@@ -486,19 +512,23 @@ mod windows {
 
 #[cfg(unix)]
 mod unix {
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     use super::*;
     use portable_pty::{Child as PtyChild, MasterPty};
 
     pub struct ProcessTree {
         process_group: AtomicI32,
+        /// Set once a signal was delivered (or the group was already gone): `Drop` then does
+        /// nothing, so a recycled pid is not signalled a second time.
+        signalled: AtomicBool,
     }
 
     impl ProcessTree {
         pub fn new() -> io::Result<Self> {
             Ok(Self {
                 process_group: AtomicI32::new(0),
+                signalled: AtomicBool::new(false),
             })
         }
 
@@ -558,13 +588,31 @@ mod unix {
                 return Err(io::Error::other("进程组尚未附加"));
             }
             if unsafe { libc::kill(-process_group, signal) } == 0 {
+                self.signalled.store(true, Ordering::Release);
                 return Ok(());
             }
             let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ESRCH) {
+                self.signalled.store(true, Ordering::Release);
                 Ok(())
             } else {
                 Err(error)
+            }
+        }
+    }
+
+    impl Drop for ProcessTree {
+        /// Parity with the Windows job object (`KILL_ON_JOB_CLOSE`): an attached tree that was
+        /// never signalled kills its group when dropped. `kill(-pgid, 0)` first confirms the group
+        /// still has a member, which narrows (but cannot remove) the pid-reuse window; this is the
+        /// accepted risk D1 of m6-058.
+        fn drop(&mut self) {
+            let group = self.process_group.load(Ordering::Acquire);
+            if group <= 0 || self.signalled.load(Ordering::Acquire) {
+                return;
+            }
+            if unsafe { libc::kill(-group, 0) } == 0 {
+                let _ = unsafe { libc::kill(-group, libc::SIGKILL) };
             }
         }
     }
@@ -593,6 +641,75 @@ mod unix {
                 .expect("process group should terminate")
                 .unwrap();
             assert!(!status.success());
+        }
+
+        #[tokio::test]
+        async fn dropping_an_attached_process_tree_kills_the_whole_group() {
+            let tree = ProcessTree::new().unwrap();
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", "sleep 30 & wait"]);
+            tree.configure(&mut command).unwrap();
+            let mut child = command.spawn().unwrap();
+            tree.attach(&child).unwrap();
+            let group = i32::try_from(child.id().unwrap()).unwrap();
+            assert!(child.try_wait().unwrap().is_none(), "alive before the drop");
+
+            drop(tree);
+
+            let status = tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .expect("dropping the tree must end the group")
+                .unwrap();
+            assert!(!status.success());
+            // The background `sleep` was in the same group and is gone as well.
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let result = unsafe { libc::kill(-group, 0) };
+                if result == -1
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "the group still has members");
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        #[tokio::test]
+        async fn dropping_after_the_group_is_gone_is_a_no_op() {
+            let tree = ProcessTree::new().unwrap();
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", "exit 0"]);
+            tree.configure(&mut command).unwrap();
+            let mut child = command.spawn().unwrap();
+            tree.attach(&child).unwrap();
+            child.wait().await.unwrap();
+            assert!(!tree.signalled.load(Ordering::Acquire));
+            // Signalling a group that is already gone is not an error and counts as signalled.
+            tree.terminate().unwrap();
+            assert!(tree.signalled.load(Ordering::Acquire));
+            drop(tree); // nothing left to signal: no panic
+
+            // An attached tree whose group is gone and that was never signalled: Drop is a no-op.
+            let tree = ProcessTree::new().unwrap();
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", "exit 0"]);
+            tree.configure(&mut command).unwrap();
+            let mut child = command.spawn().unwrap();
+            tree.attach(&child).unwrap();
+            child.wait().await.unwrap();
+            drop(tree);
+
+            let tree = ProcessTree::new().unwrap();
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args(["-c", "sleep 30"]);
+            tree.configure(&mut command).unwrap();
+            let mut child = command.spawn().unwrap();
+            tree.attach(&child).unwrap();
+            tree.terminate().unwrap();
+            assert!(tree.signalled.load(Ordering::Acquire));
+            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+            drop(tree); // already signalled: Drop does nothing
         }
 
         #[test]

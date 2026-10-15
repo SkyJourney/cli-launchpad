@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 591,
-    "Linux": 597,
-    "macOS": 595
+    "Windows": 592,
+    "Linux": 599,
+    "macOS": 597
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -345,7 +345,8 @@
       "platform::execution_process::windows::tests::tree_worker_waits_for_the_dedicated_job_before_spawning",
       "platform::file_location::tests::locate_rejects_a_junction_intermediate_component",
       "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory",
-      "services::workspace_layout_service::tests::current_layout_with_platform_invalid_file_name_degrades_the_item"
+      "services::workspace_layout_service::tests::current_layout_with_platform_invalid_file_name_degrades_the_item",
+      "platform::execution_process::windows::tests::dropping_the_job_kills_attached_processes"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",
@@ -382,7 +383,9 @@
       "services::file_service::tests::save_text_file_rejects_a_symlink_final_component",
       "services::file_service::tests::list_directory_rejects_a_symlink_directory_argument",
       "services::file_service::tests::control_character_file_names_are_handled_consistently_by_listing_and_layout",
-      "platform::path_identity::tests::project_path_key_does_not_resolve_symlinks"
+      "platform::path_identity::tests::project_path_key_does_not_resolve_symlinks",
+      "platform::execution_process::unix::tests::dropping_an_attached_process_tree_kills_the_whole_group",
+      "platform::execution_process::unix::tests::dropping_after_the_group_is_gone_is_a_no_op"
     ],
     "Linux": [
       "services::file_service::tests::listing_scan_budget_covers_entries_skipped_for_unreadable_names",
