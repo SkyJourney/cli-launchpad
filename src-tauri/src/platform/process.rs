@@ -595,6 +595,13 @@ mod tests {
         !(stat.is_empty() || stat.starts_with('Z'))
     }
 
+    /// Whether no process of the group led by `pid` is left.
+    #[cfg(unix)]
+    fn process_group_is_gone(pid: u32) -> bool {
+        let result = unsafe { libc::kill(-(pid as i32), 0) };
+        result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
     #[cfg(windows)]
     fn process_is_alive(pid: u32) -> bool {
         crate::platform::execution_process::windows_process_is_alive(pid)
@@ -697,11 +704,7 @@ mod tests {
         );
         #[cfg(unix)]
         assert!(
-            wait_until(Duration::from_secs(5), || {
-                unsafe { libc::kill(-(pid as i32), 0) } == -1
-                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-            })
-            .await,
+            wait_until(Duration::from_secs(5), || process_group_is_gone(pid)).await,
             "the process group of {pid} still has members"
         );
     }
