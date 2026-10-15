@@ -461,4 +461,52 @@ mod tests {
         second.flush_pending();
         assert_eq!(first.pending_len(), 0);
     }
+
+    #[test]
+    fn the_manager_flushes_queued_finishes_into_the_database() {
+        use crate::db::{connection, directory_repo, pty_session_repo};
+        use crate::models::tool::ToolKey;
+
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let directory =
+            directory_repo::add(&connection, "work", "C:\\Projects\\work", None).unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "s1",
+            directory.id,
+            ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .unwrap();
+        let db = crate::Db(Arc::new(Mutex::new(connection)));
+        let manager = PtySessionManager::default();
+        // A finish that failed earlier sits in the manager's own queue.
+        assert!(manager
+            .persist_queue
+            .push(PendingFinish {
+                session_id: "s1".to_string(),
+                state: "exited".to_string(),
+                ended_at_ms: 10,
+                exit_code: Some(0),
+                attempts: 1,
+            })
+            .is_none());
+
+        let report = manager.flush_pending_persistence(&db);
+
+        assert_eq!(report.retried, 1);
+        assert_eq!(report.succeeded, 1);
+        assert_eq!(report.dropped, 0);
+        assert_eq!(manager.persist_queue.len(), 0);
+        let row = crate::with_connection(&db, |connection| {
+            Ok(pty_session_repo::get_by_id(connection, "s1")?)
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(row.state, "exited");
+        assert_eq!(row.ended_at_ms, Some(10));
+        assert_eq!(row.exit_code, Some(0));
+    }
 }

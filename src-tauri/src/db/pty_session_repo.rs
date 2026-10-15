@@ -85,3 +85,59 @@ pub fn mark_running_ended(connection: &Connection, ended_at_ms: i64) -> rusqlite
         params![ended_at_ms],
     )
 }
+
+/// Settles the `running` rows of one directory. Memory is the authority for liveness, so a row
+/// still marked `running` after the in-memory table reported nothing is stale.
+pub fn mark_directory_running_ended(
+    connection: &Connection,
+    directory_id: i64,
+    ended_at_ms: i64,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        "update pty_sessions set state = 'exited', ended_at_ms = ?2, exit_code = null where directory_id = ?1 and state = 'running'",
+        params![directory_id, ended_at_ms],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{connection, directory_repo};
+
+    fn database() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        connection
+    }
+
+    #[test]
+    fn mark_directory_running_ended_updates_only_matching_rows() {
+        let connection = database();
+        let one = directory_repo::add(&connection, "one", "C:\\Projects\\one", None).unwrap();
+        let two = directory_repo::add(&connection, "two", "C:\\Projects\\two", None).unwrap();
+        insert_running(&connection, "a1", one.id, ToolKey::Claude, &one.path, 1).unwrap();
+        insert_running(&connection, "a2", one.id, ToolKey::Claude, &one.path, 2).unwrap();
+        finish(&connection, "a2", "terminated", 5, Some(1)).unwrap();
+        insert_running(&connection, "b1", two.id, ToolKey::Claude, &two.path, 3).unwrap();
+
+        assert_eq!(
+            mark_directory_running_ended(&connection, one.id, 99).unwrap(),
+            1
+        );
+
+        let settled = get_by_id(&connection, "a1").unwrap().unwrap();
+        assert_eq!(settled.state, "exited");
+        assert_eq!(settled.ended_at_ms, Some(99));
+        assert_eq!(settled.exit_code, None);
+        let kept = get_by_id(&connection, "a2").unwrap().unwrap();
+        assert_eq!(kept.state, "terminated");
+        assert_eq!(kept.ended_at_ms, Some(5));
+        let other = get_by_id(&connection, "b1").unwrap().unwrap();
+        assert_eq!(other.state, "running");
+        assert_eq!(other.ended_at_ms, None);
+        assert_eq!(
+            mark_directory_running_ended(&connection, one.id, 100).unwrap(),
+            0
+        );
+    }
+}

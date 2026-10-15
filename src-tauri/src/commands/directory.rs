@@ -4,6 +4,7 @@ use crate::db::directory_repo;
 use crate::models::directory::Directory;
 use crate::services::cache_service;
 use crate::services::directory_service;
+use crate::services::pty_session_service::PtySessionManager;
 use crate::{with_conn, AppError, CacheDb, Db};
 
 fn contains_exactly(expected_ids: &[i64], submitted_ids: &[i64]) -> bool {
@@ -52,13 +53,20 @@ pub fn update_directory(
 pub async fn remove_directory(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
+    sessions: State<'_, PtySessionManager>,
     id: i64,
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let cache = cache.inner().clone();
+    let manager = sessions.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Earlier finish writes land first so the rows catch up with memory; a failure is only
+        // logged by the retry store.
+        manager.flush_pending_persistence(&db);
         crate::with_connection(&db, |connection| {
-            directory_service::remove_directory(connection, id)
+            // m6-056 D1: the only allowed Db -> registry nesting; see PtySessionManager::running_in
+            let running = manager.running_in(id);
+            directory_service::remove_directory(connection, id, &running)
         })?;
         crate::with_cache_connection(&cache, |connection| {
             cache_service::remove_prefix(connection, "sessions:")?;

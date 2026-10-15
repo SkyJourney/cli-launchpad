@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 541,
-    "Linux": 546,
-    "macOS": 544
+    "Windows": 547,
+    "Linux": 552,
+    "macOS": 550
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -260,7 +260,13 @@
       "services::pty_session_service::tests::running_in_lists_only_registered_open_sessions_of_the_directory",
       "services::pty_session_service::tests::running_session_ids_is_a_snapshot_of_open_sessions",
       "services::pty_session_service::tests::registration_precedes_the_database_insert",
-      "services::pty_session_service::tests::a_failed_insert_unregisters_the_session"
+      "services::pty_session_service::tests::a_failed_insert_unregisters_the_session",
+      "services::directory_service::removal_tests::removal_reconciles_stale_running_rows_when_memory_reports_none",
+      "services::directory_service::removal_tests::removal_reconciliation_only_touches_the_removed_directory",
+      "services::workspace_layout_service::tests::slot_is_running_only_when_the_session_is_open_in_memory",
+      "db::pty_session_repo::tests::mark_directory_running_ended_updates_only_matching_rows",
+      "services::pty_session_service::persistence::tests::the_manager_flushes_queued_finishes_into_the_database",
+      "services::pty_session_service::tests::a_failed_row_write_in_create_registers_first_and_leaves_no_session"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

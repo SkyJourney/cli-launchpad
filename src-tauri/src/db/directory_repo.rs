@@ -64,6 +64,7 @@ pub fn remove(conn: &Connection, id: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn has_running_pty_session(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
     conn.query_row(
         "select exists(select 1 from pty_sessions where directory_id = ?1 and state = 'running')",

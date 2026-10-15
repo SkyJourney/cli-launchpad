@@ -2,15 +2,29 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use crate::{db::directory_repo, AppError};
+use crate::{
+    db::{directory_repo, pty_session_repo},
+    services::execution_service::now_ms,
+    AppError,
+};
 
-pub fn remove_directory(connection: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
+pub fn remove_directory(
+    connection: &rusqlite::Connection,
+    id: i64,
+    running_in_memory: &[String],
+) -> Result<(), AppError> {
     let transaction = connection.unchecked_transaction()?;
-    if directory_repo::has_running_pty_session(&transaction, id)? {
+    if !running_in_memory.is_empty() {
         return Err(AppError::coded(
             crate::error_codes::DIRECTORY_IN_USE,
             "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
         ));
+    }
+    // Memory is the authority for liveness: rows still marked running here are stale (a
+    // finish write failed earlier). Settle them so the delete trigger does not block removal.
+    let settled = pty_session_repo::mark_directory_running_ended(&transaction, id, now_ms())?;
+    if settled > 0 {
+        log::warn!("settled {settled} stale PTY session row(s) before removing directory id={id}");
     }
     directory_repo::remove(&transaction, id)?;
     transaction.commit()?;
@@ -86,7 +100,8 @@ mod removal_tests {
         )
         .unwrap();
 
-        let error = remove_directory(&connection, saved.id).unwrap_err();
+        let error =
+            remove_directory(&connection, saved.id, &["running-session".to_string()]).unwrap_err();
 
         assert_eq!(
             serde_json::to_value(error).unwrap()["code"],
@@ -110,11 +125,82 @@ mod removal_tests {
         )
         .unwrap();
 
-        remove_directory(&connection, saved.id).unwrap();
+        remove_directory(&connection, saved.id, &[]).unwrap();
 
         assert!(directory_repo::get(&connection, saved.id)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn removal_reconciles_stale_running_rows_when_memory_reports_none() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let directory = tempdir().unwrap();
+        let saved = directory_repo::add(
+            &connection,
+            "demo",
+            directory.path().to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "stale",
+            saved.id,
+            ToolKey::Claude,
+            directory.path().to_str().unwrap(),
+            1,
+        )
+        .unwrap();
+
+        remove_directory(&connection, saved.id, &[]).unwrap();
+
+        assert!(directory_repo::get(&connection, saved.id)
+            .unwrap()
+            .is_none());
+        assert!(pty_session_repo::get_by_id(&connection, "stale")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn removal_reconciliation_only_touches_the_removed_directory() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let a =
+            directory_repo::add(&connection, "a", first.path().to_str().unwrap(), None).unwrap();
+        let b =
+            directory_repo::add(&connection, "b", second.path().to_str().unwrap(), None).unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "sa",
+            a.id,
+            ToolKey::Claude,
+            first.path().to_str().unwrap(),
+            1,
+        )
+        .unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "sb",
+            b.id,
+            ToolKey::Claude,
+            second.path().to_str().unwrap(),
+            2,
+        )
+        .unwrap();
+
+        remove_directory(&connection, a.id, &[]).unwrap();
+
+        let untouched = pty_session_repo::get_by_id(&connection, "sb")
+            .unwrap()
+            .unwrap();
+        assert_eq!(untouched.state, "running");
+        assert_eq!(untouched.ended_at_ms, None);
+        assert!(directory_repo::get(&connection, b.id).unwrap().is_some());
     }
 }
 

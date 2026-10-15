@@ -2057,3 +2057,73 @@ fn a_failed_insert_unregisters_the_session() {
     assert_eq!(store.calls(), vec![format!("insert:{id}")]);
     assert!(manager.running_in(1).is_empty());
 }
+
+#[test]
+fn a_failed_row_write_in_create_registers_first_and_leaves_no_session() {
+    let manager = PtySessionManager::default();
+    let (fake, _rx) = FakeStore::new();
+    fake.fail_next_inserts(1);
+    let registered_at_insert = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let registry = manager.registry_handle();
+        let flag = Arc::clone(&registered_at_insert);
+        fake.set_on_insert(move |session_id| {
+            flag.store(
+                registry.contains(session_id),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        });
+    }
+    let store: Arc<dyn PtySessionStore> = fake.clone();
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let payload = launch_service::CliLaunchPayload {
+        directory: directory.path().to_str().unwrap().to_string(),
+        tool_executable: crate::platform::detect::system32(
+            "WindowsPowerShell\\v1.0\\powershell.exe",
+        ),
+        tool_args: vec![
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            "Start-Sleep -Seconds 60".to_string(),
+        ],
+    };
+    #[cfg(not(windows))]
+    let payload = launch_service::CliLaunchPayload {
+        directory: directory.path().to_str().unwrap().to_string(),
+        tool_executable: "/bin/sh".to_string(),
+        tool_args: vec!["-c".to_string(), "sleep 60".to_string()],
+    };
+    let (channel, _sink) = recording_channel();
+
+    let result = {
+        let manager = manager.clone();
+        run_with_timeout(30, move || {
+            manager
+                .create_inner(
+                    &store,
+                    1,
+                    ToolKey::Claude,
+                    &payload,
+                    size(),
+                    "main",
+                    channel,
+                )
+                .map(|session| session.session_id)
+        })
+    };
+
+    // The failure path reaps the child before returning, so a hang here would fail the test.
+    let result = result.expect("create_inner must return after a failed row write");
+    assert!(result.is_err());
+    assert!(
+        registered_at_insert.load(std::sync::atomic::Ordering::SeqCst),
+        "the session must be registered before the row is written"
+    );
+    assert!(manager.running_session_ids().is_empty());
+    assert_eq!(manager.registry_handle().len(), 0);
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].starts_with("insert:"));
+}

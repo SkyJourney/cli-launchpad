@@ -1,16 +1,41 @@
+use std::collections::HashSet;
+
 use tauri::State;
 
 use crate::models::workspace_layout::{
     WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutPresetSummary,
     WorkspaceLayoutSaveResult, WorkspaceLayoutStateRead,
 };
+use crate::services::pty_session_service::PtySessionManager;
 use crate::services::workspace_layout_service::{self, LayoutReadStage};
 use crate::{blocking, budgets, with_conn, AppError, Db};
+
+/// Open session ids from the in-memory table (the liveness authority). Earlier `finish` writes
+/// are retried first so the rows catch up; this is its own short step, never inside the
+/// database lock.
+async fn open_session_ids(
+    sessions: &PtySessionManager,
+    db: &Db,
+) -> Result<HashSet<String>, AppError> {
+    let manager = sessions.clone();
+    let db = db.clone();
+    blocking(
+        "workspace_layout.running_sessions",
+        budgets::PROJECT_DIRECTORY,
+        move || {
+            manager.flush_pending_persistence(&db);
+            Ok(manager.running_session_ids())
+        },
+    )
+    .await
+}
 
 #[tauri::command]
 pub async fn get_workspace_layout(
     state: State<'_, Db>,
+    sessions: State<'_, PtySessionManager>,
 ) -> Result<WorkspaceLayoutStateRead, AppError> {
+    let running = open_session_ids(sessions.inner(), state.inner()).await?;
     let stage = state
         .call("workspace_layout.read", |connection| {
             workspace_layout_service::read_current_stage(connection)
@@ -22,7 +47,7 @@ pub async fn get_workspace_layout(
             blocking(
                 "workspace_layout.resolve_slots",
                 budgets::PROJECT_DIRECTORY,
-                move || Ok(pending.finish()),
+                move || Ok(pending.finish(&running)),
             )
             .await
         }
@@ -105,9 +130,11 @@ pub fn delete_workspace_layout_preset(state: State<'_, Db>, id: String) -> Resul
 #[tauri::command]
 pub async fn plan_apply_workspace_layout_preset(
     state: State<'_, Db>,
+    sessions: State<'_, PtySessionManager>,
     id: String,
     active_layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+    let running = open_session_ids(sessions.inner(), state.inner()).await?;
     let pending = state
         .call("workspace_layout.plan_load", move |connection| {
             workspace_layout_service::plan_apply_preset_stage(connection, &id, &active_layout)
@@ -116,7 +143,7 @@ pub async fn plan_apply_workspace_layout_preset(
     blocking(
         "workspace_layout.plan_compute",
         budgets::PROJECT_DIRECTORY,
-        move || pending.finish(),
+        move || pending.finish(&running),
     )
     .await
 }

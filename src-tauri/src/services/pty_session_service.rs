@@ -29,7 +29,8 @@ use flow::OutputFlow;
 use handoff::{deliver_snapshot, HandoffState};
 use input::{enqueue_pty_input, pty_input_channel, start_pty_input_writer};
 use persistence::{
-    register_then_persist, LogObserver, PendingFinishQueue, PersistenceObserver, RetryingStore,
+    register_then_persist, FlushReport, LogObserver, PendingFinishQueue, PersistenceObserver,
+    RetryingStore,
 };
 use ports::{
     DbLaunchHistorySink, DbPtySessionStore, LaunchHistorySink, LaunchRecord, PtyEventSink,
@@ -120,7 +121,12 @@ impl PtySessionManager {
         )
     }
 
-    #[cfg(test)]
+    /// Retries the `finish` writes that failed earlier so the rows catch up with memory.
+    /// Failures are reported to the observer; the caller only needs the counts.
+    pub fn flush_pending_persistence(&self, db: &Db) -> FlushReport {
+        self.retrying_store(db).flush_pending()
+    }
+
     fn open_sessions(&self) -> Vec<Arc<ManagedSession>> {
         match self.registry.snapshot() {
             Ok(sessions) => sessions
@@ -138,7 +144,6 @@ impl PtySessionManager {
     /// Lock note (m6-056 D1): `remove_directory` calls this while holding the database lock;
     /// it takes only the registry lock and each session's flow lock, neither of which is ever
     /// held while acquiring the database lock.
-    #[cfg(test)]
     pub fn running_in(&self, directory_id: i64) -> Vec<String> {
         self.open_sessions()
             .into_iter()
@@ -157,7 +162,6 @@ impl PtySessionManager {
     }
 
     /// A snapshot of the ids of every open session.
-    #[cfg(test)]
     pub fn running_session_ids(&self) -> std::collections::HashSet<String> {
         self.open_sessions()
             .into_iter()

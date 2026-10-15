@@ -34,8 +34,8 @@ pub struct PendingLayoutRead {
 
 impl PendingLayoutRead {
     /// No database access: compares project paths (canonicalize) in memory.
-    pub fn finish(mut self) -> WorkspaceLayoutStateRead {
-        let slot_states = resolve_layout_slots_with(&self.facts, &mut self.layout);
+    pub fn finish(mut self, running: &HashSet<String>) -> WorkspaceLayoutStateRead {
+        let slot_states = resolve_layout_slots_with(&self.facts, &mut self.layout, running);
         WorkspaceLayoutStateRead {
             status: WorkspaceLayoutStateStatus::Ready,
             revision: Some(self.revision),
@@ -106,10 +106,13 @@ pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, Ap
 }
 
 #[cfg(test)]
-pub fn read_current(connection: &Connection) -> Result<WorkspaceLayoutStateRead, AppError> {
+pub fn read_current(
+    connection: &Connection,
+    running: &HashSet<String>,
+) -> Result<WorkspaceLayoutStateRead, AppError> {
     Ok(match read_current_stage(connection)? {
         LayoutReadStage::Done(state) => state,
-        LayoutReadStage::Resolve(pending) => pending.finish(),
+        LayoutReadStage::Resolve(pending) => pending.finish(running),
     })
 }
 
@@ -281,7 +284,7 @@ impl PendingApplyPlan {
     /// No database access: the original plan algorithm, resolving slots from `facts`.
     /// Build a pure presentation plan. This deliberately writes no workspace state
     /// and never calls PTY lifecycle or handoff operations.
-    pub fn finish(self) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+    pub fn finish(self, running: &HashSet<String>) -> Result<WorkspaceLayoutApplyPlan, AppError> {
         let PendingApplyPlan {
             preset_layout,
             active_layout,
@@ -304,7 +307,7 @@ impl PendingApplyPlan {
         let mut detached_tree_slot_ids = Vec::new();
         for active_slot in &active_layout.slots {
             let mut slot = active_slot.clone();
-            let state = resolve_slot_with(&facts, &mut slot);
+            let state = resolve_slot_with(&facts, &mut slot, running);
 
             if active_detached_slot_ids.contains(slot.instance_id.as_str()) {
                 if matches!(
@@ -377,7 +380,7 @@ impl PendingApplyPlan {
         layout.detached_contents = detached_contents;
         preserve_detached_file_contents(&mut layout, active_layout);
 
-        let mut slot_states = resolve_layout_slots_with(&facts, &mut layout);
+        let mut slot_states = resolve_layout_slots_with(&facts, &mut layout, running);
         let ended_slot_ids: Vec<String> = slot_states
             .iter()
             .filter(|slot| slot.state == WorkspaceSlotStateKind::Ended)
@@ -409,8 +412,9 @@ pub fn plan_apply_preset(
     connection: &Connection,
     id: &str,
     active_layout: &WorkspaceLayoutDocument,
+    running: &HashSet<String>,
 ) -> Result<WorkspaceLayoutApplyPlan, AppError> {
-    plan_apply_preset_stage(connection, id, active_layout)?.finish()
+    plan_apply_preset_stage(connection, id, active_layout)?.finish(running)
 }
 
 pub fn empty_layout() -> WorkspaceLayoutDocument {
@@ -519,15 +523,20 @@ impl SlotFacts {
 fn resolve_layout_slots_with(
     facts: &SlotFacts,
     layout: &mut WorkspaceLayoutDocument,
+    running: &HashSet<String>,
 ) -> Vec<WorkspaceSlotState> {
     layout
         .slots
         .iter_mut()
-        .map(|slot| resolve_slot_with(facts, slot))
+        .map(|slot| resolve_slot_with(facts, slot, running))
         .collect()
 }
 
-fn resolve_slot_with(facts: &SlotFacts, slot: &mut WorkspaceLayoutSlot) -> WorkspaceSlotState {
+fn resolve_slot_with(
+    facts: &SlotFacts,
+    slot: &mut WorkspaceLayoutSlot,
+    running: &HashSet<String>,
+) -> WorkspaceSlotState {
     let Some(directory) = facts
         .directories
         .get(&slot.directory_id)
@@ -566,7 +575,8 @@ fn resolve_slot_with(facts: &SlotFacts, slot: &mut WorkspaceLayoutSlot) -> Works
             Some(directory.name.clone()),
         );
     }
-    let state = if session.state == "running" {
+    // Liveness comes from the in-memory session table, never from the row's state column.
+    let state = if running.contains(&session.session_id) {
         WorkspaceSlotStateKind::Running
     } else {
         WorkspaceSlotStateKind::Ended
@@ -578,18 +588,20 @@ fn resolve_slot_with(facts: &SlotFacts, slot: &mut WorkspaceLayoutSlot) -> Works
 fn resolve_layout_slots(
     connection: &Connection,
     layout: &mut WorkspaceLayoutDocument,
+    running: &HashSet<String>,
 ) -> Result<Vec<WorkspaceSlotState>, AppError> {
     let facts = SlotFacts::load(connection, layout.slots.iter())?;
-    Ok(resolve_layout_slots_with(&facts, layout))
+    Ok(resolve_layout_slots_with(&facts, layout, running))
 }
 
 #[cfg(test)]
 fn resolve_slot(
     connection: &Connection,
     slot: &mut WorkspaceLayoutSlot,
+    running: &HashSet<String>,
 ) -> Result<WorkspaceSlotState, AppError> {
     let facts = SlotFacts::load(connection, std::iter::once(&*slot))?;
-    Ok(resolve_slot_with(&facts, slot))
+    Ok(resolve_slot_with(&facts, slot, running))
 }
 
 fn slot_state(
@@ -836,6 +848,19 @@ mod tests {
         connection
     }
 
+    /// The fixtures write `running` rows for the sessions they want open; treat those
+    /// sessions as open in memory (production passes the manager's open-session set).
+    fn running_ids(connection: &Connection) -> HashSet<String> {
+        let mut statement = connection
+            .prepare("select session_id from pty_sessions where state = 'running'")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<HashSet<_>, _>>()
+            .unwrap()
+    }
+
     fn layout_with_slot(
         directory_id: i64,
         directory_path: &str,
@@ -987,7 +1012,7 @@ mod tests {
             )
             .unwrap();
 
-        let read = read_current(&connection).unwrap();
+        let read = read_current(&connection, &HashSet::new()).unwrap();
         assert!(matches!(
             read.status,
             WorkspaceLayoutStateStatus::NeedsReset(_)
@@ -997,7 +1022,7 @@ mod tests {
         assert!(error.to_string().contains("显式重置"));
         assert_eq!(reset_current(&mut connection).unwrap(), 9);
         assert!(matches!(
-            read_current(&connection).unwrap().status,
+            read_current(&connection, &HashSet::new()).unwrap().status,
             WorkspaceLayoutStateStatus::Ready
         ));
     }
@@ -1012,7 +1037,7 @@ mod tests {
             )
             .unwrap();
 
-        let read = read_current(&connection).unwrap();
+        let read = read_current(&connection, &HashSet::new()).unwrap();
         assert!(matches!(
             read.status,
             WorkspaceLayoutStateStatus::NeedsReset(_)
@@ -1062,17 +1087,72 @@ mod tests {
             .unwrap();
         let mut layout =
             layout_with_slot(directory.id, &directory.path, "旧项目名", Some(running_id));
-        let states = resolve_layout_slots(&connection, &mut layout).unwrap();
+        let states =
+            resolve_layout_slots(&connection, &mut layout, &running_ids(&connection)).unwrap();
         assert_eq!(states[0].state, WorkspaceSlotStateKind::Running);
         assert_eq!(states[0].current_project_name.as_deref(), Some("新项目名"));
         assert_eq!(layout.slots[0].project_name, "新项目名");
 
         layout.slots[0].directory_path = "C:\\Projects\\different".to_string();
         assert_eq!(
-            resolve_slot(&connection, &mut layout.slots[0])
+            resolve_slot(&connection, &mut layout.slots[0], &running_ids(&connection))
                 .unwrap()
                 .state,
             WorkspaceSlotStateKind::ProjectIdentityMismatch
+        );
+    }
+
+    #[test]
+    fn slot_is_running_only_when_the_session_is_open_in_memory() {
+        let connection = database();
+        let directory =
+            directory_repo::add(&connection, "项目", "C:\\Projects\\work", None).unwrap();
+        pty_session_repo::insert_running(
+            &connection,
+            "s1",
+            directory.id,
+            ToolKey::Claude,
+            &directory.path,
+            1,
+        )
+        .unwrap();
+        let mut slot = layout_with_slot(
+            directory.id,
+            &directory.path,
+            "项目",
+            Some("s1".to_string()),
+        )
+        .slots
+        .remove(0);
+
+        // The database row still says running, but memory does not know the session.
+        assert_eq!(
+            resolve_slot(&connection, &mut slot, &HashSet::new())
+                .unwrap()
+                .state,
+            WorkspaceSlotStateKind::Ended
+        );
+        let open = HashSet::from(["s1".to_string()]);
+        assert_eq!(
+            resolve_slot(&connection, &mut slot, &open).unwrap().state,
+            WorkspaceSlotStateKind::Running
+        );
+
+        // Identity is checked before liveness: a session without a row stays missing.
+        let mut missing = layout_with_slot(
+            directory.id,
+            &directory.path,
+            "项目",
+            Some("ghost".to_string()),
+        )
+        .slots
+        .remove(0);
+        let open_ghost = HashSet::from(["ghost".to_string()]);
+        assert_eq!(
+            resolve_slot(&connection, &mut missing, &open_ghost)
+                .unwrap()
+                .state,
+            WorkspaceSlotStateKind::MissingSession
         );
     }
 
@@ -1130,7 +1210,8 @@ mod tests {
         );
         let mut connection = connection;
         let preset = create_preset(&mut connection, "团队工作区", &preset_layout).unwrap();
-        let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
 
         assert_eq!(plan.layout.slots.len(), 2);
         let session_ids: HashSet<String> = plan
@@ -1165,7 +1246,8 @@ mod tests {
             }]
         );
 
-        let repeated_plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let repeated_plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
         assert_eq!(repeated_plan.layout.slots.len(), 2);
         let still_running: i64 = connection
             .query_row(
@@ -1211,7 +1293,8 @@ mod tests {
         });
         let preset = create_preset(&mut connection, "空布局", &empty_layout()).unwrap();
 
-        let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
 
         assert_eq!(plan.layout.detached_contents, active.detached_contents);
         assert_eq!(plan.layout.slots.len(), 1);
@@ -1318,7 +1401,8 @@ mod tests {
                 document_id: active_document.id.clone(),
             });
 
-        let plan = plan_apply_preset(&connection, &preset.id, &active_layout).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active_layout, &HashSet::new()).unwrap();
 
         assert_eq!(plan.layout.documents, vec![active_document.clone()]);
         assert_eq!(
@@ -1360,7 +1444,8 @@ mod tests {
         );
         let preset = create_preset(&mut connection, "保持窗格", &preset_layout).unwrap();
 
-        let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
 
         assert!(pane_session_ids(&plan.layout.tree, "pane-1")
             .unwrap()
@@ -1408,7 +1493,8 @@ mod tests {
         );
         let preset = create_preset(&mut connection, "按编号归位", &preset_layout).unwrap();
 
-        let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
 
         assert!(pane_session_ids(&plan.layout.tree, "saved-pane-1")
             .unwrap()
@@ -1443,7 +1529,8 @@ mod tests {
         );
         let preset = create_preset(&mut connection, "焦点窗格兜底", &preset_layout).unwrap();
 
-        let plan = plan_apply_preset(&connection, &preset.id, &active).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &active, &running_ids(&connection)).unwrap();
 
         assert!(pane_session_ids(&plan.layout.tree, "saved-pane-1")
             .unwrap()
@@ -1498,7 +1585,8 @@ mod tests {
         preset_layout.focused_pane_id = "pane-2".to_string();
         let preset = create_preset(&mut connection, "结束会话布局", &preset_layout).unwrap();
 
-        let plan = plan_apply_preset(&connection, &preset.id, &empty_layout()).unwrap();
+        let plan =
+            plan_apply_preset(&connection, &preset.id, &empty_layout(), &HashSet::new()).unwrap();
 
         assert!(plan.layout.slots.is_empty());
         assert!(plan.slot_states.is_empty());
@@ -1548,7 +1636,7 @@ mod tests {
                 [&preset.id],
             )
             .unwrap();
-        assert!(plan_apply_preset(&connection, &preset.id, &layout).is_err());
+        assert!(plan_apply_preset(&connection, &preset.id, &layout, &HashSet::new()).is_err());
         assert!(delete_preset(&connection, &preset.id).unwrap());
     }
 
@@ -1577,7 +1665,7 @@ mod tests {
                 &legacy_payload_json(version),
             );
 
-            let read = read_current(&connection).unwrap();
+            let read = read_current(&connection, &HashSet::new()).unwrap();
             assert!(
                 matches!(read.status, WorkspaceLayoutStateStatus::Ready),
                 "v{version}: legacy rows must read as ready"
@@ -1606,7 +1694,7 @@ mod tests {
             let stored: serde_json::Value = serde_json::from_str(&row.payload_json).unwrap();
             assert_eq!(stored["schemaVersion"], 5, "v{version}");
 
-            let reread = read_current(&connection).unwrap();
+            let reread = read_current(&connection, &HashSet::new()).unwrap();
             assert_eq!(reread.layout, Some(layout.clone()), "v{version}");
 
             let again = save_current(&mut connection, 4, &layout).unwrap();
@@ -1631,7 +1719,10 @@ mod tests {
         let path = directory.path().join("db.sqlite");
         let first = connection::init_database(&path).unwrap();
         insert_state_row(&first, 1, 3, &legacy_payload_json(1));
-        let layout = read_current(&first).unwrap().layout.unwrap();
+        let layout = read_current(&first, &HashSet::new())
+            .unwrap()
+            .layout
+            .unwrap();
         let second = connection::open_database(&path).unwrap();
 
         let results: Vec<WorkspaceLayoutSaveResult> = std::thread::scope(|scope| {
@@ -1729,7 +1820,7 @@ mod tests {
         save_current(&mut connection, 1, &layout).unwrap();
 
         let staged = match read_current_stage(&connection).unwrap() {
-            LayoutReadStage::Resolve(pending) => pending.finish(),
+            LayoutReadStage::Resolve(pending) => pending.finish(&running_ids(&connection)),
             LayoutReadStage::Done(_) => panic!("a valid layout must need slot resolution"),
         };
 
@@ -1774,7 +1865,7 @@ mod tests {
 
         let staged = plan_apply_preset_stage(&connection, &preset.id, &active)
             .unwrap()
-            .finish()
+            .finish(&running_ids(&connection))
             .unwrap();
 
         assert_eq!(staged.layout.slots.len(), 1);
@@ -1809,14 +1900,15 @@ mod tests {
             with_session.slots.iter().chain(missing.slots.iter()),
         )
         .unwrap();
+        let running = running_ids(&connection);
         drop(connection);
 
         assert_eq!(
-            resolve_slot_with(&facts, &mut with_session.slots[0]).state,
+            resolve_slot_with(&facts, &mut with_session.slots[0], &running).state,
             WorkspaceSlotStateKind::Running
         );
         assert_eq!(
-            resolve_slot_with(&facts, &mut missing.slots[0]).state,
+            resolve_slot_with(&facts, &mut missing.slots[0], &HashSet::new()).state,
             WorkspaceSlotStateKind::MissingProject
         );
     }
@@ -1865,7 +1957,7 @@ mod tests {
         document_id: &str,
         relative_path: &str,
     ) {
-        let read = read_current(connection).unwrap();
+        let read = read_current(connection, &HashSet::new()).unwrap();
         assert!(
             matches!(read.status, WorkspaceLayoutStateStatus::Ready),
             "{:?}",
@@ -1905,7 +1997,7 @@ mod tests {
         let saved = save_current(connection, revision + 1, &layout).unwrap();
         assert!(saved.saved, "a degraded layout must be saveable: {saved:?}");
 
-        let reread = read_current(connection).unwrap();
+        let reread = read_current(connection, &HashSet::new()).unwrap();
         assert!(matches!(reread.status, WorkspaceLayoutStateStatus::Ready));
         let stable = reread.layout.expect("the saved layout must load");
         assert!(stable.documents.is_empty());
@@ -1947,7 +2039,7 @@ mod tests {
                 rusqlite::params![document_id],
             )
             .unwrap();
-        let read = read_current(&connection).unwrap();
+        let read = read_current(&connection, &HashSet::new()).unwrap();
         assert!(matches!(
             read.status,
             WorkspaceLayoutStateStatus::NeedsReset(_)
@@ -2002,7 +2094,7 @@ mod tests {
                 )
                 .unwrap();
 
-            let plan = plan_apply_preset(&connection, &id, &empty_layout())
+            let plan = plan_apply_preset(&connection, &id, &empty_layout(), &HashSet::new())
                 .unwrap_or_else(|error| panic!("applying the v{version} preset failed: {error:?}"));
 
             plan.layout.validate().unwrap();
