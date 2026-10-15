@@ -480,7 +480,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let db = crate::Db(Arc::new(Mutex::new(connection)));
+        let db = crate::Db::new(connection);
         let manager = PtySessionManager::default();
         // A finish that failed earlier sits in the manager's own queue.
         assert!(manager
@@ -500,11 +500,12 @@ mod tests {
         assert_eq!(report.succeeded, 1);
         assert_eq!(report.dropped, 0);
         assert_eq!(manager.persist_queue.len(), 0);
-        let row = crate::with_connection(&db, |connection| {
-            Ok(pty_session_repo::get_by_id(connection, "s1")?)
-        })
-        .unwrap()
-        .unwrap();
+        let row = db
+            .with_sync("test.pty_session.read", |connection| {
+                Ok(pty_session_repo::get_by_id(connection, "s1")?)
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(row.state, "exited");
         assert_eq!(row.ended_at_ms, Some(10));
         assert_eq!(row.exit_code, Some(0));

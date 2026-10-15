@@ -7,6 +7,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::db::connection;
+use crate::{AppError, Db};
 
 use super::storage_service::StoragePaths;
 
@@ -44,6 +45,16 @@ pub fn cleanup_logs(paths: &StoragePaths) -> Result<()> {
         fs::remove_file(path)?;
     }
     Ok(())
+}
+
+/// Exports the diagnostics report through the business connection. Runs on a blocking thread
+/// (the command wraps it in `blocking_unbounded`).
+pub fn export_with(db: &Db, storage: &StoragePaths, destination: &str) -> Result<(), AppError> {
+    db.with_sync("diagnostics.export", |connection| {
+        export_to_path(connection, storage, destination)?;
+        log::info!("diagnostics export completed");
+        Ok(())
+    })
 }
 
 pub fn export_to_path(

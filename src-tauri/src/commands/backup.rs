@@ -5,8 +5,8 @@ use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::session_service::RestoreGeneration;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
-    blocking, blocking_unbounded, budgets, update_close_behavior_state, with_connection, AppError,
-    CacheDb, CloseBehaviorState, Db,
+    blocking, blocking_unbounded, budgets, update_close_behavior_state, AppError, CacheDb,
+    CloseBehaviorState, Db,
 };
 
 #[tauri::command]
@@ -26,13 +26,7 @@ pub async fn create_backup(
     let db = state.inner().clone();
     let paths = paths.inner().clone();
     blocking_unbounded("backup.create", move || {
-        with_connection(&db, |connection| {
-            Ok(backup_service::create(
-                connection,
-                &paths,
-                BackupReason::Manual,
-            )?)
-        })
+        backup_service::create_with(&db, &paths, BackupReason::Manual)
     })
     .await
 }

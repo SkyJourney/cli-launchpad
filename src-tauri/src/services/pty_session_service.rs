@@ -760,7 +760,7 @@ fn spawn_session_diagnostics(session: Arc<ManagedSession>) -> std::io::Result<()
         .spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(5));
             let pending_bytes = session.flow.pending_bytes();
-            log::info!(
+            log::debug!(
                 "PTY output snapshot session_id={} chunks={} bytes={} acknowledgement_calls={} last_acknowledged_sequence={} pending_bytes={}",
                 session.session_id,
                 session.output_chunks.load(Ordering::Relaxed),

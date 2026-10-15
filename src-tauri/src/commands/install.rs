@@ -254,10 +254,10 @@ mod tests {
             .unwrap();
 
         let failed = latest(Some("network unavailable"), false);
-        let cache = CacheDb(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let cache = CacheDb::new(connection);
         cache_successful_latest_result(&cache, "latest-version:codex", &failed).unwrap();
 
-        let connection = cache.0.lock().unwrap();
+        let connection = cache.lock_for_test();
         let current_timestamp: i64 = connection
             .query_row(
                 "select created_at_ms from cache_entries where key = ?1",
@@ -289,12 +289,12 @@ mod tests {
                 ],
             )
             .unwrap();
-        let cache = CacheDb(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let cache = CacheDb::new(connection);
 
         cache_successful_latest_result(&cache, "latest-version:codex", &latest(None, false))
             .unwrap();
 
-        let connection = cache.0.lock().unwrap();
+        let connection = cache.lock_for_test();
         let timestamp: i64 = connection
             .query_row(
                 "select created_at_ms from cache_entries where key = ?1",

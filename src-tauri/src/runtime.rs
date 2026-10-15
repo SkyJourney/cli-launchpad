@@ -6,16 +6,27 @@
 //! pool, map task failures to one error code, and never run IO on the
 //! async worker. `Db` and `CacheDb` are leaf locks: never take a manager
 //! lock while the closure runs, and never do filesystem work inside it.
-//! A closure passed to `Db::call` must not call `Db::call` or `with_conn` again:
+//! A closure passed to `Db::call` must not call `Db::call` or `Db::with_sync` again:
 //! the connection mutex is not reentrant and the nested call would deadlock.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::Connection;
 use serde_json::json;
 
 use crate::error_codes::{BLOCKING_TIMEOUT, DB_POISONED, INTERNAL_TASK_FAILED};
-use crate::{AppError, CacheDb, Db};
+use crate::AppError;
+
+/// Business and cache databases are distinct managed-state types so commands cannot accidentally
+/// read cache rows through the configuration connection. The connection is private: the only
+/// entry points are `call` (async commands) and `with_sync` (code already off the async workers).
+#[derive(Clone)]
+pub struct Db(Arc<Mutex<Connection>>);
+
+/// The cache database; see `Db`.
+#[derive(Clone)]
+pub struct CacheDb(Arc<Mutex<Connection>>);
 
 // m6-033 moves these into the error code registry.
 
@@ -37,7 +48,7 @@ async fn run_on_blocking_pool<T: Send + 'static>(
 impl Db {
     /// Wraps a connection (the constructor to use outside tests).
     pub fn new(connection: Connection) -> Self {
-        Self(std::sync::Arc::new(std::sync::Mutex::new(connection)))
+        Self(Arc::new(Mutex::new(connection)))
     }
 
     /// Synchronous access for code that is NOT on an async worker: PTY monitor threads,
@@ -55,8 +66,14 @@ impl Db {
     }
 
     #[cfg(test)]
-    pub(crate) fn shared_for_test(&self) -> std::sync::Arc<std::sync::Mutex<Connection>> {
-        std::sync::Arc::clone(&self.0)
+    pub(crate) fn shared_for_test(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.0)
+    }
+
+    /// Test-only direct lock, for assertions that must hold the connection across an `await`.
+    #[cfg(test)]
+    pub(crate) fn lock_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.0.lock().unwrap()
     }
 
     /// The only entry point for business database access.
@@ -79,7 +96,7 @@ impl Db {
 impl CacheDb {
     /// Wraps a connection (the constructor to use outside tests).
     pub fn new(connection: Connection) -> Self {
-        Self(std::sync::Arc::new(std::sync::Mutex::new(connection)))
+        Self(Arc::new(Mutex::new(connection)))
     }
 
     /// Synchronous access with the same rules as `Db::with_sync`.
@@ -92,6 +109,12 @@ impl CacheDb {
             AppError::coded_with_params(DB_POISONED, "缓存数据库连接锁中毒", json!({ "op": op }))
         })?;
         f(&connection)
+    }
+
+    /// Test-only direct lock; see `Db::lock_for_test`.
+    #[cfg(test)]
+    pub(crate) fn lock_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.0.lock().unwrap()
     }
 
     /// The only entry point for cache database access.
@@ -172,11 +195,11 @@ mod tests {
     use crate::{blocking, AppError, CacheDb, Db};
 
     fn memory_db() -> Db {
-        Db(Arc::new(Mutex::new(Connection::open_in_memory().unwrap())))
+        Db::new(Connection::open_in_memory().unwrap())
     }
 
     fn memory_cache() -> CacheDb {
-        CacheDb(Arc::new(Mutex::new(Connection::open_in_memory().unwrap())))
+        CacheDb::new(Connection::open_in_memory().unwrap())
     }
 
     fn code_of(error: &AppError) -> String {

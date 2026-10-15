@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::services::{diagnostics_service, storage_service::StoragePaths};
-use crate::{blocking_unbounded, with_connection, AppError, Db};
+use crate::{blocking_unbounded, AppError, Db};
 
 #[tauri::command]
 pub async fn export_diagnostics_to_path(
@@ -12,11 +12,7 @@ pub async fn export_diagnostics_to_path(
     let db = state.inner().clone();
     let storage = storage.inner().clone();
     blocking_unbounded("diagnostics.export", move || {
-        with_connection(&db, |connection| {
-            diagnostics_service::export_to_path(connection, &storage, &path)?;
-            log::info!("diagnostics export completed");
-            Ok(())
-        })
+        diagnostics_service::export_with(&db, &storage, &path)
     })
     .await
 }

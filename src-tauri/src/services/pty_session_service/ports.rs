@@ -56,17 +56,18 @@ impl PtySessionStore for DbPtySessionStore {
         working_directory: &str,
         started_at_ms: i64,
     ) -> Result<(), AppError> {
-        crate::with_connection(&self.db, |connection| {
-            pty_session_repo::insert_running(
-                connection,
-                session_id,
-                directory_id,
-                tool_key,
-                working_directory,
-                started_at_ms,
-            )?;
-            Ok(())
-        })
+        self.db
+            .with_sync("pty.session.insert_running", |connection| {
+                pty_session_repo::insert_running(
+                    connection,
+                    session_id,
+                    directory_id,
+                    tool_key,
+                    working_directory,
+                    started_at_ms,
+                )?;
+                Ok(())
+            })
     }
 
     fn finish(
@@ -76,7 +77,7 @@ impl PtySessionStore for DbPtySessionStore {
         ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError> {
-        crate::with_connection(&self.db, |connection| {
+        self.db.with_sync("pty.session.finish", |connection| {
             pty_session_repo::finish(connection, session_id, state, ended_at_ms, exit_code)?;
             Ok(())
         })
@@ -110,7 +111,7 @@ impl DbLaunchHistorySink {
 
 impl LaunchHistorySink for DbLaunchHistorySink {
     fn record(&self, entry: LaunchRecord<'_>) -> Result<(), AppError> {
-        crate::with_connection(&self.db, |connection| {
+        self.db.with_sync("launch_history.record", |connection| {
             launch_history_repo::record(
                 connection,
                 entry.directory_id,

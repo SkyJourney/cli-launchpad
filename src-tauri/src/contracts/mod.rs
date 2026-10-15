@@ -1737,14 +1737,10 @@ fn execution_service_has_no_synchronous_database_access() {
     assert!(violations("let c = state\n    .0\n    .lock();").contains(&".0.lock()"));
 
     let source = production_text(include_str!("../services/execution_service.rs"));
-    // The exit cleanup target runs on the exit thread and keeps its one synchronous connection
-    // use until m6-059 introduces the synchronous Db entry point.
-    let scanned = source
-        .split("pub struct ExecutionExitCleanup")
-        .next()
-        .unwrap();
-    assert_eq!(violations(scanned), Vec::<&str>::new());
-    let squashed = squash(scanned);
+    // The exit cleanup target runs on the exit thread and uses `Db::with_sync`; the whole
+    // production text is scanned.
+    assert_eq!(violations(&source), Vec::<&str>::new());
+    let squashed = squash(&source);
     let calls = squashed.matches("db.call(").count() + squashed.matches("db_call(").count();
     assert!(
         calls >= 3,
@@ -2612,4 +2608,305 @@ fn confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field() {
         "confirmAppExit must take requestId"
     );
     assert!(TAURI_TS.contains("invoke<void>(\"confirm_app_exit\", { requestId })"));
+}
+
+// ---- m6-059b: Db privacy, with_sync confinement and the PTY diagnostics log level
+
+/// Files that may call `with_sync` (outside `runtime.rs`), each with the reason the caller is not
+/// on an async worker. At most six files; every entry must actually use it.
+const WITH_SYNC_ALLOWED_FILES: &[(&str, &str)] = &[
+    (
+        "services/pty_session_service/ports.rs",
+        "the PTY monitor threads use these storage ports outside any async context",
+    ),
+    (
+        "services/backup_service.rs",
+        "backup creation and restore run inside blocking closures",
+    ),
+    (
+        "services/config_service.rs",
+        "configuration export and import run inside blocking closures",
+    ),
+    (
+        "services/diagnostics_service.rs",
+        "the diagnostics export runs inside a blocking closure",
+    ),
+    (
+        "services/execution_service.rs",
+        "the exit cleanup target runs on the exit thread",
+    ),
+];
+
+/// Files that legitimately contain `.0.lock()` on a mutex that is not a database connection.
+const NON_DATABASE_LOCK_FILES: &[(&str, &str)] = &[
+    (
+        "lib.rs",
+        "CloseBehaviorState and TrayMenuLabelsState wrap a plain mutex",
+    ),
+    (
+        "commands/app_setting.rs",
+        "reads CloseBehaviorState, not a connection",
+    ),
+];
+
+/// Every production source file under `src` as (path relative to `src` with `/`, text without
+/// `#[cfg(test)]` items). Files that are tests as a whole and the contracts directory are skipped.
+fn production_sources() -> Vec<(String, String)> {
+    fn walk(directory: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(directory)
+            .expect("source directory")
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                walk(&path, root, out);
+                continue;
+            }
+            if path.extension().map_or(true, |extension| extension != "rs") {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative.starts_with("contracts/")
+                || relative.ends_with("/tests.rs")
+                || relative.ends_with("/test_support.rs")
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
+            out.push((relative, strip_cfg_test_items(&text)));
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources = Vec::new();
+    walk(&root, &root, &mut sources);
+    sources
+}
+
+/// Number of `.0.lock()` uses once whitespace is removed, so rustfmt line breaks cannot hide one.
+fn direct_lock_hits(source: &str) -> usize {
+    let squashed: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+    squashed.matches(".0.lock()").count()
+}
+
+/// Whether `needle` occurs in `text` as a whole identifier prefix (the character before it is not
+/// part of an identifier).
+fn contains_identifier(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(index, _)| {
+        text[..index]
+            .chars()
+            .next_back()
+            .map_or(true, |before| !(before.is_alphanumeric() || before == '_'))
+    })
+}
+
+/// Text from the `{` after `marker` to its matching `}`.
+fn brace_block_after(source: &str, marker: &str) -> Option<String> {
+    let at = source.find(marker)?;
+    let after = &source[at..];
+    let open = after.find('{')?;
+    let mut depth = 0usize;
+    for (index, character) in after[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(after[open..open + index + 1].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The bodies of every `async fn` in `source`.
+fn async_fn_bodies(source: &str) -> Vec<String> {
+    let mut bodies = Vec::new();
+    let mut rest = source;
+    while let Some(at) = rest.find("async fn ") {
+        let after = &rest[at + "async fn ".len()..];
+        match brace_block_after(after, "") {
+            Some(body) => {
+                let consumed = after.find(&body).unwrap() + body.len();
+                bodies.push(body);
+                rest = &after[consumed..];
+            }
+            None => break,
+        }
+    }
+    bodies
+}
+
+#[test]
+fn no_direct_database_lock_outside_the_runtime_module() {
+    let sources = production_sources();
+
+    for (path, text) in &sources {
+        if path == "runtime.rs" {
+            continue;
+        }
+        for helper in [
+            "fn with_conn",
+            "fn with_connection",
+            "fn with_cache",
+            "fn with_cache_connection",
+        ] {
+            assert!(
+                !contains_identifier(text, helper),
+                "{path} still defines `{helper}`"
+            );
+        }
+        for call in [
+            "with_conn(",
+            "with_connection(",
+            "with_cache(",
+            "with_cache_connection(",
+        ] {
+            assert!(
+                !contains_identifier(text, call),
+                "{path} still calls the legacy helper `{call}`"
+            );
+        }
+        let hits = direct_lock_hits(text);
+        let allowed = NON_DATABASE_LOCK_FILES
+            .iter()
+            .any(|(allowed_path, _)| allowed_path == path);
+        assert!(
+            hits == 0 || allowed,
+            "{path} locks a connection directly (`.0.lock()`): use Db::call or Db::with_sync"
+        );
+    }
+
+    // The exemption list cannot rot: every listed file really has such a lock.
+    for (allowed_path, reason) in NON_DATABASE_LOCK_FILES {
+        assert!(!reason.trim().is_empty());
+        let text = &sources
+            .iter()
+            .find(|(path, _)| path == allowed_path)
+            .unwrap_or_else(|| panic!("{allowed_path} is missing"))
+            .1;
+        assert!(
+            direct_lock_hits(text) > 0,
+            "{allowed_path} no longer needs its exemption"
+        );
+    }
+
+    // The connection field of both wrappers is private.
+    let runtime = &sources
+        .iter()
+        .find(|(path, _)| path == "runtime.rs")
+        .expect("runtime.rs exists")
+        .1;
+    for declaration in ["pub struct Db(", "pub struct CacheDb("] {
+        let at = runtime
+            .find(declaration)
+            .unwrap_or_else(|| panic!("`{declaration}` must be defined in runtime.rs"));
+        let fields = &runtime[at + declaration.len()..];
+        let fields = &fields[..fields.find(')').unwrap()];
+        assert!(
+            !fields.contains("pub"),
+            "`{declaration}` must not expose its connection: {fields}"
+        );
+    }
+
+    // The scan can see a violation, including one that rustfmt split across lines.
+    assert!(direct_lock_hits("fn f(){ state\n    .0\n    .lock() }") > 0);
+    assert!(direct_lock_hits("fn f(){ state.0.lock() }") > 0);
+    assert!(contains_identifier(
+        "let a = with_connection(&db, f);",
+        "with_connection("
+    ));
+    assert!(!contains_identifier(
+        "let a = db.with_connection_x(f);",
+        "with_connection("
+    ));
+}
+
+#[test]
+fn with_sync_is_confined_to_the_allowed_files() {
+    let sources = production_sources();
+    assert!(
+        WITH_SYNC_ALLOWED_FILES.len() <= 6,
+        "with_sync callers are limited to six files"
+    );
+    for (path, reason) in WITH_SYNC_ALLOWED_FILES {
+        assert!(!reason.trim().is_empty(), "{path} needs a reason");
+    }
+
+    let mut using: Vec<&str> = sources
+        .iter()
+        .filter(|(path, text)| path != "runtime.rs" && text.contains(".with_sync("))
+        .map(|(path, _)| path.as_str())
+        .collect();
+    using.sort();
+    let mut allowed: Vec<&str> = WITH_SYNC_ALLOWED_FILES
+        .iter()
+        .map(|(path, _)| *path)
+        .collect();
+    allowed.sort();
+    // Equality covers both directions: no caller outside the list, and no listed file that has
+    // stopped using it.
+    assert_eq!(using, allowed);
+
+    for (path, text) in &sources {
+        for body in async_fn_bodies(text) {
+            assert!(
+                !body.contains(".with_sync("),
+                "{path}: an async fn calls with_sync (use Db::call)"
+            );
+        }
+    }
+
+    // The scan can see a violation.
+    let bodies = async_fn_bodies("async fn f() { db.with_sync(\"op\", |c| Ok(())) }\nfn g() {}");
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].contains(".with_sync("));
+}
+
+#[test]
+fn pty_diagnostics_thread_logs_at_debug_level() {
+    let sources = production_sources();
+    let service = &sources
+        .iter()
+        .find(|(path, _)| path == "services/pty_session_service.rs")
+        .expect("pty_session_service.rs exists")
+        .1;
+    let body = brace_block_after(service, "fn spawn_session_diagnostics")
+        .expect("spawn_session_diagnostics exists");
+    assert!(body.contains("log::debug!"));
+    assert!(body.contains("PTY output snapshot"));
+    assert!(!body.contains("log::info!"));
+
+    // No other info-level log carries the periodic snapshot text anywhere in the service.
+    for (path, text) in &sources {
+        if !path.starts_with("services/pty_session_service") {
+            continue;
+        }
+        for (index, _) in text.match_indices("log::info!") {
+            // Up to the end of the macro call; no fixed byte window, which could split a
+            // multi-byte character in the Chinese comments.
+            let statement = &text[index..];
+            let statement = &statement[..statement.find(");").unwrap_or(statement.len())];
+            assert!(
+                !statement.contains("PTY output snapshot"),
+                "{path}: the periodic snapshot must stay at debug level"
+            );
+        }
+    }
+
+    // The scan can see a violation.
+    let info_body = brace_block_after(
+        "fn spawn_session_diagnostics() { log::info!(\"PTY output snapshot\"); }",
+        "fn spawn_session_diagnostics",
+    )
+    .unwrap();
+    assert!(info_body.contains("log::info!"));
 }

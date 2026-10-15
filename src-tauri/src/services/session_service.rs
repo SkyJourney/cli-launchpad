@@ -1315,8 +1315,6 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(100));
     }
 
-    use std::sync::Mutex;
-
     use crate::db::cache_connection::init_ephemeral_cache;
 
     fn index_sources(session_id: &str) -> Vec<SessionSearchIndexSource> {
@@ -1401,7 +1399,7 @@ mod tests {
     ) {
         let (captured_tx, captured_rx) = std::sync::mpsc::channel::<u64>();
         let (restored_tx, restored_rx) = std::sync::mpsc::channel::<()>();
-        let cache = crate::CacheDb(Arc::new(Mutex::new(init_ephemeral_cache().unwrap())));
+        let cache = crate::CacheDb::new(init_ephemeral_cache().unwrap());
         let generation = RestoreGeneration::default();
 
         let refresh_cache = cache.clone();
@@ -1412,7 +1410,7 @@ mod tests {
             restored_rx
                 .recv_timeout(Duration::from_secs(10))
                 .expect("the restore did not finish");
-            let connection = refresh_cache.0.lock().unwrap();
+            let connection = refresh_cache.lock_for_test();
             let outcome = write_search_index_if_current(
                 &connection,
                 &refresh_generation,
@@ -1431,7 +1429,7 @@ mod tests {
         // Same order as the restore orchestration: advance first, clear the cache afterwards.
         generation.advance();
         {
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             crate::db::cache_repo::clear_session_search(&connection).unwrap();
         }
         restored_tx.send(()).unwrap();
@@ -1441,12 +1439,12 @@ mod tests {
             "the refresh that started before the restore must be discarded"
         );
         {
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
         }
 
         // Reverse: a refresh that captures the new generation writes normally.
-        let connection = cache.0.lock().unwrap();
+        let connection = cache.lock_for_test();
         let fresh = generation.current();
         let outcome = write_search_index_if_current(
             &connection,
@@ -1463,7 +1461,7 @@ mod tests {
     #[test]
     fn concurrent_refreshes_and_restores_never_leave_stale_documents() {
         let (final_generation, remaining) = run_with_timeout(30, || {
-            let cache = crate::CacheDb(Arc::new(Mutex::new(init_ephemeral_cache().unwrap())));
+            let cache = crate::CacheDb::new(init_ephemeral_cache().unwrap());
             let generation = RestoreGeneration::default();
             std::thread::scope(|scope| {
                 for _ in 0..3 {
@@ -1474,7 +1472,7 @@ mod tests {
                             // Capture first, as the command does; write later under the cache lock.
                             let captured = generation.current();
                             let sources = index_sources(&format!("g{captured}"));
-                            let connection = cache.0.lock().unwrap();
+                            let connection = cache.lock_for_test();
                             write_search_index_if_current(
                                 &connection,
                                 &generation,
@@ -1491,12 +1489,12 @@ mod tests {
                 scope.spawn(move || {
                     for _ in 0..100 {
                         generation.advance();
-                        let connection = cache.0.lock().unwrap();
+                        let connection = cache.lock_for_test();
                         crate::db::cache_repo::clear_session_search(&connection).unwrap();
                     }
                 });
             });
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             (generation.current(), indexed_session_ids(&connection))
         });
 

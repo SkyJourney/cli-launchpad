@@ -2,7 +2,13 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::db::{app_setting_repo, directory_repo};
+use crate::models::app_setting::CloseBehavior;
+use crate::models::backup::BackupReason;
 use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
+use crate::services::app_lifecycle::{AppLifecycle, DataReplaceKind, Operation};
+use crate::services::storage_service::StoragePaths;
+use crate::services::{backup_service, cache_service};
+use crate::{AppError, CacheDb, Db};
 
 /// Snapshot project configuration into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
@@ -29,6 +35,55 @@ pub fn export_json(conn: &Connection) -> Result<String> {
 /// Export the config bundle as JSON to a file path.
 pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
     super::file_service::replace_file(std::path::Path::new(path), export_json(conn)?.as_bytes())
+}
+
+/// Exports the configuration through the business connection. Runs on a blocking thread
+/// (the command wraps it in `blocking_unbounded`).
+pub fn export_with(db: &Db, path: &str) -> Result<(), AppError> {
+    db.with_sync("config.export", |conn| match export_to_path(conn, path) {
+        Ok(()) => {
+            log::info!("configuration export completed");
+            Ok(())
+        }
+        Err(error) => {
+            log::error!("configuration export failed");
+            Err(error.into())
+        }
+    })
+}
+
+/// Imports a configuration file: a pre-import backup, the import and the session cache
+/// invalidation, all under a data-replace permit. Returns the imported close behavior. Runs on a
+/// blocking thread (the command wraps it in `blocking_unbounded`).
+pub fn import_with(
+    db: &Db,
+    cache: &CacheDb,
+    storage: &StoragePaths,
+    lifecycle: &AppLifecycle,
+    path: &str,
+) -> Result<CloseBehavior, AppError> {
+    let bundle = read_bundle_from_path(path)?;
+    // Held until the import and its cache invalidation finish.
+    let _data_replace_permit =
+        lifecycle.admit(Operation::DataReplace(DataReplaceKind::ImportConfig))?;
+    let close_behavior = db.with_sync("config.import", |conn| {
+        backup_service::create(conn, storage, BackupReason::PreImport)?;
+        match import(conn, &bundle) {
+            Ok(()) => {
+                log::info!("configuration import completed");
+                Ok(app_setting_repo::get_close_behavior(conn)?)
+            }
+            Err(error) => {
+                log::error!("configuration import failed");
+                Err(error.into())
+            }
+        }
+    })?;
+    cache.with_sync("config.import_cache", |connection| {
+        cache_service::remove_prefix(connection, "sessions:")?;
+        Ok(())
+    })?;
+    Ok(close_behavior)
 }
 
 /// Import a config bundle from a JSON file path.

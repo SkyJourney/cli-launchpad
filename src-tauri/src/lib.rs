@@ -12,9 +12,8 @@ mod platform;
 mod runtime;
 mod services;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
@@ -23,14 +22,8 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
-pub use runtime::{blocking, blocking_unbounded, bounded};
+pub use runtime::{blocking, blocking_unbounded, bounded, CacheDb, Db};
 
-/// Business and cache databases are distinct managed-state types so commands
-/// cannot accidentally read cache rows through the configuration connection.
-#[derive(Clone)]
-pub struct Db(pub Arc<Mutex<Connection>>);
-#[derive(Clone)]
-pub struct CacheDb(pub Arc<Mutex<Connection>>);
 pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
 pub struct TrayMenuLabelsState(
     pub  Mutex<
@@ -61,44 +54,6 @@ pub fn update_close_behavior_state(
         .map_err(|_| AppError::msg("关闭行为状态锁中毒"))?;
     *current = close_behavior;
     Ok(())
-}
-
-/// Lock the shared connection and run `f` with it, mapping lock poisoning to an
-/// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
-pub fn with_conn<T>(
-    state: &State<'_, Db>,
-    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    with_connection(state.inner(), f)
-}
-
-pub fn with_connection<T>(
-    state: &Db,
-    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let mut conn = state
-        .0
-        .lock()
-        .map_err(|_| AppError::msg("数据库连接锁中毒"))?;
-    f(&mut conn)
-}
-
-pub fn with_cache<T>(
-    state: &State<'_, CacheDb>,
-    f: impl FnOnce(&Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    with_cache_connection(state.inner(), f)
-}
-
-pub fn with_cache_connection<T>(
-    state: &CacheDb,
-    f: impl FnOnce(&Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let connection = state
-        .0
-        .lock()
-        .map_err(|_| AppError::msg("缓存数据库连接锁中毒"))?;
-    f(&connection)
 }
 
 pub fn run() {
@@ -221,7 +176,7 @@ pub fn run() {
                 log::warn!("marked {ended_pty_sessions} stale PTY session(s) as ended");
             }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
-            app.manage(Db(Arc::new(Mutex::new(connection))));
+            app.manage(Db::new(connection));
             let execution_tasks = services::execution_service::ExecutionTaskManager::default();
             let pty_sessions = services::pty_session_service::PtySessionManager::default();
             app.manage(services::app_lifecycle::AppLifecycle::new(
@@ -251,7 +206,7 @@ pub fn run() {
             };
             services::cache_service::remove_prefix(&cache, "sessions:")
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            app.manage(CacheDb(Arc::new(Mutex::new(cache))));
+            app.manage(CacheDb::new(cache));
             app.manage(
                 services::startup_notices::StartupNotices::from_previous_exit(&previous_exit),
             );

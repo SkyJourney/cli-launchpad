@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 597,
-    "Linux": 604,
-    "macOS": 602
+    "Windows": 600,
+    "Linux": 607,
+    "macOS": 605
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -315,7 +315,10 @@
       "contracts::migrated_commands_use_call_or_blocking",
       "runtime::tests::db_with_sync_runs_the_closure_and_returns_its_result",
       "runtime::tests::db_with_sync_maps_a_poisoned_lock_to_db_poisoned",
-      "runtime::tests::cache_db_with_sync_runs_the_closure_and_returns_its_result"
+      "runtime::tests::cache_db_with_sync_runs_the_closure_and_returns_its_result",
+      "contracts::no_direct_database_lock_outside_the_runtime_module",
+      "contracts::with_sync_is_confined_to_the_allowed_files",
+      "contracts::pty_diagnostics_thread_logs_at_debug_level"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

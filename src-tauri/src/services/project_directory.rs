@@ -270,7 +270,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let db = crate::Db(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let db = crate::Db::new(connection);
         (db, directory, record)
     }
 
@@ -341,7 +341,7 @@ mod tests {
     async fn open_ref_reports_a_missing_directory_row_as_not_found() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::connection::apply_migrations(&connection).unwrap();
-        let db = crate::Db(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let db = crate::Db::new(connection);
 
         let error = match ProjectDirectory::open_ref(&db, 999, None).await {
             Ok(_) => panic!("a missing row must be an error"),
@@ -369,7 +369,7 @@ mod tests {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::connection::apply_migrations(&connection).unwrap();
         let record = directory_repo::add(&connection, "project", "relative/project", None).unwrap();
-        let db = crate::Db(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let db = crate::Db::new(connection);
 
         let error = match ProjectDirectory::open_ref(&db, record.id, None).await {
             Ok(_) => panic!("a relative path must be refused"),
@@ -393,7 +393,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let db = crate::Db(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+        let db = crate::Db::new(connection);
         let (root, project) = ProjectDirectory::open_ref(&db, record.id, None)
             .await
             .unwrap();

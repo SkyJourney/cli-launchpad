@@ -195,7 +195,6 @@ mod tests {
     use super::ensure_main_window;
     use super::open_project;
     use crate::{AppError, Db};
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn only_main_window_can_manage_file_grants() {
@@ -208,7 +207,7 @@ mod tests {
     fn memory_db() -> Db {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::connection::apply_migrations(&connection).unwrap();
-        Db(Arc::new(Mutex::new(connection)))
+        Db::new(connection)
     }
 
     fn code_of(error: &AppError) -> String {
@@ -224,7 +223,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().display().to_string();
         let record = {
-            let connection = db.0.lock().unwrap();
+            let connection = db.lock_for_test();
             crate::db::directory_repo::add(&connection, "project", &path, None).unwrap()
         };
 
@@ -242,7 +241,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().display().to_string();
         let record = {
-            let connection = db.0.lock().unwrap();
+            let connection = db.lock_for_test();
             crate::db::directory_repo::add(&connection, "project", &path, None).unwrap()
         };
 

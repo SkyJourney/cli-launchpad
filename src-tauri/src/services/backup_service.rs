@@ -45,6 +45,18 @@ pub fn create(
     create_protecting(connection, paths, reason, None)
 }
 
+/// Creates a backup from the business connection. Runs on a blocking thread (the command wraps it
+/// in `blocking_unbounded`); the connection lock is held for the whole backup.
+pub fn create_with(
+    db: &Db,
+    paths: &StoragePaths,
+    reason: BackupReason,
+) -> Result<BackupManifest, AppError> {
+    db.with_sync("backup.create", |connection| {
+        Ok(create(connection, paths, reason)?)
+    })
+}
+
 fn create_protecting(
     connection: &Connection,
     paths: &StoragePaths,
@@ -157,7 +169,7 @@ pub fn restore_with_runtime_invalidation(
         lifecycle.admit(crate::services::app_lifecycle::Operation::DataReplace(
             crate::services::app_lifecycle::DataReplaceKind::RestoreBackup,
         ))?;
-    let (manifest, close_behavior) = crate::with_connection(db, |connection| {
+    let (manifest, close_behavior) = db.with_sync("backup.restore", |connection| {
         let manifest = restore(connection, paths, backup_id)?;
         // The business database has been replaced: any index refresh that captured an
         // older generation must not write to the cache any more (SEAM-20).
@@ -176,7 +188,7 @@ pub fn restore_with_runtime_invalidation(
         Ok((manifest, close_behavior))
     })?;
     // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
-    let cache_warning = crate::with_cache_connection(cache, |connection| {
+    let cache_warning = cache.with_sync("backup.restore_cache", |connection| {
         let targeted = (|| -> anyhow::Result<()> {
             crate::services::cache_service::remove_prefix(connection, "sessions:")?;
             crate::services::cache_service::remove_prefix(connection, "workspace-file-index:")?;
@@ -302,7 +314,6 @@ mod tests {
     use crate::services::cache_service;
     use crate::services::session_service::RestoreGeneration;
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
     fn setup() -> (tempfile::TempDir, StoragePaths, Connection) {
@@ -671,15 +682,15 @@ mod tests {
         let backup = create(&connection, &paths, BackupReason::Manual).unwrap();
         app_setting_repo::set_close_behavior(&connection, CloseBehavior::MinimizeToTray).unwrap();
         directory_repo::add(&connection, "B", "C:\\B", None).unwrap();
-        let db = Db(Arc::new(Mutex::new(connection)));
-        let cache = CacheDb(Arc::new(Mutex::new(
+        let db = Db::new(connection);
+        let cache = CacheDb::new(
             crate::db::cache_connection::init_cache(&directory.path().join("cache.db")).unwrap(),
-        )));
+        );
         (directory, paths, db, cache, backup)
     }
 
     fn directory_names(db: &Db) -> Vec<String> {
-        directory_repo::list(&db.0.lock().unwrap())
+        directory_repo::list(&db.lock_for_test())
             .unwrap()
             .into_iter()
             .map(|directory| directory.name)
@@ -692,9 +703,7 @@ mod tests {
         {
             let (_directory, paths, db, cache, backup) = scenario();
             cache
-                .0
-                .lock()
-                .unwrap()
+                .lock_for_test()
                 .execute("drop table cache_entries", [])
                 .unwrap();
             let notifier = RecordingNotifier::ok();
@@ -717,7 +726,7 @@ mod tests {
         // 子场景 B：正常恢复，缓存被清空。
         {
             let (_directory, paths, db, cache, backup) = scenario();
-            cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+            cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
             let notifier = RecordingNotifier::ok();
             let outcome = restore_with_runtime_invalidation(
                 &db,
@@ -731,18 +740,17 @@ mod tests {
             .unwrap();
             assert!(outcome.cache_warning.is_none());
             assert_eq!(notifier.calls(), 1);
-            assert!(cache_service::get_any::<String>(
-                &cache.0.lock().unwrap(),
-                "sessions:1:claude"
-            )
-            .unwrap()
-            .is_none());
+            assert!(
+                cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
+                    .unwrap()
+                    .is_none()
+            );
         }
 
         // 子场景 C：备份不存在，数据库未被替换，缓存与守卫都保持原样。
         {
             let (_directory, paths, db, cache, _backup) = scenario();
-            cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+            cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
             let notifier = RecordingNotifier::ok();
             let lifecycle = test_lifecycle();
             let result = restore_with_runtime_invalidation(
@@ -756,12 +764,11 @@ mod tests {
             );
             assert!(result.is_err());
             assert_eq!(notifier.calls(), 0);
-            assert!(cache_service::get_any::<String>(
-                &cache.0.lock().unwrap(),
-                "sessions:1:claude"
-            )
-            .unwrap()
-            .is_some());
+            assert!(
+                cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
+                    .unwrap()
+                    .is_some()
+            );
             assert_eq!(directory_names(&db).len(), 2);
             // 反向断言：许可已释放，同一个 lifecycle 实例仍能准入 PTY 启动。
             assert!(lifecycle
@@ -774,7 +781,7 @@ mod tests {
     fn restore_invalidates_session_index_and_file_index_caches() {
         let (_directory, paths, db, cache, backup) = scenario();
         {
-            let conn = cache.0.lock().unwrap();
+            let conn = cache.lock_for_test();
             cache_service::put(&conn, "sessions:1:claude", &"x").unwrap();
             cache_service::put(&conn, "workspace-file-index:1", &"y").unwrap();
             session_search_repo::refresh(
@@ -814,7 +821,7 @@ mod tests {
         )
         .unwrap();
         {
-            let conn = cache.0.lock().unwrap();
+            let conn = cache.lock_for_test();
             assert!(cache_service::get_any::<String>(&conn, "sessions:1:claude")
                 .unwrap()
                 .is_none());
@@ -837,7 +844,7 @@ mod tests {
     #[test]
     fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
         let (_directory, paths, db, cache, backup) = scenario();
-        cache_service::put(&cache.0.lock().unwrap(), "sessions:1:claude", &"x").unwrap();
+        cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
         let lifecycle = test_lifecycle();
         let notifier = RecordingNotifier::ok();
         let starting = lifecycle
@@ -865,7 +872,7 @@ mod tests {
         assert_eq!(directory_names(&db).len(), 2);
         // 反向断言：失败时缓存未被清理。
         assert!(
-            cache_service::get_any::<String>(&cache.0.lock().unwrap(), "sessions:1:claude")
+            cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
                 .unwrap()
                 .is_some()
         );
@@ -985,7 +992,7 @@ mod tests {
         .unwrap();
         assert_eq!(generation.current(), g0 + 1);
         {
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             let outcome = write_search_index_if_current(
                 &connection,
                 &generation,
@@ -997,7 +1004,7 @@ mod tests {
             assert!(matches!(outcome, IndexWriteOutcome::Discarded));
             assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
         }
-        let connection = cache.0.lock().unwrap();
+        let connection = cache.lock_for_test();
         let fresh = generation.current();
         let outcome = write_search_index_if_current(
             &connection,
@@ -1033,7 +1040,7 @@ mod tests {
         assert_eq!(generation.current(), g0);
         assert_eq!(notifier.calls(), 0);
         {
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             let outcome = write_search_index_if_current(
                 &connection,
                 &generation,
@@ -1078,9 +1085,7 @@ mod tests {
     fn generation_advances_even_when_cache_cleanup_fails() {
         let (_directory, paths, db, cache, backup) = scenario();
         cache
-            .0
-            .lock()
-            .unwrap()
+            .lock_for_test()
             .execute("drop table cache_entries", [])
             .unwrap();
         let generation = RestoreGeneration::default();
@@ -1099,7 +1104,7 @@ mod tests {
         assert!(outcome.cache_warning.is_some());
         assert_eq!(generation.current(), g0 + 1);
         {
-            let connection = cache.0.lock().unwrap();
+            let connection = cache.lock_for_test();
             let outcome = write_search_index_if_current(
                 &connection,
                 &generation,
@@ -1110,7 +1115,7 @@ mod tests {
             .unwrap();
             assert!(matches!(outcome, IndexWriteOutcome::Discarded));
         }
-        let connection = cache.0.lock().unwrap();
+        let connection = cache.lock_for_test();
         let fresh = generation.current();
         let outcome = write_search_index_if_current(
             &connection,

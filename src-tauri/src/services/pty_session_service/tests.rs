@@ -2145,7 +2145,7 @@ fn create_rejects_a_payload_for_another_project_before_spawning() {
     let manager = PtySessionManager::default();
     let connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::db::connection::apply_migrations(&connection).unwrap();
-    let db = crate::Db(Arc::new(std::sync::Mutex::new(connection)));
+    let db = crate::Db::new(connection);
     let directory = tempfile::tempdir().unwrap();
     let handle =
         cap_std::fs::Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority()).unwrap();
@@ -2184,7 +2184,7 @@ fn create_rejects_a_payload_for_another_project_before_spawning() {
     assert_eq!(serialized["code"], "project.identity_changed");
     assert!(error.to_string().contains("项目目录在启动准备期间发生变化"));
     assert_eq!(manager.active_count(), 0);
-    let connection = db.0.lock().unwrap();
+    let connection = db.lock_for_test();
     for table in ["pty_sessions", "launch_history"] {
         let rows: i64 = connection
             .query_row(&format!("select count(*) from {table}"), [], |row| {
@@ -2203,7 +2203,7 @@ fn create_verifies_the_directory_identity_before_spawning() {
     let manager = PtySessionManager::default();
     let connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::db::connection::apply_migrations(&connection).unwrap();
-    let db = crate::Db(Arc::new(std::sync::Mutex::new(connection)));
+    let db = crate::Db::new(connection);
     let current = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
     let other_handle =
@@ -2240,7 +2240,7 @@ fn create_verifies_the_directory_identity_before_spawning() {
     assert_eq!(serialized["code"], "project.identity_changed");
     assert!(error.to_string().contains("项目目录在启动准备期间发生变化"));
     assert_eq!(manager.active_count(), 0);
-    let connection = db.0.lock().unwrap();
+    let connection = db.lock_for_test();
     let rows: i64 = connection
         .query_row("select count(*) from pty_sessions", [], |row| row.get(0))
         .unwrap();

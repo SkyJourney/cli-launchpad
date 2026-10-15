@@ -1016,7 +1016,7 @@ impl crate::services::exit_cleanup::ExitCleanupTarget for ExecutionExitCleanup {
         if leftover != 0 {
             log::warn!("{leftover} execution task(s) did not stop in time during exit");
         }
-        let interrupted = crate::with_connection(&self.db, |connection| {
+        let interrupted = self.db.with_sync("exec.exit_cleanup", |connection| {
             Ok(execution_task_repo::mark_unfinished_interrupted(
                 connection,
                 now_ms(),
@@ -1245,7 +1245,6 @@ mod tests {
         use crate::models::install::{InstallKind, InstallPlan};
         use crate::models::tool::ToolKey;
         use crate::services::exit_cleanup::ExitCleanupTarget;
-        use std::sync::Arc;
 
         fn plan(tool_key: ToolKey) -> InstallPlan {
             InstallPlan {
@@ -1295,7 +1294,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let db = Db(Arc::new(Mutex::new(connection)));
+        let db = Db::new(connection);
 
         let manager = ExecutionTaskManager::default();
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
@@ -1323,7 +1322,7 @@ mod tests {
         assert_eq!(manager.active_count(), 0);
         assert!(rx.try_recv().is_ok());
         {
-            let connection = db.0.lock().unwrap();
+            let connection = db.lock_for_test();
             for id in ["t1", "t2"] {
                 let task = execution_task_repo::get(&connection, id).unwrap().unwrap();
                 assert_eq!(task.status, ExecutionStatus::Interrupted);
@@ -1442,7 +1441,7 @@ mod tests {
         if migrated {
             crate::db::connection::apply_migrations(&connection).unwrap();
         }
-        Db(Arc::new(Mutex::new(connection)))
+        Db::new(connection)
     }
 
     #[test]
@@ -1511,7 +1510,7 @@ mod tests {
         let db = memory_db(true);
         let manager = ExecutionTaskManager::default();
         // Holding the connection lock makes the write block until we let go.
-        let held = db.0.lock().unwrap();
+        let held = db.lock_for_test();
         let writer = {
             let manager = manager.clone();
             let db = db.clone();
