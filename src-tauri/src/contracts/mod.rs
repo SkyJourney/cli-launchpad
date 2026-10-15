@@ -1562,7 +1562,101 @@ fn migrated_commands_use_the_unified_execution_helpers() {
         !pty.contains("with_conn("),
         "create_pty_session must not use the legacy helper"
     );
-    assert!(pty.contains("lookup_launch_directory"));
+    assert!(pty.contains("ensure_tool_configured"));
+    assert!(pty.contains("open_ref("));
+}
+
+#[test]
+fn pty_launch_validates_the_project_directory_exactly_once() {
+    fn violations(source: &str, forbidden: &[&'static str]) -> Vec<&'static str> {
+        forbidden
+            .iter()
+            .copied()
+            .filter(|needle| source.contains(needle))
+            .collect()
+    }
+
+    // The scan must be able to see a violation at all.
+    assert_eq!(
+        violations("fn f() { validate_path(x); }", &["validate_path("]),
+        vec!["validate_path("]
+    );
+
+    let command = production_text(include_str!("../commands/pty_session.rs"));
+    assert_eq!(
+        command.matches("ProjectDirectory::open_ref(").count(),
+        1,
+        "create_pty_session opens the project exactly once"
+    );
+    assert_eq!(
+        violations(
+            &command,
+            &[
+                "validate_path(",
+                "lookup_launch_directory(",
+                "resolve_launch_directory(",
+                "paths_equal(",
+            ]
+        ),
+        Vec::<&str>::new()
+    );
+
+    for (name, source) in [
+        (
+            "pty_session_service.rs",
+            include_str!("../services/pty_session_service.rs"),
+        ),
+        (
+            "pty_session_service/flow.rs",
+            include_str!("../services/pty_session_service/flow.rs"),
+        ),
+        (
+            "pty_session_service/handoff.rs",
+            include_str!("../services/pty_session_service/handoff.rs"),
+        ),
+        (
+            "pty_session_service/input.rs",
+            include_str!("../services/pty_session_service/input.rs"),
+        ),
+        (
+            "pty_session_service/persistence.rs",
+            include_str!("../services/pty_session_service/persistence.rs"),
+        ),
+        (
+            "pty_session_service/ports.rs",
+            include_str!("../services/pty_session_service/ports.rs"),
+        ),
+        (
+            "pty_session_service/process.rs",
+            include_str!("../services/pty_session_service/process.rs"),
+        ),
+        (
+            "pty_session_service/registry.rs",
+            include_str!("../services/pty_session_service/registry.rs"),
+        ),
+        (
+            "pty_session_service/route.rs",
+            include_str!("../services/pty_session_service/route.rs"),
+        ),
+        (
+            "pty_session_service/session.rs",
+            include_str!("../services/pty_session_service/session.rs"),
+        ),
+        (
+            "pty_session_service/window.rs",
+            include_str!("../services/pty_session_service/window.rs"),
+        ),
+    ] {
+        let source = production_text(source);
+        assert_eq!(
+            violations(
+                &source,
+                &["paths_equal(", "directory_repo::get(", "validate_path("]
+            ),
+            Vec::<&str>::new(),
+            "services/{name} must not validate the project directory again"
+        );
+    }
 }
 
 #[test]

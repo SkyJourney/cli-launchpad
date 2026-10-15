@@ -17,6 +17,7 @@ use crate::models::workspace_layout::{
     WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
     MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
+use crate::platform::path_identity::ProjectPathKey;
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
 pub enum LayoutReadStage {
@@ -491,7 +492,7 @@ fn source_layout_version(payload_json: &str) -> Option<i64> {
 
 /// Directory and session rows a set of slots refers to, loaded in one
 /// database stage so slot states can be resolved afterwards without the
-/// connection (path identity comparison canonicalizes paths).
+/// connection (the path identity comparison is lexical and needs no filesystem).
 #[derive(Debug, Default)]
 pub struct SlotFacts {
     directories: HashMap<i64, Option<Directory>>,
@@ -544,7 +545,7 @@ fn resolve_slot_with(
     else {
         return slot_state(slot, WorkspaceSlotStateKind::MissingProject, None);
     };
-    if !crate::platform::path_identity::paths_equal(&directory.path, &slot.directory_path) {
+    if ProjectPathKey::of(&directory.path) != ProjectPathKey::of(&slot.directory_path) {
         return slot_state(slot, WorkspaceSlotStateKind::ProjectIdentityMismatch, None);
     }
     slot.project_name.clone_from(&directory.name);
@@ -564,10 +565,8 @@ fn resolve_slot_with(
     };
     if session.directory_id != slot.directory_id
         || session.tool_key != slot.tool_key
-        || !crate::platform::path_identity::paths_equal(
-            &session.working_directory,
-            &slot.directory_path,
-        )
+        || ProjectPathKey::of(&session.working_directory)
+            != ProjectPathKey::of(&slot.directory_path)
     {
         return slot_state(
             slot,
@@ -1100,6 +1099,44 @@ mod tests {
                 .state,
             WorkspaceSlotStateKind::ProjectIdentityMismatch
         );
+    }
+
+    #[test]
+    fn slot_identity_compares_stored_paths_lexically() {
+        let connection = database();
+        // Nothing here exists on disk: the comparison must not touch the filesystem.
+        #[cfg(windows)]
+        let stored = "C:\\Projects\\l2-demo";
+        #[cfg(not(windows))]
+        let stored = "/projects/l2-demo";
+        let directory = directory_repo::add(&connection, "项目", stored, None).unwrap();
+
+        let mut same_identity = vec![
+            stored.to_string(),
+            format!("{stored}{}", std::path::MAIN_SEPARATOR),
+        ];
+        #[cfg(windows)]
+        {
+            same_identity.push(stored.to_uppercase());
+            same_identity.push(format!(r"\\?\{stored}"));
+        }
+        for path in same_identity {
+            let mut slot = layout_with_slot(directory.id, &path, "项目", None)
+                .slots
+                .remove(0);
+            let state = resolve_slot(&connection, &mut slot, &HashSet::new()).unwrap();
+            assert_eq!(
+                state.state,
+                WorkspaceSlotStateKind::Pending,
+                "{path} must match the stored path"
+            );
+        }
+
+        let mut other = layout_with_slot(directory.id, "/another/place", "项目", None)
+            .slots
+            .remove(0);
+        let state = resolve_slot(&connection, &mut other, &HashSet::new()).unwrap();
+        assert_eq!(state.state, WorkspaceSlotStateKind::ProjectIdentityMismatch);
     }
 
     #[test]

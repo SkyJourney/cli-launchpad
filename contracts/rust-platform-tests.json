@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 556,
-    "Linux": 562,
-    "macOS": 560
+    "Windows": 562,
+    "Linux": 568,
+    "macOS": 566
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -275,7 +275,13 @@
       "services::project_directory::tests::open_ref_reports_a_missing_directory_row_as_not_found",
       "services::project_directory::tests::open_ref_fails_when_the_directory_no_longer_exists",
       "services::project_directory::tests::verify_unchanged_detects_a_replaced_directory",
-      "services::project_directory::tests::verify_unchanged_accepts_the_same_directory"
+      "services::project_directory::tests::verify_unchanged_accepts_the_same_directory",
+      "services::pty_session_service::tests::create_rejects_a_payload_for_another_project_before_spawning",
+      "services::pty_session_service::tests::create_verifies_the_directory_identity_before_spawning",
+      "services::launch_service::tests::ensure_tool_configured_rejects_an_unconfigured_tool",
+      "services::workspace_layout_service::tests::slot_identity_compares_stored_paths_lexically",
+      "contracts::pty_launch_validates_the_project_directory_exactly_once",
+      "services::project_directory::tests::open_ref_rejects_a_relative_stored_path"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

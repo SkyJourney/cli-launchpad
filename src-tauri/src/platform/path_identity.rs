@@ -89,10 +89,6 @@ impl ProjectPathKey {
             Self(unix_lexical(path).to_string())
         }
     }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

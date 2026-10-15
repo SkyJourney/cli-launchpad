@@ -2097,6 +2097,14 @@ fn a_failed_row_write_in_create_registers_first_and_leaves_no_session() {
         tool_args: vec!["-c".to_string(), "sleep 60".to_string()],
     };
     let (channel, _sink) = recording_channel();
+    let handle =
+        cap_std::fs::Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority()).unwrap();
+    let project = crate::services::project_directory::ProjectRef {
+        id: 1,
+        path: payload.directory.clone(),
+        key: crate::platform::path_identity::ProjectPathKey::of(&payload.directory),
+        root: crate::platform::path_identity::ProjectRootIdentity::of(&handle).unwrap(),
+    };
 
     let result = {
         let manager = manager.clone();
@@ -2104,7 +2112,7 @@ fn a_failed_row_write_in_create_registers_first_and_leaves_no_session() {
             manager
                 .create_inner(
                     &store,
-                    1,
+                    &project,
                     ToolKey::Claude,
                     &payload,
                     size(),
@@ -2127,4 +2135,114 @@ fn a_failed_row_write_in_create_registers_first_and_leaves_no_session() {
     let calls = fake.calls();
     assert_eq!(calls.len(), 1);
     assert!(calls[0].starts_with("insert:"));
+}
+
+#[test]
+fn create_rejects_a_payload_for_another_project_before_spawning() {
+    use crate::platform::path_identity::{ProjectPathKey, ProjectRootIdentity};
+    use crate::services::project_directory::ProjectRef;
+
+    let manager = PtySessionManager::default();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::db::connection::apply_migrations(&connection).unwrap();
+    let db = crate::Db(Arc::new(std::sync::Mutex::new(connection)));
+    let directory = tempfile::tempdir().unwrap();
+    let handle =
+        cap_std::fs::Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority()).unwrap();
+    #[cfg(windows)]
+    let (project_path, other_path) = ("C:/p/a", "C:/p/b");
+    #[cfg(not(windows))]
+    let (project_path, other_path) = ("/p/a", "/p/b");
+    // No directory row exists for id 999: the check must not depend on the database.
+    let project = ProjectRef {
+        id: 999,
+        path: project_path.to_string(),
+        key: ProjectPathKey::of(project_path),
+        root: ProjectRootIdentity::of(&handle).unwrap(),
+    };
+    let payload = launch_service::CliLaunchPayload {
+        directory: other_path.to_string(),
+        tool_executable: "cli-launchpad-test-missing-executable".to_string(),
+        tool_args: Vec::new(),
+    };
+    let (channel, _sink) = recording_channel();
+
+    let error = manager
+        .create(
+            &db,
+            &project,
+            ToolKey::Claude,
+            &payload,
+            None,
+            size(),
+            "main",
+            channel,
+        )
+        .unwrap_err();
+
+    let serialized = serde_json::to_value(&error).unwrap();
+    assert_eq!(serialized["code"], "project.identity_changed");
+    assert!(error.to_string().contains("项目目录在启动准备期间发生变化"));
+    assert_eq!(manager.active_count(), 0);
+    let connection = db.0.lock().unwrap();
+    for table in ["pty_sessions", "launch_history"] {
+        let rows: i64 = connection
+            .query_row(&format!("select count(*) from {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0, "{table} must stay empty");
+    }
+}
+
+#[test]
+fn create_verifies_the_directory_identity_before_spawning() {
+    use crate::platform::path_identity::{ProjectPathKey, ProjectRootIdentity};
+    use crate::services::project_directory::ProjectRef;
+
+    let manager = PtySessionManager::default();
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    crate::db::connection::apply_migrations(&connection).unwrap();
+    let db = crate::Db(Arc::new(std::sync::Mutex::new(connection)));
+    let current = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let other_handle =
+        cap_std::fs::Dir::open_ambient_dir(other.path(), cap_std::ambient_authority()).unwrap();
+    let path = current.path().to_str().unwrap().to_string();
+    // The key matches the payload, but the recorded handle identity is another directory's.
+    let project = ProjectRef {
+        id: 1,
+        path: path.clone(),
+        key: ProjectPathKey::of(&path),
+        root: ProjectRootIdentity::of(&other_handle).unwrap(),
+    };
+    let payload = launch_service::CliLaunchPayload {
+        directory: path,
+        tool_executable: "cli-launchpad-test-missing-executable".to_string(),
+        tool_args: Vec::new(),
+    };
+    let (channel, _sink) = recording_channel();
+
+    let error = manager
+        .create(
+            &db,
+            &project,
+            ToolKey::Claude,
+            &payload,
+            None,
+            size(),
+            "main",
+            channel,
+        )
+        .unwrap_err();
+
+    let serialized = serde_json::to_value(&error).unwrap();
+    assert_eq!(serialized["code"], "project.identity_changed");
+    assert!(error.to_string().contains("项目目录在启动准备期间发生变化"));
+    assert_eq!(manager.active_count(), 0);
+    let connection = db.0.lock().unwrap();
+    let rows: i64 = connection
+        .query_row("select count(*) from pty_sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0);
 }

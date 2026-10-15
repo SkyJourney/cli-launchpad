@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 
-use crate::db::{directory_repo, tool_repo};
+#[cfg(test)]
+use crate::db::directory_repo;
+use crate::db::tool_repo;
 use crate::models::tool::ToolKey;
 use crate::services::cli_adapters::{self, CliAdapter};
 
@@ -15,8 +17,18 @@ pub(crate) struct CliLaunchPayload {
     pub tool_args: Vec<String>,
 }
 
-/// Database stage only. The caller validates the path outside the database lock
-/// (directory_service::validate_path).
+/// Database stage only: the tool must be configured. The project directory itself is resolved by
+/// `ProjectDirectory::open_ref`.
+pub(crate) fn ensure_tool_configured(connection: &Connection, tool_key: ToolKey) -> Result<()> {
+    if !tool_repo::exists(connection, tool_key)? {
+        return Err(anyhow!("tool {} is not configured", tool_key.as_str()));
+    }
+    Ok(())
+}
+
+/// Test-only database stage kept from m6-030: the directory row plus the tool check. Production
+/// code resolves the project with `ProjectDirectory::open_ref` and `ensure_tool_configured`.
+#[cfg(test)]
 pub(crate) fn lookup_launch_directory(
     connection: &Connection,
     directory_id: i64,
@@ -24,9 +36,7 @@ pub(crate) fn lookup_launch_directory(
 ) -> Result<String> {
     let directory = directory_repo::get(connection, directory_id)?
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))?;
-    if !tool_repo::exists(connection, tool_key)? {
-        return Err(anyhow!("tool {} is not configured", tool_key.as_str()));
-    }
+    ensure_tool_configured(connection, tool_key)?;
     Ok(directory.path)
 }
 
@@ -92,7 +102,8 @@ fn apply_resume(payload: &mut CliLaunchPayload, tool_key: ToolKey, session_id: &
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_resume, resolve_launch_directory, resolve_payload_with_resolver, CliLaunchPayload,
+        apply_resume, ensure_tool_configured, resolve_launch_directory,
+        resolve_payload_with_resolver, CliLaunchPayload,
     };
 
     #[tokio::test]
@@ -303,6 +314,24 @@ mod tests {
         )
         .unwrap_err();
 
+        assert!(
+            error.to_string().contains("is not configured"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn ensure_tool_configured_rejects_an_unconfigured_tool() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+
+        assert!(ensure_tool_configured(&connection, crate::models::tool::ToolKey::Claude).is_ok());
+
+        connection
+            .execute("delete from tools where key = 'claude'", [])
+            .unwrap();
+        let error =
+            ensure_tool_configured(&connection, crate::models::tool::ToolKey::Claude).unwrap_err();
         assert!(
             error.to_string().contains("is not configured"),
             "unexpected error: {error}"

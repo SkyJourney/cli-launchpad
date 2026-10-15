@@ -45,7 +45,6 @@ use crate::models::window_kind::{is_main_label, main_window_label, WindowKind, W
 use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
 
 use crate::{
-    db::directory_repo,
     models::{
         launch_history::LaunchAction,
         pty_session::{
@@ -54,7 +53,8 @@ use crate::{
         tool::ToolKey,
     },
     platform::execution_process::{attach_pty_or_terminate, ProcessTree},
-    services::{directory_service, launch_service},
+    platform::path_identity::ProjectPathKey,
+    services::{launch_service, project_directory::ProjectRef},
     AppError, Db,
 };
 
@@ -172,7 +172,7 @@ impl PtySessionManager {
     pub fn create(
         &self,
         db: &Db,
-        directory_id: i64,
+        project: &ProjectRef,
         tool_key: ToolKey,
         payload: &launch_service::CliLaunchPayload,
         resume_session_id: Option<&str>,
@@ -180,22 +180,21 @@ impl PtySessionManager {
         window_label: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
-        let directory = crate::with_connection(db, |connection| {
-            directory_repo::get(connection, directory_id)?
-                .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))
-        })?;
-        if !crate::platform::path_identity::paths_equal(&directory.path, &payload.directory) {
+        // The project was opened and checked once by `ProjectDirectory::open_ref`; here only the
+        // payload is compared (lexically) and the directory handle identity is re-verified. The
+        // spawn below still resolves its working directory by path (a narrow, inherent window).
+        if ProjectPathKey::of(&payload.directory) != project.key {
             return Err(AppError::coded(
                 crate::error_codes::PROJECT_IDENTITY_CHANGED,
                 "项目目录在启动准备期间发生变化，请重试",
             ));
         }
-        let directory_path = directory.path;
+        project.verify_unchanged()?;
         let store: Arc<dyn PtySessionStore> = Arc::new(self.retrying_store(db));
         let history = DbLaunchHistorySink::new(db.clone());
         let result = self.create_inner(
             &store,
-            directory_id,
+            project,
             tool_key,
             payload,
             size,
@@ -213,8 +212,8 @@ impl PtySessionManager {
             .map(|session| session.session_id.as_str());
         let error_category = result.as_ref().err().map(|_| "launch_failed");
         if let Err(error) = history.record(LaunchRecord {
-            directory_id,
-            directory_path: Some(&directory_path),
+            directory_id: project.id,
+            directory_path: Some(&project.path),
             tool_key,
             action,
             success: result.is_ok(),
@@ -229,7 +228,7 @@ impl PtySessionManager {
     fn create_inner(
         &self,
         store: &Arc<dyn PtySessionStore>,
-        directory_id: i64,
+        project: &ProjectRef,
         tool_key: ToolKey,
         payload: &launch_service::CliLaunchPayload,
         size: PtySizeUpdate,
@@ -238,7 +237,7 @@ impl PtySessionManager {
     ) -> Result<PtySession, AppError> {
         validate_size(size)?;
         let payload = payload.clone();
-        directory_service::validate_path(&payload.directory)?;
+        let directory_id = project.id;
 
         let pty_system = native_pty_system();
         let pair = pty_system

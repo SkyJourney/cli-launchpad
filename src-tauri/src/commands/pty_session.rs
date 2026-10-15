@@ -1,7 +1,6 @@
 use tauri::{ipc::Channel, Manager, State, WebviewWindow};
 
 use crate::{
-    blocking, budgets,
     models::window_kind::{CallerWindow, WindowKind},
     models::{
         pty_session::{
@@ -12,7 +11,8 @@ use crate::{
     },
     services::{
         app_lifecycle::{AppExitGate, AppLifecycle, Operation},
-        directory_service, launch_service,
+        launch_service,
+        project_directory::ProjectDirectory,
         pty_session_service::PtySessionManager,
         session_service,
     },
@@ -31,31 +31,24 @@ pub async fn create_pty_session(
     on_event: Channel<PtyEvent>,
     window: WebviewWindow,
 ) -> Result<PtySession, AppError> {
-    let looked_up = db
-        .call("pty.launch_lookup", move |connection| {
-            Ok(launch_service::lookup_launch_directory(
-                connection,
-                directory_id,
-                tool_key,
-            )?)
-        })
-        .await?;
-    let directory = blocking(
-        "pty.launch_validate_path",
-        budgets::PROJECT_DIRECTORY,
-        move || {
-            directory_service::validate_path(&looked_up)?;
-            Ok(looked_up)
-        },
-    )
+    // One open: the directory row, the path check and the directory handle identity. `_root` must
+    // stay bound until the command ends (it keeps the directory handle open); never rename it to `_`.
+    let (_root, project) = ProjectDirectory::open_ref(&db, directory_id, None).await?;
+    db.call("pty.tool_configured", move |connection| {
+        Ok(launch_service::ensure_tool_configured(
+            connection, tool_key,
+        )?)
+    })
     .await?;
     if let Some(session_id) = resume_session_id.as_deref() {
-        if !session_service::session_belongs_to_directory(tool_key, &directory, session_id).await? {
+        if !session_service::session_belongs_to_directory(tool_key, &project.path, session_id)
+            .await?
+        {
             return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
         }
     }
     let payload = launch_service::resolve_payload_at_directory(
-        directory,
+        project.path.clone(),
         tool_key,
         resume_session_id.as_deref(),
     )
@@ -69,7 +62,7 @@ pub async fn create_pty_session(
         let _start_permit = start_permit;
         manager.create(
             &database,
-            directory_id,
+            &project,
             tool_key,
             &payload,
             resume_session_id.as_deref(),

@@ -23,9 +23,9 @@ impl ProjectRef {
     /// Re-checks right before use that the opened directory is still the one on disk. Filesystem
     /// access: never call it under a lock. Reopens by path, so it also fails when the directory
     /// is gone. Best effort: a directory deleted and recreated at once can get the same inode
-    /// number back, which `dev/ino` cannot tell apart.
-    // m6-057a: the PTY launch path that calls this arrives in m6-057b.
-    #[cfg(test)]
+    /// number back, which `dev/ino` cannot tell apart, and the spawn that follows resolves its
+    /// working directory by path again. Keeping the handle from `open_ref` alive narrows both
+    /// windows (an open directory handle blocks rename/delete on Windows and pins the inode).
     pub fn verify_unchanged(&self) -> Result<(), AppError> {
         let root = ProjectDirectory::open(Path::new(&self.path)).map_err(AppError::from)?;
         let now = ProjectRootIdentity::of(root.dir())
@@ -89,6 +89,11 @@ impl ProjectDirectory {
             "project.open",
             crate::budgets::PROJECT_DIRECTORY,
             move || {
+                // The stored path is untrusted input: never resolve a relative path against the
+                // process working directory (the old validate_path refused it).
+                if !Path::new(&directory.path).is_absolute() {
+                    return Err(AppError::msg("项目目录必须使用绝对路径"));
+                }
                 let root = match expected.as_deref() {
                     Some(expected) => ProjectDirectory::open_snapshot(&directory.path, expected)?,
                     None => ProjectDirectory::open(Path::new(&directory.path))
@@ -102,13 +107,6 @@ impl ProjectDirectory {
                     path: directory.path,
                     root: identity,
                 };
-                log::debug!(
-                    "project opened id={} path={} key={} root={:?}",
-                    project.id,
-                    project.path,
-                    project.key.as_str(),
-                    project.root
-                );
                 Ok((root, project))
             },
         )
@@ -364,6 +362,21 @@ mod tests {
         };
 
         assert!(error.to_string().contains("项目目录不存在或无法访问"));
+    }
+
+    #[tokio::test]
+    async fn open_ref_rejects_a_relative_stored_path() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        let record = directory_repo::add(&connection, "project", "relative/project", None).unwrap();
+        let db = crate::Db(std::sync::Arc::new(std::sync::Mutex::new(connection)));
+
+        let error = match ProjectDirectory::open_ref(&db, record.id, None).await {
+            Ok(_) => panic!("a relative path must be refused"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("项目目录必须使用绝对路径"));
     }
 
     #[tokio::test]
