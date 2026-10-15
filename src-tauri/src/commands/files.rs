@@ -24,15 +24,9 @@ async fn open_project(
     directory_id: i64,
     expected_path: String,
 ) -> Result<ProjectDirectory, AppError> {
-    let directory = db
-        .call("project.lookup", move |connection| {
-            ProjectDirectory::lookup(connection, directory_id)
-        })
-        .await?;
-    blocking("project.open", budgets::PROJECT_DIRECTORY, move || {
-        ProjectDirectory::open_snapshot(&directory.path, &expected_path)
-    })
-    .await
+    let (root, _project) =
+        ProjectDirectory::open_ref(db, directory_id, Some(&expected_path)).await?;
+    Ok(root)
 }
 
 #[tauri::command]

@@ -2,6 +2,8 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+#[cfg(any(windows, test))]
+use crate::platform::path_identity::strip_windows_verbatim_prefix;
 use crate::{
     db::{directory_repo, pty_session_repo},
     services::execution_service::now_ms,
@@ -201,17 +203,6 @@ mod removal_tests {
         assert_eq!(untouched.state, "running");
         assert_eq!(untouched.ended_at_ms, None);
         assert!(directory_repo::get(&connection, b.id).unwrap().is_some());
-    }
-}
-
-#[cfg(any(windows, test))]
-fn strip_windows_verbatim_prefix(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{rest}")
-    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
-        rest.to_string()
-    } else {
-        path.to_string()
     }
 }
 

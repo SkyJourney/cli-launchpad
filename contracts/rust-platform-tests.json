@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 547,
-    "Linux": 552,
-    "macOS": 550
+    "Windows": 556,
+    "Linux": 562,
+    "macOS": 560
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -266,7 +266,16 @@
       "services::workspace_layout_service::tests::slot_is_running_only_when_the_session_is_open_in_memory",
       "db::pty_session_repo::tests::mark_directory_running_ended_updates_only_matching_rows",
       "services::pty_session_service::persistence::tests::the_manager_flushes_queued_finishes_into_the_database",
-      "services::pty_session_service::tests::a_failed_row_write_in_create_registers_first_and_leaves_no_session"
+      "services::pty_session_service::tests::a_failed_row_write_in_create_registers_first_and_leaves_no_session",
+      "platform::path_identity::tests::project_path_key_matches_the_platform_lexical_rule",
+      "platform::path_identity::tests::project_root_identity_is_stable_and_differs_between_directories",
+      "services::project_directory::tests::open_ref_returns_the_row_with_a_matching_key_and_root_identity",
+      "services::project_directory::tests::open_ref_rejects_a_stale_expected_path",
+      "services::project_directory::tests::open_ref_without_an_expected_path_skips_the_snapshot_check",
+      "services::project_directory::tests::open_ref_reports_a_missing_directory_row_as_not_found",
+      "services::project_directory::tests::open_ref_fails_when_the_directory_no_longer_exists",
+      "services::project_directory::tests::verify_unchanged_detects_a_replaced_directory",
+      "services::project_directory::tests::verify_unchanged_accepts_the_same_directory"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -337,7 +346,8 @@
       "services::file_service::tests::open_file_rejects_a_symlink_intermediate_directory",
       "services::file_service::tests::save_text_file_rejects_a_symlink_final_component",
       "services::file_service::tests::list_directory_rejects_a_symlink_directory_argument",
-      "services::file_service::tests::control_character_file_names_are_handled_consistently_by_listing_and_layout"
+      "services::file_service::tests::control_character_file_names_are_handled_consistently_by_listing_and_layout",
+      "platform::path_identity::tests::project_path_key_does_not_resolve_symlinks"
     ],
     "Linux": [
       "services::file_service::tests::listing_scan_budget_covers_entries_skipped_for_unreadable_names",
