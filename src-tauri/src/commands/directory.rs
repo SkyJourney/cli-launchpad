@@ -60,6 +60,30 @@ pub async fn update_directory(
         .await
 }
 
+/// The database side of `remove_directory` without Tauri state (m6-112, so the order is tested):
+/// earlier `finish` writes land first, in their own database access; only then the removal runs
+/// and reads the in-memory open sessions inside the database closure (m6-056 D1).
+async fn remove_directory_reconciled(
+    db: &Db,
+    flush: impl FnOnce() + Send + 'static,
+    running_in: impl FnOnce(i64) -> Vec<String> + Send + 'static,
+    id: i64,
+) -> Result<(), AppError> {
+    // A failed write is only logged by the retry store. This is its own database access, never
+    // nested in the call below.
+    blocking("directory.flush", budgets::PROJECT_DIRECTORY, move || {
+        flush();
+        Ok(())
+    })
+    .await?;
+    db.call("directory.remove", move |connection| {
+        // m6-056 D1: the only allowed Db -> registry nesting; see PtySessionManager::running_in
+        let running = running_in(id);
+        directory_service::remove_directory(connection, id, &running)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn remove_directory(
     state: State<'_, Db>,
@@ -69,23 +93,17 @@ pub async fn remove_directory(
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let manager = sessions.inner().clone();
-    // Earlier finish writes land first so the rows catch up with memory; a failure is only
-    // logged by the retry store. This is its own database access, never nested in the call below.
-    {
-        let manager = manager.clone();
-        blocking("directory.flush", budgets::PROJECT_DIRECTORY, move || {
-            manager.flush_pending_persistence(&db);
-            Ok(())
-        })
-        .await?;
-    }
-    state
-        .call("directory.remove", move |connection| {
-            // m6-056 D1: the only allowed Db -> registry nesting; see PtySessionManager::running_in
-            let running = manager.running_in(id);
-            directory_service::remove_directory(connection, id, &running)
-        })
-        .await?;
+    let flush_db = db.clone();
+    let flush_manager = manager.clone();
+    remove_directory_reconciled(
+        &db,
+        move || {
+            flush_manager.flush_pending_persistence(&flush_db);
+        },
+        move |directory_id| manager.running_in(directory_id),
+        id,
+    )
+    .await?;
     cache
         .call("directory.remove_cache", move |connection| {
             cache_service::remove_prefix(connection, "sessions:")?;
@@ -135,7 +153,183 @@ pub async fn reorder_directories(
 
 #[cfg(test)]
 mod tests {
-    use super::contains_exactly;
+    use std::sync::{Arc, Mutex};
+
+    use super::{contains_exactly, remove_directory_reconciled};
+    use crate::db::{directory_repo, pty_session_repo};
+    use crate::models::tool::ToolKey;
+    use crate::services::pty_session_service::PtySessionManager;
+    use crate::{AppError, Db};
+
+    fn memory_db() -> Db {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        Db::new(connection)
+    }
+
+    fn add_directory(db: &Db, name: &str) -> i64 {
+        let connection = db.lock_for_test();
+        directory_repo::add(&connection, name, &format!("C:/{name}"), None)
+            .unwrap()
+            .id
+    }
+
+    fn code_of(error: &AppError) -> String {
+        serde_json::to_value(error).unwrap()["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn remove_directory_flushes_pending_finishes_while_the_database_lock_is_free() {
+        let db = memory_db();
+        let id = add_directory(&db, "flush");
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let flush_log = Arc::clone(&log);
+        let flush_probe = db.shared_for_test();
+        let running_log = Arc::clone(&log);
+
+        remove_directory_reconciled(
+            &db,
+            move || {
+                let free = flush_probe.try_lock().is_ok();
+                flush_log.lock().unwrap().push(format!("flush free={free}"));
+            },
+            move |_| {
+                running_log.lock().unwrap().push("running_in".to_string());
+                Vec::new()
+            },
+            id,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["flush free=true".to_string(), "running_in".to_string()],
+            "the flush runs first and without the database lock"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_directory_reads_running_sessions_inside_the_database_lock() {
+        let db = memory_db();
+        let id = add_directory(&db, "inside");
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let flush_log = Arc::clone(&log);
+        let flush_probe = db.shared_for_test();
+        let running_log = Arc::clone(&log);
+        let running_probe = db.shared_for_test();
+
+        remove_directory_reconciled(
+            &db,
+            move || {
+                let free = flush_probe.try_lock().is_ok();
+                flush_log.lock().unwrap().push(format!("flush free={free}"));
+            },
+            move |_| {
+                let held = running_probe.try_lock().is_err();
+                running_log
+                    .lock()
+                    .unwrap()
+                    .push(format!("running_in held={held}"));
+                Vec::new()
+            },
+            id,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "flush free=true".to_string(),
+                "running_in held=true".to_string()
+            ],
+            "the open sessions are read while the database lock is held"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_directory_is_refused_while_a_session_is_open_in_memory() {
+        let db = memory_db();
+        let saved = add_directory(&db, "saved");
+        let other = add_directory(&db, "other");
+        let manager = PtySessionManager::default();
+        manager.insert_test_session_in_directory("main", saved, None);
+        let running_manager = manager.clone();
+
+        let error = remove_directory_reconciled(
+            &db,
+            || {},
+            move |directory_id| running_manager.running_in(directory_id),
+            saved,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(code_of(&error), "directory.in_use");
+        let connection = db.lock_for_test();
+        assert!(directory_repo::get(&connection, saved).unwrap().is_some());
+        drop(connection);
+
+        // Reverse: a directory without an open session is removed by the same wiring.
+        let running_manager = manager.clone();
+        remove_directory_reconciled(
+            &db,
+            || {},
+            move |directory_id| running_manager.running_in(directory_id),
+            other,
+        )
+        .await
+        .unwrap();
+        let connection = db.lock_for_test();
+        assert!(directory_repo::get(&connection, other).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn remove_directory_settles_stale_rows_when_nothing_is_open_in_memory() {
+        let db = memory_db();
+        let id = add_directory(&db, "stale");
+        {
+            let connection = db.lock_for_test();
+            pty_session_repo::insert_running(
+                &connection,
+                "stale",
+                id,
+                ToolKey::Claude,
+                "C:/stale",
+                1,
+            )
+            .unwrap();
+        }
+        let manager = PtySessionManager::default();
+        manager.queue_failed_finish_for_test("stale", "exited", 5, Some(0));
+        let flush_manager = manager.clone();
+        let flush_db = db.clone();
+        let running_manager = manager.clone();
+
+        remove_directory_reconciled(
+            &db,
+            move || {
+                flush_manager.flush_pending_persistence(&flush_db);
+            },
+            move |directory_id| running_manager.running_in(directory_id),
+            id,
+        )
+        .await
+        .unwrap();
+
+        let connection = db.lock_for_test();
+        assert!(directory_repo::get(&connection, id).unwrap().is_none());
+        assert!(pty_session_repo::get_by_id(&connection, "stale")
+            .unwrap()
+            .is_none());
+        drop(connection);
+        // The queued write was retried by the flush: nothing is left to retry.
+        assert_eq!(manager.flush_pending_persistence(&db).retried, 0);
+    }
 
     #[test]
     fn reorder_requires_every_project_once_from_the_requested_group() {

@@ -588,7 +588,7 @@ impl PtySessionManager {
         let source_window_label = guard
             .handoff
             .bound_source()
-            .expect("check_finalize guarantees a bound handoff")
+            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?
             .to_string();
         // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
         // `cancel` or `reclaim_window` can still clean it up.
@@ -598,7 +598,7 @@ impl PtySessionManager {
         let bound = guard
             .handoff
             .commit_finalize()
-            .expect("check_finalize guarantees a bound handoff");
+            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?;
         let route = &mut guard.route;
         route.window_label = target_window_label.to_string();
         route.mirror = if is_main_label(target_window_label) {

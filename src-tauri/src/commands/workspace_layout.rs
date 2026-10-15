@@ -36,7 +36,16 @@ pub async fn get_workspace_layout(
     sessions: State<'_, PtySessionManager>,
 ) -> Result<WorkspaceLayoutStateRead, AppError> {
     let running = open_session_ids(sessions.inner(), state.inner()).await?;
-    let stage = state
+    read_layout_with(state.inner(), running).await
+}
+
+/// Layout read after the in-memory open set was taken (m6-112): the slots' `Running` state is
+/// decided by `running` alone, never by database rows.
+async fn read_layout_with(
+    db: &Db,
+    running: HashSet<String>,
+) -> Result<WorkspaceLayoutStateRead, AppError> {
+    let stage = db
         .call("workspace_layout.read", |connection| {
             workspace_layout_service::read_current_stage(connection)
         })
@@ -153,7 +162,17 @@ pub async fn plan_apply_workspace_layout_preset(
     active_layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutApplyPlan, AppError> {
     let running = open_session_ids(sessions.inner(), state.inner()).await?;
-    let pending = state
+    plan_apply_with(state.inner(), running, id, active_layout).await
+}
+
+/// Applying a preset after the in-memory open set was taken (m6-112).
+async fn plan_apply_with(
+    db: &Db,
+    running: HashSet<String>,
+    id: String,
+    active_layout: WorkspaceLayoutDocument,
+) -> Result<WorkspaceLayoutApplyPlan, AppError> {
+    let pending = db
         .call("workspace_layout.plan_load", move |connection| {
             workspace_layout_service::plan_apply_preset_stage(connection, &id, &active_layout)
         })
@@ -164,4 +183,192 @@ pub async fn plan_apply_workspace_layout_preset(
         move || pending.finish(&running),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{open_session_ids, plan_apply_with, read_layout_with};
+    use crate::db::{directory_repo, pty_session_repo};
+    use crate::models::tool::ToolKey;
+    use crate::models::workspace_layout::{
+        WorkspaceLayoutDocument, WorkspaceLayoutNode, WorkspaceLayoutSlot, WorkspacePaneContentRef,
+        WorkspaceSlotStateKind, WorkspaceSlotTitle, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+    };
+    use crate::services::pty_session_service::PtySessionManager;
+    use crate::services::workspace_layout_service;
+    use crate::Db;
+
+    fn memory_db() -> Db {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::connection::apply_migrations(&connection).unwrap();
+        Db::new(connection)
+    }
+
+    /// A project row for `path` and a layout with one PTY slot that points at `session_id`.
+    fn project_with_slot(db: &Db, path: &str, session_id: &str) -> (i64, WorkspaceLayoutDocument) {
+        let directory_id = {
+            let connection = db.lock_for_test();
+            directory_repo::add(&connection, "Project", path, None)
+                .unwrap()
+                .id
+        };
+        let slot_id = uuid::Uuid::new_v4().to_string();
+        let layout = WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: slot_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: slot_id.clone(),
+                }),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: vec![WorkspaceLayoutSlot {
+                instance_id: slot_id.clone(),
+                directory_id,
+                directory_path: path.to_string(),
+                project_name: "Project".to_string(),
+                tool_key: ToolKey::Claude,
+                sequence: 1,
+                session_id: Some(session_id.to_string()),
+                resume_session_id: None,
+                title: WorkspaceSlotTitle::Automatic,
+            }],
+            documents: Vec::new(),
+            detached_contents: Vec::new(),
+        };
+        (directory_id, layout)
+    }
+
+    fn state_of(
+        slot_states: &[crate::models::workspace_layout::WorkspaceSlotState],
+    ) -> WorkspaceSlotStateKind {
+        assert_eq!(slot_states.len(), 1);
+        slot_states[0].state
+    }
+
+    #[tokio::test]
+    async fn open_session_ids_flushes_queued_finishes_then_returns_only_open_sessions() {
+        let db = memory_db();
+        let directory_id = {
+            let connection = db.lock_for_test();
+            let directory = directory_repo::add(&connection, "P", "C:/p", None).unwrap();
+            pty_session_repo::insert_running(
+                &connection,
+                "ended-row",
+                directory.id,
+                ToolKey::Claude,
+                "C:/p",
+                1,
+            )
+            .unwrap();
+            directory.id
+        };
+        let manager = PtySessionManager::default();
+        manager.queue_failed_finish_for_test("ended-row", "exited", 7, Some(0));
+        let open = manager.insert_test_session_in_directory("main", directory_id, None);
+
+        let ids = open_session_ids(&manager, &db).await.unwrap();
+
+        assert_eq!(ids, HashSet::from([open.session_id.clone()]));
+        let connection = db.lock_for_test();
+        let row = pty_session_repo::get_by_id(&connection, "ended-row")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.state, "exited");
+        assert_eq!(row.ended_at_ms, Some(7));
+    }
+
+    #[tokio::test]
+    async fn layout_read_treats_the_memory_set_as_the_liveness_authority() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().display().to_string();
+        let db = memory_db();
+        let (directory_id, layout) = project_with_slot(&db, &path, &session_id);
+        {
+            let mut connection = db.lock_for_test();
+            pty_session_repo::insert_running(
+                &connection,
+                &session_id,
+                directory_id,
+                ToolKey::Claude,
+                &path,
+                1,
+            )
+            .unwrap();
+            workspace_layout_service::save_current(&mut connection, 1, &layout).unwrap();
+        }
+
+        // The row says `running`, but memory does not know the session: it has ended.
+        let ended = read_layout_with(&db, HashSet::new()).await.unwrap();
+        assert_eq!(state_of(&ended.slot_states), WorkspaceSlotStateKind::Ended);
+
+        let running = read_layout_with(&db, HashSet::from([session_id.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(
+            state_of(&running.slot_states),
+            WorkspaceSlotStateKind::Running
+        );
+
+        // Reverse: a set that holds some other session does not make this slot running.
+        let other = read_layout_with(&db, HashSet::from(["other".to_string()]))
+            .await
+            .unwrap();
+        assert_eq!(state_of(&other.slot_states), WorkspaceSlotStateKind::Ended);
+    }
+
+    #[tokio::test]
+    async fn plan_apply_uses_the_memory_set_for_active_running_slots() {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().display().to_string();
+        let db = memory_db();
+        let (directory_id, active) = project_with_slot(&db, &path, &session_id);
+        let preset_id = {
+            let mut connection = db.lock_for_test();
+            pty_session_repo::insert_running(
+                &connection,
+                &session_id,
+                directory_id,
+                ToolKey::Claude,
+                &path,
+                1,
+            )
+            .unwrap();
+            workspace_layout_service::create_preset(
+                &mut connection,
+                "Empty",
+                &workspace_layout_service::empty_layout(),
+            )
+            .unwrap()
+            .id
+        };
+
+        let without_memory =
+            plan_apply_with(&db, HashSet::new(), preset_id.clone(), active.clone())
+                .await
+                .unwrap();
+        assert!(
+            without_memory.layout.slots.is_empty(),
+            "an active slot that is not open in memory is dropped from the plan"
+        );
+        assert!(without_memory.slot_states.is_empty());
+
+        let with_memory =
+            plan_apply_with(&db, HashSet::from([session_id.clone()]), preset_id, active)
+                .await
+                .unwrap();
+        assert_eq!(with_memory.layout.slots.len(), 1);
+        assert_eq!(
+            state_of(&with_memory.slot_states),
+            WorkspaceSlotStateKind::Running
+        );
+    }
 }

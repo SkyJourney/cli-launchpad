@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 610,
-    "Linux": 617,
-    "macOS": 615
+    "Windows": 617,
+    "Linux": 624,
+    "macOS": 622
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -328,7 +328,14 @@
       "contracts::codex_app_server_uses_the_shared_supervised_primitive",
       "contracts::child_processes_are_spawned_only_through_the_supervised_primitives",
       "services::pty_session_service::tests::terminate_all_keeps_output_flowing_for_sessions_that_survive",
-      "services::pty_session_service::tests::reader_receives_eof_after_the_child_exits_without_dropping_the_master"
+      "services::pty_session_service::tests::reader_receives_eof_after_the_child_exits_without_dropping_the_master",
+      "commands::directory::tests::remove_directory_flushes_pending_finishes_while_the_database_lock_is_free",
+      "commands::directory::tests::remove_directory_reads_running_sessions_inside_the_database_lock",
+      "commands::directory::tests::remove_directory_is_refused_while_a_session_is_open_in_memory",
+      "commands::directory::tests::remove_directory_settles_stale_rows_when_nothing_is_open_in_memory",
+      "commands::workspace_layout::tests::open_session_ids_flushes_queued_finishes_then_returns_only_open_sessions",
+      "commands::workspace_layout::tests::layout_read_treats_the_memory_set_as_the_liveness_authority",
+      "commands::workspace_layout::tests::plan_apply_uses_the_memory_set_for_active_running_slots"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
