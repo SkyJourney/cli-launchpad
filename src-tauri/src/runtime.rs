@@ -83,14 +83,28 @@ pub async fn blocking<T: Send + 'static>(
 ) -> Result<T, AppError> {
     match tokio::time::timeout(budget, run_on_blocking_pool(op, f)).await {
         Ok(result) => result,
-        Err(_) => {
-            let budget_ms = budget.as_millis() as u64;
-            Err(AppError::coded_with_params(
-                BLOCKING_TIMEOUT,
-                format!("{op} 超过 {budget_ms} ms 仍未完成"),
-                json!({ "op": op, "budgetMs": budget_ms }),
-            ))
-        }
+        Err(_) => Err(blocking_timeout(op, budget)),
+    }
+}
+
+fn blocking_timeout(op: &'static str, budget: Duration) -> AppError {
+    let budget_ms = budget.as_millis() as u64;
+    AppError::coded_with_params(
+        BLOCKING_TIMEOUT,
+        format!("{op} 超过 {budget_ms} ms 仍未完成"),
+        json!({ "op": op, "budgetMs": budget_ms }),
+    )
+}
+
+/// Gives an external `await` (a CLI session file read, an executable lookup) a time budget.
+pub async fn bounded<T>(
+    op: &'static str,
+    budget: Duration,
+    future: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    match tokio::time::timeout(budget, future).await {
+        Ok(result) => result,
+        Err(_) => Err(blocking_timeout(op, budget)),
     }
 }
 
@@ -361,5 +375,44 @@ mod tests {
         .unwrap();
         releaser.await.unwrap();
         assert_eq!(value, "written");
+    }
+
+    #[tokio::test]
+    async fn bounded_returns_the_future_result_within_the_budget() {
+        let value = super::bounded("test.op", Duration::from_millis(500), async {
+            Ok::<_, AppError>(7)
+        })
+        .await
+        .unwrap();
+        assert_eq!(value, 7);
+
+        let error = super::bounded("test.op", Duration::from_millis(500), async {
+            Err::<(), AppError>(AppError::coded("test.failure", "boom"))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(message_of(&error), "boom");
+    }
+
+    #[tokio::test]
+    async fn bounded_reports_blocking_timeout_with_the_operation_and_budget() {
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            super::bounded(
+                "test.slow",
+                Duration::from_millis(50),
+                std::future::pending::<Result<(), AppError>>(),
+            ),
+        )
+        .await;
+
+        let error = outcome
+            .expect("bounded must return on its own budget")
+            .unwrap_err();
+        let value = serde_json::to_value(&error).unwrap();
+        assert_eq!(value["code"], "blocking.timeout");
+        assert_eq!(value["params"]["op"], "test.slow");
+        assert_eq!(value["params"]["budgetMs"], 50);
     }
 }

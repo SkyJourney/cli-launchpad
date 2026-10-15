@@ -12,6 +12,8 @@ pub const FILE_OPERATION: Duration = Duration::from_secs(30);
 pub const EXECUTABLE_PROBE: Duration = Duration::from_secs(10);
 /// Building install and update previews.
 pub const INSTALL_PLAN: Duration = Duration::from_secs(10);
+/// External awaits before a PTY launch (session file ownership check, executable resolution).
+pub const PTY_LAUNCH_PREPARE: Duration = Duration::from_secs(20);
 
 #[cfg(test)]
 mod tests {
@@ -25,6 +27,7 @@ mod tests {
             ("FILE_OPERATION", FILE_OPERATION),
             ("EXECUTABLE_PROBE", EXECUTABLE_PROBE),
             ("INSTALL_PLAN", INSTALL_PLAN),
+            ("PTY_LAUNCH_PREPARE", PTY_LAUNCH_PREPARE),
         ] {
             assert!(budget > Duration::ZERO, "{name} must be positive");
             assert!(

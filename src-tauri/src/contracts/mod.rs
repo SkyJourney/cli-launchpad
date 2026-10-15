@@ -1660,6 +1660,49 @@ fn pty_launch_validates_the_project_directory_exactly_once() {
 }
 
 #[test]
+fn create_pty_session_prepares_before_admitting_and_bounds_external_awaits() {
+    /// Every marker must appear, in this order, and nothing may be awaited between the start
+    /// permit and the blocking launch.
+    fn check_order(body: &str) -> Result<(), String> {
+        let mut at = 0;
+        for marker in [
+            "ProjectDirectory::open_ref(",
+            "\"pty.session_belongs\"",
+            "\"pty.resolve_payload\"",
+            "admit(Operation::PtyStart)",
+            "spawn_blocking(",
+        ] {
+            match body[at..].find(marker) {
+                Some(found) => at += found + marker.len(),
+                None => return Err(format!("`{marker}` is missing or out of order")),
+            }
+        }
+        let admit = body.find("admit(Operation::PtyStart)").unwrap();
+        let spawn = body[admit..].find("spawn_blocking(").unwrap() + admit;
+        if body[admit..spawn].contains(".await") {
+            return Err("an await sits between the start permit and the launch".to_string());
+        }
+        Ok(())
+    }
+
+    let command = production_text(include_str!("../commands/pty_session.rs"));
+    let body = command
+        .split("pub async fn create_pty_session")
+        .nth(1)
+        .expect("create_pty_session exists")
+        .split("#[tauri::command]")
+        .next()
+        .unwrap();
+    assert_eq!(check_order(body), Ok(()));
+
+    // The check can see a violation: the permit taken before the payload is resolved.
+    let misordered = "ProjectDirectory::open_ref( \"pty.session_belongs\" admit(Operation::PtyStart)                       \"pty.resolve_payload\" spawn_blocking(";
+    assert!(check_order(misordered).is_err());
+    let awaited = "ProjectDirectory::open_ref( \"pty.session_belongs\" \"pty.resolve_payload\"                    admit(Operation::PtyStart) x.await spawn_blocking(";
+    assert!(check_order(awaited).is_err());
+}
+
+#[test]
 fn main_window_label_matches_every_tauri_config() {
     let main = crate::models::window_kind::main_window_label();
     for (name, raw) in [

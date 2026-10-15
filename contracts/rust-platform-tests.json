@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 562,
-    "Linux": 568,
-    "macOS": 566
+    "Windows": 575,
+    "Linux": 581,
+    "macOS": 579
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -281,7 +281,20 @@
       "services::launch_service::tests::ensure_tool_configured_rejects_an_unconfigured_tool",
       "services::workspace_layout_service::tests::slot_identity_compares_stored_paths_lexically",
       "contracts::pty_launch_validates_the_project_directory_exactly_once",
-      "services::project_directory::tests::open_ref_rejects_a_relative_stored_path"
+      "services::project_directory::tests::open_ref_rejects_a_relative_stored_path",
+      "services::app_lifecycle::tests::wait_for_starts_returns_true_immediately_when_no_start_is_in_flight",
+      "services::app_lifecycle::tests::wait_for_starts_blocks_until_the_last_start_permit_drops",
+      "services::app_lifecycle::tests::wait_for_starts_times_out_while_a_start_permit_is_held",
+      "services::app_lifecycle::tests::new_starts_are_rejected_while_exit_waits_for_in_flight_starts",
+      "services::app_lifecycle::tests::every_waiter_wakes_when_the_last_start_permit_drops",
+      "services::app_lifecycle::tests::only_start_permits_count_as_in_flight_starts_for_the_exit_wait",
+      "services::app_lifecycle::tests::activity_probes_run_under_the_state_lock",
+      "services::app_lifecycle::tests::a_new_request_during_termination_returns_the_confirming_request",
+      "services::app_lifecycle::tests::a_failed_termination_releases_the_lock_so_newer_requests_supersede",
+      "services::exit_cleanup::tests::exit_waits_for_an_in_flight_start_and_then_terminates_the_late_session",
+      "runtime::tests::bounded_returns_the_future_result_within_the_budget",
+      "runtime::tests::bounded_reports_blocking_timeout_with_the_operation_and_budget",
+      "contracts::create_pty_session_prepares_before_admitting_and_bounds_external_awaits"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

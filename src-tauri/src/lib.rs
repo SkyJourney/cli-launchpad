@@ -23,7 +23,7 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
-pub use runtime::{blocking, blocking_unbounded};
+pub use runtime::{blocking, blocking_unbounded, bounded};
 
 /// Business and cache databases are distinct managed-state types so commands
 /// cannot accidentally read cache rows through the configuration connection.
@@ -460,6 +460,13 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
         tauri::RunEvent::Exit => {
             // Best-effort cleanup first, then clear the clean-exit marker. This is the
             // only place cleanup runs: ExitRequested can still be prevented.
+            // Starts that were admitted before exit get a short, bounded chance to land so their
+            // sessions are part of the cleanup below.
+            if let Some(lifecycle) = app.try_state::<services::app_lifecycle::AppLifecycle>() {
+                if !lifecycle.wait_for_starts(std::time::Duration::from_millis(1500)) {
+                    log::warn!("exit: starts were still in flight; cleaning up anyway");
+                }
+            }
             let targets = exit_cleanup_targets(app);
             match app.try_state::<services::storage_service::StoragePaths>() {
                 Some(paths) => services::exit_cleanup::on_run_event_exit(

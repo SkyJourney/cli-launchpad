@@ -1,6 +1,7 @@
 use tauri::{ipc::Channel, Manager, State, WebviewWindow};
 
 use crate::{
+    bounded, budgets,
     models::window_kind::{CallerWindow, WindowKind},
     models::{
         pty_session::{
@@ -41,17 +42,27 @@ pub async fn create_pty_session(
     })
     .await?;
     if let Some(session_id) = resume_session_id.as_deref() {
-        if !session_service::session_belongs_to_directory(tool_key, &project.path, session_id)
-            .await?
-        {
+        let belongs = bounded("pty.session_belongs", budgets::PTY_LAUNCH_PREPARE, async {
+            Ok::<bool, AppError>(
+                session_service::session_belongs_to_directory(tool_key, &project.path, session_id)
+                    .await?,
+            )
+        })
+        .await?;
+        if !belongs {
             return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
         }
     }
-    let payload = launch_service::resolve_payload_at_directory(
-        project.path.clone(),
-        tool_key,
-        resume_session_id.as_deref(),
-    )
+    let payload = bounded("pty.resolve_payload", budgets::PTY_LAUNCH_PREPARE, async {
+        Ok::<_, AppError>(
+            launch_service::resolve_payload_at_directory(
+                project.path.clone(),
+                tool_key,
+                resume_session_id.as_deref(),
+            )
+            .await?,
+        )
+    })
     .await?;
     // The permit covers only the synchronous registration in `manager.create`.
     let start_permit = lifecycle.admit(Operation::PtyStart)?;
@@ -216,12 +227,17 @@ pub async fn confirm_app_exit(
 ) -> Result<(), AppError> {
     // Held until the process exits: termination failure drops it and rolls the phase back.
     let exit_permit = lifecycle.admit(Operation::Exit)?;
+    let starts_lifecycle = lifecycle.inner().clone();
     let sessions = state.inner().clone();
     let blocking_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let exit_gate = blocking_app.state::<AppExitGate>();
         crate::services::app_lifecycle::confirm_exit_with(&exit_gate, &request_id, || {
-            sessions.terminate_all()
+            crate::services::exit_cleanup::terminate_ptys_after_starts_drain(
+                &starts_lifecycle,
+                &sessions,
+                std::time::Duration::from_secs(3),
+            )
         })
     })
     .await

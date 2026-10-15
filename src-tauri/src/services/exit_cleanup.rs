@@ -96,6 +96,21 @@ pub fn run_exit_cleanup(
     report
 }
 
+/// Exit sequence for PTY sessions: wait (bounded) for in-flight starts to land, then terminate.
+pub fn terminate_ptys_after_starts_drain(
+    lifecycle: &crate::services::app_lifecycle::AppLifecycle,
+    sessions: &crate::services::pty_session_service::PtySessionManager,
+    starts_budget: Duration,
+) -> Result<(), AppError> {
+    if !lifecycle.wait_for_starts(starts_budget) {
+        log::warn!(
+            "exit: PTY/execution starts were still in flight after {} ms; terminating anyway",
+            starts_budget.as_millis()
+        );
+    }
+    sessions.terminate_all()
+}
+
 /// Runs on `RunEvent::Exit`: cleanup first, then clear the clean-exit marker. A timed-out or
 /// panicking cleanup still clears the marker, because the app is leaving gracefully either way.
 pub fn on_run_event_exit(
@@ -438,5 +453,47 @@ mod tests {
             assert!(Instant::now() < deadline, "child process must have exited");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn exit_waits_for_an_in_flight_start_and_then_terminates_the_late_session() {
+        use crate::services::app_lifecycle::{AppLifecycle, Operation};
+        use crate::services::pty_session_service::PtySessionManager;
+
+        let lifecycle = AppLifecycle::with_counters(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let manager = PtySessionManager::default();
+        let start = lifecycle.admit(Operation::PtyStart).unwrap();
+        lifecycle.admit(Operation::Exit).unwrap().keep_exiting();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = {
+            let lifecycle = lifecycle.clone();
+            let manager = manager.clone();
+            thread::spawn(move || {
+                let result =
+                    terminate_ptys_after_starts_drain(&lifecycle, &manager, Duration::from_secs(5));
+                done_tx.send(result.is_ok()).unwrap();
+            })
+        };
+        // Let the worker reach the wait before the late session registers.
+        thread::sleep(Duration::from_millis(100));
+
+        let late = manager.insert_test_session_with_child("main", None);
+        assert_eq!(manager.active_count(), 1);
+        drop(start);
+
+        assert!(done_rx.recv_timeout(Duration::from_secs(8)).unwrap());
+        worker.join().unwrap();
+        assert_eq!(manager.active_count(), 0);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !late.exited.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            late.exited.load(Ordering::SeqCst),
+            "the late session must have been terminated"
+        );
     }
 }

@@ -9,7 +9,29 @@ use crate::models::window_kind::{window_kind_of, WindowKind};
 #[derive(Default)]
 pub struct AppExitGate {
     authorized_at: Mutex<Option<Instant>>,
-    pending_request: Mutex<Option<String>>,
+    pending_request: Mutex<PendingRequest>,
+}
+
+/// The newest exit request and whether its confirmation is currently terminating PTY sessions.
+/// While it terminates, a newer request must not supersede it: the sessions that were already
+/// ended could otherwise never be matched with an authorized exit.
+#[derive(Default)]
+struct PendingRequest {
+    id: Option<String>,
+    terminating: bool,
+}
+
+/// Held while a confirmed exit terminates sessions; releases the lock on every path.
+struct TerminationLock<'a> {
+    gate: &'a AppExitGate,
+}
+
+impl Drop for TerminationLock<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.gate.pending_request.lock() {
+            pending.terminating = false;
+        }
+    }
 }
 
 /// An authorization older than this is ignored, so a stale confirmation can never let a later,
@@ -50,20 +72,52 @@ impl AppExitGate {
         matches!(issued, Some(at) if now.saturating_duration_since(at) < AUTHORIZATION_TTL)
     }
 
-    /// A new request supersedes any older pending one (the newest wins).
+    /// A new request supersedes any older pending one (the newest wins), except while the
+    /// pending request's confirmation is terminating sessions: then the in-flight request is
+    /// returned unchanged, so the confirmation that already started can still complete.
     pub fn begin_request(&self) -> ExitRequest {
-        let id = uuid::Uuid::new_v4().to_string();
         if let Ok(mut pending) = self.pending_request.lock() {
-            *pending = Some(id.clone());
+            if pending.terminating {
+                if let Some(id) = pending.id.clone() {
+                    return ExitRequest { id };
+                }
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            pending.id = Some(id.clone());
+            return ExitRequest { id };
         }
-        ExitRequest { id }
+        ExitRequest {
+            id: uuid::Uuid::new_v4().to_string(),
+        }
     }
 
+    #[cfg(test)]
     pub fn pending_request_id(&self) -> Option<String> {
         self.pending_request
             .lock()
             .ok()
-            .and_then(|pending| pending.clone())
+            .and_then(|pending| pending.id.clone())
+    }
+
+    /// Verifies `request_id` is the pending request and keeps it pending (and unsuperseded)
+    /// until the returned lock is dropped.
+    fn lock_for_termination(
+        &self,
+        request_id: &str,
+    ) -> Result<TerminationLock<'_>, ExitConfirmError> {
+        let mut pending = self
+            .pending_request
+            .lock()
+            .map_err(|_| ExitConfirmError::NoPendingRequest)?;
+        match pending.id.as_deref() {
+            None => return Err(ExitConfirmError::NoPendingRequest),
+            Some(current) if current != request_id => {
+                return Err(ExitConfirmError::RequestMismatch)
+            }
+            Some(_) => {}
+        }
+        pending.terminating = true;
+        Ok(TerminationLock { gate: self })
     }
 
     /// Authorizes the exit only when `request_id` equals the pending request, and consumes it.
@@ -73,14 +127,14 @@ impl AppExitGate {
                 .pending_request
                 .lock()
                 .map_err(|_| ExitConfirmError::NoPendingRequest)?;
-            let matched = match pending.as_deref() {
+            let matched = match pending.id.as_deref() {
                 None => return Err(ExitConfirmError::NoPendingRequest),
                 Some(current) => current == request_id,
             };
             if !matched {
                 return Err(ExitConfirmError::RequestMismatch);
             }
-            *pending = None;
+            pending.id = None;
         }
         self.authorize();
         Ok(())
@@ -107,13 +161,10 @@ pub(crate) fn confirm_exit_with<T>(
     request_id: &str,
     terminate: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<(), AppError> {
-    match gate.pending_request_id() {
-        None => return Err(exit_confirm_error(ExitConfirmError::NoPendingRequest)),
-        Some(current) if current != request_id => {
-            return Err(exit_confirm_error(ExitConfirmError::RequestMismatch))
-        }
-        Some(_) => {}
-    }
+    // The request stays pending and cannot be superseded while sessions are terminated.
+    let _termination = gate
+        .lock_for_termination(request_id)
+        .map_err(exit_confirm_error)?;
     terminate()?;
     gate.confirm(request_id).map_err(exit_confirm_error)
 }
@@ -271,6 +322,8 @@ struct LifecycleState {
 
 struct LifecycleInner {
     state: std::sync::Mutex<LifecycleState>,
+    /// Signalled when a start permit drops (see `wait_for_starts`).
+    starts_drained: std::sync::Condvar,
     pty_active: Probe,
     exec_active: Probe,
 }
@@ -322,6 +375,8 @@ impl Drop for Permit {
             Ok(mut state) => match self.kind {
                 PermitKind::Start => {
                     state.inflight_starts = state.inflight_starts.saturating_sub(1);
+                    // Notified while `state` is still held, so a waiter cannot miss it.
+                    self.inner.starts_drained.notify_all();
                 }
                 PermitKind::DataReplace | PermitKind::ExitPending => {
                     state.phase = Phase::Running;
@@ -344,6 +399,7 @@ impl AppLifecycle {
                     phase: Phase::Running,
                     inflight_starts: 0,
                 }),
+                starts_drained: std::sync::Condvar::new(),
                 pty_active: Box::new(pty_active),
                 exec_active: Box::new(exec_active),
             }),
@@ -365,6 +421,23 @@ impl AppLifecycle {
     #[cfg(test)]
     pub(crate) fn inflight_starts(&self) -> usize {
         self.inner.state.lock().unwrap().inflight_starts
+    }
+
+    /// Blocks for at most `budget` until no start permit is outstanding. Returns true when none
+    /// is left (a poisoned lock counts as drained). Callers must not hold the session table, the
+    /// execution task table or a database connection lock (same rule as `admit`).
+    pub fn wait_for_starts(&self, budget: Duration) -> bool {
+        let Ok(state) = self.inner.state.lock() else {
+            return true;
+        };
+        match self
+            .inner
+            .starts_drained
+            .wait_timeout_while(state, budget, |state| state.inflight_starts > 0)
+        {
+            Ok((state, _)) => state.inflight_starts == 0,
+            Err(_) => true,
+        }
     }
 
     #[cfg(test)]
@@ -1392,5 +1465,207 @@ mod tests {
         // An expired authorization must not break a later, fresh one.
         gate.authorize_at(t0);
         assert!(gate.consume_authorization_at(t0 + Duration::from_secs(1)));
+    }
+
+    fn lifecycle() -> super::AppLifecycle {
+        super::AppLifecycle::with_counters(
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        )
+    }
+
+    #[test]
+    fn wait_for_starts_returns_true_immediately_when_no_start_is_in_flight() {
+        let lifecycle = lifecycle();
+        let began = Instant::now();
+
+        assert!(lifecycle.wait_for_starts(Duration::from_millis(500)));
+        assert!(began.elapsed() < Duration::from_millis(200));
+    }
+
+    #[test]
+    fn wait_for_starts_blocks_until_the_last_start_permit_drops() {
+        use super::Operation;
+        let lifecycle = lifecycle();
+        let permit = lifecycle.admit(Operation::PtyStart).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            drop(permit);
+        });
+        started_rx.recv().unwrap();
+        let began = Instant::now();
+
+        let drained = lifecycle.wait_for_starts(Duration::from_secs(5));
+
+        assert!(drained);
+        assert_eq!(lifecycle.inflight_starts(), 0);
+        let waited = began.elapsed();
+        assert!(waited >= Duration::from_millis(80), "waited {waited:?}");
+        assert!(waited < Duration::from_secs(3), "waited {waited:?}");
+        dropper.join().unwrap();
+    }
+
+    #[test]
+    fn wait_for_starts_times_out_while_a_start_permit_is_held() {
+        use super::Operation;
+        let lifecycle = lifecycle();
+        let permit = lifecycle.admit(Operation::ExecStart).unwrap();
+        let began = Instant::now();
+
+        assert!(!lifecycle.wait_for_starts(Duration::from_millis(200)));
+
+        let waited = began.elapsed();
+        assert!(waited >= Duration::from_millis(150), "waited {waited:?}");
+        assert!(waited < Duration::from_secs(2), "waited {waited:?}");
+        assert_eq!(lifecycle.inflight_starts(), 1);
+        drop(permit);
+        assert!(lifecycle.wait_for_starts(Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn new_starts_are_rejected_while_exit_waits_for_in_flight_starts() {
+        use super::{Operation, Phase};
+        let lifecycle = lifecycle();
+        let held = lifecycle.admit(Operation::PtyStart).unwrap();
+        lifecycle.admit(Operation::Exit).unwrap().keep_exiting();
+        let waiter = {
+            let lifecycle = lifecycle.clone();
+            std::thread::spawn(move || lifecycle.wait_for_starts(Duration::from_secs(5)))
+        };
+
+        for operation in [Operation::PtyStart, Operation::ExecStart] {
+            let error = lifecycle.admit(operation).unwrap_err();
+            assert_eq!(error_code(&error), "app.exiting");
+        }
+        assert_eq!(lifecycle.phase(), Phase::Exiting);
+        assert_eq!(
+            lifecycle.inflight_starts(),
+            1,
+            "the earlier start is untouched"
+        );
+
+        drop(held);
+        assert!(waiter.join().unwrap());
+    }
+
+    #[test]
+    fn every_waiter_wakes_when_the_last_start_permit_drops() {
+        use super::Operation;
+        let lifecycle = lifecycle();
+        let held = lifecycle.admit(Operation::PtyStart).unwrap();
+        let waiters: Vec<_> = (0..3)
+            .map(|_| {
+                let lifecycle = lifecycle.clone();
+                std::thread::spawn(move || {
+                    let began = Instant::now();
+                    let drained = lifecycle.wait_for_starts(Duration::from_secs(5));
+                    (drained, began.elapsed())
+                })
+            })
+            .collect();
+        std::thread::sleep(Duration::from_millis(50));
+
+        drop(held);
+
+        for waiter in waiters {
+            let (drained, waited) = waiter.join().unwrap();
+            assert!(drained);
+            assert!(
+                waited < Duration::from_secs(3),
+                "a waiter was not woken: {waited:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_start_permits_count_as_in_flight_starts_for_the_exit_wait() {
+        use super::{DataReplaceKind, Operation};
+        let lifecycle = lifecycle();
+        let replace = lifecycle
+            .admit(Operation::DataReplace(DataReplaceKind::RestoreBackup))
+            .unwrap();
+        let began = Instant::now();
+
+        assert!(lifecycle.wait_for_starts(Duration::from_secs(2)));
+        assert!(began.elapsed() < Duration::from_millis(500));
+        assert_eq!(lifecycle.inflight_starts(), 0);
+        drop(replace);
+
+        lifecycle.admit(Operation::Exit).unwrap().keep_exiting();
+        let repeated = lifecycle.admit(Operation::Exit).unwrap();
+        assert!(lifecycle.wait_for_starts(Duration::from_millis(200)));
+        drop(repeated);
+    }
+
+    #[test]
+    fn activity_probes_run_under_the_state_lock() {
+        use super::{DataReplaceKind, Operation};
+        use std::sync::{Arc, Mutex};
+        // Documents the lock order (state first, then the probes' own tables): a probe must never
+        // call back into the lifecycle, because it runs while `state` is held.
+        let slot: Arc<Mutex<Option<super::AppLifecycle>>> = Arc::new(Mutex::new(None));
+        let observed: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
+        let probe_slot = Arc::clone(&slot);
+        let probe_observed = Arc::clone(&observed);
+        let lifecycle = super::AppLifecycle::new(
+            || 0,
+            move || {
+                let held = probe_slot
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|lifecycle| lifecycle.inner.state.try_lock().is_err());
+                probe_observed.lock().unwrap().push(held.unwrap_or(false));
+                0
+            },
+        );
+        *slot.lock().unwrap() = Some(lifecycle.clone());
+
+        let permit = lifecycle
+            .admit(Operation::DataReplace(DataReplaceKind::ImportConfig))
+            .unwrap();
+        drop(permit);
+
+        let observed = observed.lock().unwrap().clone();
+        assert!(!observed.is_empty(), "the probe must have been read");
+        assert!(observed.iter().all(|held| *held));
+        // Drop the cycle so the test does not leak the shared state.
+        *slot.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn a_new_request_during_termination_returns_the_confirming_request() {
+        let gate = AppExitGate::default();
+        let request = gate.begin_request();
+        let seen: Cell<Option<String>> = Cell::new(None);
+
+        let result = confirm_exit_with(&gate, &request.id, || {
+            let newer = gate.begin_request();
+            seen.set(Some(newer.id));
+            Ok::<(), AppError>(())
+        });
+
+        assert!(result.is_ok(), "the confirmation must not be superseded");
+        assert_eq!(seen.take(), Some(request.id.clone()));
+        assert_eq!(gate.pending_request_id(), None);
+        assert!(gate.consume_authorization());
+    }
+
+    #[test]
+    fn a_failed_termination_releases_the_lock_so_newer_requests_supersede() {
+        let gate = AppExitGate::default();
+        let request = gate.begin_request();
+
+        let result = confirm_exit_with(&gate, &request.id, || {
+            Err::<(), AppError>(AppError::msg("terminate failed"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(gate.pending_request_id(), Some(request.id.clone()));
+        let newer = gate.begin_request();
+        assert_ne!(newer.id, request.id);
+        assert_eq!(gate.pending_request_id(), Some(newer.id));
     }
 }
