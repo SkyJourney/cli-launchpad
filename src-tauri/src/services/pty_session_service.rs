@@ -17,6 +17,7 @@ use uuid::Uuid;
 mod flow;
 mod handoff;
 mod input;
+mod persistence;
 mod ports;
 mod process;
 mod registry;
@@ -27,6 +28,9 @@ mod window;
 use flow::OutputFlow;
 use handoff::{deliver_snapshot, HandoffState};
 use input::{enqueue_pty_input, pty_input_channel, start_pty_input_writer};
+use persistence::{
+    register_then_persist, LogObserver, PendingFinishQueue, PersistenceObserver, RetryingStore,
+};
 use ports::{
     DbLaunchHistorySink, DbPtySessionStore, LaunchHistorySink, LaunchRecord, PtyEventSink,
     PtySessionStore,
@@ -59,12 +63,16 @@ const MAX_HANDOFF_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone)]
 pub struct PtySessionManager {
     registry: Arc<SessionRegistry>,
+    persist_queue: Arc<PendingFinishQueue>,
+    observer: Arc<dyn PersistenceObserver>,
 }
 
 impl Default for PtySessionManager {
     fn default() -> Self {
         Self {
             registry: Arc::new(SessionRegistry::new()),
+            persist_queue: Arc::new(PendingFinishQueue::new()),
+            observer: Arc::new(LogObserver),
         }
     }
 }
@@ -93,6 +101,70 @@ fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppEr
 }
 
 impl PtySessionManager {
+    /// Test constructor: production code only uses `Default` (the log observer).
+    #[cfg(test)]
+    pub(crate) fn with_observer(observer: Arc<dyn PersistenceObserver>) -> Self {
+        Self {
+            registry: Arc::new(SessionRegistry::new()),
+            persist_queue: Arc::new(PendingFinishQueue::new()),
+            observer,
+        }
+    }
+
+    /// The database store wrapped in the manager's shared retry queue.
+    fn retrying_store(&self, db: &Db) -> RetryingStore {
+        RetryingStore::new(
+            Arc::new(DbPtySessionStore::new(db.clone())),
+            Arc::clone(&self.persist_queue),
+            Arc::clone(&self.observer),
+        )
+    }
+
+    #[cfg(test)]
+    fn open_sessions(&self) -> Vec<Arc<ManagedSession>> {
+        match self.registry.snapshot() {
+            Ok(sessions) => sessions
+                .into_iter()
+                .filter(|session| !session.flow.is_closed())
+                .collect(),
+            Err(_) => {
+                log::error!("PTY session table lock poisoned while listing running sessions");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Session ids registered for `directory_id` whose output flow is still open.
+    /// Lock note (m6-056 D1): `remove_directory` calls this while holding the database lock;
+    /// it takes only the registry lock and each session's flow lock, neither of which is ever
+    /// held while acquiring the database lock.
+    #[cfg(test)]
+    pub fn running_in(&self, directory_id: i64) -> Vec<String> {
+        self.open_sessions()
+            .into_iter()
+            .filter(|session| session.directory_id == directory_id)
+            .map(|session| session.session_id.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn is_running(&self, session_id: &str) -> bool {
+        self.registry
+            .find(session_id)
+            .ok()
+            .flatten()
+            .is_some_and(|session| !session.flow.is_closed())
+    }
+
+    /// A snapshot of the ids of every open session.
+    #[cfg(test)]
+    pub fn running_session_ids(&self) -> std::collections::HashSet<String> {
+        self.open_sessions()
+            .into_iter()
+            .map(|session| session.session_id.clone())
+            .collect()
+    }
+
     pub fn create(
         &self,
         db: &Db,
@@ -115,7 +187,7 @@ impl PtySessionManager {
             ));
         }
         let directory_path = directory.path;
-        let store: Arc<dyn PtySessionStore> = Arc::new(DbPtySessionStore::new(db.clone()));
+        let store: Arc<dyn PtySessionStore> = Arc::new(self.retrying_store(db));
         let history = DbLaunchHistorySink::new(db.clone());
         let result = self.create_inner(
             &store,
@@ -211,12 +283,6 @@ impl PtySessionManager {
                 .map_err(Into::into);
         }
         let now = now_ms();
-        if let Err(error) =
-            store.insert_running(&session_id, directory_id, tool_key, &payload.directory, now)
-        {
-            stop_spawned_child(&process_tree, &mut child);
-            return Err(error);
-        }
         let killer = child.clone_killer();
         let session = Arc::new(ManagedSession {
             session_id: session_id.clone(),
@@ -252,8 +318,13 @@ impl PtySessionManager {
             last_acknowledged_sequence: AtomicU64::new(0),
             termination_requested: std::sync::atomic::AtomicBool::new(false),
         });
-        if let Err(error) = self.registry.insert(Arc::clone(&session)) {
-            self.fail_session_start(store, &session, "PTY 会话表锁中毒".to_string());
+        // Register first, then write the row: if the row cannot be written the registration is
+        // undone, so "the row says running but memory does not know it" can only come from a
+        // later failed `finish`.
+        if let Err(error) = register_then_persist(&self.registry, store.as_ref(), &session) {
+            session.flow.close();
+            session.force_terminate();
+            let _ = child.wait();
             return Err(error);
         }
 

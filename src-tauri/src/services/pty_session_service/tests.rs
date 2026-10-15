@@ -1,5 +1,6 @@
 use super::handoff::*;
 use super::input::*;
+use super::persistence::register_then_persist;
 use super::route::*;
 use super::test_support::{
     blocking_channel, failing_channel_with, long_running_test_command, quick_exit_test_command,
@@ -1945,4 +1946,114 @@ fn resize_applies_once_and_skips_equal_sizes_through_the_terminal_lock() {
         ),
         "PTY 尺寸必须至少为 1 列和 1 行",
     );
+}
+
+// ---- m6-056: the in-memory table is the liveness authority
+
+#[test]
+fn running_in_lists_only_registered_open_sessions_of_the_directory() {
+    let manager = PtySessionManager::default();
+    let a = manager
+        .insert_test_session_in_directory("main", 1, None)
+        .session_id;
+    let b = manager
+        .insert_test_session_in_directory("main", 1, None)
+        .session_id;
+    let c = manager
+        .insert_test_session_in_directory("main", 2, None)
+        .session_id;
+
+    let mut in_one = manager.running_in(1);
+    in_one.sort();
+    let mut expected = vec![a.clone(), b.clone()];
+    expected.sort();
+    assert_eq!(in_one, expected);
+    assert_eq!(manager.running_in(2), vec![c.clone()]);
+    assert!(manager.running_in(3).is_empty());
+    assert!(manager.is_running(&c));
+
+    manager.get(&b).unwrap().flow.close();
+    assert_eq!(manager.running_in(1), vec![a.clone()]);
+    assert!(!manager.is_running(&b));
+
+    manager.registry_handle().remove(&a);
+    assert!(manager.running_in(1).is_empty());
+    assert!(!manager.is_running(&a));
+    assert!(!manager.is_running("missing"));
+    assert!(manager.is_running(&c));
+}
+
+#[test]
+fn running_session_ids_is_a_snapshot_of_open_sessions() {
+    let manager = PtySessionManager::default();
+    let a = manager
+        .insert_test_session_in_directory("main", 1, None)
+        .session_id;
+    let b = manager
+        .insert_test_session_in_directory("main", 1, None)
+        .session_id;
+    let c = manager
+        .insert_test_session_in_directory("main", 2, None)
+        .session_id;
+    manager.get(&b).unwrap().flow.close();
+
+    let snapshot = manager.running_session_ids();
+
+    assert_eq!(
+        snapshot,
+        std::collections::HashSet::from([a.clone(), c.clone()])
+    );
+    manager.registry_handle().remove(&a);
+    assert!(
+        snapshot.contains(&a),
+        "an already taken snapshot is not live"
+    );
+    assert!(!manager.running_session_ids().contains(&a));
+}
+
+#[test]
+fn registration_precedes_the_database_insert() {
+    let manager = PtySessionManager::default();
+    let inserted = manager.insert_test_session("main", None);
+    let id = inserted.session_id.clone();
+    let session = manager.get(&id).unwrap();
+    let registry = manager.registry_handle();
+    registry.remove(&id);
+    let (store, _rx) = FakeStore::new();
+    let registered_at_insert = Arc::new(AtomicBool::new(false));
+    {
+        let registry = Arc::clone(&registry);
+        let registered_at_insert = Arc::clone(&registered_at_insert);
+        store.set_on_insert(move |session_id| {
+            registered_at_insert.store(registry.contains(session_id), Ordering::SeqCst);
+        });
+    }
+
+    register_then_persist(&registry, store.as_ref(), &session).unwrap();
+
+    assert_eq!(store.calls(), vec![format!("insert:{id}")]);
+    assert!(
+        registered_at_insert.load(Ordering::SeqCst),
+        "the session must be registered when the row is written"
+    );
+    assert!(registry.contains(&id));
+}
+
+#[test]
+fn a_failed_insert_unregisters_the_session() {
+    let manager = PtySessionManager::default();
+    let inserted = manager.insert_test_session("main", None);
+    let id = inserted.session_id.clone();
+    let session = manager.get(&id).unwrap();
+    let registry = manager.registry_handle();
+    registry.remove(&id);
+    let (store, _rx) = FakeStore::new();
+    store.fail_next_inserts(1);
+
+    let result = register_then_persist(&registry, store.as_ref(), &session);
+
+    assert!(result.is_err());
+    assert!(!registry.contains(&id));
+    assert_eq!(store.calls(), vec![format!("insert:{id}")]);
+    assert!(manager.running_in(1).is_empty());
 }

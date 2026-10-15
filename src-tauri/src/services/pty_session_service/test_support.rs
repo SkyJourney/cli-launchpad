@@ -70,6 +70,16 @@ impl PtySessionManager {
         owner_label: &str,
         channel: Option<Channel<PtyEvent>>,
     ) -> TestSession {
+        self.insert_test_session_in_directory(owner_label, 1, channel)
+    }
+
+    /// 与 `insert_test_session` 相同，只是 `directory_id` 可指定。
+    pub(crate) fn insert_test_session_in_directory(
+        &self,
+        owner_label: &str,
+        directory_id: i64,
+        channel: Option<Channel<PtyEvent>>,
+    ) -> TestSession {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -84,7 +94,7 @@ impl PtySessionManager {
         let session_id = Uuid::new_v4().to_string();
         let session = Arc::new(ManagedSession {
             session_id: session_id.clone(),
-            directory_id: 1,
+            directory_id,
             tool_key: ToolKey::Claude,
             working_directory: "C:/project".to_string(),
             started_at_ms: 0,
@@ -255,12 +265,21 @@ pub(crate) fn long_running_test_command() -> CommandBuilder {
     }
 }
 
+#[cfg(test)]
+type StoreHook = Box<dyn Fn(&str) + Send + Sync>;
+
 /// 记录 `finish` 调用的 `PtySessionStore` 替身。`fail_finish` 为 true 时记录之后返回错误。
 #[cfg(test)]
+
 pub(crate) struct FakeStore {
     pub inserted: Mutex<Vec<String>>,
     pub finished: Mutex<Vec<(String, String, Option<i64>)>>,
     pub fail_finish: AtomicBool,
+    finish_failures_remaining: std::sync::atomic::AtomicUsize,
+    insert_failures_remaining: std::sync::atomic::AtomicUsize,
+    calls: Mutex<Vec<String>>,
+    on_insert: Mutex<Option<StoreHook>>,
+    on_finish: Mutex<Option<StoreHook>>,
     notify: Mutex<Option<mpsc::SyncSender<()>>>,
 }
 
@@ -273,9 +292,39 @@ impl FakeStore {
             inserted: Mutex::new(Vec::new()),
             finished: Mutex::new(Vec::new()),
             fail_finish: AtomicBool::new(false),
+            finish_failures_remaining: std::sync::atomic::AtomicUsize::new(0),
+            insert_failures_remaining: std::sync::atomic::AtomicUsize::new(0),
+            calls: Mutex::new(Vec::new()),
+            on_insert: Mutex::new(None),
+            on_finish: Mutex::new(None),
             notify: Mutex::new(Some(sender)),
         });
         (store, receiver)
+    }
+
+    /// 接下来的 `n` 次 `finish` 失败（设置为 0 即取消）。
+    pub(crate) fn fail_next_finishes(&self, n: usize) {
+        self.finish_failures_remaining.store(n, Ordering::SeqCst);
+    }
+
+    /// 接下来的 `n` 次 `insert_running` 失败（设置为 0 即取消）。
+    pub(crate) fn fail_next_inserts(&self, n: usize) {
+        self.insert_failures_remaining.store(n, Ordering::SeqCst);
+    }
+
+    /// 按调用顺序记录 `insert:<id>` 与 `finish:<id>:<state>`，失败的调用也记录。
+    pub(crate) fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    /// 每次 `insert_running` 开始时调用（参数为会话 ID）。
+    pub(crate) fn set_on_insert(&self, hook: impl Fn(&str) + Send + Sync + 'static) {
+        *self.on_insert.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    /// 每次 `finish` 开始时调用（参数为会话 ID）。
+    pub(crate) fn set_on_finish(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.on_finish.lock().unwrap() = Some(Box::new(move |_| hook()));
     }
 }
 
@@ -289,6 +338,19 @@ impl PtySessionStore for FakeStore {
         _working_directory: &str,
         _started_at_ms: i64,
     ) -> Result<(), AppError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("insert:{session_id}"));
+        if let Some(hook) = self.on_insert.lock().unwrap().as_ref() {
+            hook(session_id);
+        }
+        let remaining = self.insert_failures_remaining.load(Ordering::SeqCst);
+        if remaining > 0 {
+            self.insert_failures_remaining
+                .store(remaining - 1, Ordering::SeqCst);
+            return Err(AppError::msg("injected insert failure"));
+        }
         self.inserted.lock().unwrap().push(session_id.to_string());
         Ok(())
     }
@@ -300,12 +362,25 @@ impl PtySessionStore for FakeStore {
         _ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("finish:{session_id}:{state}"));
         self.finished
             .lock()
             .unwrap()
             .push((session_id.to_string(), state.to_string(), exit_code));
         if let Some(notify) = self.notify.lock().unwrap().as_ref() {
             let _ = notify.try_send(());
+        }
+        if let Some(hook) = self.on_finish.lock().unwrap().as_ref() {
+            hook(session_id);
+        }
+        let remaining = self.finish_failures_remaining.load(Ordering::SeqCst);
+        if remaining > 0 {
+            self.finish_failures_remaining
+                .store(remaining - 1, Ordering::SeqCst);
+            return Err(AppError::msg("injected persistence failure"));
         }
         if self.fail_finish.load(Ordering::SeqCst) {
             return Err(AppError::msg("injected persistence failure"));
@@ -533,5 +608,38 @@ impl ManagedSession {
 
     pub(super) fn handoff_guard(&self) -> HandoffGuard<'_> {
         HandoffGuard(self.route_and_handoff.lock().unwrap())
+    }
+}
+
+/// 记录观察者回调的替身：`(kind, session_id, attempts)`。
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct RecordingObserver {
+    events: Mutex<Vec<(String, String, u32)>>,
+}
+
+#[cfg(test)]
+impl RecordingObserver {
+    pub(crate) fn events(&self) -> Vec<(String, String, u32)> {
+        self.events.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+impl super::persistence::PersistenceObserver for RecordingObserver {
+    fn finish_failed(&self, session_id: &str, _state: &str, attempts: u32, _error: &AppError) {
+        self.events.lock().unwrap().push((
+            "finish_failed".to_string(),
+            session_id.to_string(),
+            attempts,
+        ));
+    }
+
+    fn finish_gave_up(&self, session_id: &str, _state: &str, attempts: u32) {
+        self.events.lock().unwrap().push((
+            "finish_gave_up".to_string(),
+            session_id.to_string(),
+            attempts,
+        ));
     }
 }

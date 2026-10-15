@@ -45,6 +45,15 @@ impl SessionRegistry {
             .cloned())
     }
 
+    /// True when the session is registered; a poisoned table counts as "no".
+    #[cfg(test)]
+    pub(super) fn contains(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|sessions| sessions.contains_key(session_id))
+            .unwrap_or(false)
+    }
+
     pub(super) fn remove(&self, session_id: &str) -> bool {
         match self.inner.lock() {
             Ok(mut sessions) => sessions.remove(session_id).is_some(),
