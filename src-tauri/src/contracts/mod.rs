@@ -1766,43 +1766,6 @@ const SYNC_COMMANDS: [&str; 11] = [
     "take_startup_notices",
 ];
 
-/// Removes every `#[cfg(test)]` item (a braced block or a `;`-terminated item).
-fn strip_cfg_test_items(source: &str) -> String {
-    let mut out = String::new();
-    let mut rest = source;
-    while let Some(at) = rest.find("#[cfg(test)]") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + "#[cfg(test)]".len()..];
-        let brace = after.find('{');
-        let semicolon = after.find(';');
-        match (brace, semicolon) {
-            (Some(b), Some(s)) if s < b => rest = &after[s + 1..],
-            (Some(b), _) => {
-                let mut depth = 0usize;
-                let mut end = after.len();
-                for (index, character) in after[b..].char_indices() {
-                    match character {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = b + index + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                rest = &after[end..];
-            }
-            (None, Some(s)) => rest = &after[s + 1..],
-            (None, None) => rest = "",
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 struct CommandInfo {
     name: String,
     is_async: bool,
@@ -1812,7 +1775,7 @@ struct CommandInfo {
 }
 
 fn tauri_commands(source: &str) -> Vec<CommandInfo> {
-    let stripped = strip_cfg_test_items(source);
+    let stripped = production_text(source);
     let lines: Vec<&str> = stripped.lines().collect();
     let mut commands = Vec::new();
     let mut index = 0;
@@ -2680,7 +2643,7 @@ fn production_sources() -> Vec<(String, String)> {
             let text = std::fs::read_to_string(&path)
                 .unwrap()
                 .replace("\r\n", "\n");
-            out.push((relative, strip_cfg_test_items(&text)));
+            out.push((relative, production_text(&text)));
         }
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -2727,19 +2690,27 @@ fn brace_block_after(source: &str, marker: &str) -> Option<String> {
     None
 }
 
-/// The bodies of every `async fn` in `source`.
+/// The bodies of every `async fn` and every `async` / `async move` block in `source`.
 fn async_fn_bodies(source: &str) -> Vec<String> {
     let mut bodies = Vec::new();
-    let mut rest = source;
-    while let Some(at) = rest.find("async fn ") {
-        let after = &rest[at + "async fn ".len()..];
-        match brace_block_after(after, "") {
-            Some(body) => {
-                let consumed = after.find(&body).unwrap() + body.len();
-                bodies.push(body);
-                rest = &after[consumed..];
+    for marker in ["async fn ", "async move {", "async {"] {
+        let mut rest = source;
+        while let Some(at) = rest.find(marker) {
+            // `async move {` and `async {` end with the opening brace that starts the block.
+            let from = if marker.ends_with('{') {
+                at + marker.len() - 1
+            } else {
+                at + marker.len()
+            };
+            let after = &rest[from..];
+            match brace_block_after(after, "") {
+                Some(body) => {
+                    let consumed = after.find(&body).unwrap() + body.len();
+                    bodies.push(body);
+                    rest = &after[consumed..];
+                }
+                None => break,
             }
-            None => break,
         }
     }
     bodies
@@ -2843,7 +2814,9 @@ fn with_sync_is_confined_to_the_allowed_files() {
 
     let mut using: Vec<&str> = sources
         .iter()
-        .filter(|(path, text)| path != "runtime.rs" && text.contains(".with_sync("))
+        .filter(|(path, text)| {
+            path != "runtime.rs" && (text.contains(".with_sync(") || text.contains(".with_sync::<"))
+        })
         .map(|(path, _)| path.as_str())
         .collect();
     using.sort();
@@ -2859,16 +2832,21 @@ fn with_sync_is_confined_to_the_allowed_files() {
     for (path, text) in &sources {
         for body in async_fn_bodies(text) {
             assert!(
-                !body.contains(".with_sync("),
-                "{path}: an async fn calls with_sync (use Db::call)"
+                !body.contains(".with_sync(") && !body.contains(".with_sync::<"),
+                "{path}: an async fn or block calls with_sync (use Db::call)"
             );
         }
     }
 
-    // The scan can see a violation.
+    // The scan can see a violation: an async fn, an `async move` block and the turbofish form.
     let bodies = async_fn_bodies("async fn f() { db.with_sync(\"op\", |c| Ok(())) }\nfn g() {}");
     assert_eq!(bodies.len(), 1);
     assert!(bodies[0].contains(".with_sync("));
+    let blocks = async_fn_bodies(
+        "fn g() { tokio::spawn(async move { db.with_sync::<(), _>(\"op\", |c| Ok(())) }); }",
+    );
+    assert_eq!(blocks.len(), 1);
+    assert!(blocks[0].contains(".with_sync::<"));
 }
 
 #[test]

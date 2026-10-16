@@ -254,6 +254,27 @@ pub(super) fn register_then_persist(
 }
 
 #[cfg(test)]
+impl super::PtySessionManager {
+    /// Test seam for command-level wiring tests: puts one failed `finish` write into the
+    /// manager's own retry queue, as a store that could not reach the database would.
+    pub(crate) fn queue_failed_finish_for_test(
+        &self,
+        session_id: &str,
+        state: &str,
+        ended_at_ms: i64,
+        exit_code: Option<i64>,
+    ) {
+        self.persist_queue.push(PendingFinish {
+            session_id: session_id.to_string(),
+            state: state.to_string(),
+            ended_at_ms,
+            exit_code,
+            attempts: 1,
+        });
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
@@ -509,26 +530,5 @@ mod tests {
         assert_eq!(row.state, "exited");
         assert_eq!(row.ended_at_ms, Some(10));
         assert_eq!(row.exit_code, Some(0));
-    }
-}
-
-#[cfg(test)]
-impl super::PtySessionManager {
-    /// Test seam for command-level wiring tests: puts one failed `finish` write into the
-    /// manager's own retry queue, as a store that could not reach the database would.
-    pub(crate) fn queue_failed_finish_for_test(
-        &self,
-        session_id: &str,
-        state: &str,
-        ended_at_ms: i64,
-        exit_code: Option<i64>,
-    ) {
-        self.persist_queue.push(PendingFinish {
-            session_id: session_id.to_string(),
-            state: state.to_string(),
-            ended_at_ms,
-            exit_code,
-            attempts: 1,
-        });
     }
 }

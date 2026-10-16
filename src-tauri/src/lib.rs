@@ -59,7 +59,7 @@ pub fn update_close_behavior_state(
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 show_main_window(&window);
             }
         }))
@@ -98,11 +98,11 @@ pub fn run() {
             let window_state_flags = persistent_window_state_flags();
             app.handle().plugin(
                 tauri_plugin_window_state::Builder::default()
-                    .skip_initial_state("main")
+                    .skip_initial_state(models::window_kind::main_window_label())
                     .with_state_flags(window_state_flags)
                     .build(),
             )?;
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 // Window-state files written by older app versions can contain
                 // `decorated: true`; enforce the Windows custom chrome before
                 // restoring size and position so stale state cannot revive it.
@@ -128,7 +128,7 @@ pub fn run() {
                     .app
                     .windows
                     .iter()
-                    .find(|config| config.label == "main");
+                    .find(|config| config.label == models::window_kind::main_window_label());
                 let min_width = window_config
                     .and_then(|config| config.min_width)
                     .unwrap_or(1.0);
@@ -385,7 +385,7 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
             let execution_task_count = app
                 .state::<services::execution_service::ExecutionTaskManager>()
                 .active_count();
-            let main_window = app.get_webview_window("main");
+            let main_window = app.get_webview_window(models::window_kind::main_window_label());
             match services::app_lifecycle::decide_exit_request(
                 &exit_gate,
                 pty_count,
@@ -446,7 +446,7 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 show_main_window(&window);
             }
         }
@@ -542,7 +542,9 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) =
+                    app.get_webview_window(models::window_kind::main_window_label())
+                {
                     show_main_window(&window);
                 }
             }
@@ -557,7 +559,10 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                if let Some(window) = tray
+                    .app_handle()
+                    .get_webview_window(models::window_kind::main_window_label())
+                {
                     let is_visible = window.is_visible().unwrap_or(false);
                     let is_minimized = window.is_minimized().unwrap_or(false);
                     if is_visible && !is_minimized {
