@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { act, cleanup } from "@testing-library/react";
-import { emitTo } from "@tauri-apps/api/event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -32,7 +31,7 @@ import {
   type WorkspaceHost,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
-import { WORKSPACE_CONTENT_WINDOW_EVENT } from "../lib/workspaceContentWindowProtocol";
+import { RUST_EVENTS } from "../lib/eventNames";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
 import { getWorkspaceContentAdapter } from "./workspaceContentAdapterRegistry";
 import type { WorkspacePaneContentRef } from "../lib/tauri";
@@ -316,10 +315,19 @@ describe("duplicate and out-of-order handoff events", () => {
   ) {
     await act(async () => {
       for (const [type, payload] of requests) {
-        tauriMock.emitEvent(
-          WORKSPACE_CONTENT_WINDOW_EVENT,
-          { apiVersion: 1, type, payload },
+        // A child window speaks for itself: Rust stamps the sender it claims.
+        const claimed =
+          (payload as { windowLabel?: string } | null)?.windowLabel ?? "main";
+        tauriMock.deliverInbox(
           "main",
+          RUST_EVENTS.windowMessage,
+          { apiVersion: 1, type, payload },
+          {
+            label: claimed,
+            kind: claimed.startsWith("terminal-")
+              ? "terminal"
+              : "workspaceContent",
+          },
         );
       }
     });
@@ -498,17 +506,11 @@ describe("duplicate and out-of-order handoff events", () => {
     const { doc, state, windowLabel, payload } =
       await beginManualFileDetach(coordinator);
     const content = { kind: "file", documentId: doc.id } as const;
-    const originalEmitTo = vi.mocked(emitTo).getMockImplementation();
-    if (!originalEmitTo) throw new Error("emitTo mock has no implementation");
-    // 只让 init 事件的发送失败，其余事件照常转发。
-    vi.mocked(emitTo).mockImplementation(async (target, eventName, message) => {
-      if (
-        (message as { type?: string }).type === "workspace-file-window-init"
-      ) {
-        throw new Error("init could not be delivered");
-      }
-      return originalEmitTo(target, eventName, message as never);
-    });
+    // 只让 init 消息的发送失败，其余消息照常中继。
+    tauriMock.failNextWindowMessage(
+      "workspace-file-window-init",
+      new Error("init could not be delivered"),
+    );
     try {
       await emitToMain("workspace-file-window-ready", payload);
       // 不推进计时器：回滚必须立即发生，而不是等 15 秒超时。
@@ -526,7 +528,7 @@ describe("duplicate and out-of-order handoff events", () => {
       expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
       expect(host!.errors).toEqual([]);
     } finally {
-      vi.mocked(emitTo).mockImplementation(originalEmitTo);
+      // The failure is consumed by the send above; nothing else to restore.
     }
   });
 
@@ -673,5 +675,89 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(eventsTo(ptyLabel, "pty-return-failed")).toHaveLength(0);
     expect(eventsTo(ptyLabel, "pty-return-complete")).toHaveLength(0);
     expect(host!.errors).toEqual([]);
+  });
+});
+
+describe("untrusted window events", () => {
+  const FOREIGN = "workspace-content-11111111-1111-4111-8111-111111111111";
+  const FOREIGN_TERMINAL = "terminal-3b9f2c1e-6d4a-4f7b-8a21-5c0e9d7a1b34";
+
+  it("ignores a file buffer change whose stamped sender is not the claimed window", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const { token, windowLabel, initBuffer } = await detachFileToWindow(
+      host,
+      doc.id,
+    );
+    const payload = {
+      documentId: doc.id,
+      token,
+      windowLabel,
+      fileDocument: doc,
+      fileBuffer: {
+        ...initBuffer,
+        content: "evil",
+        version: initBuffer.version + 1,
+      },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    // Another window stamped as the sender: the claim of `windowLabel` is not trusted.
+    await emitToMain("workspace-file-window-buffer-changed", payload, {
+      source: FOREIGN,
+    });
+    await flush();
+
+    expect(host.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
+    expect(warn).toHaveBeenCalledWith(
+      "workspace_content_event.source_mismatch",
+      "workspace-file-window-buffer-changed",
+    );
+    // Reverse: the same payload from the window it claims is accepted.
+    await emitToMain("workspace-file-window-buffer-changed", payload);
+    await flush();
+    expect(host.ctx().fileBuffers[doc.id].content).toBe("evil");
+    expect(host.errors).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it("ignores a PTY return request whose stamped sender is not the claimed terminal", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const request = {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel,
+      token: "return-1",
+    };
+    const repliesTo = () =>
+      tauriMock.state.relayedMessages.filter(
+        (message) =>
+          message.target === windowLabel &&
+          (message.messageType === "pty-return-complete" ||
+            message.messageType === "pty-return-failed"),
+      );
+
+    await emitToMain("pty-return-requested", request, {
+      source: FOREIGN_TERMINAL,
+    });
+    await flush();
+
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(repliesTo()).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      "workspace_content_event.source_mismatch",
+      "pty-return-requested",
+    );
+    // Reverse: without a forged sender the request is processed.
+    await emitToMain("pty-return-requested", request);
+    await flush();
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.errors).toEqual([]);
+    warn.mockRestore();
   });
 });

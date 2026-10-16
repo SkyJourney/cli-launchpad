@@ -206,18 +206,21 @@ describe("window orchestration", () => {
     host = h;
     // mock 监听记录的是 target 而不是 ownerLabel，这里只按事件名过滤：
     // 测试环境里只有宿主会注册这些事件。
-    const OWNED = new Set(["workspace-content-window-event"]);
-    const owned = () =>
-      tauriMock.state.eventListeners.filter((listener) =>
-        OWNED.has(listener.eventName),
-      );
-    // The two Rust notifications are handlers of the main window's inbox (m6-061).
-    const inboxCounts = () => [
-      tauriMock.inboxHandlerCount("main", "pty-session-owner-lost"),
-      tauriMock.inboxHandlerCount("main", "workspace-content-window-lost"),
+    // All three notification/protocol listeners are handlers of the main window's inbox (m6-061,
+    // m6-062): the relayed protocol messages and the two Rust notifications.
+    const INBOX_EVENTS = [
+      "window-message",
+      "pty-session-owner-lost",
+      "workspace-content-window-lost",
     ];
-    const before = [...owned()];
-    const beforeInbox = inboxCounts();
+    const registered = () =>
+      INBOX_EVENTS.map((event) =>
+        tauriMock.inboxRegistrationCount("main", event),
+      );
+    const active = () =>
+      INBOX_EVENTS.map((event) => tauriMock.inboxHandlerCount("main", event));
+    const registeredBefore = registered();
+    const activeBefore = active();
 
     await openFile(h);
     await launchPty(h);
@@ -225,13 +228,12 @@ describe("window orchestration", () => {
       h.ctx().focusPane(listWorkspacePanes(h.ctx().tree)[0].id);
     });
     await flush();
-    const after = owned();
 
-    expect(before.length).toBeGreaterThanOrEqual(1);
-    expect(beforeInbox[0]).toBeGreaterThanOrEqual(1);
-    expect(before.every((listener) => after.includes(listener))).toBe(true);
-    expect(after).toHaveLength(before.length);
-    expect(inboxCounts()).toEqual(beforeInbox);
+    expect(activeBefore[0]).toBeGreaterThanOrEqual(1);
+    expect(activeBefore[1]).toBeGreaterThanOrEqual(1);
+    // The same listeners stay registered: none was torn down and registered again.
+    expect(registered()).toEqual(registeredBefore);
+    expect(active()).toEqual(activeBefore);
     expect(h.errors).toEqual([]);
   });
 });

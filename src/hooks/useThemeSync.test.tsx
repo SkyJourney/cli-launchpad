@@ -65,8 +65,12 @@ describe("useThemeSync", () => {
       expect(tauriMock.state.emittedEvents).toContainEqual(
         expect.objectContaining({
           target: "main",
-          eventName: "app-preferences-requested",
-          payload: { apiVersion: 1, windowLabel: label },
+          eventName: "window-message",
+          payload: {
+            apiVersion: 1,
+            type: "app-preferences-requested",
+            payload: { apiVersion: 1, windowLabel: label },
+          },
           windowLabel: label,
         }),
       );
@@ -108,8 +112,12 @@ describe("useThemeSync", () => {
       expect(tauriMock.state.emittedEvents).toContainEqual(
         expect.objectContaining({
           target: "main",
-          eventName: "app-preferences-requested",
-          payload: { apiVersion: 1, windowLabel: label },
+          eventName: "window-message",
+          payload: {
+            apiVersion: 1,
+            type: "app-preferences-requested",
+            payload: { apiVersion: 1, windowLabel: label },
+          },
           windowLabel: label,
         }),
       ),

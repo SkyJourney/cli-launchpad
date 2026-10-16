@@ -36,6 +36,7 @@ describe("window inbox migration", () => {
         "protocolHandlers.file.ts",
         "protocolHandlers.pty.ts",
         "useExecutionTasks.ts",
+        "windowMessages.ts",
       ].sort(),
     );
     expect(production.some(([, text]) => text.includes("onInboxEvent("))).toBe(

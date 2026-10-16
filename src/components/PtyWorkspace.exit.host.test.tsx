@@ -147,7 +147,7 @@ describe("exit impacts for detached files", () => {
       tauriMock.state.emittedEvents.some(
         (event) =>
           event.target === windowLabel &&
-          event.eventName === "workspace-content-window-event" &&
+          event.eventName === "window-message" &&
           (event.payload as { type?: string }).type ===
             "workspace-file-window-flush-requested",
       ),

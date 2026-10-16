@@ -20,15 +20,6 @@
       "plannedLayer": "L3"
     },
     {
-      "name": "app-preferences-requested",
-      "mechanism": "emit_to",
-      "direction": "window-to-window",
-      "allowedSourceKinds": ["terminal", "workspaceContent"],
-      "allowedTargetKinds": ["main"],
-      "payloadVersion": 1,
-      "plannedLayer": "L2"
-    },
-    {
       "name": "execution-task-log",
       "mechanism": "inbox",
       "direction": "rust-to-window",
@@ -60,15 +51,6 @@
       "mechanism": "relay",
       "direction": "window-to-window",
       "allowedSourceKinds": ["rust", "main", "terminal", "workspaceContent"],
-      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
-      "payloadVersion": 1,
-      "plannedLayer": "L2"
-    },
-    {
-      "name": "workspace-content-window-event",
-      "mechanism": "emit_to",
-      "direction": "window-to-window",
-      "allowedSourceKinds": ["main", "terminal", "workspaceContent"],
       "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
       "payloadVersion": 1,
       "plannedLayer": "L2"

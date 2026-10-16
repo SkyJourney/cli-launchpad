@@ -49,10 +49,7 @@ let errorSpy: { mockRestore: () => void } | undefined;
 
 describe("StandalonePtyWindow listener setup", () => {
   it("reports pty-detached-failed and leaves no listeners when listener registration fails", async () => {
-    tauriMock.failNextListen(
-      "workspace-content-window-event",
-      new Error("denied"),
-    );
+    tauriMock.failNextInboxSubscribe(new Error("denied"));
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     windowHandle = await mountPtyWindow();
 

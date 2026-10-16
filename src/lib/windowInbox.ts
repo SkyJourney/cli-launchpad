@@ -33,6 +33,7 @@ interface HandlerEntry {
 
 interface WindowInboxState {
   handlers: Map<string, Set<HandlerEntry>>;
+  registrations: Map<string, number>;
   subscription: Promise<void> | null;
   subscribed: boolean;
 }
@@ -44,7 +45,12 @@ const SOURCE_KINDS = new Set(["main", "terminal", "workspaceContent"]);
 function stateFor(label: string): WindowInboxState {
   let state = states.get(label);
   if (!state) {
-    state = { handlers: new Map(), subscription: null, subscribed: false };
+    state = {
+      handlers: new Map(),
+      registrations: new Map(),
+      subscription: null,
+      subscribed: false,
+    };
     states.set(label, state);
   }
   return state;
@@ -139,6 +145,7 @@ export async function onInboxEvent<T = unknown>(
     state.handlers.set(event, entries);
   }
   entries.add(entry);
+  state.registrations.set(event, (state.registrations.get(event) ?? 0) + 1);
   try {
     await ensureSubscribed(label, state);
   } catch (reason) {
@@ -161,4 +168,13 @@ export function inboxHandlerCountForTests(
   event: string,
 ): number {
   return states.get(label)?.handlers.get(event)?.size ?? 0;
+}
+
+// Only the test mock reads this: how many handlers were ever registered for an event, which
+// detects a listener that is torn down and registered again.
+export function inboxRegistrationCountForTests(
+  label: string,
+  event: string,
+): number {
+  return states.get(label)?.registrations.get(event) ?? 0;
 }

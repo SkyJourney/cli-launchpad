@@ -53,7 +53,7 @@ import type {
 } from "../../lib/tauri";
 import { WorkspaceDataRestoreListener } from "../../components/WorkspaceDataRestoreListener";
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
-import { WORKSPACE_CONTENT_WINDOW_EVENT } from "../../lib/workspaceContentWindowProtocol";
+import { RUST_EVENTS } from "../../lib/eventNames";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import {
   useWorkspaceHostStore,
@@ -566,22 +566,47 @@ export async function mountPtyWindow(options: MountPtyWindowOptions = {}) {
 }
 
 // ---------- 事件
+function stampedKind(label: string): "main" | "terminal" | "workspaceContent" {
+  if (label.startsWith("terminal-")) return "terminal";
+  if (label.startsWith("workspace-content-")) return "workspaceContent";
+  return "main";
+}
+
+/**
+ * Simulates a window message arriving in `label`'s inbox. `options.source` is the label Rust
+ * would stamp as the sender; by default a message to the main window comes from the window it
+ * claims in `payload.windowLabel` (a child window speaking for itself), and a message to a
+ * child window comes from the main window.
+ */
 export async function emitToWindow(
   label: string,
   type: string,
   payload: unknown,
+  options?: { source?: string },
 ) {
+  const claimed =
+    typeof (payload as { windowLabel?: unknown } | null)?.windowLabel ===
+    "string"
+      ? (payload as { windowLabel: string }).windowLabel
+      : undefined;
+  const sourceLabel =
+    options?.source ?? (label === "main" ? (claimed ?? "main") : "main");
   await act(async () => {
-    tauriMock.emitEvent(
-      WORKSPACE_CONTENT_WINDOW_EVENT,
-      { apiVersion: 1, type, payload },
+    tauriMock.deliverInbox(
       label,
+      RUST_EVENTS.windowMessage,
+      { apiVersion: 1, type, payload },
+      { label: sourceLabel, kind: stampedKind(sourceLabel) },
     );
   });
 }
 
-export function emitToMain(type: string, payload: unknown) {
-  return emitToWindow("main", type, payload);
+export function emitToMain(
+  type: string,
+  payload: unknown,
+  options?: { source?: string },
+) {
+  return emitToWindow("main", type, payload, options);
 }
 
 export async function emitBackendEvent(name: string, payload: unknown) {

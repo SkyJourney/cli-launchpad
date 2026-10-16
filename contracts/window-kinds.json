@@ -57,7 +57,6 @@
         "send_window_message"
       ],
       "corePermissions": [
-        "core:event:allow-emit-to",
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "core:window:allow-close",
@@ -87,7 +86,6 @@
         "send_window_message"
       ],
       "corePermissions": [
-        "core:event:allow-emit-to",
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "core:window:allow-close",

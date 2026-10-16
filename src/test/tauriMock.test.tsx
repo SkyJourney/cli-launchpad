@@ -66,6 +66,8 @@ describe("Tauri event target semantics", () => {
     tauriMock.setCurrentWindowLabel(TERMINAL);
     const spy = vi.fn();
     await listen("probe", spy);
+    // Child windows may no longer `emitTo`: the emitting window is main.
+    tauriMock.setCurrentWindowLabel("main");
 
     await emitTo("main", "probe", { n: 1 });
 
@@ -80,6 +82,8 @@ describe("Tauri event target semantics", () => {
     tauriMock.setCurrentWindowLabel(TERMINAL);
     const spy = vi.fn();
     await getCurrentWebviewWindow().listen("probe", spy);
+    // Child windows may no longer `emitTo`: the emitting window is main.
+    tauriMock.setCurrentWindowLabel("main");
 
     await emitTo("main", "probe", { n: 1 });
     await emitTo(TERMINAL, "probe", { n: 2 });
@@ -202,22 +206,30 @@ describe("tauriMock capability enforcement", () => {
       code: "acl.denied",
       message: `emit not allowed for ${TERMINAL}`,
     });
-    await expect(emitTo("main", "probe", {})).resolves.toBeUndefined();
+    await expect(emitTo("main", "probe", {})).rejects.toEqual({
+      code: "acl.denied",
+      message: `emitTo not allowed for ${TERMINAL}`,
+    });
 
     tauriMock.setCurrentWindowLabel(WORKSPACE);
-    await expect(emitTo("main", "probe", {})).resolves.toBeUndefined();
+    await expect(emitTo("main", "probe", {})).rejects.toEqual({
+      code: "acl.denied",
+      message: `emitTo not allowed for ${WORKSPACE}`,
+    });
 
     tauriMock.setCurrentWindowLabel("main");
     await expect(emit("probe", {})).resolves.toBeUndefined();
 
-    expect(tauriMock.state.emittedEvents).toHaveLength(3);
+    expect(tauriMock.state.emittedEvents).toHaveLength(1);
     expect(tauriMock.state.emittedEvents.map((e) => e.windowLabel)).toEqual([
-      TERMINAL,
-      WORKSPACE,
       "main",
     ]);
-    expect(tauriMock.state.aclViolations).toHaveLength(1);
-    expect(tauriMock.state.aclViolations[0].api).toBe("emit");
+    expect(tauriMock.state.aclViolations).toHaveLength(3);
+    expect(tauriMock.state.aclViolations.map((v) => v.api)).toEqual([
+      "emit",
+      "emitTo",
+      "emitTo",
+    ]);
   });
 
   it("rejects creating and looking up windows from child windows", async () => {
@@ -278,7 +290,10 @@ describe("tauriMock records and helpers", () => {
     tauriMock.setInvokeHandler(() => undefined);
 
     await invoke("get_pty_session_window_status", { sessionId: "s" });
+    // Child windows may no longer `emitTo`: the emitting window is main.
+    tauriMock.setCurrentWindowLabel("main");
     await emitTo("main", "probe", { n: 1 });
+    tauriMock.setCurrentWindowLabel(TERMINAL);
     await getCurrentWebviewWindow().setTheme("dark");
 
     expect(tauriMock.state.invokeCalls[0]).toEqual({
@@ -287,7 +302,7 @@ describe("tauriMock records and helpers", () => {
       windowLabel: TERMINAL,
     });
     expect(tauriMock.state.emittedEvents[0]).toEqual({
-      windowLabel: TERMINAL,
+      windowLabel: "main",
       target: "main",
       eventName: "probe",
       payload: { n: 1 },
@@ -413,5 +428,82 @@ describe("tauriMock records and helpers", () => {
         (call) => call.command === "subscribe_window_inbox",
       ),
     ).toHaveLength(1);
+  });
+
+  it("relays send_window_message to the inbox of the target with the caller as source", async () => {
+    tauriMock.setCurrentWindowLabel(TERMINAL);
+    const got: unknown[] = [];
+    const channel = new Channel<unknown>();
+    channel.onmessage = (message) => got.push(message);
+    await invoke("subscribe_window_inbox", { onEvent: channel });
+    tauriMock.setCurrentWindowLabel("main");
+
+    await expect(
+      invoke("send_window_message", {
+        target: TERMINAL,
+        messageType: "pty-return-complete",
+        payload: {
+          apiVersion: 1,
+          type: "pty-return-complete",
+          payload: {},
+        },
+      }),
+    ).resolves.toEqual({ delivered: true });
+
+    expect(got).toEqual([
+      {
+        seq: 1,
+        event: "window-message",
+        payload: {
+          apiVersion: 1,
+          type: "pty-return-complete",
+          payload: {},
+        },
+        source: { label: "main", kind: "main" },
+      },
+    ]);
+    expect(tauriMock.state.aclViolations).toEqual([]);
+  });
+
+  it("records relayed messages as window-message events and reports unavailable targets", async () => {
+    tauriMock.setCurrentWindowLabel(TERMINAL);
+    const envelope = {
+      apiVersion: 1,
+      type: "pty-detached-ready",
+      payload: {},
+    };
+
+    await expect(
+      invoke("send_window_message", {
+        target: "main",
+        messageType: "pty-detached-ready",
+        payload: envelope,
+      }),
+    ).resolves.toEqual({ delivered: false });
+
+    expect(tauriMock.state.relayedMessages).toEqual([
+      {
+        from: TERMINAL,
+        target: "main",
+        messageType: "pty-detached-ready",
+        payload: envelope,
+      },
+    ]);
+    expect(
+      tauriMock.state.emittedEvents.filter(
+        (event) =>
+          event.eventName === "window-message" &&
+          event.target === "main" &&
+          event.windowLabel === TERMINAL,
+      ),
+    ).toEqual([
+      {
+        windowLabel: TERMINAL,
+        target: "main",
+        eventName: "window-message",
+        payload: envelope,
+      },
+    ]);
+    expect(tauriMock.state.aclViolations).toEqual([]);
   });
 });

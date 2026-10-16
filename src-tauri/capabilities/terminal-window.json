@@ -4,7 +4,6 @@
   "description": "独立终端窗口所需的终端、事件和窗口关闭能力。",
   "windows": ["terminal-*"],
   "permissions": [
-    "core:event:allow-emit-to",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-close",

@@ -1,75 +1,99 @@
 import { describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { tauriMock } from "../test/tauriMock";
-import {
-  emitWorkspaceContentWindowEvent,
-  listenWorkspaceContentWindowEvent,
-  WORKSPACE_CONTENT_WINDOW_EVENT,
-} from "./workspaceContentWindowProtocol";
+import { listenWorkspaceContentWindowEvent } from "./workspaceContentWindowProtocol";
+
+const TERMINAL_A = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+const TERMINAL_B = "terminal-3b9f2c1e-6d4a-4f7b-8a21-5c0e9d7a1b34";
 
 describe("workspace content window protocol with the global Tauri mock", () => {
-  it("subscribes per window and ignores emits addressed to other windows", async () => {
-    const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
-    tauriMock.setCurrentWindowLabel(label);
-    const ready = vi.fn();
+  it("delivers messages only to the inbox of the addressed window", async () => {
     const payload = {
       instanceId: "slot-1",
       sessionId: "session-1",
-      windowLabel: label,
+      windowLabel: TERMINAL_A,
     };
-
-    const stop = await listenWorkspaceContentWindowEvent(
+    tauriMock.setCurrentWindowLabel(TERMINAL_A);
+    const readyA = vi.fn();
+    const stopA = await listenWorkspaceContentWindowEvent(
       "pty-detached-ready",
-      ready,
+      readyA,
     );
+    tauriMock.setCurrentWindowLabel(TERMINAL_B);
+    const readyB = vi.fn();
+    const stopB = await listenWorkspaceContentWindowEvent(
+      "pty-detached-ready",
+      readyB,
+    );
+    const message = {
+      apiVersion: 1,
+      type: "pty-detached-ready",
+      payload,
+    };
+    const stamped = { label: TERMINAL_A, kind: "terminal" };
     try {
-      await emitWorkspaceContentWindowEvent(
-        "terminal-other",
-        "pty-detached-ready",
-        payload,
-      );
-      expect(ready).not.toHaveBeenCalled();
+      tauriMock.deliverInbox(TERMINAL_B, "window-message", message, stamped);
+      expect(readyB).toHaveBeenCalledTimes(1);
+      expect(readyA).not.toHaveBeenCalled();
 
-      await emitWorkspaceContentWindowEvent(
-        label,
-        "pty-detached-ready",
-        payload,
-      );
-      expect(ready).toHaveBeenCalledTimes(1);
-      expect(ready).toHaveBeenCalledWith({ payload });
+      tauriMock.deliverInbox(TERMINAL_A, "window-message", message, stamped);
+      expect(readyA).toHaveBeenCalledTimes(1);
+      expect(readyA.mock.calls[0][0].payload).toEqual(payload);
+      // The message never travels as a Tauri event: no listener is registered for it.
+      expect(
+        tauriMock.state.eventListeners.some(
+          (item) => item.eventName === "window-message",
+        ),
+      ).toBe(false);
       expect(listen).not.toHaveBeenCalled();
-      expect(tauriMock.getWindow(label).listen).toHaveBeenCalledTimes(1);
     } finally {
-      // 协议模块持有进程内的订阅状态：断言失败时也必须释放，否则会污染后续用例。
-      stop();
+      stopA();
+      stopB();
     }
   });
 
-  it("releases the window-scoped listener when the last subscriber stops", async () => {
+  it("keeps one inbox subscription per window and stops delivering after unlisten", async () => {
     tauriMock.setCurrentWindowLabel("main");
-    const protocolListeners = () =>
-      tauriMock.state.eventListeners.filter(
-        (item) => item.eventName === WORKSPACE_CONTENT_WINDOW_EVENT,
-      );
-
+    const ready = vi.fn();
+    const failed = vi.fn();
     const stopReady = await listenWorkspaceContentWindowEvent(
       "pty-detached-ready",
-      vi.fn(),
+      ready,
     );
     const stopFailed = await listenWorkspaceContentWindowEvent(
       "pty-detached-failed",
-      vi.fn(),
+      failed,
     );
+    const subscriptions = () =>
+      tauriMock.state.invokeCalls.filter(
+        (call) => call.command === "subscribe_window_inbox",
+      );
     try {
-      expect(protocolListeners()).toHaveLength(1);
+      expect(subscriptions()).toHaveLength(1);
 
       stopReady();
-      expect(protocolListeners()).toHaveLength(1);
+      expect(subscriptions()).toHaveLength(1);
+      tauriMock.deliverInbox(
+        "main",
+        "window-message",
+        {
+          apiVersion: 1,
+          type: "pty-detached-ready",
+          payload: {
+            instanceId: "slot-1",
+            sessionId: "session-1",
+            windowLabel: TERMINAL_A,
+          },
+        },
+        { label: TERMINAL_A, kind: "terminal" },
+      );
+      expect(ready).not.toHaveBeenCalled();
     } finally {
       stopReady();
       stopFailed();
     }
-    expect(protocolListeners()).toHaveLength(0);
+    // Nothing is left in the global event registry.
+    expect(tauriMock.state.eventListeners).toHaveLength(0);
     expect(listen).not.toHaveBeenCalled();
   });
 });

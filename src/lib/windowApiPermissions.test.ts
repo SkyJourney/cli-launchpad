@@ -255,8 +255,8 @@ describe("native API permissions by window kind", () => {
   });
 
   it.each([
-    ["terminal", "core:event:allow-emit-to"],
-    ["workspaceContent", "core:event:allow-emit-to"],
+    ["terminal", "core:event:allow-listen"],
+    ["workspaceContent", "core:event:allow-listen"],
     ["main", "core:window:allow-set-focus"],
   ] as const)("reports %s when %s is removed", (kindId, permission) => {
     expect(findMissingPermissions(kindId, CAPABILITIES[kindId])).toEqual([]);

@@ -20,6 +20,7 @@ import terminalCapability from "../../src-tauri/capabilities/terminal-window.jso
 import workspaceContentCapability from "../../src-tauri/capabilities/workspace-content-window.json";
 import {
   inboxHandlerCountForTests,
+  inboxRegistrationCountForTests,
   resetWindowInboxForTests,
 } from "../lib/windowInbox";
 import { windowKindOf, type WindowKind } from "../lib/windowKinds";
@@ -86,6 +87,13 @@ const mockState = vi.hoisted(() => ({
     payload: unknown;
     source: unknown;
   }>,
+  relayedMessages: [] as Array<{
+    from: string;
+    target: string;
+    messageType: string;
+    payload: unknown;
+  }>,
+  relayFailures: [] as Array<{ messageType: string; error: unknown }>,
 }));
 
 // core:default 展开集合。手工同步：src-tauri/gen/schemas/acl-manifests.json 没有入库，
@@ -417,6 +425,47 @@ function handleInboxSubscribe(args: unknown): {
   return { replaced, flushed: queued.length, dropped: 0 };
 }
 
+// The kind Rust would derive from a window label.
+function windowKindForLabel(
+  label: string,
+): "main" | "terminal" | "workspaceContent" {
+  if (label.startsWith("terminal-")) return "terminal";
+  if (label.startsWith("workspace-content-")) return "workspaceContent";
+  return "main";
+}
+
+// Mirrors the Rust relay for tests: the call is recorded as a `window-message` event, and when
+// the target has subscribed its inbox the message is delivered with the caller as stamped source.
+function handleSendWindowMessage(args: unknown): { delivered: boolean } {
+  const { target, messageType, payload } = args as {
+    target: string;
+    messageType: string;
+    payload: unknown;
+  };
+  const failure = mockState.relayFailures.findIndex(
+    (candidate) => candidate.messageType === messageType,
+  );
+  if (failure >= 0) {
+    throw mockState.relayFailures.splice(failure, 1)[0].error;
+  }
+  const from = mockState.currentWindowLabel;
+  mockState.relayedMessages.push({ from, target, messageType, payload });
+  mockState.emittedEvents.push({
+    windowLabel: from,
+    target,
+    eventName: "window-message",
+    payload,
+  });
+  if (!mockState.inboxChannels.has(target)) {
+    return { delivered: false };
+  }
+  deliverToInbox(target, "window-message", payload, {
+    label: from,
+    kind: windowKindForLabel(from),
+  });
+  return { delivered: true };
+}
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (command: string, args?: unknown) => {
     checkCommand(command);
@@ -430,6 +479,9 @@ vi.mock("@tauri-apps/api/core", () => ({
     }
     if (command === "subscribe_window_inbox") {
       return handleInboxSubscribe(args);
+    }
+    if (command === "send_window_message") {
+      return handleSendWindowMessage(args);
     }
     if (mockState.invokeHandler) {
       return mockState.invokeHandler(command, args);
@@ -563,6 +615,14 @@ export const tauriMock = {
   queueInboxFlush(event: string, payload: unknown, source: unknown = null) {
     mockState.inboxFlushQueue.push({ event, payload, source });
   },
+  /** 让下一次发送该类型的 send_window_message 调用失败（不记录、不投递）。 */
+  failNextWindowMessage(messageType: string, error: unknown): void {
+    mockState.relayFailures.push({ messageType, error });
+  },
+  /** 某个窗口里某个事件累计登记过的收件箱 handler 数（含已注销的）。 */
+  inboxRegistrationCount(label: string, event: string): number {
+    return inboxRegistrationCountForTests(label, event);
+  },
   /** 某个窗口里某个事件当前登记的收件箱 handler 数。 */
   inboxHandlerCount(label: string, event: string): number {
     return inboxHandlerCountForTests(label, event);
@@ -587,6 +647,8 @@ export const tauriMock = {
     mockState.inboxSeq.clear();
     mockState.inboxSubscribeFailures.length = 0;
     mockState.inboxFlushQueue.length = 0;
+    mockState.relayedMessages.length = 0;
+    mockState.relayFailures.length = 0;
     resetWindowInboxForTests();
   },
 };

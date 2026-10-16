@@ -1,26 +1,28 @@
-import { emit, emitTo, type UnlistenFn } from "@tauri-apps/api/event";
-import {
-  getCurrentWebviewWindow,
-  WebviewWindow,
-} from "@tauri-apps/api/webviewWindow";
+import { emit } from "@tauri-apps/api/event";
 import {
   APP_PREFERENCES_API_VERSION,
   APP_PREFERENCES_EVENT,
-  APP_PREFERENCES_REQUEST_EVENT,
+  APP_PREFERENCES_REPLY_MESSAGE,
+  APP_PREFERENCES_REQUEST_MESSAGE,
   type AppPreferences,
 } from "./appPreferences";
-import { isDetachedWindowLabel } from "./windowKinds";
+import type { Unlisten } from "./windowInbox";
+import { onWindowMessage, sendWindowMessage } from "./windowMessages";
 
 export async function publishAppPreferences(preferences: AppPreferences) {
   await emit(APP_PREFERENCES_EVENT, preferences);
 }
 
+/**
+ * Answers the preferences requests of child windows through the relay. A request is answered only
+ * when the label it claims is the label Rust stamped on it, and the reply goes to that window.
+ */
 export async function respondToAppPreferencesRequests(
   getPreferences: () => AppPreferences,
-): Promise<UnlistenFn> {
-  return getCurrentWebviewWindow().listen<unknown>(
-    APP_PREFERENCES_REQUEST_EVENT,
-    async ({ payload }) => {
+): Promise<Unlisten> {
+  return onWindowMessage<unknown>(
+    APP_PREFERENCES_REQUEST_MESSAGE,
+    async ({ payload, source }) => {
       if (
         typeof payload !== "object" ||
         payload === null ||
@@ -32,15 +34,13 @@ export async function respondToAppPreferencesRequests(
       if (
         request.apiVersion !== APP_PREFERENCES_API_VERSION ||
         typeof request.windowLabel !== "string" ||
-        !isDetachedWindowLabel(request.windowLabel)
+        request.windowLabel !== source.label
       ) {
         return;
       }
-      const target = await WebviewWindow.getByLabel(request.windowLabel);
-      if (!target) return;
-      await emitTo(
-        request.windowLabel,
-        APP_PREFERENCES_EVENT,
+      await sendWindowMessage(
+        source.label,
+        APP_PREFERENCES_REPLY_MESSAGE,
         getPreferences(),
       );
     },

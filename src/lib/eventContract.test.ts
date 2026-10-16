@@ -2,12 +2,8 @@
 import { describe, expect, it } from "vitest";
 import events from "../../contracts/events.json";
 import windowKinds from "../../contracts/window-kinds.json";
-import {
-  APP_PREFERENCES_EVENT,
-  APP_PREFERENCES_REQUEST_EVENT,
-} from "./appPreferences";
+import { APP_PREFERENCES_EVENT } from "./appPreferences";
 import { RUST_EVENTS } from "./eventNames";
-import { WORKSPACE_CONTENT_WINDOW_EVENT } from "./workspaceContentWindowProtocol";
 
 const sources = import.meta.glob("../**/*.{ts,tsx}", {
   query: "?raw",
@@ -30,12 +26,7 @@ describe("event contract", () => {
       .sort();
     expect(Object.values(RUST_EVENTS).sort()).toEqual(rustEvents);
     expect(events.events.map((event) => event.name).sort()).toEqual(
-      [
-        ...Object.values(RUST_EVENTS),
-        APP_PREFERENCES_EVENT,
-        APP_PREFERENCES_REQUEST_EVENT,
-        WORKSPACE_CONTENT_WINDOW_EVENT,
-      ].sort(),
+      [...Object.values(RUST_EVENTS), APP_PREFERENCES_EVENT].sort(),
     );
   });
 

@@ -4,7 +4,6 @@
   "description": "独立工作区内容窗口所需的事件与窗口控制能力。",
   "windows": ["workspace-content-*"],
   "permissions": [
-    "core:event:allow-emit-to",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-close",

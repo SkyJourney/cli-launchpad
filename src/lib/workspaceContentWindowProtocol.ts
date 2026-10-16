@@ -1,6 +1,6 @@
-import { emitTo, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { WorkspaceFileDocument } from "./tauri";
+import type { WindowInboxSource, WorkspaceFileDocument } from "./tauri";
+import type { Unlisten } from "./windowInbox";
+import { onWindowMessage, sendWindowMessage } from "./windowMessages";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
 import { windowLabelPrefix } from "./windowKinds";
 
@@ -112,29 +112,14 @@ export interface WorkspaceContentWindowEventPayloads {
 export type WorkspaceContentWindowEventName =
   keyof WorkspaceContentWindowEventPayloads;
 
-export const WORKSPACE_CONTENT_WINDOW_EVENT = "workspace-content-window-event";
-const PROTOCOL_VERSION = 1 as const;
-
-type WorkspaceContentWindowEnvelope = {
-  [Type in WorkspaceContentWindowEventName]: {
-    apiVersion: typeof PROTOCOL_VERSION;
-    type: Type;
-    payload: WorkspaceContentWindowEventPayloads[Type];
-  };
-}[WorkspaceContentWindowEventName];
-
+/**
+ * 协议消息经 Rust 中继（m6-062）：发送用 `sendWindowMessage`，接收用 `onWindowMessage`，
+ * 发送方由 Rust 盖戳。`handler` 的参数多出只读的 `source`。
+ */
 type EventHandler<Type extends WorkspaceContentWindowEventName> = (event: {
   payload: WorkspaceContentWindowEventPayloads[Type];
-}) => void;
-
-interface Subscriber {
-  type: WorkspaceContentWindowEventName;
-  handler: (payload: unknown) => void | Promise<void>;
-}
-
-const subscribers = new Set<Subscriber>();
-let unlistenProtocol: UnlistenFn | null = null;
-let protocolRegistration: Promise<void> | null = null;
+  source: WindowInboxSource;
+}) => void | Promise<void>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -289,7 +274,7 @@ function isValidEventPayload(
   }
 }
 
-function isWorkspaceContentWindowEventName(
+export function isWorkspaceContentWindowEventName(
   value: unknown,
 ): value is WorkspaceContentWindowEventName {
   return (
@@ -325,75 +310,32 @@ const workspaceContentWindowEventPayloadKeys: Record<
   "workspace-file-window-init": true,
 };
 
-async function ensureProtocolListener(): Promise<void> {
-  if (unlistenProtocol || protocolRegistration) {
-    await protocolRegistration;
-    return;
-  }
-  protocolRegistration = getCurrentWebviewWindow()
-    .listen<WorkspaceContentWindowEnvelope>(
-      WORKSPACE_CONTENT_WINDOW_EVENT,
-      ({ payload }) => {
-        if (
-          !payload ||
-          payload.apiVersion !== PROTOCOL_VERSION ||
-          !isWorkspaceContentWindowEventName(payload.type) ||
-          !isValidEventPayload(payload.type, payload.payload)
-        ) {
-          return;
-        }
-        for (const subscriber of subscribers) {
-          if (subscriber.type === payload.type) {
-            try {
-              Promise.resolve(
-                subscriber.handler({ payload: payload.payload }),
-              ).catch((reason) =>
-                console.error(
-                  `Workspace content event handler failed: ${payload.type}`,
-                  reason,
-                ),
-              );
-            } catch (reason) {
-              console.error(
-                `Workspace content event handler failed: ${payload.type}`,
-                reason,
-              );
-            }
-          }
-        }
-      },
-    )
-    .then((stop) => {
-      if (subscribers.size === 0) stop();
-      else unlistenProtocol = stop;
-    })
-    .finally(() => {
-      protocolRegistration = null;
-    });
-  await protocolRegistration;
-}
+/** The message types of the protocol (the contract test compares them with window-messages.json). */
+export const WORKSPACE_CONTENT_WINDOW_MESSAGE_TYPES = Object.keys(
+  workspaceContentWindowEventPayloadKeys,
+) as WorkspaceContentWindowEventName[];
 
-export async function listenWorkspaceContentWindowEvent<
+export function listenWorkspaceContentWindowEvent<
   Type extends WorkspaceContentWindowEventName,
->(type: Type, handler: EventHandler<Type>): Promise<UnlistenFn> {
-  const subscriber: Subscriber = {
-    type,
-    handler: handler as (payload: unknown) => void | Promise<void>,
-  };
-  subscribers.add(subscriber);
-  try {
-    await ensureProtocolListener();
-  } catch (reason) {
-    subscribers.delete(subscriber);
-    throw reason;
-  }
-  return () => {
-    subscribers.delete(subscriber);
-    if (subscribers.size === 0) {
-      unlistenProtocol?.();
-      unlistenProtocol = null;
+>(type: Type, handler: EventHandler<Type>): Promise<Unlisten> {
+  return onWindowMessage<unknown>(type, (event) => {
+    if (!isValidEventPayload(type, event.payload)) return;
+    // A window may only speak for itself: when a child window claims a label, it must be its own
+    // (stamped) label. Messages from the main window address the receiver and are not checked.
+    const claimed = (event.payload as { windowLabel?: unknown }).windowLabel;
+    if (
+      event.source.kind !== "main" &&
+      typeof claimed === "string" &&
+      claimed !== event.source.label
+    ) {
+      console.warn("workspace_content_event.source_mismatch", type);
+      return;
     }
-  };
+    return handler({
+      payload: event.payload as WorkspaceContentWindowEventPayloads[Type],
+      source: event.source,
+    });
+  });
 }
 
 export function emitWorkspaceContentWindowEvent<
@@ -403,11 +345,9 @@ export function emitWorkspaceContentWindowEvent<
   type: Type,
   payload: WorkspaceContentWindowEventPayloads[Type],
 ): Promise<void> {
-  return emitTo(target, WORKSPACE_CONTENT_WINDOW_EVENT, {
-    apiVersion: PROTOCOL_VERSION,
-    type,
-    payload,
-  } as Extract<WorkspaceContentWindowEnvelope, { type: Type }>);
+  return sendWindowMessage(target, type, payload).then((delivered) => {
+    if (!delivered) console.warn("window_message.target_unavailable", type);
+  });
 }
 
 export function getWorkspaceContentWindowLabelPrefix(

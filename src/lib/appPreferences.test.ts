@@ -3,12 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { tauriMock } from "../test/tauriMock";
 import { useAppStore } from "../store/appStore";
 import { applyRemoteAppLanguage } from "../i18n";
-import {
-  APP_PREFERENCES_EVENT,
-  APP_PREFERENCES_REQUEST_EVENT,
-  applyRemotePreferences,
-  isAppPreferences,
-} from "./appPreferences";
+import { applyRemotePreferences, isAppPreferences } from "./appPreferences";
+import { onInboxEvent } from "./windowInbox";
+import { listenForAppPreferences } from "./appPreferencesChild";
 import { respondToAppPreferencesRequests } from "./appPreferencesMain";
 
 describe("app preferences protocol", () => {
@@ -51,48 +48,113 @@ describe("app preferences protocol", () => {
   it.each([
     "terminal-8e783338-f464-4b10-b15e-b534748c6241",
     "workspace-content-8e783338-f464-4b10-b15e-b534748c6241",
-  ])("answers a registered detached window request: %s", async (label) => {
-    tauriMock.setCurrentWindowLabel("main");
-    tauriMock.getWindow(label);
-    await respondToAppPreferencesRequests(() => ({
-      apiVersion: 1,
-      theme: "dark",
-      language: "ja",
-    }));
+  ])(
+    "answers the window that sent the preferences request through the relay: %s",
+    async (label) => {
+      tauriMock.setCurrentWindowLabel("main");
+      await respondToAppPreferencesRequests(() => ({
+        apiVersion: 1,
+        theme: "dark",
+        language: "ja",
+      }));
+      // The requesting window has subscribed its inbox.
+      tauriMock.setCurrentWindowLabel(label);
+      await onInboxEvent("window-message", vi.fn());
+      tauriMock.setCurrentWindowLabel("main");
 
-    tauriMock.emitEvent(
-      APP_PREFERENCES_REQUEST_EVENT,
-      { apiVersion: 1, windowLabel: label },
-      "main",
-    );
-
-    await vi.waitFor(() => {
-      expect(tauriMock.state.emittedEvents).toContainEqual(
-        expect.objectContaining({
-          target: label,
-          eventName: APP_PREFERENCES_EVENT,
-          payload: { apiVersion: 1, theme: "dark", language: "ja" },
-          windowLabel: "main",
-        }),
+      tauriMock.deliverInbox(
+        "main",
+        "window-message",
+        {
+          apiVersion: 1,
+          type: "app-preferences-requested",
+          payload: { apiVersion: 1, windowLabel: label },
+        },
+        {
+          label,
+          kind: label.startsWith("terminal-") ? "terminal" : "workspaceContent",
+        },
       );
-    });
-  });
 
-  it("does not answer a request for an unregistered label", async () => {
+      await vi.waitFor(() => {
+        expect(tauriMock.state.relayedMessages).toContainEqual({
+          from: "main",
+          target: label,
+          messageType: "app-preferences-reply",
+          payload: {
+            apiVersion: 1,
+            type: "app-preferences-reply",
+            payload: { apiVersion: 1, theme: "dark", language: "ja" },
+          },
+        });
+      });
+      // The reply is a relayed message, not a targeted event.
+      expect(
+        tauriMock.state.emittedEvents.some(
+          (event) =>
+            event.target === label && event.eventName === "app-preferences",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("does not answer a request whose claimed label differs from the stamped sender", async () => {
     tauriMock.setCurrentWindowLabel("main");
-    const before = tauriMock.state.emittedEvents.length;
     await respondToAppPreferencesRequests(() => ({
       apiVersion: 1,
       theme: "dark",
       language: "en",
     }));
-    tauriMock.emitEvent(
-      APP_PREFERENCES_REQUEST_EVENT,
-      { apiVersion: 1, windowLabel: "terminal-invalid" },
+    const claimed = "terminal-3b9f2c1e-6d4a-4f7b-8a21-5c0e9d7a1b34";
+    const stamped = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+    tauriMock.setCurrentWindowLabel(stamped);
+    await onInboxEvent("window-message", vi.fn());
+    tauriMock.setCurrentWindowLabel("main");
+    const before = tauriMock.state.relayedMessages.length;
+
+    tauriMock.deliverInbox(
       "main",
+      "window-message",
+      {
+        apiVersion: 1,
+        type: "app-preferences-requested",
+        payload: { apiVersion: 1, windowLabel: claimed },
+      },
+      { label: stamped, kind: "terminal" },
     );
 
     await Promise.resolve();
-    expect(tauriMock.state.emittedEvents).toHaveLength(before);
+    expect(tauriMock.state.relayedMessages).toHaveLength(before);
+
+    // Reverse: a request whose claim equals the stamp is answered.
+    tauriMock.deliverInbox(
+      "main",
+      "window-message",
+      {
+        apiVersion: 1,
+        type: "app-preferences-requested",
+        payload: { apiVersion: 1, windowLabel: stamped },
+      },
+      { label: stamped, kind: "terminal" },
+    );
+    await vi.waitFor(() =>
+      expect(tauriMock.state.relayedMessages).toHaveLength(before + 1),
+    );
+  });
+
+  it("releases the broadcast listener when the relayed reply cannot be registered", async () => {
+    const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+    tauriMock.setCurrentWindowLabel(label);
+    const unlistenBroadcast = vi.fn();
+    (
+      tauriMock.getWindow(label).listen as ReturnType<typeof vi.fn>
+    ).mockImplementation(async () => unlistenBroadcast);
+    tauriMock.failNextInboxSubscribe(new Error("subscribe failed"));
+
+    await expect(listenForAppPreferences(vi.fn())).rejects.toThrow(
+      "subscribe failed",
+    );
+
+    expect(unlistenBroadcast).toHaveBeenCalledTimes(1);
   });
 });

@@ -219,10 +219,7 @@ describe("StandaloneWorkspaceFileWindow", () => {
 
 describe("StandaloneWorkspaceFileWindow listener setup", () => {
   it("reports attach failure to the main window when listener registration fails", async () => {
-    tauriMock.failNextListen(
-      "workspace-content-window-event",
-      new Error("denied"),
-    );
+    tauriMock.failNextInboxSubscribe(new Error("denied"));
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     windowHandle = await mountFileWindow();
 

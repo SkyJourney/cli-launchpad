@@ -3126,8 +3126,6 @@ fn window_message_contract_is_well_formed() {
     }
 }
 
-// m6-062a asserts the additive half (the relay commands are granted, the broad event
-// permissions are absent); m6-062b adds the removal of `core:event:allow-emit-to`.
 #[test]
 fn child_windows_cannot_emit_events_and_can_use_the_relay() {
     let kinds: serde_json::Value =
@@ -3167,6 +3165,7 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
             );
         }
         for forbidden in [
+            "core:event:allow-emit-to",
             "core:event:allow-emit",
             "core:event:default",
             "core:default",
@@ -3182,6 +3181,13 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
             .iter()
             .find(|kind| kind["id"] == kind_id)
             .unwrap();
+        let core = string_array(&kind["corePermissions"], "corePermissions");
+        assert!(
+            !core
+                .iter()
+                .any(|permission| permission == "core:event:allow-emit-to"),
+            "{kind_id} corePermissions must not list core:event:allow-emit-to"
+        );
         let commands = string_array(&kind["appCommands"], "appCommands");
         for command in ["subscribe_window_inbox", "send_window_message"] {
             assert!(
@@ -3206,7 +3212,6 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
     assert_eq!(main_kind["appCommands"], "all");
 }
 
-// m6-062a asserts the relay event; m6-062b adds the absence of the two retired events.
 #[test]
 fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
     let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
@@ -3221,6 +3226,14 @@ fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
     for kind in ["rust", "main", "terminal", "workspaceContent"] {
         assert!(sources.iter().any(|source| source == kind), "{kind}");
     }
+    for retired in [
+        "workspace-content-window-event",
+        "app-preferences-requested",
+    ] {
+        assert!(find(retired).is_none(), "{retired} is retired");
+    }
+    // The nine entries after m6-061, minus the two retired events, plus the relay event.
+    assert_eq!(events.len(), 8);
     let preferences = find("app-preferences").expect("app-preferences stays registered");
     assert_eq!(preferences["mechanism"], "emit");
     assert_eq!(

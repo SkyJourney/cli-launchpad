@@ -714,11 +714,14 @@ describe("PTY owner-lost recovery", () => {
 });
 
 describe("workspace listener isolation", () => {
-  it("keeps PTY handoff listeners when the owner-lost listener fails to register and surfaces the failure", async () => {
+  // Since m6-062 the PTY handoff protocol, the owner-lost and the content-window-lost
+  // notifications are all handlers of one inbox subscription, so a registration failure is shared
+  // by every group instead of hitting a single listener.
+  it("absorbs transient inbox subscription failures by retrying and keeps PTY handoff listeners", async () => {
     toastSpy.error.mockClear();
-    // Both Rust notification registrations (owner-lost and content-window-lost) share the one
-    // inbox subscription, so each of their three attempts must fail: 2 x 3 subscribe failures.
-    tauriMock.failNextInboxSubscribe(new Error("event.listen not allowed"), 6);
+    // Two failed subscription attempts: the retry budget of every group (three attempts) absorbs
+    // them, so the handoff listeners are registered and nothing is reported.
+    tauriMock.failNextInboxSubscribe(new Error("event.listen not allowed"), 2);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator, listenerRetryDelaysMs: [0, 0] });
@@ -728,9 +731,21 @@ describe("workspace listener isolation", () => {
     await detachPromise;
 
     expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
-    // The shared inbox subscription failed, so each notification group reports its own failure
-    // once: the owner-lost group and the content-window-lost group (m6-061).
-    expect(toastSpy.error).toHaveBeenCalledTimes(2);
+    expect(toastSpy.error).not.toHaveBeenCalled();
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+  });
+
+  it("surfaces the failure of every notification group when the inbox subscription keeps failing", async () => {
+    toastSpy.error.mockClear();
+    // More failures than all groups can ever attempt: nothing registers.
+    tauriMock.failNextInboxSubscribe(new Error("event.listen not allowed"), 40);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator, listenerRetryDelaysMs: [0, 0] });
+    await launchPty(host);
+
+    expect(toastSpy.error).toHaveBeenCalled();
     const messages = toastSpy.error.mock.calls.map((call) => String(call[0]));
     for (const message of messages) {
       expect(message).toContain("pty.listenerSetupFailed");
