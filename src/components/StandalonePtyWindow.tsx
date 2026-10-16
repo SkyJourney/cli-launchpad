@@ -151,7 +151,9 @@ export function StandalonePtyWindow({
           },
           transferId: crypto.randomUUID(),
           capabilities: {
-            prepare: async () => ({ handoff: await terminal.captureHandoff() }),
+            prepare: async () => ({
+              handoff: await terminal.captureHandoff("main"),
+            }),
             attach: async (payload) => {
               await terminal.attachHandoff(sessionId, payload.handoff.token);
             },

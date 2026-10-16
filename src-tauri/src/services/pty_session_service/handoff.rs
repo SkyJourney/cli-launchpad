@@ -15,7 +15,11 @@ use uuid::Uuid;
 
 use super::{flow::OutputFlow, ports::PtyEventSink};
 use crate::{
-    models::pty_session::{PtyEvent, PtyHandoff, PtyTerminalSnapshot},
+    error_codes::WINDOW_NOT_ALLOWED,
+    models::{
+        pty_session::{PtyEvent, PtyHandoff, PtyTerminalSnapshot},
+        window_kind::{window_kind_of, WindowKind, WindowLabel},
+    },
     AppError,
 };
 
@@ -23,6 +27,8 @@ pub(super) struct Paused {
     pub(super) token: String,
     pub(super) source: String,
     pub(super) sequence: u64,
+    /// The window registered at `begin` as the only one that may complete this handoff.
+    pub(super) reserved_target: String,
 }
 
 pub(super) struct Staged {
@@ -30,6 +36,7 @@ pub(super) struct Staged {
     pub(super) source: String,
     pub(super) sequence: u64,
     pub(super) snapshot: PtyTerminalSnapshot,
+    pub(super) reserved_target: String,
 }
 
 pub(super) struct Bound {
@@ -65,6 +72,29 @@ pub(super) fn deliver_snapshot(
         .map_err(|error| AppError::msg(format!("新窗口终端尚未就绪：{error}")))
 }
 
+/// Validates the target window registered by `begin_handoff`: the label must be a known window
+/// and the direction must be main -> terminal window or terminal window -> main. Terminal to
+/// terminal handoffs are not offered by the UI and are refused.
+pub(super) fn validate_handoff_target(
+    source_label: &str,
+    target_label: &str,
+) -> Result<(), AppError> {
+    let target = WindowLabel::parse(target_label)?;
+    let allowed = match window_kind_of(source_label) {
+        Some(WindowKind::Main) => target.kind() == WindowKind::Terminal,
+        Some(WindowKind::Terminal) => target.kind() == WindowKind::Main,
+        _ => false,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(AppError::coded(
+            WINDOW_NOT_ALLOWED,
+            "终端交接的目标窗口类别不允许",
+        ))
+    }
+}
+
 fn expired() -> AppError {
     AppError::msg("终端窗口交接已过期")
 }
@@ -97,6 +127,17 @@ impl HandoffState {
         }
     }
 
+    /// The window that may complete this handoff: the one registered at `begin`, or the target a
+    /// bound handoff already carries (the same window).
+    fn reserved_target(&self) -> Option<&str> {
+        match self {
+            Self::Idle => None,
+            Self::Paused(paused) => Some(paused.reserved_target.as_str()),
+            Self::Staged(staged) => Some(staged.reserved_target.as_str()),
+            Self::Bound(bound) => Some(bound.target.as_str()),
+        }
+    }
+
     /// `(token, source, sequence)` of a handoff that is not Idle.
     fn identity(&self) -> Option<(String, String, u64)> {
         match self {
@@ -122,6 +163,7 @@ impl HandoffState {
         &mut self,
         flow: &OutputFlow,
         source: &str,
+        reserved_target: &str,
     ) -> Result<PtyHandoff, AppError> {
         if let Some((_, _, sequence)) = self.identity() {
             if flow.is_paused_at(sequence) {
@@ -135,6 +177,7 @@ impl HandoffState {
             token: token.clone(),
             source: source.to_string(),
             sequence,
+            reserved_target: reserved_target.to_string(),
         });
         Ok(PtyHandoff { token, sequence })
     }
@@ -165,6 +208,7 @@ impl HandoffState {
                 source: paused.source,
                 sequence: paused.sequence,
                 snapshot,
+                reserved_target: paused.reserved_target,
             }),
             Self::Staged(mut staged) => {
                 staged.snapshot = snapshot;
@@ -197,6 +241,14 @@ impl HandoffState {
             return Err(AppError::coded(
                 crate::error_codes::PTY_HANDOFF_TARGET_IS_SOURCE,
                 "目标窗口与源窗口相同，无法交接终端",
+            ));
+        }
+        // Only the window registered at `begin` may complete (after the source check above, so
+        // that a target equal to the source keeps its own error code).
+        if self.reserved_target() != Some(target) {
+            return Err(AppError::coded(
+                WINDOW_NOT_ALLOWED,
+                "该窗口不是此次终端交接登记的目标窗口",
             ));
         }
         if !flow.is_paused_at(sequence) {
@@ -305,6 +357,21 @@ impl HandoffState {
         Ok(())
     }
 
+    /// Returns to Idle when the window is the registered target of a handoff that has not been
+    /// completed yet (a completed one is covered by `clear_for_window`). The caller resumes the
+    /// output like for any other cleared handoff.
+    pub(super) fn clear_for_reserved_target(&mut self, window_label: &str) -> bool {
+        let reserved = match self {
+            Self::Paused(paused) => paused.reserved_target == window_label,
+            Self::Staged(staged) => staged.reserved_target == window_label,
+            Self::Idle | Self::Bound(_) => false,
+        };
+        if reserved {
+            *self = Self::Idle;
+        }
+        reserved
+    }
+
     /// Returns to Idle when the handoff references the window. It does not touch the flow; the
     /// caller decides based on the route.
     pub(super) fn clear_for_window(&mut self, window_label: &str) -> bool {
@@ -372,7 +439,7 @@ mod tests {
 
     fn begun(flow: &OutputFlow) -> (HandoffState, PtyHandoff) {
         let mut state = HandoffState::default();
-        let handoff = state.begin(flow, SRC).unwrap();
+        let handoff = state.begin(flow, SRC, TGT).unwrap();
         (state, handoff)
     }
 
@@ -397,7 +464,7 @@ mod tests {
         flow.reserve(1).unwrap();
         let mut state = HandoffState::default();
 
-        let handoff = state.begin(&flow, SRC).unwrap();
+        let handoff = state.begin(&flow, SRC, TGT).unwrap();
 
         assert_eq!(handoff.sequence, 2);
         Uuid::parse_str(&handoff.token).expect("the token is a UUID");
@@ -408,14 +475,14 @@ mod tests {
         let busy = OutputFlow::new();
         busy.pause_indefinitely();
         let mut idle = HandoffState::default();
-        let error = idle.begin(&busy, SRC).unwrap_err();
+        let error = idle.begin(&busy, SRC, TGT).unwrap_err();
         assert!(describe(&error).contains("正在进行其他窗口交接"));
         assert!(idle.is_idle());
 
         let closed = OutputFlow::new();
         closed.close();
         let mut idle = HandoffState::default();
-        let error = idle.begin(&closed, SRC).unwrap_err();
+        let error = idle.begin(&closed, SRC, TGT).unwrap_err();
         assert!(describe(&error).contains("已经结束"));
         assert!(idle.is_idle());
     }
@@ -431,7 +498,7 @@ mod tests {
                 _ => bound(&flow, &sink),
             };
 
-            let error = state.begin(&flow, SRC).unwrap_err();
+            let error = state.begin(&flow, SRC, TGT).unwrap_err();
 
             assert!(
                 describe(&error).contains("该终端正在进行窗口交接"),
@@ -447,7 +514,7 @@ mod tests {
         }
         // Reverse: from Idle the same call succeeds.
         let flow = OutputFlow::new();
-        assert!(HandoffState::default().begin(&flow, SRC).is_ok());
+        assert!(HandoffState::default().begin(&flow, SRC, TGT).is_ok());
     }
 
     #[test]
@@ -456,7 +523,7 @@ mod tests {
         let (mut state, first) = begun(&flow);
         lapse(&flow);
 
-        let second = state.begin(&flow, SRC).unwrap();
+        let second = state.begin(&flow, SRC, TGT).unwrap();
 
         assert_ne!(second.token, first.token);
         let error = state
@@ -862,7 +929,7 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.begin(f, SRC).map(|_| ())
+        s.begin(f, SRC, TGT).map(|_| ())
     }
     fn e_stage_ok(
         s: &mut HandoffState,

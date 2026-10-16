@@ -674,8 +674,11 @@ export function createPtySession(
   });
 }
 
-export function beginPtyHandoff(sessionId: string) {
-  return invoke<PtyHandoff>("begin_pty_handoff", { sessionId });
+export function beginPtyHandoff(sessionId: string, targetWindowLabel: string) {
+  return invoke<PtyHandoff>("begin_pty_handoff", {
+    sessionId,
+    targetWindowLabel,
+  });
 }
 
 export function stagePtyHandoffSnapshot(

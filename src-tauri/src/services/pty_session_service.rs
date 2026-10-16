@@ -26,7 +26,7 @@ mod session;
 mod window;
 
 use flow::OutputFlow;
-use handoff::{deliver_snapshot, HandoffState};
+use handoff::{deliver_snapshot, validate_handoff_target, HandoffState};
 use input::{enqueue_pty_input, pty_input_channel, start_pty_input_writer};
 use persistence::{
     register_then_persist, FlushReport, LogObserver, PendingFinishQueue, PersistenceObserver,
@@ -499,14 +499,19 @@ impl PtySessionManager {
         &self,
         session_id: &str,
         window_label: &str,
+        target_window_label: &str,
     ) -> Result<PtyHandoff, AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
+        // Before the lock and before the pause: a rejected target leaves the session untouched.
+        validate_handoff_target(window_label, target_window_label)?;
         let mut guard = session
             .route_and_handoff
             .lock()
             .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        guard.handoff.begin(&session.flow, window_label)
+        guard
+            .handoff
+            .begin(&session.flow, window_label, target_window_label)
     }
 
     pub fn stage_handoff_snapshot(

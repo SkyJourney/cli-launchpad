@@ -621,7 +621,6 @@ export function createContentWindowOrchestrator(
     }
     const terminal = deps.terminalOf(instanceId);
     if (!terminal) throw new Error(deps.translate("pty.terminalNotReady"));
-
     const windowLabel = createWindowLabel("terminal");
     const sourcePane = listWorkspacePanes(deps.store.getLive().tree).find(
       (pane) => hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
@@ -645,7 +644,9 @@ export function createContentWindowOrchestrator(
       target,
       transferId: crypto.randomUUID(),
       capabilities: {
-        prepare: async () => ({ handoff: await terminal.captureHandoff() }),
+        prepare: async () => ({
+          handoff: await terminal.captureHandoff(windowLabel),
+        }),
         attach: async (payload) => {
           await terminal.attachHandoff(sessionId, payload.handoff.token);
         },
@@ -682,7 +683,6 @@ export function createContentWindowOrchestrator(
       toolKey: slot.toolKey,
       sourcePaneId: sourcePane.id,
     });
-
     try {
       await new Promise<void>((resolve, reject) => {
         const child = ports.createWindow({

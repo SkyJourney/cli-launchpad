@@ -71,7 +71,10 @@ impl PtySessionManager {
                 );
                 continue;
             };
-            let pending_cleared = guard.handoff.clear_for_window(window_label);
+            // Two statements on purpose: both clean-ups must run (no short-circuit).
+            let referenced = guard.handoff.clear_for_window(window_label);
+            let reserved = guard.handoff.clear_for_reserved_target(window_label);
+            let pending_cleared = referenced || reserved;
             if reclaim_event_route(&mut guard.route, window_label) {
                 if !session.flow.is_closed() {
                     session.flow.pause_indefinitely();

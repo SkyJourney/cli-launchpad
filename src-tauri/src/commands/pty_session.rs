@@ -154,8 +154,9 @@ pub fn begin_pty_handoff(
     state: State<'_, PtySessionManager>,
     window: WebviewWindow,
     session_id: String,
+    target_window_label: String,
 ) -> Result<PtyHandoff, AppError> {
-    state.begin_handoff(&session_id, window.label())
+    state.begin_handoff(&session_id, window.label(), &target_window_label)
 }
 
 #[tauri::command]

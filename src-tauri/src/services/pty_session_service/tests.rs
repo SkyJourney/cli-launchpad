@@ -397,7 +397,7 @@ fn reclaim_window_pauses_output_and_clears_pending_handoffs() {
     let ts2 = manager.insert_test_session("main", Some(channel_2));
     let s2 = ts2.session_id.clone();
     let session_2 = manager.get(&s2).unwrap();
-    let handoff = manager.begin_handoff(&s2, "main").unwrap();
+    let handoff = manager.begin_handoff(&s2, "main", T2).unwrap();
     manager
         .stage_handoff_snapshot(&s2, "main", &handoff.token, handoff.sequence, snapshot())
         .unwrap();
@@ -883,7 +883,7 @@ fn finalized_handoff_rejects_source_cancel_in_manager() {
         .session_id;
     let session = manager.get(&s1).unwrap();
     session.flow.reserve(10).unwrap();
-    let handoff = manager.begin_handoff(&s1, "main").unwrap();
+    let handoff = manager.begin_handoff(&s1, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s1, "main", &handoff.token, handoff.sequence, snapshot())
         .unwrap();
@@ -938,7 +938,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", "wrong-token", h.sequence, snapshot()),
         "交接已过期",
@@ -949,7 +949,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", &h.token, h.sequence + 1, snapshot()),
         "交接已过期",
@@ -960,7 +960,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.stage_handoff_snapshot(&s, T9, &h.token, h.sequence, snapshot()),
         "另一个窗口控制",
@@ -971,7 +971,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.complete_handoff(&s, T1, &h.token, ch()),
         "画面尚未准备好",
@@ -982,7 +982,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -996,7 +996,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1011,7 +1011,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1025,7 +1025,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1040,15 +1040,15 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    manager.begin_handoff(&s, "main").unwrap();
-    assert_rejected(manager.begin_handoff(&s, "main"), "正在进行窗口交接");
+    manager.begin_handoff(&s, "main", T1).unwrap();
+    assert_rejected(manager.begin_handoff(&s, "main", T1), "正在进行窗口交接");
     assert_eq!(manager.test_route(&s), before);
 
     // 子用例 10：暂停过期之后 complete 被拒绝。
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1061,10 +1061,10 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h1 = manager.begin_handoff(&s, "main").unwrap();
+    let h1 = manager.begin_handoff(&s, "main", T1).unwrap();
     session.flow.state.lock().unwrap().pause_deadline =
         Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
-    let h2 = manager.begin_handoff(&s, "main").unwrap();
+    let h2 = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_ne!(h2.token, h1.token);
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", &h1.token, h1.sequence, snapshot()),
@@ -1076,7 +1076,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(manager.cancel_handoff(&s, "main", "bad-token"), "令牌无效");
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
@@ -1087,7 +1087,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let manager = PtySessionManager::default();
     let (channel, _sink) = recording_channel();
     let s = manager.insert_test_session(T1, Some(channel)).session_id;
-    let h = manager.begin_handoff(&s, T1).unwrap();
+    let h = manager.begin_handoff(&s, T1, "main").unwrap();
     manager
         .stage_handoff_snapshot(&s, T1, &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1116,7 +1116,7 @@ fn handoff_target_equal_to_source_is_rejected() {
     // T2-N13：m6-037 起 complete_handoff 拒绝目标等于源（错误码 pty.handoff_target_is_source）。
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1140,7 +1140,7 @@ fn handoff_target_rejection_keeps_the_pending_handoff_usable() {
     // PD-09：拒绝不得写入目标或改变路由，之后用正确目标仍可完成同一次交接。
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1360,7 +1360,7 @@ fn snapshot_events(events: &Arc<Mutex<Vec<serde_json::Value>>>) -> Vec<serde_jso
 fn restaging_before_complete_overwrites_the_snapshot() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("A"))
         .unwrap();
@@ -1381,7 +1381,7 @@ fn restaging_before_complete_overwrites_the_snapshot() {
 fn stage_after_complete_keeps_the_binding_and_finalize_still_succeeds() {
     let manager = PtySessionManager::default();
     let (s, _session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot_with("A"))
         .unwrap();
@@ -1402,7 +1402,7 @@ fn stage_after_complete_keeps_the_binding_and_finalize_still_succeeds() {
 fn expired_handoff_is_cleared_and_output_resumes_without_a_new_begin() {
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1423,7 +1423,7 @@ fn expired_handoff_is_cleared_and_output_resumes_without_a_new_begin() {
 fn finalize_route_mismatch_keeps_the_bound_state() {
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1447,7 +1447,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
     // A second session: after the mismatch, destroying the bound target window can still
     // clean the handoff up and resume the output.
     let (s2, session2) = main_owned_session(&manager);
-    let h2 = manager.begin_handoff(&s2, "main").unwrap();
+    let h2 = manager.begin_handoff(&s2, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s2, "main", &h2.token, h2.sequence, snapshot())
         .unwrap();
@@ -1636,7 +1636,7 @@ fn complete_handoff_snapshot_delivery_does_not_hold_the_route_lock() {
     // S3: cancelled while the snapshot is in flight.
     let manager = PtySessionManager::default();
     let (s, session) = main_owned_session(&manager);
-    let h = manager.begin_handoff(&s, "main").unwrap();
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1674,7 +1674,7 @@ fn complete_handoff_snapshot_delivery_does_not_hold_the_route_lock() {
 
     // S3b: not cancelled: the same delivery binds the target and sends exactly one snapshot.
     let (s2, _session2) = main_owned_session(&manager);
-    let h2 = manager.begin_handoff(&s2, "main").unwrap();
+    let h2 = manager.begin_handoff(&s2, "main", T1).unwrap();
     manager
         .stage_handoff_snapshot(&s2, "main", &h2.token, h2.sequence, snapshot())
         .unwrap();
@@ -1734,15 +1734,17 @@ fn send_failure_while_the_owner_is_reclaimed_is_buffered_not_lost() {
             let Some(target) = new_owner_slot.lock().unwrap().take() else {
                 return;
             };
-            let h = manager.begin_handoff(&s, T1).unwrap();
+            let h = manager.begin_handoff(&s, "main", T2).unwrap();
             manager
-                .stage_handoff_snapshot(&s, T1, &h.token, h.sequence, snapshot())
+                .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
                 .unwrap();
             manager.complete_handoff(&s, T2, &h.token, target).unwrap();
             manager.finalize_handoff(&s, T2, &h.token, size()).unwrap();
         })
     };
-    let s = manager.insert_test_session(T1, Some(channel)).session_id;
+    let s = manager
+        .insert_test_session("main", Some(channel))
+        .session_id;
     *session_id_slot.lock().unwrap() = Some(s.clone());
     let session = manager.get(&s).unwrap();
 
@@ -2411,4 +2413,192 @@ fn reader_receives_eof_after_the_child_exits_without_dropping_the_master() {
         sequences.windows(2).all(|pair| pair[0] < pair[1]),
         "output sequences are strictly increasing: {sequences:?}"
     );
+}
+
+// ---- m6-063: PTY 交接在 begin 时登记目标窗口，complete 只接受登记的目标。
+
+fn error_code(error: &AppError) -> String {
+    serde_json::to_value(error).unwrap()["code"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn begin_handoff_reserves_the_target_and_only_that_window_can_complete() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    let (channel_2, sink_2) = recording_channel();
+
+    let error = manager
+        .complete_handoff(&s, T2, &h.token, channel_2)
+        .unwrap_err();
+
+    assert_eq!(error_code(&error), "window.not_allowed");
+    assert_eq!(manager.test_route(&s).window_label, "main");
+    assert!(matches!(&*session.handoff_guard(), HandoffState::Staged(_)));
+    assert!(is_paused(&session));
+    // 反向：快照没有发给未登记的窗口。
+    assert!(records(&sink_2).is_empty());
+
+    // 被拒绝的一次没有消耗令牌：登记的目标仍可完成同一次交接。
+    manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
+    manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
+    assert_eq!(manager.test_route(&s).window_label, T1);
+}
+
+#[test]
+fn a_stolen_token_cannot_finalize_for_another_window() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
+
+    assert!(manager.finalize_handoff(&s, T2, &h.token, size()).is_err());
+
+    assert_eq!(manager.test_route(&s).window_label, "main");
+    // 反向：失败的 T2 没有进入任何记录，待决交接仍绑定 T1。
+    assert!(matches!(
+        &*session.handoff_guard(),
+        HandoffState::Bound(bound) if bound.target == T1
+    ));
+    manager.finalize_handoff(&s, T1, &h.token, size()).unwrap();
+    assert_eq!(manager.test_route(&s).window_label, T1);
+}
+
+#[test]
+fn handoff_direction_rules_allow_only_main_to_terminal_and_terminal_to_main() {
+    let content = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+    // (源, 目标, 期望：None 表示允许，Some(码) 表示拒绝)
+    let rows: [(&str, &str, Option<&str>); 11] = [
+        ("main", T1, None),
+        (T1, "main", None),
+        ("main", "main", Some("window.not_allowed")),
+        ("main", content, Some("window.not_allowed")),
+        (T1, T2, Some("window.not_allowed")),
+        (T1, content, Some("window.not_allowed")),
+        ("main", "terminal-invalid", Some("window.label_invalid")),
+        ("main", "", Some("window.label_invalid")),
+        (T1, "main ", Some("window.label_invalid")),
+        (content, "main", Some("window.not_allowed")),
+        ("", "main", Some("window.not_allowed")),
+    ];
+    let mut allowed = 0;
+    for (source, target, expected) in rows {
+        match (validate_handoff_target(source, target), expected) {
+            (Ok(()), None) => allowed += 1,
+            (Err(error), Some(code)) => {
+                assert_eq!(error_code(&error), code, "{source:?} -> {target:?}")
+            }
+            (other, expected) => panic!("{source:?} -> {target:?}: {other:?} vs {expected:?}"),
+        }
+    }
+    // 反向：被允许的恰好是前两行。
+    assert_eq!(allowed, 2);
+}
+
+#[test]
+fn rejected_begin_requests_leave_the_session_untouched() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    let cases = [
+        ("main", "window.not_allowed"),
+        ("terminal-invalid", "window.label_invalid"),
+        (
+            "workspace-content-8e783338-f464-4b10-b15e-b534748c6241",
+            "window.not_allowed",
+        ),
+    ];
+    for (target, code) in cases {
+        let error = manager.begin_handoff(&s, "main", target).unwrap_err();
+        assert_eq!(error_code(&error), code, "{target:?}");
+        assert!(session.handoff_guard().is_idle());
+        assert!(!is_paused(&session));
+    }
+    // 拒绝没有留下“正在交接”的状态。
+    manager.begin_handoff(&s, "main", T1).unwrap();
+
+    // 终端窗到终端窗不允许。
+    let s2 = manager.insert_test_session(T1, Some(ch())).session_id;
+    let session_2 = manager.get(&s2).unwrap();
+    let error = manager.begin_handoff(&s2, T1, T2).unwrap_err();
+    assert_eq!(error_code(&error), "window.not_allowed");
+    assert!(session_2.handoff_guard().is_idle());
+}
+
+#[test]
+fn return_handoff_to_main_completes_only_for_main() {
+    let manager = PtySessionManager::default();
+    let s = manager.insert_test_session(T1, Some(ch())).session_id;
+    let h = manager.begin_handoff(&s, T1, "main").unwrap();
+    manager
+        .stage_handoff_snapshot(&s, T1, &h.token, h.sequence, snapshot())
+        .unwrap();
+
+    let error = manager
+        .complete_handoff(&s, T2, &h.token, ch())
+        .unwrap_err();
+    assert_eq!(error_code(&error), "window.not_allowed");
+
+    // 反向：T2 失败之后令牌仍可用于 main。
+    manager
+        .complete_handoff(&s, "main", &h.token, ch())
+        .unwrap();
+    manager
+        .finalize_handoff(&s, "main", &h.token, size())
+        .unwrap();
+    assert_eq!(manager.test_route(&s).window_label, "main");
+}
+
+#[test]
+fn destroying_the_reserved_target_window_clears_the_pending_handoff() {
+    let manager = PtySessionManager::default();
+    let (s, session) = main_owned_session(&manager);
+    manager.begin_handoff(&s, "main", T1).unwrap();
+    assert!(is_paused(&session));
+
+    // T1 只被登记、还没 complete：它不是任何会话的所有者，但待决交接要被清除。
+    assert!(manager.reclaim_window(T1).is_empty());
+
+    assert!(session.handoff_guard().is_idle());
+    assert!(!is_paused(&session));
+    assert_eq!(manager.test_route(&s).window_label, "main");
+
+    // 已 stage、未 complete 时关闭目标窗口（用户最常见的路径）同样清除待决交接。
+    let h = manager.begin_handoff(&s, "main", T1).unwrap();
+    manager
+        .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
+        .unwrap();
+    assert!(matches!(&*session.handoff_guard(), HandoffState::Staged(_)));
+    assert!(manager.reclaim_window(T1).is_empty());
+    assert!(session.handoff_guard().is_idle());
+    assert!(!is_paused(&session));
+
+    // 反向：无关窗口被销毁不影响待决交接。
+    manager.begin_handoff(&s, "main", T1).unwrap();
+    assert!(manager.reclaim_window(T3).is_empty());
+    assert!(!session.handoff_guard().is_idle());
+    assert!(is_paused(&session));
+}
+
+#[test]
+fn begin_pty_handoff_command_requires_a_target_label() {
+    const COMMANDS_RS: &str = include_str!("../../commands/pty_session.rs");
+    let start = COMMANDS_RS
+        .find("fn begin_pty_handoff")
+        .expect("begin_pty_handoff exists");
+    let rest = &COMMANDS_RS[start..];
+    let body = &rest[..rest.find("#[tauri::command]").unwrap_or(rest.len())];
+
+    assert!(body.contains("target_window_label: String"));
+    assert!(body.contains("begin_handoff(&session_id, window.label(), &target_window_label)"));
+    // 反向：旧的两参数写法不得再出现。
+    assert!(!body.contains("begin_handoff(&session_id, window.label())"));
 }

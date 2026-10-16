@@ -83,7 +83,7 @@ const FILE_INIT = {
 
 // 键是命令名（字面量），值通过真实封装触发该命令。用例会同时核对“封装实际发出的命令名等于键”。
 const CALLS: Record<string, () => Promise<unknown>> = {
-  begin_pty_handoff: () => beginPtyHandoff("s"),
+  begin_pty_handoff: () => beginPtyHandoff("s", "main"),
   stage_pty_handoff_snapshot: () =>
     stagePtyHandoffSnapshot("s", "t", 1, SNAPSHOT),
   complete_pty_handoff: () =>

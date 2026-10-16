@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 649,
-    "Linux": 656,
-    "macOS": 654
+    "Windows": 656,
+    "Linux": 663,
+    "macOS": 661
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -61,6 +61,13 @@
       "services::app_lifecycle::tests::exit_request_still_goes_through_the_exit_gate_when_tray_is_unavailable",
       "contracts::acceptance_hooks_feature_is_opt_in_and_gated",
       "contracts::acceptance_marker_scanner_flags_ungated_occurrences",
+      "services::pty_session_service::tests::begin_handoff_reserves_the_target_and_only_that_window_can_complete",
+      "services::pty_session_service::tests::a_stolen_token_cannot_finalize_for_another_window",
+      "services::pty_session_service::tests::handoff_direction_rules_allow_only_main_to_terminal_and_terminal_to_main",
+      "services::pty_session_service::tests::rejected_begin_requests_leave_the_session_untouched",
+      "services::pty_session_service::tests::return_handoff_to_main_completes_only_for_main",
+      "services::pty_session_service::tests::destroying_the_reserved_target_window_clears_the_pending_handoff",
+      "services::pty_session_service::tests::begin_pty_handoff_command_requires_a_target_label",
       "services::pty_session_service::tests::reclaim_window_pauses_output_and_clears_pending_handoffs",
       "services::pty_session_service::tests::reattach_replays_only_buffered_events_after_snapshot_sequence",
       "services::pty_session_service::tests::repeated_reattach_is_rejected_without_replacing_the_live_channel",

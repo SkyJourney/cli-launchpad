@@ -16,7 +16,7 @@ vi.mock(
 );
 
 import { tauriMock } from "../test/tauriMock";
-import { resetFakeTerminals } from "../test/host/hostMocks";
+import { fakeTerminals, resetFakeTerminals } from "../test/host/hostMocks";
 import { assertWorkspaceInvariants } from "../test/host/workspaceInvariants";
 import {
   detachFileToWindow,
@@ -759,5 +759,23 @@ describe("untrusted window events", () => {
     expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
     expect(host.errors).toEqual([]);
     warn.mockRestore();
+  });
+});
+
+describe("PTY handoff target", () => {
+  it("passes the new terminal window label to captureHandoff when detaching", async () => {
+    host = await mountWorkspace();
+    const { slot } = await launchPty(host);
+    const terminal = fakeTerminals[0];
+
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+
+    expect(terminal.captureHandoff).toHaveBeenCalledTimes(1);
+    expect(terminal.captureHandoff).toHaveBeenCalledWith(windowLabel);
+    // 同一个标签既传给 captureHandoff，也用于创建窗口。
+    expect(windowLabel).toBe(tauriMock.state.createdWindows[0].label);
+    // 反向：不是 main，也不是 undefined。
+    expect(terminal.captureHandoff.mock.calls[0][0]).toMatch(/^terminal-/);
+    expect(host.errors).toEqual([]);
   });
 });

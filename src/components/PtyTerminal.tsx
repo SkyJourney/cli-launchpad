@@ -64,7 +64,7 @@ export interface PtyTerminalHandle {
     resumeSessionId?: string,
   ): Promise<void>;
   closeSession(confirm?: boolean): Promise<PtySessionCloseResult>;
-  captureHandoff(): Promise<PtyHandoff>;
+  captureHandoff(targetWindowLabel: string): Promise<PtyHandoff>;
   cancelHandoff(token: string): Promise<void>;
   attachHandoff(sessionId: string, token: string): Promise<PtySession>;
   reattachLostSession(sessionId: string): Promise<PtySession>;
@@ -539,7 +539,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             setStarting(false);
           }
         },
-        async captureHandoff() {
+        async captureHandoff(targetWindowLabel) {
           const currentSession = sessionRef.current;
           const terminal = terminalRef.current;
           const serialize = serializeRef.current;
@@ -559,7 +559,10 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           setHandoffBusy(true);
           let handoff: PtyHandoff | null = null;
           try {
-            handoff = await beginPtyHandoff(currentSession.sessionId);
+            handoff = await beginPtyHandoff(
+              currentSession.sessionId,
+              targetWindowLabel,
+            );
             await waitForWrittenSequence(handoff.sequence);
             const snapshot: PtyTerminalSnapshot = {
               data: serialize.serialize(),
