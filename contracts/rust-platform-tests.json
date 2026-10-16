@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 642,
-    "Linux": 649,
-    "macOS": 647
+    "Windows": 643,
+    "Linux": 650,
+    "macOS": 648
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -343,6 +343,7 @@
       "services::window_inbox::tests::delivery_does_not_hold_the_registry_lock_while_sending",
       "services::window_inbox::tests::messages_to_a_window_without_an_inbox_are_not_buffered_except_for_main",
       "services::window_inbox::tests::release_window_removes_the_inbox_and_its_buffer",
+      "services::window_inbox::tests::a_released_main_window_gets_no_new_buffer_until_it_subscribes_again",
       "services::window_inbox::tests::inbox_messages_serialize_with_camel_case_fields_and_a_stamped_source",
       "services::window_inbox::tests::sequence_numbers_are_per_window_and_strictly_increasing",
       "services::window_inbox::tests::messages_delivered_during_a_flush_stay_behind_the_flushed_ones",

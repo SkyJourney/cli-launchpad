@@ -131,6 +131,27 @@ describe("useExecutionTaskEvents", () => {
     expect(toastSpy.warning).not.toHaveBeenCalled();
   });
 
+  it("ignores buffered messages flushed to an effect that was already unmounted", async () => {
+    const release = tauriMock.holdNextInboxSubscribe();
+    tauriMock.queueInboxFlush("execution-task-updated", {
+      ...BASE,
+      status: "succeeded",
+      finishedAtMs: 2,
+      exitCode: 0,
+    });
+    const { queryClient, hook } = setup();
+    // 卸载发生在订阅返回（冲刷缓冲）之前。
+    hook.unmount();
+    release();
+    await settle();
+
+    expect(
+      queryClient.getQueryData<ExecutionTask[]>(qk.executionTasks()),
+    ).toEqual([]);
+    expect(toastSpy.success).not.toHaveBeenCalled();
+    expect(detectCalls()).toHaveLength(0);
+  });
+
   it("refreshes only the completed tool's status", async () => {
     setup();
     await settle();

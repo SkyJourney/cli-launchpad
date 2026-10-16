@@ -82,6 +82,7 @@ const mockState = vi.hoisted(() => ({
   >(),
   inboxSeq: new Map<string, number>(),
   inboxSubscribeFailures: [] as unknown[],
+  inboxSubscribeGate: null as Promise<void> | null,
   inboxFlushQueue: [] as Array<{
     event: string;
     payload: unknown;
@@ -478,6 +479,11 @@ vi.mock("@tauri-apps/api/core", () => ({
       throw mockState.invokeError;
     }
     if (command === "subscribe_window_inbox") {
+      const gate = mockState.inboxSubscribeGate;
+      if (gate) {
+        mockState.inboxSubscribeGate = null;
+        await gate;
+      }
       return handleInboxSubscribe(args);
     }
     if (command === "send_window_message") {
@@ -611,6 +617,14 @@ export const tauriMock = {
       mockState.inboxSubscribeFailures.push(error);
     }
   },
+  /** 让下一次收件箱订阅停在 IPC 途中，直到返回的函数被调用（模拟订阅期间发生的卸载）。 */
+  holdNextInboxSubscribe(): () => void {
+    let release: () => void = () => undefined;
+    mockState.inboxSubscribeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  },
   /** 排队一条消息，在下一次订阅返回之前冲刷（模拟 Rust 的订阅前缓冲）。 */
   queueInboxFlush(event: string, payload: unknown, source: unknown = null) {
     mockState.inboxFlushQueue.push({ event, payload, source });
@@ -646,6 +660,7 @@ export const tauriMock = {
     mockState.inboxChannels.clear();
     mockState.inboxSeq.clear();
     mockState.inboxSubscribeFailures.length = 0;
+    mockState.inboxSubscribeGate = null;
     mockState.inboxFlushQueue.length = 0;
     mockState.relayedMessages.length = 0;
     mockState.relayFailures.length = 0;

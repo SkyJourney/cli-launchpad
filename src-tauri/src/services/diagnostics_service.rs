@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+#[cfg(test)]
 use rusqlite::Connection;
 use serde::Serialize;
 
@@ -50,18 +51,33 @@ pub fn cleanup_logs(paths: &StoragePaths) -> Result<()> {
 /// Exports the diagnostics report through the business connection. Runs on a blocking thread
 /// (the command wraps it in `blocking_unbounded`).
 pub fn export_with(db: &Db, storage: &StoragePaths, destination: &str) -> Result<(), AppError> {
-    db.with_sync("diagnostics.export", |connection| {
-        export_to_path(connection, storage, destination)?;
-        log::info!("diagnostics export completed");
-        Ok(())
-    })
+    // Only the schema version needs the connection; log files and the report file are read and
+    // written outside its lock.
+    let schema_version = db.with_sync("diagnostics.export", |connection| {
+        Ok(connection::schema_version(connection)?)
+    })?;
+    let report = build_report(storage, schema_version)?;
+    write_report(&report, destination)?;
+    log::info!("diagnostics export completed");
+    Ok(())
 }
 
+/// Connection-based export used by the tests; the application goes through `export_with`.
+#[cfg(test)]
 pub fn export_to_path(
     connection: &Connection,
     storage: &StoragePaths,
     destination: &str,
 ) -> Result<()> {
+    let report = build_report(storage, connection::schema_version(connection)?)?;
+    write_report(&report, destination)
+}
+
+fn write_report(report: &DiagnosticReport, destination: &str) -> Result<()> {
+    super::file_service::replace_file(Path::new(destination), &serde_json::to_vec_pretty(report)?)
+}
+
+fn build_report(storage: &StoragePaths, schema_version: i64) -> Result<DiagnosticReport> {
     let logs = log_paths(storage)?
         .into_iter()
         .filter_map(|path| {
@@ -79,10 +95,10 @@ pub fn export_to_path(
         database_size_bytes: fs::metadata(&storage.database_path)
             .map(|metadata| metadata.len())
             .unwrap_or(0),
-        schema_version: connection::schema_version(connection)?,
+        schema_version,
         logs,
     };
-    super::file_service::replace_file(Path::new(destination), &serde_json::to_vec_pretty(&report)?)
+    Ok(report)
 }
 
 fn log_paths(paths: &StoragePaths) -> Result<Vec<std::path::PathBuf>> {

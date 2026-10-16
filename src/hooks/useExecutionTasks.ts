@@ -73,6 +73,8 @@ export function useExecutionTaskEvents() {
       const taskUnlisten = await onInboxEvent<ExecutionTask>(
         RUST_EVENTS.executionTaskUpdated,
         (event) => {
+          // 订阅返回前冲刷的缓冲消息不交给已卸载的 effect。
+          if (disposed) return;
           const task = event.payload;
           // list 与 detail 两份缓存各自可能滞后（list 会被轮询刷新），任一方为终态即视为已结束。
           const knownStatuses = [
@@ -157,6 +159,7 @@ export function useExecutionTaskEvents() {
       const logUnlisten = await onInboxEvent<ExecutionLogChunk>(
         RUST_EVENTS.executionTaskLog,
         (event) => {
+          if (disposed) return;
           const chunk = event.payload;
           queryClient.setQueryData<ExecutionTaskDetail>(
             qk.executionTask(chunk.taskId),

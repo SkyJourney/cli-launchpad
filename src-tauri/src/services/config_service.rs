@@ -32,15 +32,17 @@ pub fn export_json(conn: &Connection) -> Result<String> {
     Ok(serde_json::to_string_pretty(&export(conn)?)?)
 }
 
-/// Export the config bundle as JSON to a file path.
-pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
-    super::file_service::replace_file(std::path::Path::new(path), export_json(conn)?.as_bytes())
-}
-
 /// Exports the configuration through the business connection. Runs on a blocking thread
 /// (the command wraps it in `blocking_unbounded`).
 pub fn export_with(db: &Db, path: &str) -> Result<(), AppError> {
-    db.with_sync("config.export", |conn| match export_to_path(conn, path) {
+    // The bundle is built under the connection lock; the file is written after it is released.
+    let json = db.with_sync("config.export", |conn| {
+        export_json(conn).map_err(|error| {
+            log::error!("configuration export failed");
+            AppError::from(error)
+        })
+    })?;
+    match super::file_service::replace_file(std::path::Path::new(path), json.as_bytes()) {
         Ok(()) => {
             log::info!("configuration export completed");
             Ok(())
@@ -49,7 +51,7 @@ pub fn export_with(db: &Db, path: &str) -> Result<(), AppError> {
             log::error!("configuration export failed");
             Err(error.into())
         }
-    })
+    }
 }
 
 /// Imports a configuration file: a pre-import backup, the import and the session cache

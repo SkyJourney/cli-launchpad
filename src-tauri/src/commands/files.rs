@@ -10,7 +10,8 @@ use crate::services::project_directory::ProjectDirectory;
 use crate::{blocking, blocking_unbounded, budgets, AppError, Db};
 
 fn ensure_main_window(label: &str) -> Result<(), AppError> {
-    if label == "main" {
+    // The kind comes from the window registry, not from a spelled-out label (R-RS-1).
+    if window_kind_of(label) == Some(WindowKind::Main) {
         Ok(())
     } else {
         Err(AppError::msg("只有主窗口可以管理文件窗口授权"))

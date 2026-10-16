@@ -162,6 +162,8 @@ function AppContent() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void onInboxEvent<unknown>(RUST_EVENTS.appExitRequested, (event) => {
+      // 订阅返回前冲刷的缓冲消息会先到达已卸载的 effect（StrictMode 双挂载同理）。
+      if (disposed) return;
       const payload = parseExitRequestedPayload(event.payload);
       if (!payload) {
         console.warn("app.exit_request_invalid", event.payload);

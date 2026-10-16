@@ -13,7 +13,10 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 use serde::Serialize;
@@ -108,6 +111,10 @@ impl WindowInbox {
 #[derive(Default)]
 pub struct WindowInboxRegistry {
     inboxes: Mutex<HashMap<String, WindowInbox>>,
+    /// Set when the main window was released and cleared by its next subscription. A destroyed
+    /// main window must not get a fresh buffer from late notifications (m6-b1920-16); it is only
+    /// read and written under the `inboxes` lock.
+    main_released: AtomicBool,
 }
 
 impl WindowInboxRegistry {
@@ -127,6 +134,9 @@ impl WindowInboxRegistry {
         let label = window.as_str().to_string();
         let (replaced, dropped) = {
             let mut inboxes = self.lock()?;
+            if window.kind() == WindowKind::Main {
+                self.main_released.store(false, Ordering::SeqCst);
+            }
             let inbox = inboxes
                 .entry(label.clone())
                 .or_insert_with(WindowInbox::new);
@@ -189,7 +199,7 @@ impl WindowInboxRegistry {
                 return DeliverOutcome::NoInbox;
             };
             if !inboxes.contains_key(window.as_str()) {
-                if window.kind() != WindowKind::Main {
+                if window.kind() != WindowKind::Main || self.main_released.load(Ordering::SeqCst) {
                     return DeliverOutcome::NoInbox;
                 }
                 inboxes.insert(window.as_str().to_string(), WindowInbox::new());
@@ -256,6 +266,9 @@ impl WindowScopedResource for WindowInboxRegistry {
     fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
         if let Ok(mut inboxes) = self.inboxes.lock() {
             inboxes.remove(window.as_str());
+            if window.kind() == WindowKind::Main {
+                self.main_released.store(true, Ordering::SeqCst);
+            }
         }
         Vec::new()
     }
@@ -517,6 +530,30 @@ mod tests {
 
         assert!(registry.release_window(&main).is_empty());
         assert_eq!(registry.buffered_len(&main), 0);
+    }
+
+    #[test]
+    fn a_released_main_window_gets_no_new_buffer_until_it_subscribes_again() {
+        let registry = WindowInboxRegistry::default();
+        let main = main_label();
+        registry.deliver(&main, "before", json!(null), None);
+        registry.release_window(&main);
+
+        // Late notifications after the main window is gone are dropped, not re-buffered.
+        assert_eq!(
+            registry.deliver(&main, "late", json!(null), None),
+            DeliverOutcome::NoInbox
+        );
+        assert_eq!(registry.buffered_len(&main), 0);
+
+        // A new subscription clears the mark and the inbox works again.
+        let channel = FakeChannel::new();
+        registry.subscribe(&main, channel.clone()).unwrap();
+        assert_eq!(
+            registry.deliver(&main, "after", json!(null), None),
+            DeliverOutcome::Sent
+        );
+        assert_eq!(channel.events(), ["after"]);
     }
 
     #[test]
