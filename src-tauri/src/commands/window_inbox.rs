@@ -34,5 +34,10 @@ pub async fn send_window_message(
     message_type: String,
     payload: serde_json::Value,
 ) -> Result<SendWindowMessageResult, AppError> {
+    caller.require(&[
+        WindowKind::Main,
+        WindowKind::Terminal,
+        WindowKind::WorkspaceContent,
+    ])?;
     window_relay::relay(&registry, &caller, &target, &message_type, payload)
 }

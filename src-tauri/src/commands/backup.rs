@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::models::backup::{BackupManifest, BackupReason};
+use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::session_service::RestoreGeneration;
 use crate::services::{backup_service, storage_service::StoragePaths};
@@ -50,6 +51,7 @@ impl backup_service::RestoreNotifier for TauriRestoreNotifier {
 
 #[tauri::command]
 pub async fn restore_backup(
+    caller: CallerWindow,
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
@@ -59,6 +61,7 @@ pub async fn restore_backup(
     app: tauri::AppHandle,
     backup_id: String,
 ) -> Result<BackupManifest, AppError> {
+    caller.require(&[WindowKind::Main])?;
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let lifecycle = lifecycle.inner().clone();

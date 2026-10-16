@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::config_service;
 use crate::services::session_service::RestoreGeneration;
@@ -20,6 +21,7 @@ pub async fn export_config_to_path(state: State<'_, Db>, path: String) -> Result
 
 #[tauri::command]
 pub async fn import_config_from_path(
+    caller: CallerWindow,
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
@@ -28,6 +30,7 @@ pub async fn import_config_from_path(
     generation: State<'_, RestoreGeneration>,
     path: String,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main])?;
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let generation = generation.inner().clone();

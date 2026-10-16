@@ -3219,3 +3219,418 @@ fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
         serde_json::json!(["main"])
     );
 }
+
+// ---- m6-064: command caller checks (contracts/command-caller-checks.json).
+
+const COMMAND_CALLER_CHECKS_JSON: &str =
+    include_str!("../../../contracts/command-caller-checks.json");
+
+/// One entry of the companion contract: `require` commands list the window kinds they accept.
+struct CallerCheck {
+    command: String,
+    require: bool,
+    kinds: BTreeSet<String>,
+}
+
+fn caller_checks() -> Vec<CallerCheck> {
+    let contract: Value =
+        serde_json::from_str(COMMAND_CALLER_CHECKS_JSON).expect("parse command caller checks");
+    contract["commands"]
+        .as_array()
+        .expect("commands must be an array")
+        .iter()
+        .map(|entry| CallerCheck {
+            command: entry["command"].as_str().expect("command name").to_string(),
+            require: match entry["callerCheck"].as_str() {
+                Some("require") => true,
+                Some("acl-only") => false,
+                other => panic!("unknown callerCheck {other:?} for {}", entry["command"]),
+            },
+            kinds: entry
+                .get("kinds")
+                .map(|kinds| json_strings(kinds).into_iter().collect())
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// A command's parameter list and body, split out of `tauri_commands`.
+struct CommandDef {
+    file: String,
+    name: String,
+    signature: String,
+    body: String,
+}
+
+fn command_definitions() -> Vec<CommandDef> {
+    let mut definitions = Vec::new();
+    for (file, source) in command_files() {
+        for command in tauri_commands(&source) {
+            let text = &command.text;
+            let open = text
+                .find('(')
+                .unwrap_or_else(|| panic!("{file}: `{}` has no parameter list", command.name));
+            let mut depth = 0usize;
+            let mut close = None;
+            for (offset, character) in text[open..].char_indices() {
+                match character {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + offset);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let close = close.unwrap_or_else(|| {
+                panic!(
+                    "{file}: `{}` has an unbalanced parameter list",
+                    command.name
+                )
+            });
+            let rest = &text[close + 1..];
+            let brace = rest
+                .find('{')
+                .unwrap_or_else(|| panic!("{file}: `{}` has no body", command.name));
+            definitions.push(CommandDef {
+                file: file.clone(),
+                name: command.name.clone(),
+                signature: text[open + 1..close].to_string(),
+                body: rest[brace + 1..].to_string(),
+            });
+        }
+    }
+    definitions
+}
+
+/// The window types a command signature must not use any more (the caller is a `CallerWindow`).
+fn takes_raw_window(signature: &str) -> bool {
+    if signature.contains("WebviewWindow") || signature.contains("tauri::Window") {
+        return true;
+    }
+    signature.match_indices(": Window").any(|(at, needle)| {
+        !signature[at + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
+    })
+}
+
+/// The first statement of a body, with leading blank lines and `//` comment lines skipped.
+fn first_statement(body: &str) -> String {
+    let mut rest = body;
+    loop {
+        rest = rest.trim_start();
+        match rest.strip_prefix("//") {
+            Some(comment) => rest = comment.split_once('\n').map_or("", |(_, tail)| tail),
+            None => break,
+        }
+    }
+    rest.split(';')
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn kind_id(variant: &str) -> &'static str {
+    match variant {
+        "WindowKind::Main" => "main",
+        "WindowKind::Terminal" => "terminal",
+        "WindowKind::WorkspaceContent" => "workspaceContent",
+        other => panic!("unknown window kind variant {other:?}"),
+    }
+}
+
+/// The window kinds the ACL (`window-kinds.json`) grants a command to.
+fn acl_kinds(command: &str, manifest: &Value) -> BTreeSet<String> {
+    let app_commands: Vec<String> =
+        json_strings(&serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse commands"));
+    assert!(app_commands.iter().any(|name| name == command), "{command}");
+    manifest["kinds"]
+        .as_array()
+        .expect("window kinds")
+        .iter()
+        .filter(|kind| match &kind["appCommands"] {
+            Value::String(all) => all == "all",
+            list => json_strings(list).iter().any(|name| name == command),
+        })
+        .map(|kind| kind["id"].as_str().expect("kind id").to_string())
+        .collect()
+}
+
+#[test]
+fn command_caller_check_contract_covers_every_registered_command() {
+    let checks = caller_checks();
+    let registered: Vec<String> = json_strings(
+        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app commands"),
+    );
+
+    let names: Vec<String> = checks.iter().map(|check| check.command.clone()).collect();
+    assert_eq!(names, sorted_strings(names.clone()), "dictionary order");
+    assert_eq!(
+        names.iter().collect::<BTreeSet<_>>().len(),
+        names.len(),
+        "no duplicates"
+    );
+    assert_eq!(sorted_strings(names), sorted_strings(registered));
+    let allowed = ["main", "terminal", "workspaceContent"];
+    for check in &checks {
+        if check.require {
+            assert!(!check.kinds.is_empty(), "{}: kinds", check.command);
+            assert!(
+                check
+                    .kinds
+                    .iter()
+                    .all(|kind| allowed.contains(&kind.as_str())),
+                "{}: unknown kind",
+                check.command
+            );
+        } else {
+            assert!(
+                check.kinds.is_empty(),
+                "{}: acl-only has kinds",
+                check.command
+            );
+        }
+    }
+    // Reverse: the contract is not trivially all acl-only, and the documented commands require.
+    assert!(checks.iter().filter(|check| check.require).count() >= 24);
+    for command in [
+        "confirm_app_exit",
+        "restore_backup",
+        "import_config_from_path",
+        "set_close_behavior",
+        "grant_content_window_file",
+        "revoke_content_window_file",
+        "open_granted_file",
+        "save_granted_text_file",
+        "create_pty_session",
+        "reattach_pty_session",
+        "set_tray_menu_labels",
+        "subscribe_window_inbox",
+        "send_window_message",
+    ] {
+        let check = checks
+            .iter()
+            .find(|check| check.command == command)
+            .unwrap_or_else(|| panic!("{command} is not in the contract"));
+        assert!(check.require, "{command} must be `require`");
+    }
+}
+
+#[test]
+fn acl_only_commands_are_main_only_and_take_no_window_parameter() {
+    let definitions = command_definitions();
+    let registered: Vec<String> = json_strings(
+        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app commands"),
+    );
+    // Reverse: the parser found every registered command (it cannot silently skip one).
+    assert_eq!(definitions.len(), registered.len());
+
+    let mut violations = Vec::new();
+    for check in caller_checks().iter().filter(|check| !check.require) {
+        let Some(definition) = definitions.iter().find(|d| d.name == check.command) else {
+            violations.push(format!("{}: not found in commands/*.rs", check.command));
+            continue;
+        };
+        if definition.signature.contains("CallerWindow") || takes_raw_window(&definition.signature)
+        {
+            violations.push(format!(
+                "{}: an acl-only command takes a window parameter ({})",
+                check.command, definition.file
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+}
+
+#[test]
+fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds() {
+    let definitions = command_definitions();
+    let mut violations = Vec::new();
+    let mut webview_in_require = 0;
+    for check in caller_checks().iter().filter(|check| check.require) {
+        let Some(definition) = definitions.iter().find(|d| d.name == check.command) else {
+            violations.push(format!("{}: not found in commands/*.rs", check.command));
+            continue;
+        };
+        if definition.signature.contains("WebviewWindow") {
+            webview_in_require += 1;
+        }
+        let Some((before, _)) = definition.signature.split_once(": CallerWindow") else {
+            violations.push(format!("{}: no `: CallerWindow` parameter", check.command));
+            continue;
+        };
+        let name: String = before
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let statement = first_statement(&definition.body);
+        let prefix = format!("{name}.require(&[");
+        let Some(list) = statement.strip_prefix(&prefix) else {
+            violations.push(format!(
+                "{}: the first statement is not `{prefix}…` ({})",
+                check.command, statement
+            ));
+            continue;
+        };
+        let Some((list, _)) = list.split_once("])?") else {
+            violations.push(format!("{}: `require` is not `…])?`", check.command));
+            continue;
+        };
+        let actual: BTreeSet<String> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|variant| !variant.is_empty())
+            .map(|variant| kind_id(variant).to_string())
+            .collect();
+        if actual != check.kinds {
+            violations.push(format!(
+                "{}: requires {actual:?}, the contract declares {:?}",
+                check.command, check.kinds
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+    assert_eq!(webview_in_require, 0);
+}
+
+#[test]
+fn commands_take_no_raw_window_parameters_and_compare_no_labels() {
+    let forbidden = [
+        "ensure_main_window",
+        ".label() ==",
+        ".label() !=",
+        ".label().as_str() ==",
+        ".label().as_str() !=",
+        "starts_with(\"terminal-\")",
+        "starts_with(\"workspace-content-\")",
+    ];
+    let files = command_files();
+    let mut violations = Vec::new();
+    for (file, source) in &files {
+        let production = production_text(source);
+        for needle in forbidden {
+            if production.contains(needle) {
+                violations.push(format!("{file}: contains `{needle}`"));
+            }
+        }
+    }
+    for definition in command_definitions() {
+        if takes_raw_window(&definition.signature) {
+            violations.push(format!(
+                "{}: `{}` takes a raw window parameter",
+                definition.file, definition.name
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+    // Reverse: enough files were scanned, and the target check of `revoke_content_window_file`
+    // (a label that is not the caller) was kept.
+    assert!(files.len() >= 10, "{}", files.len());
+    let (_, grants) = files
+        .iter()
+        .find(|(file, _)| file == "files.rs")
+        .expect("files.rs");
+    assert!(production_text(grants).contains("window_kind_of(&target_label)"));
+}
+
+#[test]
+fn capability_window_globs_match_the_label_rules() {
+    let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    let windows = |file: &str| json_strings(&real_capability(file)["windows"]);
+
+    assert_eq!(windows("default.json"), vec!["main".to_string()]);
+    assert_eq!(
+        kind_of(&manifest, "main")["label"].as_str(),
+        Some("main"),
+        "the main capability glob is the literal main label"
+    );
+    for (id, file) in [
+        ("terminal", "terminal-window.json"),
+        ("workspaceContent", "workspace-content-window.json"),
+    ] {
+        let kind = kind_of(&manifest, id);
+        let prefix = kind["labelPrefix"].as_str().expect("label prefix");
+        assert_eq!(windows(file), vec![format!("{prefix}*")], "{file}");
+        assert_eq!(
+            real_capability(file)["identifier"],
+            kind["capability"],
+            "{file}: identifier"
+        );
+    }
+    // Reverse: no capability opens up to every window.
+    for file in [
+        "default.json",
+        "terminal-window.json",
+        "workspace-content-window.json",
+    ] {
+        assert!(
+            windows(file)
+                .iter()
+                .all(|glob| glob != "*" && !glob.is_empty()),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn caller_check_contract_matches_the_window_kind_acl() {
+    let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    let mut violations = Vec::new();
+    let mut proper_subset = 0;
+    for check in caller_checks() {
+        let acl = acl_kinds(&check.command, &manifest);
+        let children: BTreeSet<String> =
+            acl.iter().filter(|kind| *kind != "main").cloned().collect();
+        if check.require {
+            if !check.kinds.is_subset(&acl) || !children.is_subset(&check.kinds) {
+                violations.push(format!(
+                    "{}: kinds {:?} vs ACL {acl:?}",
+                    check.command, check.kinds
+                ));
+            }
+            if check.kinds.is_subset(&acl) && check.kinds != acl {
+                proper_subset += 1;
+            }
+        } else if acl != BTreeSet::from(["main".to_string()]) {
+            violations.push(format!("{}: acl-only but ACL is {acl:?}", check.command));
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+    // Reverse: the rule is not an identity (the granted-file commands exclude `main` on purpose).
+    assert!(proper_subset >= 2, "{proper_subset}");
+}
+
+#[test]
+fn window_inbox_commands_accept_every_window_kind() {
+    // B1920-17: the two commands any window may call. Because they accept every kind there is no
+    // wrong-kind caller to reject, so a behavioural "not allowed" test cannot exist; what protects
+    // them is that the guard exists and lists exactly all window kinds.
+    let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    let all_kinds: BTreeSet<String> = manifest["kinds"]
+        .as_array()
+        .expect("window kinds")
+        .iter()
+        .map(|kind| kind["id"].as_str().expect("kind id").to_string())
+        .collect();
+    let checks = caller_checks();
+    for command in ["subscribe_window_inbox", "send_window_message"] {
+        let check = checks
+            .iter()
+            .find(|check| check.command == command)
+            .unwrap_or_else(|| panic!("{command}"));
+        assert!(check.require, "{command}");
+        assert_eq!(check.kinds, all_kinds, "{command}");
+        assert_eq!(acl_kinds(command, &manifest), all_kinds, "{command}");
+    }
+}

@@ -1,4 +1,4 @@
-use tauri::{ipc::Channel, Manager, State, WebviewWindow};
+use tauri::{ipc::Channel, Manager, State};
 
 use crate::{
     blocking, bounded, budgets,
@@ -30,8 +30,9 @@ pub async fn create_pty_session(
     resume_session_id: Option<String>,
     size: PtySizeUpdate,
     on_event: Channel<PtyEvent>,
-    window: WebviewWindow,
+    caller: CallerWindow,
 ) -> Result<PtySession, AppError> {
+    caller.require(&[WindowKind::Main])?;
     // One open: the directory row, the path check and the directory handle identity. `_root` must
     // stay bound until the command ends (it keeps the directory handle open); never rename it to `_`.
     let (_root, project) = ProjectDirectory::open_ref(&db, directory_id, None).await?;
@@ -68,7 +69,7 @@ pub async fn create_pty_session(
     let start_permit = lifecycle.admit(Operation::PtyStart)?;
     let manager = state.inner().clone();
     let database = db.inner().clone();
-    let window_label = window.label().to_string();
+    let window_label = caller.label().as_str().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let _start_permit = start_permit;
         manager.create(
@@ -90,22 +91,24 @@ pub async fn create_pty_session(
 // sync: 纯内存：入队，不等待写线程
 pub fn write_pty_session(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     data: String,
 ) -> Result<(), AppError> {
-    state.write(&session_id, window.label(), data.as_bytes())
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.write(&session_id, caller.label().as_str(), data.as_bytes())
 }
 
 #[tauri::command]
 pub async fn resize_pty_session(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     size: PtySizeUpdate,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = window.label().to_string();
+    let label = caller.label().as_str().to_string();
     blocking("pty.resize", budgets::PTY_CONTROL, move || {
         manager.resize(&session_id, &label, size)
     })
@@ -116,32 +119,35 @@ pub async fn resize_pty_session(
 // sync: 纯内存：释放流控额度
 pub fn acknowledge_pty_output(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     sequence: u64,
 ) -> Result<(), AppError> {
-    state.acknowledge(&session_id, window.label(), sequence)
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.acknowledge(&session_id, caller.label().as_str(), sequence)
 }
 
 #[tauri::command]
 // sync: 纯内存：只记日志
 pub fn report_pty_frontend_stage(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     stage: PtyFrontendStage,
 ) -> Result<(), AppError> {
-    state.report_frontend_stage(&session_id, window.label(), stage)
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.report_frontend_stage(&session_id, caller.label().as_str(), stage)
 }
 
 #[tauri::command]
 pub async fn terminate_pty_session(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = window.label().to_string();
+    let label = caller.label().as_str().to_string();
     blocking("pty.terminate", budgets::PTY_CONTROL, move || {
         manager.terminate(&session_id, &label)
     })
@@ -152,36 +158,45 @@ pub async fn terminate_pty_session(
 // sync: 纯内存：状态机转移与流控暂停
 pub fn begin_pty_handoff(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     target_window_label: String,
 ) -> Result<PtyHandoff, AppError> {
-    state.begin_handoff(&session_id, window.label(), &target_window_label)
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.begin_handoff(&session_id, caller.label().as_str(), &target_window_label)
 }
 
 #[tauri::command]
 // sync: 纯内存：保存快照
 pub fn stage_pty_handoff_snapshot(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     token: String,
     sequence: u64,
     snapshot: PtyTerminalSnapshot,
 ) -> Result<(), AppError> {
-    state.stage_handoff_snapshot(&session_id, window.label(), &token, sequence, snapshot)
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.stage_handoff_snapshot(
+        &session_id,
+        caller.label().as_str(),
+        &token,
+        sequence,
+        snapshot,
+    )
 }
 
 #[tauri::command]
 pub async fn complete_pty_handoff(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     token: String,
     on_event: Channel<PtyEvent>,
 ) -> Result<PtySession, AppError> {
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = window.label().to_string();
+    let label = caller.label().as_str().to_string();
     blocking("pty.complete_handoff", budgets::PTY_CONTROL, move || {
         manager.complete_handoff(&session_id, &label, &token, on_event)
     })
@@ -191,13 +206,14 @@ pub async fn complete_pty_handoff(
 #[tauri::command]
 pub async fn finalize_pty_handoff(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     token: String,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = window.label().to_string();
+    let label = caller.label().as_str().to_string();
     blocking("pty.finalize_handoff", budgets::PTY_CONTROL, move || {
         manager.finalize_handoff(&session_id, &label, &token, size)
     })
@@ -208,11 +224,12 @@ pub async fn finalize_pty_handoff(
 // sync: 纯内存：状态机转移
 pub fn cancel_pty_handoff(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     token: String,
 ) -> Result<(), AppError> {
-    state.cancel_handoff(&session_id, window.label(), &token)
+    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    state.cancel_handoff(&session_id, caller.label().as_str(), &token)
 }
 
 #[tauri::command]
@@ -229,15 +246,16 @@ pub fn get_pty_session_window_status(
 #[tauri::command]
 pub async fn reattach_pty_session(
     state: State<'_, PtySessionManager>,
-    window: WebviewWindow,
+    caller: CallerWindow,
     session_id: String,
     on_event: Channel<PtyEvent>,
     snapshot: PtyTerminalSnapshot,
     sequence: u64,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
+    caller.require(&[WindowKind::Main])?;
     let manager = state.inner().clone();
-    let label = window.label().to_string();
+    let label = caller.label().as_str().to_string();
     blocking("pty.reattach", budgets::PTY_CONTROL, move || {
         manager.reattach(&session_id, &label, on_event, snapshot, sequence, size)
     })
@@ -246,11 +264,13 @@ pub async fn reattach_pty_session(
 
 #[tauri::command]
 pub async fn confirm_app_exit(
+    caller: CallerWindow,
     state: State<'_, PtySessionManager>,
     lifecycle: State<'_, AppLifecycle>,
     app: tauri::AppHandle,
     request_id: String,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main])?;
     // Held until the process exits: termination failure drops it and rolls the phase back.
     let exit_permit = lifecycle.admit(Operation::Exit)?;
     let starts_lifecycle = lifecycle.inner().clone();

@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::{diagnostics_service, storage_service::StoragePaths};
 use crate::{blocking_unbounded, AppError, Db};
 
@@ -22,6 +23,16 @@ pub async fn export_diagnostics_to_path(
 /// synchronous on purpose: it only formats text and writes to the logger.
 #[tauri::command]
 // sync: 纯内存：只格式化文本并写日志
-pub fn report_window_sync_failure(window: tauri::WebviewWindow, code: String, message: String) {
-    diagnostics_service::log_window_sync_failure(window.label(), &code, &message);
+pub fn report_window_sync_failure(
+    caller: CallerWindow,
+    code: String,
+    message: String,
+) -> Result<(), AppError> {
+    caller.require(&[
+        WindowKind::Main,
+        WindowKind::Terminal,
+        WindowKind::WorkspaceContent,
+    ])?;
+    diagnostics_service::log_window_sync_failure(caller.label().as_str(), &code, &message);
+    Ok(())
 }

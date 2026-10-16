@@ -16,10 +16,12 @@ pub async fn get_close_behavior(state: State<'_, Db>) -> Result<CloseBehavior, A
 
 #[tauri::command]
 pub async fn set_close_behavior(
+    caller: CallerWindow,
     state: State<'_, Db>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     close_behavior: CloseBehavior,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main])?;
     state
         .call("app_setting.set_close_behavior", move |conn| {
             Ok(app_setting_repo::set_close_behavior(conn, close_behavior)?)

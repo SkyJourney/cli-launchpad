@@ -2598,7 +2598,9 @@ fn begin_pty_handoff_command_requires_a_target_label() {
     let body = &rest[..rest.find("#[tauri::command]").unwrap_or(rest.len())];
 
     assert!(body.contains("target_window_label: String"));
-    assert!(body.contains("begin_handoff(&session_id, window.label(), &target_window_label)"));
+    assert!(
+        body.contains("begin_handoff(&session_id, caller.label().as_str(), &target_window_label)")
+    );
     // 反向：旧的两参数写法不得再出现。
     assert!(!body.contains("begin_handoff(&session_id, window.label())"));
 }
