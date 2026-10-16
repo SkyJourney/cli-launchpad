@@ -3058,3 +3058,173 @@ fn production_code_does_not_use_tauri_event_emit_apis() {
         .1;
     assert!(inbox.contains("fn notify_main"));
 }
+
+// ---- m6-062: messages between windows go through the Rust relay
+
+const WINDOW_MESSAGES_JSON: &str = include_str!("../../../contracts/window-messages.json");
+
+#[test]
+fn window_message_contract_is_well_formed() {
+    let contract: serde_json::Value = serde_json::from_str(WINDOW_MESSAGES_JSON).unwrap();
+    let messages = contract["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 20);
+    let names: Vec<&str> = messages
+        .iter()
+        .map(|message| message["type"].as_str().unwrap())
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted, "types are sorted");
+    let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), names.len(), "types are unique");
+
+    for message in messages {
+        let name = message["type"].as_str().unwrap();
+        assert!(
+            name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+            "{name} must be kebab-case"
+        );
+        for side in ["from", "to"] {
+            let kinds = string_array(&message[side], side);
+            assert!(!kinds.is_empty(), "{name}.{side} is empty");
+            for kind in &kinds {
+                assert!(
+                    ["main", "terminal", "workspaceContent"].contains(&kind.as_str()),
+                    "{name}.{side}: {kind}"
+                );
+            }
+        }
+        assert!(
+            ["pty", "file", "app"].contains(&message["contentKind"].as_str().unwrap()),
+            "{name}"
+        );
+        assert_eq!(message["payloadVersion"], 1, "{name}");
+        let only_main = |side: &str| {
+            string_array(&message[side], side)
+                .iter()
+                .all(|kind| kind == "main")
+        };
+        assert!(
+            !(only_main("from") && only_main("to")),
+            "{name}: main would only message itself"
+        );
+        // A window kind that both sends and receives a type could message itself or a sibling.
+        let from_kinds = string_array(&message["from"], "from");
+        let to_kinds = string_array(&message["to"], "to");
+        assert!(
+            from_kinds.iter().all(|kind| !to_kinds.contains(kind)),
+            "{name}: from and to must not share a window kind"
+        );
+        let expected_kind = if name.starts_with("pty-") {
+            "pty"
+        } else if name.starts_with("workspace-file-window-") {
+            "file"
+        } else {
+            "app"
+        };
+        assert_eq!(message["contentKind"], expected_kind, "{name}");
+    }
+}
+
+// m6-062a asserts the additive half (the relay commands are granted, the broad event
+// permissions are absent); m6-062b adds the removal of `core:event:allow-emit-to`.
+#[test]
+fn child_windows_cannot_emit_events_and_can_use_the_relay() {
+    let kinds: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/window-kinds.json")).unwrap();
+    for (capability_json, kind_id) in [
+        (
+            include_str!("../../capabilities/terminal-window.json"),
+            "terminal",
+        ),
+        (
+            include_str!("../../capabilities/workspace-content-window.json"),
+            "workspaceContent",
+        ),
+    ] {
+        let capability: serde_json::Value = serde_json::from_str(capability_json).unwrap();
+        let permissions: Vec<String> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|permission| {
+                permission
+                    .as_str()
+                    .or_else(|| permission["identifier"].as_str())
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        for required in [
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
+            "allow-subscribe-window-inbox",
+            "allow-send-window-message",
+        ] {
+            assert!(
+                permissions.iter().any(|permission| permission == required),
+                "{kind_id} must have {required}"
+            );
+        }
+        for forbidden in [
+            "core:event:allow-emit",
+            "core:event:default",
+            "core:default",
+        ] {
+            assert!(
+                !permissions.iter().any(|permission| permission == forbidden),
+                "{kind_id} must not have {forbidden}"
+            );
+        }
+        let kind = kinds["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|kind| kind["id"] == kind_id)
+            .unwrap();
+        let commands = string_array(&kind["appCommands"], "appCommands");
+        for command in ["subscribe_window_inbox", "send_window_message"] {
+            assert!(
+                commands.iter().any(|candidate| candidate == command),
+                "{kind_id} appCommands must list {command}"
+            );
+        }
+    }
+    let main: serde_json::Value =
+        serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
+    assert!(main["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|permission| permission == "allow-send-window-message"));
+    let main_kind = kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["id"] == "main")
+        .unwrap();
+    assert_eq!(main_kind["appCommands"], "all");
+}
+
+// m6-062a asserts the relay event; m6-062b adds the absence of the two retired events.
+#[test]
+fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
+    let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
+    let events = contract["events"].as_array().unwrap();
+    let find = |name: &str| events.iter().find(|event| event["name"] == name);
+
+    let relay = find("window-message").expect("window-message is registered");
+    assert_eq!(relay["mechanism"], "relay");
+    assert_eq!(relay["direction"], "window-to-window");
+    assert_eq!(relay["plannedLayer"], "L2");
+    let sources = string_array(&relay["allowedSourceKinds"], "allowedSourceKinds");
+    for kind in ["rust", "main", "terminal", "workspaceContent"] {
+        assert!(sources.iter().any(|source| source == kind), "{kind}");
+    }
+    let preferences = find("app-preferences").expect("app-preferences stays registered");
+    assert_eq!(preferences["mechanism"], "emit");
+    assert_eq!(
+        preferences["allowedSourceKinds"],
+        serde_json::json!(["main"])
+    );
+}

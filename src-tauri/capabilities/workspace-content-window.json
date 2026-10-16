@@ -17,6 +17,8 @@
     "core:window:allow-toggle-maximize",
     "allow-open-granted-file",
     "allow-save-granted-text-file",
-    "allow-report-window-sync-failure"
+    "allow-report-window-sync-failure",
+    "allow-subscribe-window-inbox",
+    "allow-send-window-message"
   ]
 }

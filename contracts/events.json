@@ -56,6 +56,15 @@
       "plannedLayer": "L1"
     },
     {
+      "name": "window-message",
+      "mechanism": "relay",
+      "direction": "window-to-window",
+      "allowedSourceKinds": ["rust", "main", "terminal", "workspaceContent"],
+      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
+      "payloadVersion": 1,
+      "plannedLayer": "L2"
+    },
+    {
       "name": "workspace-content-window-event",
       "mechanism": "emit_to",
       "direction": "window-to-window",

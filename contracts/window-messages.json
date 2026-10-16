@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "messages": [
+    {
+      "type": "app-preferences-reply",
+      "from": ["main"],
+      "to": ["terminal", "workspaceContent"],
+      "contentKind": "app",
+      "payloadVersion": 1
+    },
+    {
+      "type": "app-preferences-requested",
+      "from": ["terminal", "workspaceContent"],
+      "to": ["main"],
+      "contentKind": "app",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-detached-exited",
+      "from": ["terminal"],
+      "to": ["main"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-detached-failed",
+      "from": ["terminal"],
+      "to": ["main"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-detached-ready",
+      "from": ["terminal"],
+      "to": ["main"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-return-complete",
+      "from": ["main"],
+      "to": ["terminal"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-return-drop-requested",
+      "from": ["main"],
+      "to": ["terminal"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-return-failed",
+      "from": ["main"],
+      "to": ["terminal"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "pty-return-requested",
+      "from": ["terminal"],
+      "to": ["main"],
+      "contentKind": "pty",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-attach-failed",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-attached",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-buffer-changed",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-flush-complete",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-flush-requested",
+      "from": ["main"],
+      "to": ["workspaceContent"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-init",
+      "from": ["main"],
+      "to": ["workspaceContent"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-ready",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-return-complete",
+      "from": ["main"],
+      "to": ["workspaceContent"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-return-drop-requested",
+      "from": ["main"],
+      "to": ["workspaceContent"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-return-failed",
+      "from": ["main"],
+      "to": ["workspaceContent"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    },
+    {
+      "type": "workspace-file-window-return-requested",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "file",
+      "payloadVersion": 1
+    }
+  ]
+}

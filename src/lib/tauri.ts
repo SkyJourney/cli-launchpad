@@ -793,9 +793,30 @@ export interface WindowInboxSubscription {
   dropped: number;
 }
 
-/** Only the main window may call this; use `onInboxEvent` from `./windowInbox` instead. */
+/** Use `onInboxEvent` from `./windowInbox` instead of calling this directly. */
 export function subscribeWindowInbox(onEvent: Channel<InboxMessage>) {
   return invoke<WindowInboxSubscription>("subscribe_window_inbox", { onEvent });
+}
+
+export interface SendWindowMessageResult {
+  delivered: boolean;
+}
+
+/**
+ * Relays one envelope to another window through Rust, which checks the message type against
+ * `contracts/window-messages.json` and stamps the sender. Use `sendWindowMessage` from
+ * `./windowMessages` instead of calling this directly.
+ */
+export function sendWindowMessageCommand(
+  target: string,
+  messageType: string,
+  payload: unknown,
+) {
+  return invoke<SendWindowMessageResult>("send_window_message", {
+    target,
+    messageType,
+    payload,
+  });
 }
 
 export interface StartupNotice {

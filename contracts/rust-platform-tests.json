@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 630,
-    "Linux": 637,
-    "macOS": 635
+    "Windows": 642,
+    "Linux": 649,
+    "macOS": 647
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -348,7 +348,19 @@
       "services::window_inbox::tests::messages_delivered_during_a_flush_stay_behind_the_flushed_ones",
       "services::window_inbox::tests::messages_carry_the_stamped_source",
       "contracts::rust_to_window_events_use_the_inbox_mechanism",
-      "contracts::production_code_does_not_use_tauri_event_emit_apis"
+      "contracts::production_code_does_not_use_tauri_event_emit_apis",
+      "services::window_relay::tests::the_window_message_table_matches_the_protocol_directions",
+      "services::window_relay::tests::relay_stamps_the_caller_as_the_source_and_delivers_to_the_target_inbox",
+      "services::window_relay::tests::relay_rejects_a_sender_kind_that_the_message_type_does_not_allow",
+      "services::window_relay::tests::relay_rejects_a_target_kind_that_the_message_type_does_not_allow",
+      "services::window_relay::tests::relay_rejects_invalid_target_labels",
+      "services::window_relay::tests::relay_rejects_unknown_message_types_and_malformed_envelopes",
+      "services::window_relay::tests::relay_reports_an_unavailable_target_without_buffering",
+      "services::window_relay::tests::relay_buffers_for_the_main_window_before_it_subscribes",
+      "services::window_relay::tests::a_forged_source_in_the_envelope_cannot_override_the_stamp",
+      "contracts::window_message_contract_is_well_formed",
+      "contracts::child_windows_cannot_emit_events_and_can_use_the_relay",
+      "contracts::event_contract_lists_the_relay_event_and_not_the_retired_ones"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

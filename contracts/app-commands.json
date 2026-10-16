@@ -30,6 +30,7 @@
   "terminate_pty_session",
   "confirm_app_exit",
   "subscribe_window_inbox",
+  "send_window_message",
   "list_directories",
   "add_directory",
   "update_directory",

@@ -27,7 +27,11 @@
         "clipboard-manager:allow-write-text",
         {
           "identifier": "opener:allow-open-url",
-          "allow": [{ "url": "https://github.com/SkyJourney/cli-launchpad" }]
+          "allow": [
+            {
+              "url": "https://github.com/SkyJourney/cli-launchpad"
+            }
+          ]
         }
       ]
     },
@@ -48,7 +52,9 @@
         "resize_pty_session",
         "acknowledge_pty_output",
         "report_pty_frontend_stage",
-        "terminate_pty_session"
+        "terminate_pty_session",
+        "subscribe_window_inbox",
+        "send_window_message"
       ],
       "corePermissions": [
         "core:event:allow-emit-to",
@@ -76,7 +82,9 @@
       "appCommands": [
         "open_granted_file",
         "save_granted_text_file",
-        "report_window_sync_failure"
+        "report_window_sync_failure",
+        "subscribe_window_inbox",
+        "send_window_message"
       ],
       "corePermissions": [
         "core:event:allow-emit-to",

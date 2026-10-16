@@ -4,6 +4,7 @@ export const RUST_EVENTS = {
   executionTaskLog: "execution-task-log",
   executionTaskUpdated: "execution-task-updated",
   ptySessionOwnerLost: "pty-session-owner-lost",
+  windowMessage: "window-message",
   workspaceContentWindowLost: "workspace-content-window-lost",
   workspaceDataRestored: "workspace-data-restored",
 } as const;

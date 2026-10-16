@@ -58,6 +58,7 @@
     "allow-terminate-pty-session",
     "allow-confirm-app-exit",
     "allow-subscribe-window-inbox",
+    "allow-send-window-message",
     "allow-list-directories",
     "allow-add-directory",
     "allow-update-directory",

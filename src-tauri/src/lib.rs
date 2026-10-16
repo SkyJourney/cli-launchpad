@@ -251,6 +251,7 @@ pub fn run() {
             commands::pty_session::terminate_pty_session,
             commands::pty_session::confirm_app_exit,
             commands::window_inbox::subscribe_window_inbox,
+            commands::window_inbox::send_window_message,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
