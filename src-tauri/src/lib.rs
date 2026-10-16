@@ -63,6 +63,8 @@ pub fn run() {
                 show_main_window(&window);
             }
         }))
+        // Only the application's own pages may be navigated to; see services/navigation_guard.rs.
+        .plugin(services::navigation_guard::plugin())
         // Native file/folder picker for the add-directory flow.
         .plugin(tauri_plugin_dialog::init())
         // Open trusted external links with the operating system's default app.

@@ -13,6 +13,7 @@ pub mod exit_cleanup;
 pub mod file_service;
 pub mod install_service;
 pub mod launch_service;
+pub mod navigation_guard;
 pub mod project_directory;
 pub mod pty_session_service;
 pub mod session_service;

@@ -3634,3 +3634,56 @@ fn window_inbox_commands_accept_every_window_kind() {
         assert_eq!(acl_kinds(command, &manifest), all_kinds, "{command}");
     }
 }
+
+// ---- m6-065: navigation guard (services/navigation_guard.rs).
+
+#[test]
+fn navigation_guard_plugin_is_registered_after_single_instance() {
+    // Comment lines do not count as registrations.
+    let code: String = LIB_RS
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let registration = "services::navigation_guard::plugin()";
+    assert_eq!(code.matches(registration).count(), 1);
+    let single_instance = code
+        .find("tauri_plugin_single_instance::init")
+        .expect("single instance plugin is registered");
+    let guard = code.find(registration).expect("the guard is registered");
+    assert!(single_instance < guard, "single instance must stay first");
+    // Reverse: the guard goes through the plugin only, never a second hook on the builder.
+    assert!(!code.contains("on_navigation"));
+}
+
+#[test]
+fn no_code_enables_new_window_creation() {
+    let forbidden = [
+        "on_new_window(",
+        "with_new_window_req_handler",
+        "NewWindowResponse::Allow",
+        "NewWindowResponse::Create",
+    ];
+    let sources = production_rust_sources();
+    let mut violations = Vec::new();
+    for (file, text) in &sources {
+        for (number, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for needle in forbidden {
+                if line.contains(needle) {
+                    violations.push(format!("{file}:{}: {needle}", number + 1));
+                }
+            }
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+    // Reverse: enough files were read, and the guard's own production code was among them.
+    assert!(sources.len() > 20, "{}", sources.len());
+    let guard = sources
+        .iter()
+        .find(|(file, _)| file == "services/navigation_guard.rs")
+        .expect("navigation_guard.rs exists");
+    assert!(guard.1.contains("fn plugin"));
+}

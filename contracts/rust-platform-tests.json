@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 662,
-    "Linux": 669,
-    "macOS": 667
+    "Windows": 668,
+    "Linux": 675,
+    "macOS": 673
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,8 @@
   ],
   "required": {
     "all": [
+      "contracts::navigation_guard_plugin_is_registered_after_single_instance",
+      "contracts::no_code_enables_new_window_creation",
       "contracts::command_caller_check_contract_covers_every_registered_command",
       "contracts::acl_only_commands_are_main_only_and_take_no_window_parameter",
       "contracts::require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds",
@@ -44,6 +46,10 @@
       "models::workspace_layout::tests::legacy_payload_json_rejects_unsupported_versions",
       "platform::file_cas::tests::lock_current_error_names_the_requested_path",
       "platform::file_cas::tests::separate_processes_using_same_revision_allow_only_one_winner",
+      "services::navigation_guard::tests::app_origins_are_allowed",
+      "services::navigation_guard::tests::external_and_dangerous_urls_are_denied",
+      "services::navigation_guard::tests::dev_origin_is_allowed_only_when_the_debug_flag_is_set",
+      "services::navigation_guard::tests::blocked_navigation_logs_carry_no_path_query_or_credentials",
       "services::install_service::tests::antigravity_update_plan_for_uses_builtin_command",
       "services::install_service::tests::claude_update_plan_for_uses_builtin_command",
       "services::launch_service::tests::resume_validation_failure_produces_no_launch_payload",
