@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum WindowKind {
     Main,

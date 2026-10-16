@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
+use tauri::{Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
@@ -193,6 +193,7 @@ pub fn run() {
             app.manage(pty_sessions);
             app.manage(services::session_service::RestoreGeneration::default());
             app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
+            app.manage(services::window_inbox::WindowInboxRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             app.manage(TrayMenuLabelsState::default());
@@ -249,6 +250,7 @@ pub fn run() {
             commands::pty_session::report_pty_frontend_stage,
             commands::pty_session::terminate_pty_session,
             commands::pty_session::confirm_app_exit,
+            commands::window_inbox::subscribe_window_inbox,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
@@ -297,12 +299,14 @@ pub fn run() {
                         .state::<services::content_window_grants::ContentWindowGrantRegistry>();
                     let sessions =
                         window.state::<services::pty_session_service::PtySessionManager>();
+                    let inbox = window.state::<services::window_inbox::WindowInboxRegistry>();
                     let sink = TauriEventSink(window.app_handle().clone());
                     services::window_lifecycle::on_window_destroyed(
                         &destroyed,
                         &[
                             &*grants as &dyn services::window_lifecycle::WindowScopedResource,
                             &*sessions as &dyn services::window_lifecycle::WindowScopedResource,
+                            &*inbox as &dyn services::window_lifecycle::WindowScopedResource,
                         ],
                         &sink,
                     );
@@ -360,13 +364,13 @@ struct TauriEventSink(tauri::AppHandle);
 
 impl services::window_lifecycle::EventSink for TauriEventSink {
     fn emit_to_main(&self, event: &services::window_lifecycle::AppEvent) -> Result<(), String> {
-        self.0
-            .emit_to(
-                models::window_kind::main_window_label(),
-                event.name(),
-                event.payload(),
-            )
-            .map_err(|error| error.to_string())
+        match services::window_inbox::notify_main(&self.0, event.name(), event.payload()) {
+            services::window_inbox::DeliverOutcome::NoInbox => {
+                Err("main window inbox is unavailable".to_string())
+            }
+            // `Buffered` counts as delivered: the main window gets it when it subscribes.
+            _ => Ok(()),
+        }
     }
 }
 
@@ -397,14 +401,15 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                         show_main_window(window);
                     }
                     let request = exit_gate.begin_request();
-                    let _ = app.emit_to(
-                        "main",
+                    let _ = services::window_inbox::notify_main(
+                        app,
                         crate::events::APP_EXIT_REQUESTED,
-                        services::app_lifecycle::exit_requested_payload(
+                        serde_json::to_value(services::app_lifecycle::exit_requested_payload(
                             &request,
                             pty_count,
                             execution_task_count,
-                        ),
+                        ))
+                        .unwrap_or(serde_json::Value::Null),
                     );
                 }
                 services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {

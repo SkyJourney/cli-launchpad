@@ -57,6 +57,7 @@
     "allow-report-window-sync-failure",
     "allow-terminate-pty-session",
     "allow-confirm-app-exit",
+    "allow-subscribe-window-inbox",
     "allow-list-directories",
     "allow-add-directory",
     "allow-update-directory",

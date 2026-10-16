@@ -3,7 +3,7 @@
   "events": [
     {
       "name": "app-exit-requested",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],
@@ -30,7 +30,7 @@
     },
     {
       "name": "execution-task-log",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],
@@ -39,7 +39,7 @@
     },
     {
       "name": "execution-task-updated",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],
@@ -48,7 +48,7 @@
     },
     {
       "name": "pty-session-owner-lost",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],
@@ -66,7 +66,7 @@
     },
     {
       "name": "workspace-content-window-lost",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],
@@ -75,7 +75,7 @@
     },
     {
       "name": "workspace-data-restored",
-      "mechanism": "emit_to",
+      "mechanism": "inbox",
       "direction": "rust-to-window",
       "allowedSourceKinds": ["rust"],
       "allowedTargetKinds": ["main"],

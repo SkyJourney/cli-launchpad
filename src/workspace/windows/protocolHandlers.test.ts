@@ -35,9 +35,9 @@ function flush() {
 }
 
 function listenersNamed(name: string) {
-  return tauriMock.state.eventListeners.filter(
-    (listener) => listener.eventName === name,
-  );
+  // Rust notifications are handlers of the main window's inbox (m6-061), not `listen` records;
+  // one entry per registered handler keeps the length assertions below unchanged.
+  return Array.from({ length: tauriMock.inboxHandlerCount("main", name) });
 }
 
 function makeProtocolFixture() {

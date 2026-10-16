@@ -636,6 +636,7 @@ App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更�
 - 安装/更新等会执行平台命令的进程统一经 `platform/process.rs`（`cli_command` 与带超时、输出上限、进程树回收的 `run_bounded`）与任务管理器的 `platform/execution_process.rs` 启动；`platform/terminal*.rs` 已删除。
 - CLI 安装与更新计划在用户确认前显示来源和命令，并带有计划指纹（`InstallPlan.fingerprint`），任务创建时后端重新生成计划并比对指纹，不一致返回 `plan_changed` 要求重新确认；0.3.0 起普通 CLI PTY 启动不展示命令预览。
 - 跨窗口事件不是安全边界：Tauri 事件不携带经过验证的发送方，任何窗口都可用全局 `listen` 窃听，子窗口的 `emit-to` 权限可广播到任意目标；不得在事件载荷中传递应被保密的数据或把事件当作鉴权依据（待收口，见 M7 前必须完成的边界改造）。
+- **Rust 通知走主窗口私有收件箱（m6-061 已落地，L1）：** Rust 发起的通知（退出请求、执行任务更新与日志、PTY 所有者丢失、内容窗口丢失、数据恢复完成）不再用 `emit_to`，而是由 `WindowInboxRegistry`（`services/window_inbox.rs`）写入主窗口通过 `subscribe_window_inbox` 提供的私有 `Channel`；订阅前的消息进入每窗口最多 256 条的有界缓冲，订阅时按序冲刷，缓冲溢出丢弃最旧并计数；发送在注册表锁之外进行。前端只把冲刷出的消息交给订阅时已登记 handler 的事件，没有 handler 的事件会被丢弃（不做前端暂存），通道在 Rust 侧失效后也没有自动重订阅（页面重载前通知只进缓冲），这两点是已知限制。其他窗口既不能订阅主窗口的收件箱，也无法用全局 `listen` 窃听这些通知。子窗口之间的消息与偏好请求仍使用旧的事件机制，由 m6-062 迁移；`core:event:allow-emit-to` 在子窗口 capability 中尚未移除。
 - 不在 SQLite 中保存密钥。如果未来需要凭据，使用操作系统凭据存储。
 
 ## 跨平台发布约束

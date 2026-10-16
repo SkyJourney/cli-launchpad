@@ -12,4 +12,5 @@ pub mod launch_history;
 pub mod pty_session;
 pub mod session;
 pub mod startup_notice;
+pub mod window_inbox;
 pub mod workspace_layout;

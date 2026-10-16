@@ -2521,7 +2521,7 @@ fn event_contract_entries_are_well_formed() {
             "{name} must be kebab-case"
         );
         assert!(
-            ["emit", "emit_to"].contains(&event["mechanism"].as_str().unwrap()),
+            ["emit", "emit_to", "inbox", "relay"].contains(&event["mechanism"].as_str().unwrap()),
             "{name}"
         );
         assert!(
@@ -2984,4 +2984,77 @@ fn child_processes_are_spawned_only_through_the_supervised_primitives() {
 
     // The scan can see a violation in an ordinary service file.
     assert!(!spawn_violations("fn start() { Command::new(\"x\").spawn().unwrap(); }").is_empty());
+}
+
+// ---- m6-061: Rust notifications reach the main window only through its private inbox
+
+#[test]
+fn rust_to_window_events_use_the_inbox_mechanism() {
+    let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
+    let mut inbox_events = Vec::new();
+    for event in contract["events"].as_array().unwrap() {
+        let name = event["name"].as_str().unwrap();
+        if event["direction"] == "rust-to-window" {
+            assert_eq!(event["mechanism"], "inbox", "{name} must use the inbox");
+            assert_eq!(
+                event["allowedTargetKinds"],
+                serde_json::json!(["main"]),
+                "{name} targets only the main window"
+            );
+            assert_eq!(
+                event["allowedSourceKinds"],
+                serde_json::json!(["rust"]),
+                "{name}"
+            );
+            inbox_events.push(name.to_string());
+        } else {
+            // Reverse: window-originated events are not inbox events in this layer.
+            assert_ne!(event["mechanism"], "inbox", "{name}");
+        }
+    }
+    inbox_events.sort();
+    assert_eq!(
+        inbox_events,
+        vec![
+            "app-exit-requested",
+            "execution-task-log",
+            "execution-task-updated",
+            "pty-session-owner-lost",
+            "workspace-content-window-lost",
+            "workspace-data-restored",
+        ]
+    );
+}
+
+#[test]
+fn production_code_does_not_use_tauri_event_emit_apis() {
+    let sources = production_sources();
+    assert!(
+        sources.len() > 20,
+        "the source scan read {} files",
+        sources.len()
+    );
+    let mut violations = Vec::new();
+    for (path, text) in &sources {
+        for (index, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for needle in [".emit_to(", ".emit(", "emit_filter(", "Emitter"] {
+                if line.contains(needle) {
+                    violations.push(format!("{path}:{} contains `{needle}`", index + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Rust notifications go through notify_main: {violations:#?}"
+    );
+    let inbox = &sources
+        .iter()
+        .find(|(path, _)| path == "services/window_inbox.rs")
+        .expect("window_inbox.rs exists")
+        .1;
+    assert!(inbox.contains("fn notify_main"));
 }

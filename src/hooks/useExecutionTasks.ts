@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
 import { RUST_EVENTS } from "../lib/eventNames";
+import { onInboxEvent, type Unlisten } from "../lib/windowInbox";
 import { refreshCliStatusForTool } from "./useCliStatus";
 import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
@@ -67,10 +67,10 @@ export function useExecutionTaskEvents() {
 
   useEffect(() => {
     let disposed = false;
-    const unlisten: UnlistenFn[] = [];
+    const unlisten: Unlisten[] = [];
 
     const register = async () => {
-      const taskUnlisten = await listen<ExecutionTask>(
+      const taskUnlisten = await onInboxEvent<ExecutionTask>(
         RUST_EVENTS.executionTaskUpdated,
         (event) => {
           const task = event.payload;
@@ -154,7 +154,7 @@ export function useExecutionTaskEvents() {
         unlisten.push(taskUnlisten);
       }
 
-      const logUnlisten = await listen<ExecutionLogChunk>(
+      const logUnlisten = await onInboxEvent<ExecutionLogChunk>(
         RUST_EVENTS.executionTaskLog,
         (event) => {
           const chunk = event.payload;

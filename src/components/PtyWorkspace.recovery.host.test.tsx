@@ -639,16 +639,12 @@ describe("PTY owner-lost recovery", () => {
     vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
 
     await act(async () => {
-      tauriMock.emitEvent(
-        OWNER_LOST_EVENT,
-        { sessionId: slot.sessionId },
-        "main",
-      );
-      tauriMock.emitEvent(
-        OWNER_LOST_EVENT,
-        { sessionId: slot.sessionId },
-        "main",
-      );
+      tauriMock.deliverInbox("main", OWNER_LOST_EVENT, {
+        sessionId: slot.sessionId,
+      });
+      tauriMock.deliverInbox("main", OWNER_LOST_EVENT, {
+        sessionId: slot.sessionId,
+      });
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -720,12 +716,9 @@ describe("PTY owner-lost recovery", () => {
 describe("workspace listener isolation", () => {
   it("keeps PTY handoff listeners when the owner-lost listener fails to register and surfaces the failure", async () => {
     toastSpy.error.mockClear();
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      tauriMock.failNextListen(
-        OWNER_LOST_EVENT,
-        new Error("event.listen not allowed"),
-      );
-    }
+    // Both Rust notification registrations (owner-lost and content-window-lost) share the one
+    // inbox subscription, so each of their three attempts must fail: 2 x 3 subscribe failures.
+    tauriMock.failNextInboxSubscribe(new Error("event.listen not allowed"), 6);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator, listenerRetryDelaysMs: [0, 0] });
@@ -735,10 +728,17 @@ describe("workspace listener isolation", () => {
     await detachPromise;
 
     expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
-    expect(toastSpy.error).toHaveBeenCalledTimes(1);
-    const message = String(toastSpy.error.mock.calls[0][0]);
-    expect(message).toContain("pty.listenerSetupFailed");
-    expect(message).toContain(OWNER_LOST_EVENT);
+    // The shared inbox subscription failed, so each notification group reports its own failure
+    // once: the owner-lost group and the content-window-lost group (m6-061).
+    expect(toastSpy.error).toHaveBeenCalledTimes(2);
+    const messages = toastSpy.error.mock.calls.map((call) => String(call[0]));
+    for (const message of messages) {
+      expect(message).toContain("pty.listenerSetupFailed");
+    }
+    expect(messages.some((message) => message.includes(OWNER_LOST_EVENT))).toBe(
+      true,
+    );
+    expect(messages.some((message) => message.includes(LOST_EVENT))).toBe(true);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
   });

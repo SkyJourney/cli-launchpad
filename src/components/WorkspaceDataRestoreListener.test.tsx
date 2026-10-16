@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, waitFor } from "@testing-library/react";
-import { listen } from "@tauri-apps/api/event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tauriMock } from "../test/tauriMock";
 
@@ -25,13 +24,14 @@ describe("WorkspaceDataRestoreListener", () => {
   it("rehydrates the workspace after the backend reports a completed restore", async () => {
     render(<WorkspaceDataRestoreListener />);
     await waitFor(() => {
-      expect(listen).toHaveBeenCalledWith(
-        "workspace-data-restored",
-        expect.any(Function),
-      );
+      expect(
+        tauriMock.state.invokeCalls.filter(
+          (call) => call.command === "subscribe_window_inbox",
+        ),
+      ).toHaveLength(1);
     });
 
-    tauriMock.emitEvent("workspace-data-restored", {}, "main");
+    tauriMock.deliverInbox("main", "workspace-data-restored", {});
 
     await waitFor(() => expect(rehydrateWorkspace).toHaveBeenCalledTimes(1));
   });

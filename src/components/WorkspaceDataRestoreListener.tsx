@@ -1,6 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { RUST_EVENTS } from "../lib/eventNames";
+import { onInboxEvent } from "../lib/windowInbox";
 import { usePtyWorkspace } from "./PtyWorkspace";
 
 export function WorkspaceDataRestoreListener() {
@@ -9,7 +9,7 @@ export function WorkspaceDataRestoreListener() {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen(RUST_EVENTS.workspaceDataRestored, () => {
+    void onInboxEvent(RUST_EVENTS.workspaceDataRestored, () => {
       void rehydrateWorkspace().catch((reason) =>
         console.error("Unable to reload restored workspace data", reason),
       );

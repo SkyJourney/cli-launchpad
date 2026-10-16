@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import {
   getCurrentWebviewWindow,
   WebviewWindow,
 } from "@tauri-apps/api/webviewWindow";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { onInboxEvent } from "../lib/windowInbox";
 import { tauriMock } from "./tauriMock";
 
 const TERMINAL = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
@@ -344,5 +345,73 @@ describe("tauriMock records and helpers", () => {
     expect(tauriMock.state.aclViolations).toHaveLength(0);
     await expect(listen("later", vi.fn())).resolves.toBeTypeOf("function");
     expect(tauriMock.state.invokeCalls).toHaveLength(0);
+  });
+
+  it("delivers inbox messages only to the channel of the addressed window", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    const channel = new Channel<unknown>();
+    const got: unknown[] = [];
+    channel.onmessage = (message) => got.push(message);
+    await invoke("subscribe_window_inbox", { onEvent: channel });
+
+    tauriMock.deliverInbox("main", "probe", { n: 1 });
+    tauriMock.deliverInbox("main", "probe", { n: 2 });
+
+    expect(got).toEqual([
+      { seq: 1, event: "probe", payload: { n: 1 }, source: null },
+      { seq: 2, event: "probe", payload: { n: 2 }, source: null },
+    ]);
+    expect(() => tauriMock.deliverInbox(WORKSPACE, "probe", 1)).toThrow(
+      `tauriMock: window ${WORKSPACE} has no inbox subscription`,
+    );
+    expect(tauriMock.state.aclViolations).toEqual([]);
+  });
+
+  it("fails the next inbox subscriptions on request and then recovers", async () => {
+    tauriMock.failNextInboxSubscribe({ code: "x" }, 2);
+
+    await expect(
+      invoke("subscribe_window_inbox", { onEvent: new Channel() }),
+    ).rejects.toEqual({ code: "x" });
+    await expect(
+      invoke("subscribe_window_inbox", { onEvent: new Channel() }),
+    ).rejects.toEqual({ code: "x" });
+    const result = await invoke("subscribe_window_inbox", {
+      onEvent: new Channel(),
+    });
+
+    expect(result).toEqual({ replaced: false, flushed: 0, dropped: 0 });
+    expect(
+      tauriMock.state.invokeCalls.filter(
+        (call) => call.command === "subscribe_window_inbox",
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("reset clears inbox subscriptions and pending subscription failures", async () => {
+    await invoke("subscribe_window_inbox", { onEvent: new Channel() });
+    tauriMock.failNextInboxSubscribe({ code: "later" });
+    tauriMock.queueInboxFlush("probe", 1);
+
+    tauriMock.reset();
+
+    expect(tauriMock.state.inboxChannels.size).toBe(0);
+    const result = await invoke("subscribe_window_inbox", {
+      onEvent: new Channel(),
+    });
+    expect(result).toEqual({ replaced: false, flushed: 0, dropped: 0 });
+    tauriMock.deliverInbox("main", "probe", 1);
+    // Sequence numbers start over after a reset.
+    tauriMock.reset();
+    const seen = vi.fn();
+    // The module state of the inbox is cleared too: a new handler subscribes again.
+    await onInboxEvent("alpha", seen);
+    tauriMock.deliverInbox("main", "alpha", 1);
+    expect(seen.mock.calls[0][0].seq).toBe(1);
+    expect(
+      tauriMock.state.invokeCalls.filter(
+        (call) => call.command === "subscribe_window_inbox",
+      ),
+    ).toHaveLength(1);
   });
 });

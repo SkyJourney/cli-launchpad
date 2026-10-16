@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   lazy,
@@ -66,6 +65,7 @@ import { useWindowLevelBehaviors } from "./hooks/useWindowLevelBehaviors";
 import { type ViewName, useAppStore } from "./store/appStore";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import { confirmAppExit } from "./lib/tauri";
+import { onInboxEvent } from "./lib/windowInbox";
 import {
   collectAppExitImpacts,
   shouldExitWithoutPrompt,
@@ -161,7 +161,7 @@ function AppContent() {
   useLayoutEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<unknown>(RUST_EVENTS.appExitRequested, (event) => {
+    void onInboxEvent<unknown>(RUST_EVENTS.appExitRequested, (event) => {
       const payload = parseExitRequestedPayload(event.payload);
       if (!payload) {
         console.warn("app.exit_request_invalid", event.payload);

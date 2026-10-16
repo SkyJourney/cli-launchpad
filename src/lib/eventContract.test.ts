@@ -66,7 +66,7 @@ describe("event contract", () => {
       expect(seen.has(event.name), event.name).toBe(false);
       seen.add(event.name);
       expect(event.name).toMatch(/^[a-z]+(-[a-z]+)*$/);
-      expect(["emit", "emit_to"]).toContain(event.mechanism);
+      expect(["emit", "emit_to", "inbox", "relay"]).toContain(event.mechanism);
       expect(["rust-to-window", "window-to-window", "window-to-all"]).toContain(
         event.direction,
       );

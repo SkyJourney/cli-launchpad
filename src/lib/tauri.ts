@@ -774,6 +774,30 @@ export function confirmAppExit(requestId: string) {
   return invoke<void>("confirm_app_exit", { requestId });
 }
 
+export interface WindowInboxSource {
+  label: string;
+  kind: "main" | "terminal" | "workspaceContent";
+}
+
+/** One message of the window inbox (`src-tauri/src/services/window_inbox.rs`). */
+export interface InboxMessage {
+  seq: number;
+  event: string;
+  payload: unknown;
+  source: WindowInboxSource | null;
+}
+
+export interface WindowInboxSubscription {
+  replaced: boolean;
+  flushed: number;
+  dropped: number;
+}
+
+/** Only the main window may call this; use `onInboxEvent` from `./windowInbox` instead. */
+export function subscribeWindowInbox(onEvent: Channel<InboxMessage>) {
+  return invoke<WindowInboxSubscription>("subscribe_window_inbox", { onEvent });
+}
+
 export interface StartupNotice {
   kind: "abnormal_exit_detected";
   startedAtMs: number | null;

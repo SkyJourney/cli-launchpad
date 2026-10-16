@@ -29,6 +29,7 @@
   "report_pty_frontend_stage",
   "terminate_pty_session",
   "confirm_app_exit",
+  "subscribe_window_inbox",
   "list_directories",
   "add_directory",
   "update_directory",

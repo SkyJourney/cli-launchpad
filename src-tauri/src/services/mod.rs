@@ -19,5 +19,6 @@ pub mod session_service;
 pub mod startup_notices;
 pub mod storage_service;
 pub mod version_service;
+pub mod window_inbox;
 pub mod window_lifecycle;
 pub mod workspace_layout_service;

@@ -18,6 +18,10 @@ import windowKindsManifest from "../../contracts/window-kinds.json";
 import defaultCapability from "../../src-tauri/capabilities/default.json";
 import terminalCapability from "../../src-tauri/capabilities/terminal-window.json";
 import workspaceContentCapability from "../../src-tauri/capabilities/workspace-content-window.json";
+import {
+  inboxHandlerCountForTests,
+  resetWindowInboxForTests,
+} from "../lib/windowInbox";
 import { windowKindOf, type WindowKind } from "../lib/windowKinds";
 
 type MockEvent = {
@@ -71,6 +75,17 @@ const mockState = vi.hoisted(() => ({
   }>,
   enforceCapabilities: true,
   listenFailures: new Map<string, unknown[]>(),
+  inboxChannels: new Map<
+    string,
+    { onmessage: ((message: unknown) => void) | null }
+  >(),
+  inboxSeq: new Map<string, number>(),
+  inboxSubscribeFailures: [] as unknown[],
+  inboxFlushQueue: [] as Array<{
+    event: string;
+    payload: unknown;
+    source: unknown;
+  }>,
 }));
 
 // core:default 展开集合。手工同步：src-tauri/gen/schemas/acl-manifests.json 没有入库，
@@ -359,6 +374,49 @@ function getWindowMock(label: string): Record<string, unknown> {
   return windowMock;
 }
 
+function deliverToInbox(
+  label: string,
+  event: string,
+  payload: unknown,
+  source: unknown,
+): void {
+  const channel = mockState.inboxChannels.get(label);
+  if (!channel) {
+    throw new Error(`tauriMock: window ${label} has no inbox subscription`);
+  }
+  const seq = (mockState.inboxSeq.get(label) ?? 0) + 1;
+  mockState.inboxSeq.set(label, seq);
+  channel.onmessage?.({ seq, event, payload, source });
+}
+
+// Mirrors the Rust registry: the channel is installed, then the messages buffered before the
+// subscription are flushed before the subscription call returns.
+function handleInboxSubscribe(args: unknown): {
+  replaced: boolean;
+  flushed: number;
+  dropped: number;
+} {
+  const channel = (
+    args as { onEvent?: { onmessage: ((message: unknown) => void) | null } }
+  )?.onEvent;
+  if (!channel) {
+    throw new Error(
+      "tauriMock: subscribe_window_inbox requires an onEvent channel",
+    );
+  }
+  if (mockState.inboxSubscribeFailures.length > 0) {
+    throw mockState.inboxSubscribeFailures.shift();
+  }
+  const label = mockState.currentWindowLabel;
+  const replaced = mockState.inboxChannels.has(label);
+  mockState.inboxChannels.set(label, channel);
+  const queued = mockState.inboxFlushQueue.splice(0);
+  for (const message of queued) {
+    deliverToInbox(label, message.event, message.payload, message.source);
+  }
+  return { replaced, flushed: queued.length, dropped: 0 };
+}
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (command: string, args?: unknown) => {
     checkCommand(command);
@@ -369,6 +427,9 @@ vi.mock("@tauri-apps/api/core", () => ({
     });
     if (mockState.invokeError !== undefined) {
       throw mockState.invokeError;
+    }
+    if (command === "subscribe_window_inbox") {
+      return handleInboxSubscribe(args);
     }
     if (mockState.invokeHandler) {
       return mockState.invokeHandler(command, args);
@@ -481,6 +542,31 @@ export const tauriMock = {
     // 模拟 Rust 或其他窗口发来的事件，不属于被测窗口的权限。
     dispatchEvent(eventName, payload, targetLabel);
   },
+  /**
+   * 模拟 Rust 向某个窗口的收件箱投递通知。窗口没有订阅收件箱时抛错：说明被测代码没有订阅。
+   */
+  deliverInbox(
+    label: string,
+    event: string,
+    payload: unknown,
+    source: unknown = null,
+  ): void {
+    deliverToInbox(label, event, payload, source);
+  },
+  /** 让接下来 `times` 次收件箱订阅失败。 */
+  failNextInboxSubscribe(error: unknown, times = 1): void {
+    for (let index = 0; index < times; index += 1) {
+      mockState.inboxSubscribeFailures.push(error);
+    }
+  },
+  /** 排队一条消息，在下一次订阅返回之前冲刷（模拟 Rust 的订阅前缓冲）。 */
+  queueInboxFlush(event: string, payload: unknown, source: unknown = null) {
+    mockState.inboxFlushQueue.push({ event, payload, source });
+  },
+  /** 某个窗口里某个事件当前登记的收件箱 handler 数。 */
+  inboxHandlerCount(label: string, event: string): number {
+    return inboxHandlerCountForTests(label, event);
+  },
   reset(): void {
     mockState.currentWindowLabel = "main";
     mockState.invokeCalls.length = 0;
@@ -497,6 +583,11 @@ export const tauriMock = {
     mockState.aclViolations.length = 0;
     mockState.enforceCapabilities = true;
     mockState.listenFailures.clear();
+    mockState.inboxChannels.clear();
+    mockState.inboxSeq.clear();
+    mockState.inboxSubscribeFailures.length = 0;
+    mockState.inboxFlushQueue.length = 0;
+    resetWindowInboxForTests();
   },
 };
 

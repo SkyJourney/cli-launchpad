@@ -206,16 +206,18 @@ describe("window orchestration", () => {
     host = h;
     // mock 监听记录的是 target 而不是 ownerLabel，这里只按事件名过滤：
     // 测试环境里只有宿主会注册这些事件。
-    const OWNED = new Set([
-      "workspace-content-window-event",
-      "pty-session-owner-lost",
-      "workspace-content-window-lost",
-    ]);
+    const OWNED = new Set(["workspace-content-window-event"]);
     const owned = () =>
       tauriMock.state.eventListeners.filter((listener) =>
         OWNED.has(listener.eventName),
       );
+    // The two Rust notifications are handlers of the main window's inbox (m6-061).
+    const inboxCounts = () => [
+      tauriMock.inboxHandlerCount("main", "pty-session-owner-lost"),
+      tauriMock.inboxHandlerCount("main", "workspace-content-window-lost"),
+    ];
     const before = [...owned()];
+    const beforeInbox = inboxCounts();
 
     await openFile(h);
     await launchPty(h);
@@ -226,13 +228,10 @@ describe("window orchestration", () => {
     const after = owned();
 
     expect(before.length).toBeGreaterThanOrEqual(1);
-    expect(
-      before.some(
-        (listener) => listener.eventName === "pty-session-owner-lost",
-      ),
-    ).toBe(true);
+    expect(beforeInbox[0]).toBeGreaterThanOrEqual(1);
     expect(before.every((listener) => after.includes(listener))).toBe(true);
     expect(after).toHaveLength(before.length);
+    expect(inboxCounts()).toEqual(beforeInbox);
     expect(h.errors).toEqual([]);
   });
 });

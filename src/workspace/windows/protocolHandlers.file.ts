@@ -6,10 +6,9 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 
-import { listen } from "@tauri-apps/api/event";
-
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
+import { onInboxEvent } from "../../lib/windowInbox";
 import { listenWorkspaceContentWindowEvent } from "../../lib/workspaceContentWindowProtocol";
 import {
   addWorkspaceFileToPane,
@@ -790,7 +789,7 @@ export function createFileProtocolHandlers(
       {
         name: RUST_EVENTS.workspaceContentWindowLost,
         register: () =>
-          listen<WorkspaceContentWindowLostEvent>(
+          onInboxEvent<WorkspaceContentWindowLostEvent>(
             RUST_EVENTS.workspaceContentWindowLost,
             (event) => {
               handleWorkspaceContentWindowLost(event.payload);

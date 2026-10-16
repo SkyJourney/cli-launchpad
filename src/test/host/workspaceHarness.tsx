@@ -586,7 +586,7 @@ export function emitToMain(type: string, payload: unknown) {
 
 export async function emitBackendEvent(name: string, payload: unknown) {
   await act(async () => {
-    tauriMock.emitEvent(name, payload, "main");
+    tauriMock.deliverInbox("main", name, payload);
   });
 }
 

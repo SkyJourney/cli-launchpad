@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::oneshot;
 
@@ -20,7 +20,6 @@ use crate::{AppError, Db};
 
 pub const TASK_UPDATED_EVENT: &str = crate::events::EXECUTION_TASK_UPDATED;
 pub const TASK_LOG_EVENT: &str = crate::events::EXECUTION_TASK_LOG;
-const EXECUTION_EVENT_TARGET: &str = "main";
 const TASK_TIMEOUT: Duration = Duration::from_secs(600);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
@@ -960,18 +959,42 @@ async fn db_call<T: Send + 'static>(
 }
 
 fn emit_task(app: &AppHandle, task: &ExecutionTask) {
-    if let Err(error) = app.emit_to(EXECUTION_EVENT_TARGET, TASK_UPDATED_EVENT, task) {
+    let payload = match serde_json::to_value(task) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log::warn!(
+                "unable to serialize execution task update task_id={} error={error}",
+                task.id
+            );
+            return;
+        }
+    };
+    if crate::services::window_inbox::notify_main(app, TASK_UPDATED_EVENT, payload)
+        == crate::services::window_inbox::DeliverOutcome::NoInbox
+    {
         log::warn!(
-            "unable to emit execution task update task_id={} error={error}",
+            "unable to emit execution task update task_id={}: main window inbox is unavailable",
             task.id
         );
     }
 }
 
 fn emit_log(app: &AppHandle, chunk: &ExecutionLogChunk) {
-    if let Err(error) = app.emit_to(EXECUTION_EVENT_TARGET, TASK_LOG_EVENT, chunk) {
+    let payload = match serde_json::to_value(chunk) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log::warn!(
+                "unable to serialize execution log task_id={} error={error}",
+                chunk.task_id
+            );
+            return;
+        }
+    };
+    if crate::services::window_inbox::notify_main(app, TASK_LOG_EVENT, payload)
+        == crate::services::window_inbox::DeliverOutcome::NoInbox
+    {
         log::warn!(
-            "unable to emit execution log task_id={} error={error}",
+            "unable to emit execution log task_id={}: main window inbox is unavailable",
             chunk.task_id
         );
     }

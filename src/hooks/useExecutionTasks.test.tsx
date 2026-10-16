@@ -52,14 +52,14 @@ async function settle() {
 
 async function emitTask(task: ExecutionTask) {
   await act(async () => {
-    tauriMock.emitEvent("execution-task-updated", task);
+    tauriMock.deliverInbox("main", "execution-task-updated", task);
   });
   await settle();
 }
 
 async function emitLog(sequence: number) {
   await act(async () => {
-    tauriMock.emitEvent("execution-task-log", {
+    tauriMock.deliverInbox("main", "execution-task-log", {
       taskId: "t1",
       sequence,
       stream: "stdout",

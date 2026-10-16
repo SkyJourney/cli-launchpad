@@ -363,16 +363,16 @@ describe("application exit requests", () => {
     const host = await mountExitApp({ dirty: false });
     // 两次投递放在同一个 act 中：不能用 Promise.all 叠加多个 emitBackendEvent（重叠的 act 会破坏后续渲染）。
     await act(async () => {
-      tauriMock.emitEvent(
-        "app-exit-requested",
-        { requestId: "req-1", ptyCount: 0, executionTaskCount: 0 },
-        "main",
-      );
-      tauriMock.emitEvent(
-        "app-exit-requested",
-        { requestId: "req-2", ptyCount: 1, executionTaskCount: 0 },
-        "main",
-      );
+      tauriMock.deliverInbox("main", "app-exit-requested", {
+        requestId: "req-1",
+        ptyCount: 0,
+        executionTaskCount: 0,
+      });
+      tauriMock.deliverInbox("main", "app-exit-requested", {
+        requestId: "req-2",
+        ptyCount: 1,
+        executionTaskCount: 0,
+      });
     });
     await flush(10);
 

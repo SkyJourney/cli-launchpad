@@ -8,13 +8,12 @@ import type {
   PtySessionOwnerLostEvent,
 } from "./contentWindowOrchestrator";
 
-import { listen } from "@tauri-apps/api/event";
-
 import { toast } from "sonner";
 
 import { abortableDelay } from "../../lib/abortableDelay";
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
+import { onInboxEvent } from "../../lib/windowInbox";
 import { listenWorkspaceContentWindowEvent } from "../../lib/workspaceContentWindowProtocol";
 import {
   findWorkspacePane,
@@ -512,7 +511,7 @@ export function createPtyProtocolHandlers(
       {
         name: RUST_EVENTS.ptySessionOwnerLost,
         register: () =>
-          listen<PtySessionOwnerLostEvent>(
+          onInboxEvent<PtySessionOwnerLostEvent>(
             RUST_EVENTS.ptySessionOwnerLost,
             (event) => {
               void handlePtySessionOwnerLost(event.payload);

@@ -1,4 +1,4 @@
-use tauri::{Emitter, State};
+use tauri::State;
 
 use crate::models::backup::{BackupManifest, BackupReason};
 use crate::services::app_lifecycle::AppLifecycle;
@@ -35,9 +35,16 @@ struct TauriRestoreNotifier(tauri::AppHandle);
 
 impl backup_service::RestoreNotifier for TauriRestoreNotifier {
     fn workspace_data_restored(&self) -> Result<(), String> {
-        self.0
-            .emit_to("main", crate::events::WORKSPACE_DATA_RESTORED, ())
-            .map_err(|error| error.to_string())
+        match crate::services::window_inbox::notify_main(
+            &self.0,
+            crate::events::WORKSPACE_DATA_RESTORED,
+            serde_json::Value::Null,
+        ) {
+            crate::services::window_inbox::DeliverOutcome::NoInbox => {
+                Err("main window inbox is unavailable".to_string())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
