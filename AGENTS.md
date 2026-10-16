@@ -123,7 +123,7 @@
 ### R-RS-1 Rust：IO 命令异步化，数据库只经统一执行器，锁内禁止 IO
 
 - 触及数据库、文件系统、进程或 `canonicalize`/可执行文件解析的命令必须是 `async` 且阻塞部分放入 `spawn_blocking`（或统一的 `blocking(op, budget, …)` 包装）；同步命令只允许纯内存操作和必须在主线程执行的 UI 操作（须加注释说明）。
-- 数据库访问统一经 `Db::call` / `CacheDb::call`（落地前，新增代码使用现有 helper，但不得新增直接 `.0.lock()` 的写法）；持有数据库锁或任一 manager 锁时，不得做文件系统、进程、`where.exe`、IPC 发送或 `sleep`；锁层级遵守审查报告 3B.3 节的规定，`Db`/`CacheDb` 为叶子锁。
+- 数据库访问统一经 `Db::call` / `CacheDb::call`（m6-059b 起 `Db`/`CacheDb` 的连接字段私有，旧的 `with_conn`、`with_connection`、`with_cache`、`with_cache_connection` 已删除；`Db::with_sync`/`CacheDb::with_sync` 只供非 async 线程使用，使用它的文件由 contracts 测试限定，`async fn` 与 async 块内禁止调用）；持有数据库锁或任一 manager 锁时，不得做文件系统、进程、`where.exe`、IPC 发送或 `sleep`；锁层级遵守审查报告 3B.3 节的规定，`Db`/`CacheDb` 为叶子锁。
 - 窗口身份由 `WebviewWindow`（`CallerWindow`/`WindowLabel`）在命令入口取得并校验类别，服务层不得再用字符串字面量（`"main"`、`"terminal-"`）判断窗口类别；窗口类别、命令、内容 kind、tool key、错误码等跨语言事实以 `contracts/*.json` 为唯一来源，并有双端契约测试。
 - 路径定位采用“父目录句柄 + 名称”，禁止用 `canonicalize` 的结果作为写入位置；平台差异进入 `platform/`，不得新增到普通 services。
 - 面向用户的失败使用带 `domain.reason` 错误码的 `AppError`，预期内的业务分支用结构化结果返回，两者不得重复表达同一事实；不得新增裸字符串错误码。
