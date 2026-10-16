@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_window_state::AppHandleExt;
 
 /// 自定义 Quit 菜单项 id；大小写敏感。
@@ -82,6 +82,26 @@ pub fn macos_edit_submenu_entries() -> Vec<AppMenuEntry> {
 pub fn request_app_exit<R: Runtime>(app: &AppHandle<R>) {
     if let Err(error) = app.save_window_state(crate::persistent_window_state_flags()) {
         log::warn!("unable to save main window state before exit request: {error}");
+    }
+    // Without a main window there is nobody to ask: authorize the exit up front so that
+    // `PreventWithoutMain` cannot keep the application alive forever (F13). The exit cleanup then
+    // terminates every remaining session.
+    let main_window_present = app
+        .get_webview_window(crate::models::window_kind::main_window_label())
+        .is_some();
+    let active_ptys = app
+        .try_state::<crate::services::pty_session_service::PtySessionManager>()
+        .map_or(0, |sessions| sessions.active_count());
+    let plan = match app.try_state::<crate::services::app_lifecycle::AppExitGate>() {
+        Some(gate) => {
+            crate::services::app_lifecycle::prepare_quit(&gate, main_window_present, active_ptys)
+        }
+        None => crate::services::app_lifecycle::quit_plan(main_window_present, active_ptys),
+    };
+    if plan == crate::services::app_lifecycle::QuitPlan::ForceQuit {
+        log::warn!(
+            "quit requested without a main window; forcing exit with {active_ptys} sessions"
+        );
     }
     app.exit(0);
 }

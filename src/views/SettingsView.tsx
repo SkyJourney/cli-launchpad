@@ -305,6 +305,8 @@ export function SettingsView() {
       }
       queryClient.invalidateQueries({ queryKey: qk.directories() });
       queryClient.removeQueries({ queryKey: ["sessions"] });
+      // An index refresh that was in flight during the import is discarded; run it again.
+      queryClient.invalidateQueries({ queryKey: qk.sessionSearchIndexes() });
       queryClient.invalidateQueries({ queryKey: qk.closeBehavior() });
       queryClient.invalidateQueries({ queryKey: qk.backups() });
     },

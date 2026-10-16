@@ -21,6 +21,8 @@ import { ko } from "../i18n/locales/ko";
 import { pt } from "../i18n/locales/pt";
 import { ru } from "../i18n/locales/ru";
 import { zh } from "../i18n/locales/zh";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { tauriMock } from "../test/tauriMock";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 
 vi.mock(
@@ -69,6 +71,63 @@ describe("AppErrorBoundary", () => {
       errorSpy.mock.calls.filter((call) => call[0] === "[app.render_crashed]"),
     ).toHaveLength(1);
     errorSpy.mockRestore();
+  });
+
+  it("shows a title bar in the fallback so the window can still be dragged and closed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    tauriMock.setCurrentWindowLabel("main");
+    render(
+      <AppErrorBoundary onReload={vi.fn()}>
+        <Thrower />
+      </AppErrorBoundary>,
+    );
+    await act(async () => {});
+
+    expect(screen.getByRole("alert")).toBeTruthy();
+    const titlebar = screen.getByLabelText("windowChrome.titlebar");
+    expect(titlebar).toBeTruthy();
+    fireEvent.mouseDown(
+      titlebar.querySelector(".window-titlebar-drag-region") as Element,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "windowChrome.close" }));
+
+    const appWindow = tauriMock.getWindow("main");
+    expect(appWindow.startDragging).toHaveBeenCalledTimes(1);
+    expect(appWindow.close).toHaveBeenCalledTimes(1);
+    // Reverse: the healthy path renders no fallback title bar.
+    cleanup();
+    render(
+      <AppErrorBoundary>
+        <span data-testid="child" />
+      </AppErrorBoundary>,
+    );
+    expect(screen.queryByLabelText("windowChrome.titlebar")).toBeNull();
+  });
+
+  it("keeps the reload button when the fallback title bar itself fails", async () => {
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    tauriMock.setCurrentWindowLabel("main");
+    vi.mocked(getCurrentWindow).mockImplementation(() => {
+      throw new Error("window api unavailable");
+    });
+    const onReload = vi.fn();
+    render(
+      <AppErrorBoundary onReload={onReload}>
+        <Thrower />
+      </AppErrorBoundary>,
+    );
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("button", { name: "appCrash.reload" }));
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("windowChrome.titlebar")).toBeNull();
+    expect(
+      errorSpy.mock.calls.some(
+        (call) => call[0] === "[app.crash_titlebar_failed]",
+      ),
+    ).toBe(true);
   });
 
   it("is mounted around App in the renderer entry", () => {

@@ -221,6 +221,38 @@ pub fn decide_exit_request(
     }
 }
 
+/// 用户明确发起退出（托盘“退出”、macOS 应用菜单 Quit）时的处理方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitPlan {
+    /// 走常规退出请求：由 `decide_exit_request` 决定放行或询问主窗。
+    RequestThroughMain,
+    /// 主窗已不存在而仍有 PTY 会话：没有地方可以询问，直接授权退出，由退出清理终止全部会话
+    /// （否则 `PreventWithoutMain` 会让应用永远无法退出，F13）。
+    ForceQuit,
+}
+
+/// 纯决策：只看主窗是否存在与活动 PTY 数。`decide_exit_request` 本身不变（RS-T07）。
+pub fn quit_plan(main_window_present: bool, active_pty_count: usize) -> QuitPlan {
+    if !main_window_present && active_pty_count > 0 {
+        QuitPlan::ForceQuit
+    } else {
+        QuitPlan::RequestThroughMain
+    }
+}
+
+/// 用户明确发起退出前的准备：`ForceQuit` 时先授权，使随后的 `ExitRequested` 被放行。
+pub fn prepare_quit(
+    gate: &AppExitGate,
+    main_window_present: bool,
+    active_pty_count: usize,
+) -> QuitPlan {
+    let plan = quit_plan(main_window_present, active_pty_count);
+    if plan == QuitPlan::ForceQuit {
+        gate.authorize();
+    }
+    plan
+}
+
 /// 窗口收到关闭请求时的处理结论。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainCloseDecision {
@@ -570,8 +602,9 @@ mod tests {
     use super::AppExitGate;
     use super::{confirm_exit_with, exit_requested_payload, ExitRequest};
     use super::{
-        decide_close_request, decide_exit_request, effective_close_behavior, setup_tray_or_degrade,
-        ExitRequestDecision, MainCloseDecision, TrayAvailability,
+        decide_close_request, decide_exit_request, effective_close_behavior, prepare_quit,
+        quit_plan, setup_tray_or_degrade, ExitRequestDecision, MainCloseDecision, QuitPlan,
+        TrayAvailability,
     };
     use std::cell::Cell;
     use std::time::{Duration, Instant};
@@ -588,6 +621,57 @@ mod tests {
     const TERM_T1: &str = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
     const SOURCE: &str = include_str!("app_lifecycle.rs");
     const LIB_RS: &str = include_str!("../lib.rs");
+
+    #[test]
+    fn an_explicit_quit_forces_the_exit_only_when_the_main_window_is_gone_and_sessions_run() {
+        use QuitPlan::{ForceQuit, RequestThroughMain};
+        // (主窗存在, 活动 PTY 数, 期望)
+        for (main_present, ptys, expected) in [
+            (true, 0, RequestThroughMain),
+            (true, 3, RequestThroughMain),
+            (false, 0, RequestThroughMain),
+            (false, 1, ForceQuit),
+            (false, 3, ForceQuit),
+        ] {
+            assert_eq!(
+                quit_plan(main_present, ptys),
+                expected,
+                "main_present={main_present} ptys={ptys}"
+            );
+        }
+    }
+
+    #[test]
+    fn preparing_a_quit_authorizes_the_exit_only_for_a_forced_quit() {
+        // A forced quit authorizes once: the next exit request is allowed, the one after is not.
+        let gate = AppExitGate::default();
+        assert_eq!(
+            decide_exit_request(&gate, 2, 0, false),
+            ExitRequestDecision::PreventWithoutMain
+        );
+        assert_eq!(prepare_quit(&gate, false, 2), QuitPlan::ForceQuit);
+        assert_eq!(
+            decide_exit_request(&gate, 2, 0, false),
+            ExitRequestDecision::AllowExit
+        );
+        assert_eq!(
+            decide_exit_request(&gate, 2, 0, false),
+            ExitRequestDecision::PreventWithoutMain
+        );
+
+        // Every other combination leaves the gate alone, so the normal confirmation applies.
+        for (main_present, ptys) in [(true, 0), (true, 3), (false, 0)] {
+            let gate = AppExitGate::default();
+            assert_eq!(
+                prepare_quit(&gate, main_present, ptys),
+                QuitPlan::RequestThroughMain
+            );
+            assert!(
+                !gate.consume_authorization(),
+                "main_present={main_present} ptys={ptys} must not authorize"
+            );
+        }
+    }
 
     #[test]
     fn exit_request_decision_matrix() {

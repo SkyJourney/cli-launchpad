@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 645,
-    "Linux": 652,
-    "macOS": 650
+    "Windows": 649,
+    "Linux": 656,
+    "macOS": 654
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -48,6 +48,8 @@
       "app_menu::tests::macos_app_menu_entries_replace_predefined_quit",
       "app_menu::tests::predefined_entries_are_all_constructible_names",
       "app_menu::tests::custom_menu_ids_are_unique_and_not_tray_ids",
+      "services::app_lifecycle::tests::an_explicit_quit_forces_the_exit_only_when_the_main_window_is_gone_and_sessions_run",
+      "services::app_lifecycle::tests::preparing_a_quit_authorizes_the_exit_only_for_a_forced_quit",
       "services::app_lifecycle::tests::exit_request_decision_matrix",
       "services::app_lifecycle::tests::main_close_request_decisions",
       "services::app_lifecycle::tests::lib_rs_delegates_exit_and_window_events_to_decision_functions",
@@ -346,6 +348,8 @@
       "services::window_inbox::tests::release_window_removes_the_inbox_and_its_buffer",
       "services::window_inbox::tests::a_released_main_window_gets_no_new_buffer_until_it_subscribes_again",
       "services::window_inbox::tests::inbox_messages_serialize_with_camel_case_fields_and_a_stamped_source",
+      "services::config_service::tests::import_advances_the_generation_and_discards_an_in_flight_index_refresh",
+      "services::config_service::tests::a_failed_import_keeps_the_generation_and_an_in_flight_refresh_valid",
       "services::window_inbox::tests::sequence_numbers_are_per_window_and_strictly_increasing",
       "services::window_inbox::tests::messages_delivered_during_a_flush_stay_behind_the_flushed_ones",
       "services::window_inbox::tests::messages_carry_the_stamped_source",

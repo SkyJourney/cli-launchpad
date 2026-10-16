@@ -6,6 +6,7 @@ use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::BackupReason;
 use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
 use crate::services::app_lifecycle::{AppLifecycle, DataReplaceKind, Operation};
+use crate::services::session_service::RestoreGeneration;
 use crate::services::storage_service::StoragePaths;
 use crate::services::{backup_service, cache_service};
 use crate::{AppError, CacheDb, Db};
@@ -62,6 +63,7 @@ pub fn import_with(
     cache: &CacheDb,
     storage: &StoragePaths,
     lifecycle: &AppLifecycle,
+    generation: &RestoreGeneration,
     path: &str,
 ) -> Result<CloseBehavior, AppError> {
     let bundle = read_bundle_from_path(path)?;
@@ -73,6 +75,9 @@ pub fn import_with(
         match import(conn, &bundle) {
             Ok(()) => {
                 log::info!("configuration import completed");
+                // The directory set changed: an index refresh that captured the previous
+                // generation must not write to the cache any more (m6-b1920 D2).
+                generation.advance();
                 Ok(app_setting_repo::get_close_behavior(conn)?)
             }
             Err(error) => {
@@ -176,6 +181,87 @@ mod tests {
         {
             format!("/cli-launchpad-tests/{name}")
         }
+    }
+
+    /// A storage root, a business database holding one directory, and a cache database.
+    fn import_scenario() -> (tempfile::TempDir, StoragePaths, Db, CacheDb, AppLifecycle) {
+        let root = tempfile::tempdir().unwrap();
+        let storage = StoragePaths::from_root(root.path().join(".cli-launchpad"));
+        storage.create_directories().unwrap();
+        let connection = connection::init_database(&storage.database_path).unwrap();
+        directory_repo::add(
+            &connection,
+            "existing",
+            &absolute_test_path("existing"),
+            None,
+        )
+        .unwrap();
+        let cache = CacheDb::new(
+            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
+        );
+        let lifecycle = AppLifecycle::with_counters(
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        );
+        (root, storage, Db::new(connection), cache, lifecycle)
+    }
+
+    fn write_bundle(root: &tempfile::TempDir, directory_path: &str) -> String {
+        let source = seeded_db();
+        directory_repo::add(&source, "imported", directory_path, None).unwrap();
+        let path = root.path().join("bundle.json");
+        std::fs::write(&path, export_json(&source).unwrap()).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn import_advances_the_generation_and_discards_an_in_flight_index_refresh() {
+        use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+        let (root, storage, db, cache, lifecycle) = import_scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let bundle = write_bundle(&root, &absolute_test_path("imported"));
+
+        import_with(&db, &cache, &storage, &lifecycle, &generation, &bundle).unwrap();
+
+        assert_eq!(generation.current(), g0 + 1);
+        let connection = cache.lock_for_test();
+        let stale = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
+        assert!(matches!(stale, IndexWriteOutcome::Discarded));
+        // Reverse: a refresh that starts after the import carries the new generation.
+        let fresh =
+            write_search_index_if_current(&connection, &generation, generation.current(), 1, &[])
+                .unwrap();
+        assert!(matches!(fresh, IndexWriteOutcome::Written(_)));
+    }
+
+    #[test]
+    fn a_failed_import_keeps_the_generation_and_an_in_flight_refresh_valid() {
+        use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+        let (root, storage, db, cache, lifecycle) = import_scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        // A relative directory identity makes the import fail and roll back.
+        let bundle = write_bundle(&root, "relative/path");
+
+        let error = import_with(&db, &cache, &storage, &lifecycle, &generation, &bundle)
+            .expect_err("a relative directory identity must be rejected");
+
+        // The pre-import backup was taken, so the failure came from the import itself.
+        assert_eq!(backup_service::list(&storage).unwrap().len(), 1, "{error}");
+        // Rolled back: the database still holds only the directory it started with.
+        let names: Vec<String> = directory_repo::list(&db.lock_for_test())
+            .unwrap()
+            .into_iter()
+            .map(|directory| directory.name)
+            .collect();
+        assert_eq!(names, vec!["existing".to_string()]);
+        assert_eq!(generation.current(), g0);
+        let connection = cache.lock_for_test();
+        let outcome = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::config_service;
+use crate::services::session_service::RestoreGeneration;
 use crate::services::storage_service::StoragePaths;
 use crate::{
     blocking_unbounded, update_close_behavior_state, AppError, CacheDb, CloseBehaviorState, Db,
@@ -24,14 +25,16 @@ pub async fn import_config_from_path(
     close_behavior_state: State<'_, CloseBehaviorState>,
     storage: State<'_, StoragePaths>,
     lifecycle: State<'_, AppLifecycle>,
+    generation: State<'_, RestoreGeneration>,
     path: String,
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let cache = cache.inner().clone();
+    let generation = generation.inner().clone();
     let storage = storage.inner().clone();
     let lifecycle = lifecycle.inner().clone();
     let close_behavior = blocking_unbounded("config.import", move || {
-        config_service::import_with(&db, &cache, &storage, &lifecycle, &path)
+        config_service::import_with(&db, &cache, &storage, &lifecycle, &generation, &path)
     })
     .await?;
     update_close_behavior_state(&close_behavior_state, close_behavior)?;

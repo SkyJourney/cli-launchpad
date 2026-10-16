@@ -4582,15 +4582,23 @@ h1 {
   }
 }
 
+.app-crash-shell {
+  background: var(--color-canvas);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
 .app-crash {
   align-items: center;
   background: var(--color-canvas);
   color: var(--text-body-color);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 12px;
   justify-content: center;
-  min-height: 100vh;
+  min-height: 0;
   padding: 24px;
   text-align: center;
 }

@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { tauriMock } from "../test/tauriMock";
-import { onInboxEvent } from "./windowInbox";
+import {
+  INBOX_PENDING_LIMIT,
+  onInboxEvent,
+  REPLAY_MAX_AGE_MS,
+} from "./windowInbox";
 
 const TERMINAL = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
 
@@ -132,6 +136,113 @@ describe("window inbox", () => {
     expect(h.mock.calls[0][0].source).toBeNull();
     expect(h.mock.calls[1][0].seq).toBe(2);
     expect(h.mock.calls[1][0].source).toEqual(source);
+  });
+
+  it("replays only the newest exit request that arrived before its handler", async () => {
+    tauriMock.queueInboxFlush("app-exit-requested", { requestId: "r1" });
+    tauriMock.queueInboxFlush("app-exit-requested", { requestId: "r2" });
+    // Another event's handler triggers the subscription; the exit request has no handler yet.
+    const other = vi.fn();
+    await onInboxEvent("execution-task-updated", other);
+    expect(other).not.toHaveBeenCalled();
+
+    const first = vi.fn();
+    await onInboxEvent("app-exit-requested", first);
+
+    expect(first.mock.calls.map((call) => call[0].payload)).toEqual([
+      { requestId: "r2" },
+    ]);
+    // Reverse: the stash is consumed, so a handler registered afterwards gets nothing replayed.
+    const second = vi.fn();
+    await onInboxEvent("app-exit-requested", second);
+    expect(second).not.toHaveBeenCalled();
+    tauriMock.deliverInbox("main", "app-exit-requested", { requestId: "r3" });
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays to every handler registered at the same time, so an unmounted first one cannot swallow it", async () => {
+    tauriMock.queueInboxFlush("workspace-data-restored", { n: 1 });
+    await onInboxEvent("execution-task-updated", vi.fn());
+
+    const unmounted = vi.fn();
+    const mounted = vi.fn();
+    // Both register before either subscription await resumes (a StrictMode remount).
+    const [stopFirst] = await Promise.all([
+      onInboxEvent("workspace-data-restored", unmounted),
+      onInboxEvent("workspace-data-restored", mounted),
+    ]);
+
+    expect(unmounted).toHaveBeenCalledTimes(1);
+    expect(mounted).toHaveBeenCalledTimes(1);
+    stopFirst();
+  });
+
+  it("keeps the order when a live message arrives between registration and replay", async () => {
+    tauriMock.queueInboxFlush("execution-task-updated", { n: 1 });
+    await onInboxEvent("execution-task-log", vi.fn());
+    const handler = vi.fn();
+
+    const registration = onInboxEvent("execution-task-updated", handler);
+    // The handler is registered but the replay has not run yet.
+    tauriMock.deliverInbox("main", "execution-task-updated", { n: 2 });
+    await registration;
+
+    expect(handler.mock.calls.map((call) => call[0].payload)).toEqual([
+      { n: 1 },
+      { n: 2 },
+    ]);
+    // Once replayed, live messages are delivered directly again.
+    tauriMock.deliverInbox("main", "execution-task-updated", { n: 3 });
+    expect(handler).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not replay messages older than the replay window", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000_000);
+    tauriMock.queueInboxFlush("app-exit-requested", { requestId: "old" });
+    await onInboxEvent("execution-task-updated", vi.fn());
+
+    now.mockReturnValue(1_000_000 + REPLAY_MAX_AGE_MS + 1);
+    const handler = vi.fn();
+    await onInboxEvent("app-exit-requested", handler);
+
+    expect(handler).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it("never replays events that carry timing or sender semantics", async () => {
+    tauriMock.queueInboxFlush("pty-session-owner-lost", { sessionId: "s1" });
+    tauriMock.queueInboxFlush("window-message", { type: "x" });
+    tauriMock.queueInboxFlush("workspace-content-window-lost", { id: "w" });
+    await onInboxEvent("execution-task-updated", vi.fn());
+
+    const lost = vi.fn();
+    const message = vi.fn();
+    const contentLost = vi.fn();
+    await onInboxEvent("pty-session-owner-lost", lost);
+    await onInboxEvent("window-message", message);
+    await onInboxEvent("workspace-content-window-lost", contentLost);
+
+    expect(lost).not.toHaveBeenCalled();
+    expect(message).not.toHaveBeenCalled();
+    expect(contentLost).not.toHaveBeenCalled();
+  });
+
+  it("keeps only the newest stashed messages per event", async () => {
+    for (let index = 1; index <= INBOX_PENDING_LIMIT + 5; index += 1) {
+      tauriMock.queueInboxFlush("execution-task-log", { sequence: index });
+    }
+    await onInboxEvent("execution-task-updated", vi.fn());
+
+    const handler = vi.fn();
+    await onInboxEvent("execution-task-log", handler);
+
+    expect(handler).toHaveBeenCalledTimes(INBOX_PENDING_LIMIT);
+    expect(handler.mock.calls[0][0].payload).toEqual({ sequence: 6 });
+    expect(handler.mock.calls[INBOX_PENDING_LIMIT - 1][0].payload).toEqual({
+      sequence: INBOX_PENDING_LIMIT + 5,
+    });
   });
 
   it("registers handlers before the subscription resolves so flushed messages are not lost", async () => {
