@@ -2329,6 +2329,42 @@ fn terminate_all_keeps_output_flowing_for_sessions_that_survive() {
 }
 
 #[test]
+fn terminate_all_withdraws_the_termination_request_from_sessions_that_survive() {
+    use std::sync::atomic::Ordering;
+
+    let manager = PtySessionManager::default();
+    let survivor = manager.insert_test_session("main", None);
+    let session = manager.get(&survivor.session_id).unwrap();
+
+    // The survivor never exits (no monitor thread, a killer that does nothing).
+    manager
+        .terminate_all_within(
+            std::time::Duration::from_millis(300),
+            std::time::Duration::from_millis(50),
+        )
+        .expect_err("a session that does not exit makes terminate_all fail");
+    assert!(
+        !session.termination_requested.load(Ordering::Acquire),
+        "a survivor that exits later on its own must be recorded as exited, not terminated"
+    );
+
+    // Reverse: sessions that do exit keep the request, so the monitor records terminated.
+    let manager = PtySessionManager::default();
+    let child = manager.insert_test_session_with_child("main", None);
+    let exiting = manager.get(&child.session_id).unwrap();
+    manager
+        .terminate_all_within(
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_millis(750),
+        )
+        .expect("a session that exits lets terminate_all succeed");
+    assert!(
+        exiting.termination_requested.load(Ordering::Acquire),
+        "an exited session keeps the termination request"
+    );
+}
+
+#[test]
 fn reader_receives_eof_after_the_child_exits_without_dropping_the_master() {
     let manager = PtySessionManager::default();
     let (channel, events) = recording_channel();

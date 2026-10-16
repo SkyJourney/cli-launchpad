@@ -199,6 +199,37 @@ describe("useThemeSync diagnostics", () => {
     setItem.mockRestore();
   });
 
+  it("keeps applying broadcasts in a child when the relayed reply path fails to register", async () => {
+    const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+    tauriMock.setCurrentWindowLabel(label);
+    tauriMock.failNextInboxSubscribe(new Error("subscribe failed"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderHook(() => useThemeSync());
+
+    await vi.waitFor(() => {
+      expect(toastSpy.error).toHaveBeenCalled();
+    });
+    expect(String(toastSpy.error.mock.calls[0]?.[0])).toContain(
+      "window.preferences_listen_failed",
+    );
+    // The reply path is gone, so no initial request is sent that nobody could answer.
+    expect(
+      tauriMock.state.emittedEvents.filter(
+        (event) => event.eventName === "window-message",
+      ),
+    ).toEqual([]);
+
+    // The broadcast path still works.
+    tauriMock.emitEvent(
+      APP_PREFERENCES_EVENT,
+      { apiVersion: 1, theme: "light", language: "en" },
+      label,
+    );
+    await vi.waitFor(() => {
+      expect(useAppStore.getState().themeMode).toBe("light");
+    });
+  });
+
   it("surfaces a native theme sync failure in development", async () => {
     tauriMock.setCurrentWindowLabel("main");
     (

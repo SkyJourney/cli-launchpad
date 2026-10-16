@@ -23,6 +23,7 @@ pub const PTY_INPUT_UNAVAILABLE: &str = "pty.input_unavailable";
 pub const PTY_SESSION_STARTING: &str = "pty.session_starting";
 pub const PTY_SESSIONS_ACTIVE: &str = "pty.sessions_active";
 pub const WINDOW_LABEL_INVALID: &str = "window.label_invalid";
+pub const WINDOW_MESSAGE_TOO_LARGE: &str = "window.message_too_large";
 pub const WINDOW_NOT_ALLOWED: &str = "window.not_allowed";
 
 /// Every registered code; only the contract tests read it.
@@ -50,5 +51,6 @@ pub const ALL: &[&str] = &[
     PTY_SESSION_STARTING,
     PTY_SESSIONS_ACTIVE,
     WINDOW_LABEL_INVALID,
+    WINDOW_MESSAGE_TOO_LARGE,
     WINDOW_NOT_ALLOWED,
 ];

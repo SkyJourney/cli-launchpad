@@ -142,7 +142,7 @@ describe("app preferences protocol", () => {
     );
   });
 
-  it("releases the broadcast listener when the relayed reply cannot be registered", async () => {
+  it("keeps the broadcast listener when the relayed reply cannot be registered", async () => {
     const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
     tauriMock.setCurrentWindowLabel(label);
     const unlistenBroadcast = vi.fn();
@@ -150,11 +150,68 @@ describe("app preferences protocol", () => {
       tauriMock.getWindow(label).listen as ReturnType<typeof vi.fn>
     ).mockImplementation(async () => unlistenBroadcast);
     tauriMock.failNextInboxSubscribe(new Error("subscribe failed"));
+    const onPartialFailure = vi.fn();
 
-    await expect(listenForAppPreferences(vi.fn())).rejects.toThrow(
-      "subscribe failed",
-    );
+    const stop = await listenForAppPreferences(vi.fn(), onPartialFailure);
 
+    expect(onPartialFailure).toHaveBeenCalledTimes(1);
+    expect(onPartialFailure).toHaveBeenCalledWith("reply", expect.any(Error));
+    // The broadcast path stays registered until the caller stops listening.
+    expect(unlistenBroadcast).not.toHaveBeenCalled();
+    stop();
     expect(unlistenBroadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the relayed reply when the broadcast cannot be registered", async () => {
+    const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+    tauriMock.setCurrentWindowLabel(label);
+    (
+      tauriMock.getWindow(label).listen as ReturnType<typeof vi.fn>
+    ).mockImplementation(async () => {
+      throw new Error("listen failed");
+    });
+    const onPreferences = vi.fn();
+    const onPartialFailure = vi.fn();
+
+    const stop = await listenForAppPreferences(onPreferences, onPartialFailure);
+
+    expect(onPartialFailure).toHaveBeenCalledWith(
+      "broadcast",
+      expect.any(Error),
+    );
+    tauriMock.deliverInbox(
+      label,
+      "window-message",
+      {
+        apiVersion: 1,
+        type: "app-preferences-reply",
+        payload: { apiVersion: 1, theme: "dark", language: "ja" },
+      },
+      { label: "main", kind: "main" },
+    );
+    expect(onPreferences).toHaveBeenCalledWith({
+      apiVersion: 1,
+      theme: "dark",
+      language: "ja",
+    });
+    stop();
+  });
+
+  it("rejects when neither the broadcast nor the relayed reply can be registered", async () => {
+    const label = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+    tauriMock.setCurrentWindowLabel(label);
+    (
+      tauriMock.getWindow(label).listen as ReturnType<typeof vi.fn>
+    ).mockImplementation(async () => {
+      throw new Error("listen failed");
+    });
+    tauriMock.failNextInboxSubscribe(new Error("subscribe failed"));
+    const onPartialFailure = vi.fn();
+
+    await expect(
+      listenForAppPreferences(vi.fn(), onPartialFailure),
+    ).rejects.toThrow();
+
+    expect(onPartialFailure).not.toHaveBeenCalled();
   });
 });

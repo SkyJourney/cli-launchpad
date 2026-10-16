@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 643,
-    "Linux": 650,
-    "macOS": 648
+    "Windows": 645,
+    "Linux": 652,
+    "macOS": 650
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -328,6 +328,7 @@
       "contracts::codex_app_server_uses_the_shared_supervised_primitive",
       "contracts::child_processes_are_spawned_only_through_the_supervised_primitives",
       "services::pty_session_service::tests::terminate_all_keeps_output_flowing_for_sessions_that_survive",
+      "services::pty_session_service::tests::terminate_all_withdraws_the_termination_request_from_sessions_that_survive",
       "services::pty_session_service::tests::reader_receives_eof_after_the_child_exits_without_dropping_the_master",
       "commands::directory::tests::remove_directory_flushes_pending_finishes_while_the_database_lock_is_free",
       "commands::directory::tests::remove_directory_reads_running_sessions_inside_the_database_lock",
@@ -350,6 +351,7 @@
       "services::window_inbox::tests::messages_carry_the_stamped_source",
       "contracts::rust_to_window_events_use_the_inbox_mechanism",
       "contracts::production_code_does_not_use_tauri_event_emit_apis",
+      "services::window_relay::tests::an_envelope_over_the_size_limit_is_rejected_and_never_delivered",
       "services::window_relay::tests::the_window_message_table_matches_the_protocol_directions",
       "services::window_relay::tests::relay_stamps_the_caller_as_the_source_and_delivers_to_the_target_inbox",
       "services::window_relay::tests::relay_rejects_a_sender_kind_that_the_message_type_does_not_allow",

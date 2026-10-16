@@ -78,18 +78,28 @@ export function useThemeSync() {
     }
 
     let disposed = false;
+    let replyUnavailable = false;
     let unlistenPreferences: (() => void) | undefined;
-    void listenForAppPreferences((preferences) => {
-      void applyRemotePreferences(preferences).catch((error: unknown) =>
-        reportWindowSyncFailure("window.preferences_apply_failed", error),
-      );
-    })
+    void listenForAppPreferences(
+      (preferences) => {
+        void applyRemotePreferences(preferences).catch((error: unknown) =>
+          reportWindowSyncFailure("window.preferences_apply_failed", error),
+        );
+      },
+      (path, error) => {
+        // The other path keeps working; without the reply path the initial request would never
+        // be answered, so it is skipped below.
+        if (path === "reply") replyUnavailable = true;
+        reportWindowSyncFailure("window.preferences_listen_failed", error);
+      },
+    )
       .then((stop) => {
         if (disposed) {
           stop();
           return;
         }
         unlistenPreferences = stop;
+        if (replyUnavailable) return;
         return requestInitialAppPreferences(currentWindowLabel);
       })
       .catch((error: unknown) =>

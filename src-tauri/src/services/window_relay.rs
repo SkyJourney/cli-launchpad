@@ -11,13 +11,18 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error_codes::WINDOW_NOT_ALLOWED;
+use crate::error_codes::{WINDOW_MESSAGE_TOO_LARGE, WINDOW_NOT_ALLOWED};
 use crate::events::WINDOW_MESSAGE;
 use crate::models::window_kind::{CallerWindow, WindowKind, WindowLabel};
 use crate::services::window_inbox::{DeliverOutcome, InboxSource, WindowInboxRegistry};
 use crate::AppError;
 
 const WINDOW_MESSAGES_JSON: &str = include_str!("../../../contracts/window-messages.json");
+
+/// Largest serialized envelope the relay accepts. A file buffer message carries at most two
+/// copies of a text file (`MAX_TEXT_FILE_BYTES`, 2 MiB each) plus JSON escaping; anything
+/// beyond this is a flood or a bug, not a legitimate message (m6-b1920-19).
+pub const MAX_ENVELOPE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct MessageManifest {
@@ -66,6 +71,24 @@ pub fn relay(
     message_type: &str,
     envelope: Value,
 ) -> Result<SendWindowMessageResult, AppError> {
+    relay_within(
+        registry,
+        caller,
+        target,
+        message_type,
+        envelope,
+        MAX_ENVELOPE_BYTES,
+    )
+}
+
+fn relay_within(
+    registry: &WindowInboxRegistry,
+    caller: &CallerWindow,
+    target: &str,
+    message_type: &str,
+    envelope: Value,
+    max_envelope_bytes: usize,
+) -> Result<SendWindowMessageResult, AppError> {
     let rule = rule_for(message_type)
         .ok_or_else(|| AppError::coded(WINDOW_NOT_ALLOWED, "未登记的窗口消息类型"))?;
     caller.require(&rule.from)?;
@@ -82,6 +105,18 @@ pub fn relay(
     });
     if !envelope_matches {
         return Err(AppError::coded(WINDOW_NOT_ALLOWED, "消息信封不合法"));
+    }
+    // Checked after the cheap rejections above; an envelope that cannot be measured is refused.
+    let size = serde_json::to_vec(&envelope).map_or(usize::MAX, |bytes| bytes.len());
+    if size > max_envelope_bytes {
+        log::warn!(
+            "window message rejected as too large type={message_type} target={} bytes={size}",
+            target.as_str()
+        );
+        return Err(AppError::coded(
+            WINDOW_MESSAGE_TOO_LARGE,
+            "窗口消息超过大小上限",
+        ));
     }
     let source = InboxSource {
         label: caller.label().as_str().to_string(),
@@ -147,6 +182,58 @@ mod tests {
 
     fn kinds(rule: &MessageRule) -> (Vec<WindowKind>, Vec<WindowKind>) {
         (rule.from.clone(), rule.to.clone())
+    }
+
+    #[test]
+    fn an_envelope_over_the_size_limit_is_rejected_and_never_delivered() {
+        let registry = WindowInboxRegistry::default();
+        let main_channel = subscribed(&registry, "main");
+        let sender = caller(TERMINAL);
+        let build = |filler: usize| {
+            json!({
+                "apiVersion": 1,
+                "type": "pty-detached-ready",
+                "payload": { "filler": "x".repeat(filler) },
+            })
+        };
+        let exact = serde_json::to_vec(&build(500)).unwrap().len();
+
+        // One byte over the limit is refused with its own code and nothing is delivered.
+        let over = relay_within(
+            &registry,
+            &sender,
+            "main",
+            "pty-detached-ready",
+            build(501),
+            exact,
+        );
+        assert_eq!(code_of(over), "window.message_too_large");
+        assert!(main_channel.sent.lock().unwrap().is_empty());
+
+        // Exactly at the limit is accepted.
+        let at_limit = relay_within(
+            &registry,
+            &sender,
+            "main",
+            "pty-detached-ready",
+            build(500),
+            exact,
+        )
+        .unwrap();
+        assert!(at_limit.delivered);
+        assert_eq!(main_channel.sent.lock().unwrap().len(), 1);
+
+        // The public entry point applies the shipped limit, and a normal message passes it.
+        assert_eq!(MAX_ENVELOPE_BYTES, 16 * 1024 * 1024);
+        let normal = relay(
+            &registry,
+            &sender,
+            "main",
+            "pty-detached-ready",
+            envelope("pty-detached-ready"),
+        )
+        .unwrap();
+        assert!(normal.delivered);
     }
 
     #[test]

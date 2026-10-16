@@ -26,6 +26,7 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "pty.session_starting": "errors.ptySessionStarting",
   "pty.sessions_active": "errors.ptySessionsActive",
   "window.label_invalid": "errors.internal",
+  "window.message_too_large": "errors.internal",
   "window.not_allowed": "errors.internal",
   "layout.needs_reset": "errors.layoutNeedsReset",
   "layout.save_rejected": "errors.layoutSaveRejected",

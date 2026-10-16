@@ -23,6 +23,7 @@
     "pty.session_starting",
     "pty.sessions_active",
     "window.label_invalid",
+    "window.message_too_large",
     "window.not_allowed"
   ],
   "frontendCodes": [

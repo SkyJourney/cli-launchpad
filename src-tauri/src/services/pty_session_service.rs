@@ -689,9 +689,18 @@ impl PtySessionManager {
             thread::sleep(std::time::Duration::from_millis(25));
         }
         if self.active_count() > 0 {
-            // The application keeps running with the survivors: back-pressure applies again.
+            // The application keeps running with the survivors: back-pressure applies again,
+            // and a survivor that exits on its own later is an ordinary exit, not a termination
+            // (m6-b1920-09).
             for session in &sessions {
                 session.flow.cancel_exit();
+            }
+            if let Ok(survivors) = self.registry.snapshot() {
+                for survivor in survivors {
+                    survivor
+                        .termination_requested
+                        .store(false, std::sync::atomic::Ordering::Release);
+                }
             }
             return Err(AppError::msg(
                 "部分 PTY 会话未能在限定时间内退出，应用继续保持运行",
