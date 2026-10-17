@@ -1,6 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { getWorkspaceContentAdapter } from "../components/workspaceContentAdapterRegistry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getWorkspaceContentAdapter,
+  registerWorkspaceContentAdapter,
+} from "../components/workspaceContentAdapterRegistry";
 import { resolveEditorEngine } from "../components/workspaceEditorEngineRegistry";
+import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
+import {
+  clearContributionFailures,
+  getContributionFailures,
+} from "../lib/registerContribution";
 import { registerBuiltinContributions } from "./registerBuiltinContributions";
 
 let unregister: (() => void) | undefined;
@@ -27,5 +35,45 @@ describe("built-in contribution bootstrap", () => {
     unregister = registerBuiltinContributions();
 
     expect(getWorkspaceContentAdapter("pty").id).toBe("core.pty");
+  });
+
+  it("keeps registering the other built-in contributions when one is rejected", () => {
+    clearContributionFailures();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // The squatter takes the "pty" content kind, so the built-in pty adapter is rejected.
+    const squatter = registerWorkspaceContentAdapter({
+      id: "test.squatter",
+      apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION,
+      kind: "pty",
+      render: () => null,
+      presentation: () => ({ title: "t", icon: null, closeLabelKey: "close" }),
+      labels: {},
+      projectContextOf: () => null,
+    } as never);
+    try {
+      expect(() => {
+        unregister = registerBuiltinContributions();
+      }).not.toThrow();
+
+      expect(getWorkspaceContentAdapter("file").id).toBe("core.file-editor");
+      expect(resolveEditorEngine()?.id).toBe("core.monaco");
+      expect(
+        getContributionFailures().map(
+          (failure) => `${failure.registry}:${failure.id}`,
+        ),
+      ).toEqual(["workspaceContentAdapter:core.pty"]);
+      const rejected = error.mock.calls.filter(
+        ([message]) =>
+          message ===
+          "[bootstrap.contribution_rejected] workspaceContentAdapter:core.pty",
+      );
+      expect(rejected).toHaveLength(1);
+      // Reverse: the built-in pty adapter did not replace the squatter.
+      expect(getWorkspaceContentAdapter("pty").id).toBe("test.squatter");
+    } finally {
+      squatter();
+      clearContributionFailures();
+      vi.restoreAllMocks();
+    }
   });
 });

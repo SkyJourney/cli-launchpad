@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { isValidElement } from "react";
 import {
   getWorkspaceContentAdapter,
+  listWorkspaceContentAdapters,
   presentWorkspaceContent,
   registerWorkspaceContentAdapter,
   subscribeWorkspaceContentAdapters,
@@ -9,6 +10,7 @@ import {
 } from "./workspaceContentAdapterRegistry";
 import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
 import contentKinds from "../../contracts/content-kinds.json";
+import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
 
 const labels = {
   menu: "menu",
@@ -338,5 +340,44 @@ describe("content adapter contract version 3", () => {
       workspaceContentProjectContext(unknown, presentationContext),
     ).toBeNull();
     dispose();
+  });
+
+  it("lists registered adapters in registration order and drops unregistered ones", () => {
+    const make = (id: string, kind: "pty" | "file") =>
+      ({
+        id,
+        apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION,
+        kind,
+        render: () => null,
+        presentation: () => ({
+          title: "t",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
+      }) as never;
+    const unregisterPty = registerWorkspaceContentAdapter(
+      make("test.list-pty", "pty"),
+    );
+    let unregisterFile: (() => void) | undefined;
+    try {
+      unregisterFile = registerWorkspaceContentAdapter(
+        make("test.list-file", "file"),
+      );
+      expect(
+        listWorkspaceContentAdapters().map((adapter) => adapter.id),
+      ).toEqual(["test.list-pty", "test.list-file"]);
+
+      unregisterPty();
+      expect(
+        listWorkspaceContentAdapters().map((adapter) => adapter.id),
+      ).toEqual(["test.list-file"]);
+    } finally {
+      unregisterPty();
+      unregisterFile?.();
+    }
+    // Reverse: nothing is left registered.
+    expect(listWorkspaceContentAdapters()).toEqual([]);
   });
 });

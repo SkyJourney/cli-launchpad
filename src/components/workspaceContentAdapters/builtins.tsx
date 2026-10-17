@@ -12,6 +12,7 @@ import {
   resolveEditorEngine,
 } from "../workspaceEditorEngineRegistry";
 import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
+import { registerContributionSafely } from "../../lib/registerContribution";
 import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 
@@ -303,9 +304,11 @@ function isInvalidRestoredSlotState(state: string | undefined): boolean {
 }
 
 export function registerBuiltinWorkspaceContentAdapters(): () => void {
-  const unregister = [
-    registerWorkspaceContentAdapter(ptyAdapter),
-    registerWorkspaceContentAdapter(fileAdapter),
-  ];
+  const adapters: WorkspaceContentAdapter<any>[] = [ptyAdapter, fileAdapter];
+  const unregister = adapters.map((adapter) =>
+    registerContributionSafely("workspaceContentAdapter", adapter.id, () =>
+      registerWorkspaceContentAdapter(adapter),
+    ),
+  );
   return () => unregister.reverse().forEach((dispose) => dispose());
 }

@@ -1,4 +1,6 @@
 import type { ComponentType } from "react";
+import { createRegistry } from "../lib/createRegistry";
+import { WORKSPACE_EDITOR_ENGINE_API_VERSION } from "../lib/extensionApiVersions";
 import type { ThemeId } from "../lib/themes";
 export interface WorkspaceEditorEngineProps {
   documentKey: string;
@@ -20,36 +22,25 @@ export interface WorkspaceEditorEngine {
 
 export const defaultEngineId = "core.monaco";
 
-const engines = new Map<string, WorkspaceEditorEngine>();
-const listeners = new Set<() => void>();
-let revision = 0;
-
-function notifyChanged() {
-  revision += 1;
-  listeners.forEach((listener) => listener());
-}
+const registry = createRegistry<WorkspaceEditorEngine>({
+  name: "workspaceEditorEngine",
+  supportedApiVersions: [WORKSPACE_EDITOR_ENGINE_API_VERSION],
+  messages: {
+    emptyId: "编辑器引擎 ID 不能为空",
+    unsupportedApiVersion: (apiVersion) =>
+      `不支持编辑器引擎 API 版本: ${apiVersion}`,
+    duplicateId: (id) => `编辑器引擎 ID 已注册: ${id}`,
+  },
+});
 
 export function registerWorkspaceEditorEngine(
   engine: WorkspaceEditorEngine,
 ): () => void {
-  if (!engine.id.trim()) throw new Error("编辑器引擎 ID 不能为空");
-  if (engine.apiVersion !== 1) {
-    throw new Error(`不支持编辑器引擎 API 版本: ${engine.apiVersion}`);
-  }
-  if (engines.has(engine.id)) {
-    throw new Error(`编辑器引擎 ID 已注册: ${engine.id}`);
-  }
-  engines.set(engine.id, engine);
-  notifyChanged();
-  return () => {
-    if (engines.get(engine.id) !== engine) return;
-    engines.delete(engine.id);
-    notifyChanged();
-  };
+  return registry.register(engine);
 }
 
 export function getWorkspaceEditorEngine(id: string): WorkspaceEditorEngine {
-  const engine = engines.get(id);
+  const engine = registry.get(id);
   if (!engine) throw new Error(`未注册编辑器引擎: ${id}`);
   return engine;
 }
@@ -58,16 +49,19 @@ export function resolveEditorEngine(
   preferredId?: string,
 ): WorkspaceEditorEngine | undefined {
   return (
-    (preferredId ? engines.get(preferredId) : undefined) ??
-    engines.get(defaultEngineId)
+    (preferredId ? registry.get(preferredId) : undefined) ??
+    registry.get(defaultEngineId)
   );
 }
 
+export function listWorkspaceEditorEngines(): readonly WorkspaceEditorEngine[] {
+  return registry.list();
+}
+
 export function getWorkspaceEditorEngineRevision(): number {
-  return revision;
+  return registry.revision();
 }
 
 export function subscribeWorkspaceEditorEngines(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return registry.subscribe(listener);
 }

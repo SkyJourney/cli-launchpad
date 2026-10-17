@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultEngineId,
   getWorkspaceEditorEngine,
+  listWorkspaceEditorEngines,
   resolveEditorEngine,
   registerWorkspaceEditorEngine,
 } from "./workspaceEditorEngineRegistry";
@@ -77,5 +78,29 @@ describe("workspace editor engine registry", () => {
 
   it("returns undefined when the default engine is unavailable", () => {
     expect(resolveEditorEngine()).toBeUndefined();
+  });
+
+  it("lists registered engines in registration order", () => {
+    const make = (id: string) => ({
+      id,
+      apiVersion: 1 as const,
+      releaseDocument: () => {},
+      View: () => null,
+    });
+    const unregisterA = registerWorkspaceEditorEngine(make("test.list-a"));
+    const unregisterB = registerWorkspaceEditorEngine(make("test.list-b"));
+    try {
+      expect(listWorkspaceEditorEngines().map((engine) => engine.id)).toEqual([
+        "test.list-a",
+        "test.list-b",
+      ]);
+    } finally {
+      unregisterB();
+      unregisterA();
+    }
+    // Reverse: both are gone after unregistering.
+    const ids = listWorkspaceEditorEngines().map((engine) => engine.id);
+    expect(ids).not.toContain("test.list-a");
+    expect(ids).not.toContain("test.list-b");
   });
 });

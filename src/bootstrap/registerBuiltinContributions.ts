@@ -6,14 +6,12 @@ let unregisterContributions: (() => void) | undefined;
 export function registerBuiltinContributions(): () => void {
   if (unregisterContributions) return unregisterContributions;
 
-  const cleanup: Array<() => void> = [];
-  try {
-    cleanup.push(registerBuiltinWorkspaceContentAdapters());
-    cleanup.push(registerBuiltinWorkspaceEditorEngines());
-  } catch (error) {
-    cleanup.reverse().forEach((unregister) => unregister());
-    throw error;
-  }
+  // 每个注册函数内部已逐项隔离被拒绝的贡献（registerContributionSafely），
+  // 这里不再整体回滚：一项失败不影响其余贡献。
+  const cleanup: Array<() => void> = [
+    registerBuiltinWorkspaceContentAdapters(),
+    registerBuiltinWorkspaceEditorEngines(),
+  ];
 
   const unregister = () => {
     if (unregisterContributions !== unregister) return;

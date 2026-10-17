@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import contentKinds from "../../contracts/content-kinds.json";
+import { createRegistry } from "../lib/createRegistry";
+import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
 import type {
   PtySession,
   ToolKey,
@@ -156,50 +157,37 @@ export interface WorkspaceContentAdapter<
   lifecycle?: WorkspaceContentAdapterLifecycle<Kind>;
 }
 
-const adaptersByKind = new Map<
-  RegisteredWorkspaceContentKind,
-  WorkspaceContentAdapter<any>
->();
-const adaptersById = new Map<string, WorkspaceContentAdapter<any>>();
-const listeners = new Set<() => void>();
-let revision = 0;
-
-function notifyRegistryChanged() {
-  revision += 1;
-  listeners.forEach((listener) => listener());
-}
+const registry = createRegistry<WorkspaceContentAdapter<any>>({
+  name: "workspaceContentAdapter",
+  supportedApiVersions: [WORKSPACE_CONTENT_ADAPTER_API_VERSION],
+  messages: {
+    emptyId: "内容适配器 ID 不能为空",
+    unsupportedApiVersion: (apiVersion) =>
+      `不支持内容适配器 API 版本: ${apiVersion}`,
+    duplicateId: (id) => `内容适配器 ID 已注册: ${id}`,
+    duplicateKey: (kind) => `内容类型已注册: ${kind}`,
+  },
+  keyOf: (adapter) => adapter.kind,
+  validate: (adapter) => {
+    const handoffHooks = [
+      adapter.lifecycle?.prepareHandoff,
+      adapter.lifecycle?.attachHandoff,
+      adapter.lifecycle?.rollbackHandoff,
+    ];
+    if (handoffHooks.some(Boolean) && !handoffHooks.every(Boolean)) {
+      throw new Error(`内容适配器 handoff 生命周期钩子不完整: ${adapter.kind}`);
+    }
+  },
+});
 
 export function registerWorkspaceContentAdapter<
   Kind extends RegisteredWorkspaceContentKind,
 >(adapter: WorkspaceContentAdapter<Kind>): () => void {
-  if (!adapter.id.trim()) throw new Error("内容适配器 ID 不能为空");
-  if (adapter.apiVersion !== contentKinds.adapterApiVersion) {
-    throw new Error(`不支持内容适配器 API 版本: ${adapter.apiVersion}`);
-  }
-  if (adaptersById.has(adapter.id)) {
-    throw new Error(`内容适配器 ID 已注册: ${adapter.id}`);
-  }
-  if (adaptersByKind.has(adapter.kind)) {
-    throw new Error(`内容类型已注册: ${adapter.kind}`);
-  }
-  const handoffHooks = [
-    adapter.lifecycle?.prepareHandoff,
-    adapter.lifecycle?.attachHandoff,
-    adapter.lifecycle?.rollbackHandoff,
-  ];
-  if (handoffHooks.some(Boolean) && !handoffHooks.every(Boolean)) {
-    throw new Error(`内容适配器 handoff 生命周期钩子不完整: ${adapter.kind}`);
-  }
+  return registry.register(adapter);
+}
 
-  adaptersById.set(adapter.id, adapter);
-  adaptersByKind.set(adapter.kind, adapter);
-  notifyRegistryChanged();
-  return () => {
-    if (adaptersById.get(adapter.id) !== adapter) return;
-    adaptersById.delete(adapter.id);
-    adaptersByKind.delete(adapter.kind);
-    notifyRegistryChanged();
-  };
+export function listWorkspaceContentAdapters(): readonly WorkspaceContentAdapter<any>[] {
+  return registry.list();
 }
 
 export function getWorkspaceContentAdapter<
@@ -213,7 +201,7 @@ export function getWorkspaceContentAdapter<
 export function tryGetWorkspaceContentAdapter<
   Kind extends RegisteredWorkspaceContentKind,
 >(kind: Kind): WorkspaceContentAdapter<Kind> | undefined {
-  return adaptersByKind.get(kind) as WorkspaceContentAdapter<Kind> | undefined;
+  return registry.getByKey(kind) as WorkspaceContentAdapter<Kind> | undefined;
 }
 
 function unsupportedPresentation(kind: string): WorkspaceContentPresentation {
@@ -253,12 +241,11 @@ export function workspaceContentProjectContext(
 }
 
 export function getWorkspaceContentAdapterRevision(): number {
-  return revision;
+  return registry.revision();
 }
 
 export function subscribeWorkspaceContentAdapters(
   listener: () => void,
 ): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return registry.subscribe(listener);
 }
