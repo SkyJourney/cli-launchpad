@@ -68,9 +68,9 @@ impl CliAdapter for AntigravityAdapter {
     fn build_plan(
         &self,
         kind: InstallKind,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> anyhow::Result<InstallPlan> {
-        platform::build_plan(kind)
+        platform::build_plan(kind, context)
     }
 
     fn list_sessions(

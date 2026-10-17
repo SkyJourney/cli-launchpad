@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
+use crate::services::cli_adapters::AdapterContext;
 
 /// Resolve the home and XDG data directory that own a native Claude binary.
 /// The versioned binary lives under `$HOME/.local/share/claude/versions`;
@@ -29,11 +30,18 @@ pub(crate) fn native_install_context(path: &Path) -> Option<(PathBuf, PathBuf)> 
     Some((home_dir, share_dir.to_path_buf()))
 }
 
-pub(super) fn build_plan(kind: InstallKind) -> anyhow::Result<InstallPlan> {
+pub(super) fn build_plan(
+    kind: InstallKind,
+    context: &AdapterContext,
+) -> anyhow::Result<InstallPlan> {
     match kind {
         InstallKind::Update => {
-            let program = crate::services::install_service::resolve_program("claude")?;
-            update_plan_for(Path::new(&program))
+            let path = context.resolved_path.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "未检测到可运行的 Claude Code CLI（未找到执行安装或更新所需的程序：claude）"
+                )
+            })?;
+            update_plan_for(path)
         }
         InstallKind::Install => install_plan(kind),
     }
@@ -128,5 +136,41 @@ mod tests {
         std::fs::write(&binary, b"test").unwrap();
 
         assert!(native_install_context(&binary).is_none());
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    use crate::services::cli_adapters::AdapterContext;
+
+    fn context(path: Option<&str>) -> AdapterContext {
+        AdapterContext {
+            resolved_path: path.map(PathBuf::from),
+            home: std::env::temp_dir(),
+            budget: std::time::Duration::from_secs(10),
+        }
+    }
+
+    #[test]
+    fn update_plan_uses_the_injected_executable_path() {
+        let plan = build_plan(InstallKind::Update, &context(Some("custom-bin/claude"))).unwrap();
+
+        assert_eq!(
+            plan.program,
+            PathBuf::from("custom-bin/claude").display().to_string()
+        );
+        assert_eq!(plan.args, vec!["update".to_string()]);
+        assert_eq!(plan.tool_key, ToolKey::Claude);
+        assert!(!plan.fingerprint.is_empty());
+    }
+
+    #[test]
+    fn update_plan_requires_a_detected_executable() {
+        let error = build_plan(InstallKind::Update, &context(None)).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("未检测到可运行的 Claude Code CLI"));
     }
 }

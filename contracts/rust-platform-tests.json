@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 691,
-    "Linux": 698,
-    "macOS": 696
+    "Windows": 699,
+    "Linux": 706,
+    "macOS": 704
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,14 @@
   ],
   "required": {
     "all": [
+      "services::cli_adapters::claude::platform::context_tests::update_plan_uses_the_injected_executable_path",
+      "services::cli_adapters::claude::platform::context_tests::update_plan_requires_a_detected_executable",
+      "services::cli_adapters::codex::platform::context_tests::update_plan_uses_the_injected_executable_path",
+      "services::cli_adapters::codex::platform::context_tests::update_plan_requires_a_detected_executable",
+      "services::cli_adapters::antigravity::platform::context_tests::update_plan_uses_the_injected_agy_path",
+      "services::cli_adapters::antigravity::platform::context_tests::update_plan_rejects_the_compatibility_command",
+      "services::cli_adapters::antigravity::platform::context_tests::update_plan_requires_a_detected_executable",
+      "services::cli_adapters::tests::plan_context_resolves_the_executable_even_without_the_history_requirement",
       "services::cli_runtime::tests::run_returns_the_result_of_the_operation",
       "services::cli_runtime::tests::run_reports_a_timeout_naming_the_tool_and_operation",
       "services::cli_runtime::tests::run_isolates_a_panicking_operation",

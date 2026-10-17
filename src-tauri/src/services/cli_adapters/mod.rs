@@ -25,22 +25,6 @@ pub struct ExecutionPreflight {
     pub verify_update_result: bool,
 }
 
-impl AdapterContext {
-    // Blocking: only call from a blocking thread (see commands that run build_plan inside blocking).
-    fn for_adapter_blocking(adapter: &dyn CliAdapter, budget: Duration) -> Result<Self> {
-        let resolved_path = if adapter.requires_executable_path() {
-            resolve_installed_blocking(adapter)
-        } else {
-            None
-        };
-        Ok(Self {
-            resolved_path,
-            home: crate::services::session_service::home_dir()?,
-            budget,
-        })
-    }
-}
-
 pub(crate) mod antigravity;
 pub(crate) mod claude;
 pub(crate) mod codex;
@@ -273,8 +257,28 @@ pub async fn context_within_budget(
     )
 }
 
+/// Plan building always needs the executable (updates run it), regardless of
+/// `requires_executable_path()` which only governs the history and version paths.
+fn plan_context_with(
+    adapter: &'static dyn CliAdapter,
+    budget: Duration,
+    home: PathBuf,
+    resolver: &dyn ExecutableResolver,
+) -> AdapterContext {
+    AdapterContext {
+        resolved_path: resolver.resolve(adapter),
+        home,
+        budget,
+    }
+}
+
 pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
-    let context = AdapterContext::for_adapter_blocking(get(tool_key), Duration::from_secs(30))?;
+    let context = plan_context_with(
+        get(tool_key),
+        Duration::from_secs(30),
+        crate::services::session_service::home_dir()?,
+        &NativeExecutableResolver,
+    );
     let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {
         get(tool_key).build_plan(kind, &context)
     })?;
@@ -916,5 +920,29 @@ mod tests {
         // 预算只由 cli_runtime::run 在外层执行一次；这里得到操作自己的结果。
         assert_eq!(result.latest.as_deref(), Some("9.9.9"));
         assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn plan_context_resolves_the_executable_even_without_the_history_requirement() {
+        struct FixedResolver(PathBuf);
+        impl ExecutableResolver for FixedResolver {
+            fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+                Some(self.0.clone())
+            }
+        }
+
+        let adapter = get(ToolKey::Claude);
+        let context = plan_context_with(
+            adapter,
+            Duration::from_secs(5),
+            std::env::temp_dir(),
+            &FixedResolver(PathBuf::from("custom-bin/claude")),
+        );
+
+        assert!(!adapter.requires_executable_path());
+        assert_eq!(
+            context.resolved_path,
+            Some(PathBuf::from("custom-bin/claude"))
+        );
     }
 }
