@@ -72,8 +72,13 @@ pub(crate) fn resolve_program(program: &str) -> Result<String> {
     if program.eq_ignore_ascii_case("powershell") {
         return Ok(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
     }
-    detect::resolve_executable_path(&[program])
-        .ok_or_else(|| anyhow!("未找到执行安装或更新所需的程序：{program}"))
+    crate::platform::executable_resolver::resolve_blocking(
+        &[program],
+        &[],
+        &crate::platform::launch_environment::LaunchEnvironment::capture(),
+    )
+    .map(|found| found.path.display().to_string())
+    .ok_or_else(|| anyhow!("未找到执行安装或更新所需的程序：{program}"))
 }
 
 /// Execute only the executable path embedded in the confirmed plan.

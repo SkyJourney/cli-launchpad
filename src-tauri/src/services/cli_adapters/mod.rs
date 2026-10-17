@@ -29,7 +29,7 @@ impl AdapterContext {
     // Blocking: only call from a blocking thread (see commands that run build_plan inside blocking).
     fn for_adapter_blocking(adapter: &dyn CliAdapter, budget: Duration) -> Result<Self> {
         let resolved_path = if adapter.requires_executable_path() {
-            installed_path(adapter)
+            resolve_installed_blocking(adapter)
         } else {
             None
         };
@@ -193,40 +193,17 @@ pub(crate) fn all() -> impl Iterator<Item = &'static dyn CliAdapter> {
     ToolKey::ALL.into_iter().map(get)
 }
 
-pub fn installed_path(adapter: &dyn CliAdapter) -> Option<PathBuf> {
+fn resolve_installed_blocking(adapter: &dyn CliAdapter) -> Option<PathBuf> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::platform::detect::resolve_executable_path_with_dirs(
+        crate::platform::executable_resolver::resolve_blocking(
             adapter.command_candidates(),
             &adapter.additional_install_dirs(),
+            &crate::platform::launch_environment::LaunchEnvironment::capture(),
         )
-        .map(PathBuf::from)
+        .map(|found| found.path)
     }))
     .ok()
     .flatten()
-}
-
-pub async fn installed_path_async(adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
-    let candidates = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        adapter.command_candidates()
-    }))
-    .ok()?;
-    for candidate in candidates {
-        if let Some(path) = crate::platform::detect::which(candidate).await {
-            return Some(path);
-        }
-    }
-    let additional_dirs = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        adapter.additional_install_dirs()
-    }))
-    .ok()?;
-    for candidate in candidates {
-        if let Some(path) =
-            crate::platform::detect::find_in_known_dirs_with(candidate, &additional_dirs)
-        {
-            return Some(path);
-        }
-    }
-    None
 }
 
 /// Resolves the executable path of an adapter. Replaceable so tests can inject
@@ -240,7 +217,7 @@ pub struct NativeExecutableResolver;
 
 impl ExecutableResolver for NativeExecutableResolver {
     fn resolve(&self, adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
-        installed_path(adapter)
+        resolve_installed_blocking(adapter)
     }
 }
 

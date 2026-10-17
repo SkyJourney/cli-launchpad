@@ -247,7 +247,10 @@ impl PtySessionManager {
         let mut command = CommandBuilder::new(&payload.tool_executable);
         command.args(&payload.tool_args);
         command.cwd(&payload.directory);
-        configure_cli_environment(&mut command);
+        configure_cli_environment(
+            &mut command,
+            &crate::platform::launch_environment::LaunchEnvironment::capture(),
+        );
 
         let mut child = pair
             .slave
@@ -897,7 +900,10 @@ fn spawn_child_monitor(
         .map(|_| ())
 }
 
-fn configure_cli_environment(command: &mut CommandBuilder) {
+fn configure_cli_environment(
+    command: &mut CommandBuilder,
+    environment: &crate::platform::launch_environment::LaunchEnvironment,
+) {
     for key in [
         "NO_COLOR",
         "TERM",
@@ -911,12 +917,7 @@ fn configure_cli_environment(command: &mut CommandBuilder) {
     }
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    #[cfg(windows)]
-    if let Some(path) = crate::platform::windows_environment::merged_registered_path(
-        std::env::var_os("PATH").as_deref(),
-    ) {
-        command.env("PATH", path);
-    }
+    environment.apply_to_pty(command);
 }
 
 fn validate_size(size: PtySizeUpdate) -> Result<(), AppError> {

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 675,
-    "Linux": 682,
-    "macOS": 680
+    "Windows": 685,
+    "Linux": 692,
+    "macOS": 690
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,16 @@
   ],
   "required": {
     "all": [
+      "platform::launch_environment::tests::from_path_exposes_the_directories_in_order",
+      "platform::launch_environment::tests::capture_keeps_the_process_path_directories",
+      "platform::launch_environment::tests::apply_sets_the_path_variable_on_std_and_tokio_commands",
+      "platform::launch_environment::tests::apply_sets_the_path_variable_on_pty_commands",
+      "platform::executable_resolver::tests::resolves_from_the_launch_environment_path",
+      "platform::executable_resolver::tests::falls_back_to_the_extra_install_directories",
+      "platform::executable_resolver::tests::returns_none_when_no_candidate_matches",
+      "platform::executable_resolver::tests::candidates_are_tried_in_order",
+      "platform::executable_resolver::tests::async_resolution_matches_blocking_and_a_slow_one_is_abandoned",
+      "services::cli_detect_service::tests::detection_resolves_commands_on_the_launch_environment_path",
       "services::cli_adapters::tests::descriptors_declare_the_confirmed_capabilities_for_all_five_clis",
       "services::cli_adapters::tests::managed_update_policy_maps_source_verification_to_a_status",
       "services::cli_adapters::tests::failed_version_queries_never_report_a_denied_update_source",
@@ -399,7 +409,7 @@
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
       "models::workspace_layout::tests::workspace_layout_rejects_windows_ads_and_reserved_file_names",
-      "platform::detect::tests::known_windows_install_dirs_include_user_local_bin",
+      "platform::executable_resolver::tests::known_windows_install_dirs_include_user_local_bin",
       "platform::execution_process::windows::tests::failed_job_attachment_terminates_pty_process",
       "platform::execution_process::windows::tests::job_object_terminate_kills_grandchild_processes",
       "platform::execution_process::windows::tests::job_object_terminates_attached_process",
@@ -435,7 +445,7 @@
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",
       "models::workspace_layout::tests::workspace_layout_uses_unix_file_name_rules",
-      "platform::detect::tests::known_directory_requires_executable_permission",
+      "platform::executable_resolver::tests::known_directory_requires_executable_permission",
       "platform::execution_process::unix::tests::process_group_terminates_pty_process",
       "platform::execution_process::unix::tests::process_group_terminates_shell_and_descendant",
       "platform::file_cas::tests::cas_survives_tight_external_atomic_replacement_loop",

@@ -88,9 +88,30 @@ pub(crate) async fn resolve_payload_at_directory(
         directory,
         tool_key,
         resume_session_id,
-        cli_adapters::installed_path_async,
+        resolve_installed_executable,
     )
     .await
+}
+
+/// Resolves the adapter's executable through the shared resolver and launch environment, so the
+/// launch path sees the same PATH as detection. An adapter panic counts as "not found".
+async fn resolve_installed_executable(adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+    let (candidates, additional_dirs) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (
+                adapter.command_candidates(),
+                adapter.additional_install_dirs(),
+            )
+        }))
+        .ok()?;
+    crate::platform::executable_resolver::resolve(
+        candidates,
+        &additional_dirs,
+        &crate::platform::launch_environment::LaunchEnvironment::capture(),
+        crate::budgets::EXECUTABLE_PROBE,
+    )
+    .await
+    .map(|found| found.path)
 }
 
 #[cfg(test)]
