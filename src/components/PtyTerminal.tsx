@@ -53,8 +53,7 @@ import {
   type PtyInputWriter,
 } from "../lib/ptyInputWriter";
 import { getTerminalKeyIntent } from "../lib/windowChrome";
-import { getThemeDefinition, type ThemeId } from "../lib/themes";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { getThemeDefinition, TERMINAL_RUNTIME_THEME_ID } from "../lib/themes";
 import "@xterm/xterm/css/xterm.css";
 
 export interface PtyTerminalHandle {
@@ -107,7 +106,6 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     ref,
   ) {
     const { t } = useTranslation();
-    const resolvedTheme = useResolvedTheme();
     const hostRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitRef = useRef<FitAddon | null>(null);
@@ -203,7 +201,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         fontFamily: '"Maple Mono NF CN", monospace',
         fontSize: 13,
         scrollback: 5000,
-        theme: getTerminalTheme(resolvedTheme.id),
+        theme: getTerminalTheme(),
       });
       const fit = new FitAddon();
       const serialize = new SerializeAddon();
@@ -360,13 +358,6 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         sequenceWaitersRef.current = [];
       };
     }, []);
-
-    useEffect(() => {
-      const terminal = terminalRef.current;
-      if (!terminal) return;
-
-      terminal.options.theme = getTerminalTheme(resolvedTheme.id);
-    }, [resolvedTheme.id]);
 
     useEffect(() => {
       if (!visible) return;
@@ -753,9 +744,7 @@ function sizeOf(terminal: Terminal): PtySizeUpdate {
   };
 }
 
-function getTerminalTheme(
-  themeId: ThemeId,
-): NonNullable<Terminal["options"]["theme"]> {
+function getTerminalTheme(): NonNullable<Terminal["options"]["theme"]> {
   const styles = getComputedStyle(document.documentElement);
   const color = (token: string) =>
     styles.getPropertyValue(token).trim() || undefined;
@@ -766,6 +755,6 @@ function getTerminalTheme(
     foreground,
     cursor: foreground,
     selectionBackground: color("--color-terminal-selection"),
-    ...getThemeDefinition(themeId).terminal.ansi,
+    ...getThemeDefinition(TERMINAL_RUNTIME_THEME_ID).terminal.ansi,
   };
 }

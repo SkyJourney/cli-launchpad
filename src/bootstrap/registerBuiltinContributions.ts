@@ -1,5 +1,6 @@
 import { registerBuiltinWorkspaceContentAdapters } from "../components/workspaceContentAdapters/builtins";
 import { registerBuiltinWorkspaceEditorEngines } from "../components/workspaceEditorEngines/builtins";
+import { registerBuiltinThemes } from "../lib/themes";
 
 let unregisterContributions: (() => void) | undefined;
 
@@ -9,6 +10,7 @@ export function registerBuiltinContributions(): () => void {
   // 每个注册函数内部已逐项隔离被拒绝的贡献（registerContributionSafely），
   // 这里不再整体回滚：一项失败不影响其余贡献。
   const cleanup: Array<() => void> = [
+    registerBuiltinThemes(),
     registerBuiltinWorkspaceContentAdapters(),
     registerBuiltinWorkspaceEditorEngines(),
   ];

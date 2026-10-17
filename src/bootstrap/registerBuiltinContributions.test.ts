@@ -4,6 +4,7 @@ import {
   registerWorkspaceContentAdapter,
 } from "../components/workspaceContentAdapterRegistry";
 import { resolveEditorEngine } from "../components/workspaceEditorEngineRegistry";
+import { listThemes } from "../lib/themeRegistry";
 import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
 import {
   clearContributionFailures,
@@ -75,5 +76,16 @@ describe("built-in contribution bootstrap", () => {
       clearContributionFailures();
       vi.restoreAllMocks();
     }
+  });
+
+  it("keeps the built-in themes registered after the bootstrap cleanup", () => {
+    const dispose = registerBuiltinContributions();
+    dispose();
+
+    expect(listThemes().map((theme) => theme.id)).toEqual(["light", "dark"]);
+    // Reverse: only the themes are permanent; adapters are unregistered by the cleanup.
+    expect(() => getWorkspaceContentAdapter("pty")).toThrow(
+      "未注册内容适配器: pty",
+    );
   });
 });

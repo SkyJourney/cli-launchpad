@@ -14,7 +14,7 @@ import {
   publishAppPreferences,
   respondToAppPreferencesRequests,
 } from "../lib/appPreferencesMain";
-import { resolveThemeMode } from "../lib/themes";
+import { getThemeDefinition, resolveThemeMode } from "../lib/themes";
 import { setTrayMenuLabels } from "../lib/tauri";
 import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import { useAppStore } from "../store/appStore";
@@ -42,8 +42,10 @@ export function useThemeSync() {
       systemTheme.addEventListener("change", applyTheme);
     }
 
+    const nativeTheme =
+      themeMode === "system" ? null : getThemeDefinition(themeMode).base;
     void getCurrentWindow()
-      .setTheme(themeMode === "system" ? null : themeMode)
+      .setTheme(nativeTheme)
       .catch((error: unknown) =>
         reportWindowSyncFailure("window.theme_sync_failed", error),
       );

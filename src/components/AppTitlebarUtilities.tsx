@@ -22,18 +22,19 @@ import {
   type AppLanguage,
 } from "../i18n";
 import { useAppStore, type ThemeMode } from "../store/appStore";
-import { THEMES, THEME_IDS } from "../lib/themes";
+import type { LocaleKey } from "../i18n/localeKeys";
+import { listThemes } from "../lib/themeRegistry";
 import { AnchoredPopover } from "./AnchoredPopover";
 
 const THEME_OPTIONS: {
   icon: LucideIcon;
-  labelKey: "theme.light" | "theme.dark" | "theme.system";
+  labelKey: LocaleKey;
   value: ThemeMode;
 }[] = [
-  ...THEME_IDS.map((id) => ({
-    icon: THEMES[id].base === "light" ? Sun : Moon,
-    labelKey: THEMES[id].labelKey,
-    value: id,
+  ...listThemes().map((theme) => ({
+    icon: theme.base === "light" ? Sun : Moon,
+    labelKey: theme.labelKey,
+    value: theme.id as ThemeMode,
   })),
   { icon: Monitor, labelKey: "theme.system", value: "system" },
 ];

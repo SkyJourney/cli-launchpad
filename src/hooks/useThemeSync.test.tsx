@@ -3,6 +3,8 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyRemoteAppLanguage, setAppLanguage } from "../i18n";
 import { APP_PREFERENCES_EVENT } from "../lib/appPreferences";
+import { registerTheme } from "../lib/themeRegistry";
+import { THEMES, type ThemeMode } from "../lib/themes";
 import { useAppStore } from "../store/appStore";
 import { tauriMock } from "../test/tauriMock";
 import { useThemeSync } from "./useThemeSync";
@@ -132,6 +134,49 @@ describe("useThemeSync", () => {
       });
       expect(document.documentElement.dir).toBe("rtl");
     });
+  });
+
+  it("passes the built-in theme base to the native window theme", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    useAppStore.getState().applyRemoteThemeMode("dark");
+    const setTheme = tauriMock.getWindow("main").setTheme as ReturnType<
+      typeof vi.fn
+    >;
+    renderHook(() => useThemeSync());
+
+    await vi.waitFor(() => expect(setTheme).toHaveBeenCalledWith("dark"));
+    // Reverse: the mode name "system" is never handed to the native window.
+    expect(setTheme).not.toHaveBeenCalledWith("system");
+  });
+
+  it("clears the native window theme for the system mode", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    const setTheme = tauriMock.getWindow("main").setTheme as ReturnType<
+      typeof vi.fn
+    >;
+    renderHook(() => useThemeSync());
+
+    await vi.waitFor(() => expect(setTheme).toHaveBeenCalledWith(null));
+  });
+
+  it("passes the base of a registered theme instead of its id to the native window theme", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    const setTheme = tauriMock.getWindow("main").setTheme as ReturnType<
+      typeof vi.fn
+    >;
+    const dispose = registerTheme({ ...THEMES.dark, id: "test.contrast" });
+    try {
+      useAppStore.getState().applyRemoteThemeMode("test.contrast" as ThemeMode);
+      renderHook(() => useThemeSync());
+
+      await vi.waitFor(() => expect(setTheme).toHaveBeenCalledWith("dark"));
+      // Reverse: the theme id is not a legal native theme and must never reach the window.
+      expect(setTheme).not.toHaveBeenCalledWith("test.contrast");
+    } finally {
+      cleanup();
+      dispose();
+      useAppStore.getState().applyRemoteThemeMode("system");
+    }
   });
 });
 

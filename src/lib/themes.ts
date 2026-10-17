@@ -1,4 +1,9 @@
+import type { LocaleKey } from "../i18n/localeKeys";
+import { themeRegistry } from "./themeRegistry";
+
 export type ThemeBase = "light" | "dark";
+
+export type MonacoBuiltinTheme = "vs" | "vs-dark" | "hc-black" | "hc-light";
 
 export interface TerminalAnsiPalette {
   black: string;
@@ -21,9 +26,10 @@ export interface TerminalAnsiPalette {
 
 export interface ThemeDefinition {
   id: string;
+  apiVersion: 1;
   base: ThemeBase;
-  labelKey: "theme.light" | "theme.dark";
-  monacoTheme: "vs" | "vs-dark";
+  labelKey: LocaleKey;
+  monacoTheme: MonacoBuiltinTheme;
   terminal: { ansi: TerminalAnsiPalette };
 }
 
@@ -49,6 +55,7 @@ const sharedTerminalAnsi: TerminalAnsiPalette = {
 export const THEMES = {
   light: {
     id: "light",
+    apiVersion: 1,
     base: "light",
     labelKey: "theme.light",
     monacoTheme: "vs",
@@ -56,6 +63,7 @@ export const THEMES = {
   },
   dark: {
     id: "dark",
+    apiVersion: 1,
     base: "dark",
     labelKey: "theme.dark",
     monacoTheme: "vs-dark",
@@ -69,8 +77,28 @@ export type ResolvedTheme = { id: ThemeId; base: ThemeBase };
 
 export const THEME_IDS = Object.keys(THEMES) as ThemeId[];
 
-export function getThemeDefinition(id: ThemeId): ThemeDefinition {
-  return THEMES[id];
+/** PD-07：终端始终使用深色调色板，登记为例外；终端运行时不订阅主题变化。 */
+export const TERMINAL_RUNTIME_THEME_ID: ThemeId = "dark";
+
+export function registerBuiltinThemes(): () => void {
+  const registered: Array<() => void> = [];
+  for (const theme of Object.values(THEMES)) {
+    if (themeRegistry.get(theme.id) === theme) continue;
+    registered.push(themeRegistry.register(theme));
+  }
+  // 内建主题是永久贡献：模块加载时已同步注册，这里只补注册缺失项；
+  // 返回的清理函数只注销本次补注册的项，从不注销加载时注册的两个内建主题。
+  return () => registered.reverse().forEach((dispose) => dispose());
+}
+
+// appStore 在模块导入期就调用 resolveThemeMode，早于启动期，所以必须同步注册。
+registerBuiltinThemes();
+
+export function getThemeDefinition(id: string): ThemeDefinition {
+  const definition =
+    themeRegistry.get(id) ?? (isThemeId(id) ? THEMES[id] : undefined);
+  if (!definition) throw new Error(`未注册主题: ${id}`);
+  return definition;
 }
 
 export function isThemeId(value: unknown): value is ThemeId {
@@ -89,5 +117,5 @@ export function resolveThemeMode(
   systemPrefersDark: boolean,
 ): ResolvedTheme {
   const id = mode === "system" ? (systemPrefersDark ? "dark" : "light") : mode;
-  return { id, base: THEMES[id].base };
+  return { id, base: getThemeDefinition(id).base };
 }
