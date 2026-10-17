@@ -4,6 +4,7 @@ pub mod cache_service;
 pub mod clean_exit_marker;
 pub mod cli_adapters;
 pub mod cli_detect_service;
+pub mod cli_runtime;
 pub mod config_service;
 pub mod content_window_grants;
 pub mod diagnostics_service;

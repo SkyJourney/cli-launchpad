@@ -284,35 +284,33 @@ pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
 
 pub async fn query_update(tool_key: ToolKey, context: AdapterContext) -> LatestVersion {
     let budget = context.budget;
-    let query = get(tool_key).query_update(context);
-    match tokio::time::timeout(budget, tokio::spawn(query)).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(error)) => crate::services::version_service::latest_from_version_result(
+    match crate::services::cli_runtime::run(tool_key, "版本查询", budget, move |adapter| {
+        adapter.query_update(context)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => crate::services::version_service::latest_from_version_result(
             tool_key,
-            Err(format!("{} 版本查询适配器异常：{error}", tool_key.as_str())),
-        ),
-        Err(_) => crate::services::version_service::latest_from_version_result(
-            tool_key,
-            Err(format!("{} 版本查询超时", tool_key.as_str())),
+            Err(error.to_string()),
         ),
     }
 }
 
+/// Runs a blocking version query on the blocking pool. The budget is enforced
+/// once, by `cli_runtime::run` around the whole adapter call, so the context
+/// is accepted only to keep adapters passing their own.
 pub(crate) fn blocking_latest(
     tool_key: ToolKey,
-    context: AdapterContext,
+    _context: AdapterContext,
     operation: impl FnOnce() -> LatestVersion + Send + 'static,
 ) -> AdapterFuture<LatestVersion> {
     Box::pin(async move {
-        match tokio::time::timeout(context.budget, tokio::task::spawn_blocking(operation)).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(error)) => crate::services::version_service::latest_from_version_result(
+        match tokio::task::spawn_blocking(operation).await {
+            Ok(result) => result,
+            Err(error) => crate::services::version_service::latest_from_version_result(
                 tool_key,
                 Err(format!("{} 版本查询适配器异常：{error}", tool_key.as_str())),
-            ),
-            Err(_) => crate::services::version_service::latest_from_version_result(
-                tool_key,
-                Err(format!("{} 版本查询超时", tool_key.as_str())),
             ),
         }
     })
@@ -872,5 +870,51 @@ mod tests {
             let failed = latest_from_version_result(tool_key, Err("network".to_string()));
             assert_eq!(failed.managed_update, ManagedUpdateStatus::Allowed);
         }
+    }
+
+    fn failed_context(budget: Duration) -> AdapterContext {
+        AdapterContext {
+            resolved_path: None,
+            home: std::env::temp_dir(),
+            budget,
+        }
+    }
+
+    #[tokio::test]
+    async fn blocking_latest_reports_adapter_panics_with_the_query_message() {
+        let result = blocking_latest(
+            ToolKey::Codex,
+            failed_context(Duration::from_secs(5)),
+            || -> LatestVersion { panic!("adapter panic") },
+        )
+        .await;
+
+        let error = result.error.expect("panic must become an error result");
+        assert!(error.starts_with("codex 版本查询适配器异常："), "{error}");
+    }
+
+    #[tokio::test]
+    async fn blocking_latest_does_not_apply_its_own_timeout() {
+        let result = blocking_latest(
+            ToolKey::Codex,
+            failed_context(Duration::from_millis(1)),
+            || {
+                std::thread::sleep(Duration::from_millis(50));
+                LatestVersion {
+                    tool_key: ToolKey::Codex,
+                    latest: Some("9.9.9".to_string()),
+                    update_availability: crate::models::install::UpdateAvailability::Unknown,
+                    commits_behind: None,
+                    error: None,
+                    from_cache: false,
+                    managed_update: crate::models::install::ManagedUpdateStatus::Allowed,
+                }
+            },
+        )
+        .await;
+
+        // 预算只由 cli_runtime::run 在外层执行一次；这里得到操作自己的结果。
+        assert_eq!(result.latest.as_deref(), Some("9.9.9"));
+        assert!(result.error.is_none());
     }
 }

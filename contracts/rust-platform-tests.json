@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 685,
-    "Linux": 692,
-    "macOS": 690
+    "Windows": 691,
+    "Linux": 698,
+    "macOS": 696
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,12 @@
   ],
   "required": {
     "all": [
+      "services::cli_runtime::tests::run_returns_the_result_of_the_operation",
+      "services::cli_runtime::tests::run_reports_a_timeout_naming_the_tool_and_operation",
+      "services::cli_runtime::tests::run_isolates_a_panicking_operation",
+      "services::cli_runtime::tests::run_blocking_returns_results_and_isolates_panics",
+      "services::cli_adapters::tests::blocking_latest_reports_adapter_panics_with_the_query_message",
+      "services::cli_adapters::tests::blocking_latest_does_not_apply_its_own_timeout",
       "platform::launch_environment::tests::from_path_exposes_the_directories_in_order",
       "platform::launch_environment::tests::capture_keeps_the_process_path_directories",
       "platform::launch_environment::tests::apply_sets_the_path_variable_on_std_and_tokio_commands",
