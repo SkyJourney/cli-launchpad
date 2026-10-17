@@ -10,7 +10,6 @@ export const claudeAdapter: CliAdapter = {
   shortLabel: "CC",
   icon: ClaudeCodeIcon,
   terminalPaste: { controlV: "clipboard", windowsAltV: "escape-v" },
-  latestStatusKind: "version",
   showCommandNotice: () => true,
   refreshLatestAfterExecution: () => false,
   displayExecutionStream: (_kind, stream) => stream,

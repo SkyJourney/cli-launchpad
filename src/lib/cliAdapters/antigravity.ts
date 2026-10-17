@@ -10,7 +10,6 @@ export const antigravityAdapter: CliAdapter = {
   shortLabel: "AGY",
   icon: AntigravityIcon,
   terminalPaste: { controlV: "clipboard", windowsAltV: "terminal" },
-  latestStatusKind: "version",
   showCommandNotice: () => true,
   refreshLatestAfterExecution: () => false,
   displayExecutionStream: (_kind, stream) => stream,

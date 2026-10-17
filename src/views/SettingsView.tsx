@@ -15,7 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import clsx from "clsx";
-import { createRef, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { AnchoredPopover } from "../components/AnchoredPopover";
@@ -43,11 +43,13 @@ import {
   type WorkspaceDataRestoreBlockers,
 } from "../lib/workspaceRestorePolicy";
 import {
+  createToolAnchorRefs,
   getLatestUpdateAvailability,
   isManagedUpdateAllowed,
   getCliAdapter,
   TOOLS,
 } from "../lib/tools";
+import { getProviderDescriptor } from "../lib/toolCapabilities";
 import {
   clearCache,
   clearLaunchHistory,
@@ -158,15 +160,7 @@ export function SettingsView() {
   const [actionErrors, setActionErrors] = useState<
     Partial<Record<ToolKey, string>>
   >({});
-  const popoverAnchorRefs = useRef<
-    Record<ToolKey, ReturnType<typeof createRef<HTMLDivElement>>>
-  >({
-    claude: createRef<HTMLDivElement>(),
-    codex: createRef<HTMLDivElement>(),
-    antigravity: createRef<HTMLDivElement>(),
-    grok: createRef<HTMLDivElement>(),
-    hermes: createRef<HTMLDivElement>(),
-  }).current;
+  const popoverAnchorRefs = useRef(createToolAnchorRefs()).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
@@ -505,7 +499,9 @@ export function SettingsView() {
           const busyKind = activeTask?.kind ?? reconciliationKind;
           const actionKind = isMissing ? "install" : "update";
           const pendingAction = pendingByTool[tool.key];
-          const branchUpdateStatus = tool.latestStatusKind === "branch-update";
+          const branchUpdateStatus =
+            getProviderDescriptor(tool.key).capabilities.updateSemantics ===
+            "branch";
           const isCreatingTask = creatingToolKeys.has(tool.key);
           const isPlanning = planningToolKeys.has(tool.key);
           const actionError = actionErrors[tool.key];

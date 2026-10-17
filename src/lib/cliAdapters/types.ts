@@ -19,7 +19,6 @@ export interface CliAdapter {
   shortLabel: string;
   icon: ComponentType<{ size?: number | string }>;
   terminalPaste: TerminalPasteBehavior;
-  latestStatusKind: "version" | "branch-update";
   installEffects?: (platform: CliPlatform) => InstallEffectsNotice | undefined;
   showCommandNotice(kind: InstallKind): boolean;
   refreshLatestAfterExecution(kind: InstallKind): boolean;
