@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 669,
-    "Linux": 676,
-    "macOS": 674
+    "Windows": 675,
+    "Linux": 682,
+    "macOS": 680
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,12 @@
   ],
   "required": {
     "all": [
+      "services::cli_adapters::tests::descriptors_declare_the_confirmed_capabilities_for_all_five_clis",
+      "services::cli_adapters::tests::managed_update_policy_maps_source_verification_to_a_status",
+      "services::cli_adapters::tests::failed_version_queries_never_report_a_denied_update_source",
+      "services::cli_adapters::hermes::common::tests::inconclusive_hermes_checks_do_not_report_a_denied_source",
+      "commands::install::tests::merge_stale_latest_restores_cached_fields_and_managed_update",
+      "contracts::tool_capabilities_contract_matches_adapter_descriptors",
       "contracts::tauri_config_keeps_global_tauri_and_asset_protocol_closed",
       "contracts::navigation_guard_plugin_is_registered_after_single_instance",
       "contracts::no_code_enables_new_window_creation",

@@ -4,7 +4,10 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 const LATEST_URL: &str = "https://releases.openai.com/codex/channels/latest";
 
@@ -14,6 +17,20 @@ pub static ADAPTER: CodexAdapter = CodexAdapter;
 impl CliAdapter for CodexAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Codex
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Codex,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {

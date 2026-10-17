@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::models::install::{LatestVersion, ManagedUpdateStatus, UpdateAvailability};
+use crate::models::install::{LatestVersion, UpdateAvailability};
 use crate::models::tool::ToolKey;
 
 #[cfg(test)]
@@ -24,7 +24,7 @@ pub(crate) fn latest_from_version_result(
             commits_behind: None,
             error: None,
             from_cache: false,
-            managed_update: managed_update_status(tool_key, None),
+            managed_update: crate::services::cli_adapters::get(tool_key).managed_update(None),
         },
         Err(error) => {
             log::warn!("latest version query failed tool={}", tool_key.as_str());
@@ -35,33 +35,22 @@ pub(crate) fn latest_from_version_result(
                 commits_behind: None,
                 error: Some(error),
                 from_cache: false,
-                managed_update: managed_update_status(tool_key, None),
+                managed_update: crate::services::cli_adapters::get(tool_key)
+                    .managed_update_after_failed_query(),
             }
         }
-    }
-}
-
-pub(crate) fn managed_update_status(
-    tool_key: ToolKey,
-    source_verified: Option<bool>,
-) -> ManagedUpdateStatus {
-    match tool_key {
-        ToolKey::Claude | ToolKey::Codex | ToolKey::Antigravity => ManagedUpdateStatus::Allowed,
-        ToolKey::Grok if source_verified == Some(true) => ManagedUpdateStatus::Allowed,
-        ToolKey::Hermes if source_verified == Some(true) => ManagedUpdateStatus::Allowed,
-        ToolKey::Grok => ManagedUpdateStatus::Denied {
-            reason_key: "settings.grokUpdateSourceDenied".to_string(),
-        },
-        ToolKey::Hermes => ManagedUpdateStatus::Denied {
-            reason_key: "settings.hermesUpdateSourceDenied".to_string(),
-        },
     }
 }
 
 /// Combine the version service result with the current version captured by CLI
 /// detection. Branch based tools provide their update state directly.
 pub(crate) fn apply_update_availability(latest: &mut LatestVersion, current_version: Option<&str>) {
-    if latest.tool_key == ToolKey::Hermes {
+    if crate::services::cli_adapters::get(latest.tool_key)
+        .descriptor()
+        .capabilities
+        .update_semantics
+        == crate::services::cli_adapters::UpdateSemantics::Branch
+    {
         return;
     }
     latest.update_availability = match (
@@ -284,7 +273,8 @@ mod tests {
 
         for (tool_key, expected_managed, branch_based) in cases {
             let mut latest = latest_from_version_result(tool_key, Ok("1.2.4".to_string()));
-            latest.managed_update = managed_update_status(tool_key, Some(true));
+            latest.managed_update =
+                crate::services::cli_adapters::get(tool_key).managed_update(Some(true));
             if branch_based {
                 latest.update_availability = UpdateAvailability::Available;
             } else {
@@ -296,11 +286,11 @@ mod tests {
         }
 
         assert!(matches!(
-            managed_update_status(ToolKey::Grok, None),
+            crate::services::cli_adapters::get(ToolKey::Grok).managed_update(None),
             ManagedUpdateStatus::Denied { .. }
         ));
         assert!(matches!(
-            managed_update_status(ToolKey::Hermes, Some(false)),
+            crate::services::cli_adapters::get(ToolKey::Hermes).managed_update(Some(false)),
             ManagedUpdateStatus::Denied { .. }
         ));
     }

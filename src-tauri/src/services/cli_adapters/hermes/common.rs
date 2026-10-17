@@ -4,7 +4,10 @@ use crate::models::tool::ToolKey;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 pub struct HermesAdapter;
 pub static ADAPTER: HermesAdapter = HermesAdapter;
@@ -12,6 +15,22 @@ pub static ADAPTER: HermesAdapter = HermesAdapter;
 impl CliAdapter for HermesAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Hermes
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Hermes,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Branch,
+                managed_update: ManagedUpdatePolicy::SourceVerified {
+                    denied_reason_key: "settings.hermesUpdateSourceDenied",
+                },
+                install_effects_key: Some("hermes"),
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {
@@ -52,22 +71,22 @@ impl CliAdapter for HermesAdapter {
         let home = context.home.clone();
         crate::services::cli_adapters::blocking_latest(ToolKey::Hermes, context, move || {
             match version::fetch_hermes_update_check(path.as_deref(), &home) {
-                Ok(check) => LatestVersion {
-                    tool_key: ToolKey::Hermes,
-                    latest: None,
-                    update_availability: match check.update_available {
-                        Some(true) => UpdateAvailability::Available,
-                        Some(false) => UpdateAvailability::UpToDate,
-                        None => UpdateAvailability::Unknown,
-                    },
-                    commits_behind: check.commits_behind,
-                    error: check.error,
-                    from_cache: false,
-                    managed_update: crate::services::version_service::managed_update_status(
-                        ToolKey::Hermes,
-                        Some(check.managed_update_allowed),
-                    ),
-                },
+                Ok(check) => {
+                    let managed_update = hermes_managed_update(&check);
+                    LatestVersion {
+                        tool_key: ToolKey::Hermes,
+                        latest: None,
+                        update_availability: match check.update_available {
+                            Some(true) => UpdateAvailability::Available,
+                            Some(false) => UpdateAvailability::UpToDate,
+                            None => UpdateAvailability::Unknown,
+                        },
+                        commits_behind: check.commits_behind,
+                        error: check.error,
+                        from_cache: false,
+                        managed_update,
+                    }
+                }
                 Err(error) => LatestVersion {
                     tool_key: ToolKey::Hermes,
                     latest: None,
@@ -75,10 +94,7 @@ impl CliAdapter for HermesAdapter {
                     commits_behind: None,
                     error: Some(error),
                     from_cache: false,
-                    managed_update: crate::services::version_service::managed_update_status(
-                        ToolKey::Hermes,
-                        None,
-                    ),
+                    managed_update: ADAPTER.managed_update_after_failed_query(),
                 },
             }
         })
@@ -138,6 +154,16 @@ impl CliAdapter for HermesAdapter {
     }
 }
 
+fn hermes_managed_update(
+    check: &super::version::HermesUpdateCheck,
+) -> crate::models::install::ManagedUpdateStatus {
+    // 官方检查输出被截断：既没有验证来源，也没有证据表明来源被拒，按“查询失败”处理。
+    if check.error.is_some() && !check.managed_update_allowed {
+        return ADAPTER.managed_update_after_failed_query();
+    }
+    ADAPTER.managed_update(Some(check.managed_update_allowed))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -154,5 +180,40 @@ mod tests {
                 &session_id
             ));
         }
+    }
+
+    #[test]
+    fn inconclusive_hermes_checks_do_not_report_a_denied_source() {
+        use super::hermes_managed_update;
+        use crate::models::install::ManagedUpdateStatus;
+        use crate::services::cli_adapters::hermes::version::HermesUpdateCheck;
+
+        let check = |error: Option<&str>, allowed: bool| HermesUpdateCheck {
+            update_available: None,
+            commits_behind: None,
+            error: error.map(str::to_string),
+            managed_update_allowed: allowed,
+            management_message: None,
+        };
+
+        // 输出被截断：无法确认，不是“来源被拒”。
+        assert_eq!(
+            hermes_managed_update(&check(Some("输出超过上限"), false)),
+            ManagedUpdateStatus::NotApplicable
+        );
+        // 来源已验证、只是更新检查失败：保持允许。
+        assert_eq!(
+            hermes_managed_update(&check(Some("检查失败"), true)),
+            ManagedUpdateStatus::Allowed
+        );
+        // 来源验证被拒（没有错误文本）：才是真正的 Denied。
+        assert!(matches!(
+            hermes_managed_update(&check(None, false)),
+            ManagedUpdateStatus::Denied { .. }
+        ));
+        assert_eq!(
+            hermes_managed_update(&check(None, true)),
+            ManagedUpdateStatus::Allowed
+        );
     }
 }

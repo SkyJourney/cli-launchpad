@@ -11,6 +11,7 @@ mod serde_lint;
 
 const APP_COMMANDS_JSON: &str = include_str!("../../../contracts/app-commands.json");
 const TOOL_KEYS_JSON: &str = include_str!("../../../contracts/tool-keys.json");
+const TOOL_CAPABILITIES_JSON: &str = include_str!("../../../contracts/tool-capabilities.json");
 const CONTENT_KINDS_JSON: &str = include_str!("../../../contracts/content-kinds.json");
 const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
 const LIB_RS: &str = include_str!("../lib.rs");
@@ -3751,4 +3752,36 @@ fn tauri_config_keeps_global_tauri_and_asset_protocol_closed() {
     }
     // Reverse: the configuration was really read.
     assert!(!security["csp"].as_str().expect("csp").is_empty());
+}
+
+// ---- m6-068: provider capability contract (contracts/tool-capabilities.json).
+
+#[test]
+fn tool_capabilities_contract_matches_adapter_descriptors() {
+    let contract: serde_json::Value =
+        serde_json::from_str(TOOL_CAPABILITIES_JSON).expect("parse tool capabilities contract");
+    assert_eq!(contract["formatVersion"], 1);
+    let items = contract["items"]
+        .as_array()
+        .expect("items must be an array");
+    assert_eq!(items.len(), crate::models::tool::ToolKey::ALL.len());
+    for (item, tool_key) in items.iter().zip(crate::models::tool::ToolKey::ALL) {
+        let actual =
+            serde_json::to_value(crate::services::cli_adapters::get(tool_key).descriptor())
+                .expect("serialize descriptor");
+        assert_eq!(item, &actual, "{}", tool_key.as_str());
+    }
+    let keys: Vec<&str> = items
+        .iter()
+        .map(|item| item["toolKey"].as_str().expect("toolKey must be a string"))
+        .collect();
+    let tool_keys: serde_json::Value =
+        serde_json::from_str(TOOL_KEYS_JSON).expect("parse tool keys");
+    let tool_keys: Vec<&str> = tool_keys
+        .as_array()
+        .expect("tool keys")
+        .iter()
+        .map(|value| value.as_str().expect("tool key"))
+        .collect();
+    assert_eq!(keys, tool_keys, "契约顺序必须等于 tool-keys.json");
 }

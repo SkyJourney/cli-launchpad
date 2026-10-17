@@ -1,5 +1,7 @@
 use crate::models::cli_status::{CliAvailability, CliStatus};
-use crate::models::install::{InstallKind, InstallPlan, LatestVersion, UpdateAvailability};
+use crate::models::install::{
+    InstallKind, InstallPlan, LatestVersion, ManagedUpdateStatus, UpdateAvailability,
+};
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_adapters, install_service};
 use crate::{blocking, budgets, AppError, CacheDb};
@@ -80,20 +82,31 @@ pub async fn fetch_latest_version(
     store_latest_result(&cache, key.clone(), fetched.clone()).await?;
 
     if let Some(stale) = stale {
-        let has_fresh_result =
-            fetched.latest.is_some() || fetched.update_availability != UpdateAvailability::Unknown;
-        if !has_fresh_result && fetched.error.is_some() {
-            fetched.latest = stale.latest;
-            fetched.update_availability = stale.update_availability;
-            fetched.commits_behind = stale.commits_behind;
-            fetched.from_cache = true;
-        }
+        merge_stale_latest(&mut fetched, stale);
     }
     crate::services::version_service::apply_update_availability(
         &mut fetched,
         current_version.as_deref(),
     );
     Ok(fetched)
+}
+
+fn merge_stale_latest(fetched: &mut LatestVersion, stale: LatestVersion) {
+    let has_fresh_result =
+        fetched.latest.is_some() || fetched.update_availability != UpdateAvailability::Unknown;
+    if !has_fresh_result && fetched.error.is_some() {
+        fetched.latest = stale.latest;
+        fetched.update_availability = stale.update_availability;
+        fetched.commits_behind = stale.commits_behind;
+        fetched.from_cache = true;
+        fetched.managed_update = match stale.managed_update {
+            // 旧缓存没有记录托管状态（缺省值）时，按适配器策略重新计算。
+            ManagedUpdateStatus::NotApplicable => {
+                cli_adapters::get(fetched.tool_key).managed_update_after_failed_query()
+            }
+            recorded => recorded,
+        };
+    }
 }
 
 async fn cached_current_version(
@@ -162,7 +175,7 @@ pub async fn get_install_plan(
 mod tests {
     use super::*;
     use crate::models::cli_status::CliAvailability;
-    use crate::models::install::LatestVersion;
+    use crate::models::install::{LatestVersion, ManagedUpdateStatus};
     use crate::models::tool::ToolKey;
     use rusqlite::{params, Connection};
 
@@ -303,5 +316,56 @@ mod tests {
             )
             .unwrap();
         assert!(timestamp > 1);
+    }
+
+    #[test]
+    fn merge_stale_latest_restores_cached_fields_and_managed_update() {
+        let failed = |tool_key| LatestVersion {
+            tool_key,
+            latest: None,
+            update_availability: UpdateAvailability::Unknown,
+            commits_behind: None,
+            error: Some("network".to_string()),
+            from_cache: false,
+            managed_update: ManagedUpdateStatus::NotApplicable,
+        };
+        let stale = |tool_key, managed_update| LatestVersion {
+            tool_key,
+            latest: Some("1.0.0".to_string()),
+            update_availability: UpdateAvailability::Available,
+            commits_behind: Some(3),
+            error: None,
+            from_cache: false,
+            managed_update,
+        };
+        let denied = ManagedUpdateStatus::Denied {
+            reason_key: "settings.grokUpdateSourceDenied".to_string(),
+        };
+
+        // 旧缓存记录了 Denied：失败刷新后原样恢复，错误文本保留。
+        let mut fetched = failed(ToolKey::Grok);
+        merge_stale_latest(&mut fetched, stale(ToolKey::Grok, denied.clone()));
+        assert_eq!(fetched.latest.as_deref(), Some("1.0.0"));
+        assert_eq!(fetched.update_availability, UpdateAvailability::Available);
+        assert_eq!(fetched.commits_behind, Some(3));
+        assert!(fetched.from_cache);
+        assert_eq!(fetched.error.as_deref(), Some("network"));
+        assert_eq!(fetched.managed_update, denied);
+
+        // 旧缓存是缺省的 NotApplicable：按适配器策略重新计算（Claude 总是允许）。
+        let mut fetched = failed(ToolKey::Claude);
+        merge_stale_latest(
+            &mut fetched,
+            stale(ToolKey::Claude, ManagedUpdateStatus::NotApplicable),
+        );
+        assert_eq!(fetched.managed_update, ManagedUpdateStatus::Allowed);
+
+        // 反向断言：本次查询有新结果时不合并旧缓存。
+        let mut fresh = failed(ToolKey::Grok);
+        fresh.latest = Some("2.0.0".to_string());
+        merge_stale_latest(&mut fresh, stale(ToolKey::Grok, denied));
+        assert_eq!(fresh.latest.as_deref(), Some("2.0.0"));
+        assert!(!fresh.from_cache);
+        assert_eq!(fresh.managed_update, ManagedUpdateStatus::NotApplicable);
     }
 }

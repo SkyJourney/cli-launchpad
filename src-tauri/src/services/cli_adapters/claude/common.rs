@@ -7,7 +7,10 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 const LATEST_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
 
@@ -17,6 +20,20 @@ pub static ADAPTER: ClaudeAdapter = ClaudeAdapter;
 impl CliAdapter for ClaudeAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Claude
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Claude,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {

@@ -4,7 +4,10 @@ use crate::models::tool::ToolKey;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 pub struct GrokAdapter;
 pub static ADAPTER: GrokAdapter = GrokAdapter;
@@ -12,6 +15,22 @@ pub static ADAPTER: GrokAdapter = GrokAdapter;
 impl CliAdapter for GrokAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Grok
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Grok,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::SourceVerified {
+                    denied_reason_key: "settings.grokUpdateSourceDenied",
+                },
+                install_effects_key: Some("grok"),
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {
@@ -41,10 +60,7 @@ impl CliAdapter for GrokAdapter {
                     commits_behind: None,
                     error: None,
                     from_cache: false,
-                    managed_update: crate::services::version_service::managed_update_status(
-                        ToolKey::Grok,
-                        Some(managed_update_allowed),
-                    ),
+                    managed_update: ADAPTER.managed_update(Some(managed_update_allowed)),
                 },
                 Err(error) => LatestVersion {
                     tool_key: ToolKey::Grok,
@@ -53,10 +69,7 @@ impl CliAdapter for GrokAdapter {
                     commits_behind: None,
                     error: Some(error),
                     from_cache: false,
-                    managed_update: crate::services::version_service::managed_update_status(
-                        ToolKey::Grok,
-                        None,
-                    ),
+                    managed_update: ADAPTER.managed_update_after_failed_query(),
                 },
             }
         })

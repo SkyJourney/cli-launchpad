@@ -44,11 +44,40 @@ impl AdapterContext {
 pub(crate) mod antigravity;
 pub(crate) mod claude;
 pub(crate) mod codex;
+pub(crate) mod descriptor;
 pub(crate) mod grok;
 pub(crate) mod hermes;
 
+pub use descriptor::{
+    ManagedUpdatePolicy, ProviderCapabilities, ProviderDescriptor, UpdateSemantics,
+    PROVIDER_DESCRIPTOR_API_VERSION,
+};
+
 pub trait CliAdapter: Sync {
     fn tool_key(&self) -> ToolKey;
+
+    /// Static facts about this provider. No default: adding a provider must
+    /// declare its capabilities.
+    fn descriptor(&self) -> ProviderDescriptor;
+
+    /// Managed update status given the source verification evidence.
+    fn managed_update(
+        &self,
+        source_verified: Option<bool>,
+    ) -> crate::models::install::ManagedUpdateStatus {
+        self.descriptor()
+            .capabilities
+            .managed_update
+            .status(source_verified)
+    }
+
+    /// Managed update status when the version query itself failed.
+    fn managed_update_after_failed_query(&self) -> crate::models::install::ManagedUpdateStatus {
+        self.descriptor()
+            .capabilities
+            .managed_update
+            .status_after_failed_query()
+    }
 
     fn resume_args(&self, session_id: &str) -> Result<Vec<String>>;
 
@@ -452,6 +481,10 @@ mod tests {
             ToolKey::Hermes
         }
 
+        fn descriptor(&self) -> ProviderDescriptor {
+            get(ToolKey::Hermes).descriptor()
+        }
+
         fn command_candidates(&self) -> &'static [&'static str] {
             &["hermes"]
         }
@@ -500,6 +533,10 @@ mod tests {
     impl CliAdapter for ValidateWithoutMessageAdapter {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Hermes
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            get(ToolKey::Hermes).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {
@@ -557,6 +594,10 @@ mod tests {
             ToolKey::Claude
         }
 
+        fn descriptor(&self) -> ProviderDescriptor {
+            get(ToolKey::Claude).descriptor()
+        }
+
         fn command_candidates(&self) -> &'static [&'static str] {
             &["x"]
         }
@@ -572,6 +613,10 @@ mod tests {
     impl CliAdapter for PathNeedingAdapter {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Hermes
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            get(ToolKey::Hermes).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {
@@ -593,6 +638,10 @@ mod tests {
     impl CliAdapter for UnknownCommandAdapter {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Grok
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            get(ToolKey::Grok).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {
@@ -735,5 +784,116 @@ mod tests {
     #[test]
     fn native_resolver_returns_none_for_unknown_commands() {
         assert!(NativeExecutableResolver.resolve(&UNKNOWN_COMMAND).is_none());
+    }
+
+    #[test]
+    fn descriptors_declare_the_confirmed_capabilities_for_all_five_clis() {
+        let always = ManagedUpdatePolicy::Always;
+        let plain = |tool_key| ProviderDescriptor {
+            tool_key,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: always,
+                install_effects_key: None,
+            },
+        };
+        let expected = [
+            plain(ToolKey::Claude),
+            plain(ToolKey::Codex),
+            plain(ToolKey::Antigravity),
+            ProviderDescriptor {
+                tool_key: ToolKey::Grok,
+                api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+                capabilities: ProviderCapabilities {
+                    history: true,
+                    resume: true,
+                    update_semantics: UpdateSemantics::Version,
+                    managed_update: ManagedUpdatePolicy::SourceVerified {
+                        denied_reason_key: "settings.grokUpdateSourceDenied",
+                    },
+                    install_effects_key: Some("grok"),
+                },
+            },
+            ProviderDescriptor {
+                tool_key: ToolKey::Hermes,
+                api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+                capabilities: ProviderCapabilities {
+                    history: true,
+                    resume: true,
+                    update_semantics: UpdateSemantics::Branch,
+                    managed_update: ManagedUpdatePolicy::SourceVerified {
+                        denied_reason_key: "settings.hermesUpdateSourceDenied",
+                    },
+                    install_effects_key: Some("hermes"),
+                },
+            },
+        ];
+
+        assert_eq!(ToolKey::ALL.len(), expected.len());
+        for (tool_key, expected) in ToolKey::ALL.into_iter().zip(expected) {
+            let actual = get(tool_key).descriptor();
+            assert_eq!(actual, expected, "{}", tool_key.as_str());
+            assert_eq!(actual.tool_key, get(tool_key).tool_key());
+        }
+    }
+
+    #[test]
+    fn managed_update_policy_maps_source_verification_to_a_status() {
+        use crate::models::install::ManagedUpdateStatus;
+
+        for evidence in [Some(true), Some(false), None] {
+            assert_eq!(
+                ManagedUpdatePolicy::Always.status(evidence),
+                ManagedUpdateStatus::Allowed
+            );
+        }
+        let policy = ManagedUpdatePolicy::SourceVerified {
+            denied_reason_key: "settings.x",
+        };
+        assert_eq!(policy.status(Some(true)), ManagedUpdateStatus::Allowed);
+        for evidence in [Some(false), None] {
+            assert_eq!(
+                policy.status(evidence),
+                ManagedUpdateStatus::Denied {
+                    reason_key: "settings.x".to_string()
+                }
+            );
+        }
+        assert_eq!(
+            policy.status_after_failed_query(),
+            ManagedUpdateStatus::NotApplicable
+        );
+        assert_eq!(
+            ManagedUpdatePolicy::Always.status_after_failed_query(),
+            ManagedUpdateStatus::Allowed
+        );
+    }
+
+    #[test]
+    fn failed_version_queries_never_report_a_denied_update_source() {
+        use crate::models::install::ManagedUpdateStatus;
+        use crate::services::version_service::latest_from_version_result;
+
+        for tool_key in [ToolKey::Grok, ToolKey::Hermes] {
+            let failed = latest_from_version_result(tool_key, Err("network".to_string()));
+            assert_eq!(
+                failed.managed_update,
+                ManagedUpdateStatus::NotApplicable,
+                "{}",
+                tool_key.as_str()
+            );
+            // 反向断言：没有来源验证证据的成功结果仍然按拒绝处理。
+            assert!(matches!(
+                get(tool_key).managed_update(None),
+                ManagedUpdateStatus::Denied { .. }
+            ));
+        }
+        for tool_key in [ToolKey::Claude, ToolKey::Codex, ToolKey::Antigravity] {
+            let failed = latest_from_version_result(tool_key, Err("network".to_string()));
+            assert_eq!(failed.managed_update, ManagedUpdateStatus::Allowed);
+        }
     }
 }

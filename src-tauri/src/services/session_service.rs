@@ -1598,6 +1598,10 @@ mod tests {
             ToolKey::Hermes
         }
 
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Hermes).descriptor()
+        }
+
         fn command_candidates(&self) -> &'static [&'static str] {
             &["hermes"]
         }
@@ -1635,6 +1639,10 @@ mod tests {
     impl CliAdapter for BudgetProbe {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Hermes
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Hermes).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {
@@ -1675,6 +1683,10 @@ mod tests {
             ToolKey::Claude
         }
 
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Claude).descriptor()
+        }
+
         fn command_candidates(&self) -> &'static [&'static str] {
             &["claude"]
         }
@@ -1706,6 +1718,10 @@ mod tests {
     impl CliAdapter for FixedOwnership {
         fn tool_key(&self) -> ToolKey {
             ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Claude).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {
@@ -1777,6 +1793,10 @@ mod tests {
     impl CliAdapter for FakeIndexAdapter {
         fn tool_key(&self) -> ToolKey {
             self.tool
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(self.tool).descriptor()
         }
 
         fn command_candidates(&self) -> &'static [&'static str] {

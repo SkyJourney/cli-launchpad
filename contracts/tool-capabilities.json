@@ -1,0 +1,66 @@
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "toolKey": "claude",
+      "apiVersion": 1,
+      "capabilities": {
+        "history": true,
+        "resume": true,
+        "updateSemantics": "version",
+        "managedUpdate": { "mode": "always" },
+        "installEffectsKey": null
+      }
+    },
+    {
+      "toolKey": "codex",
+      "apiVersion": 1,
+      "capabilities": {
+        "history": true,
+        "resume": true,
+        "updateSemantics": "version",
+        "managedUpdate": { "mode": "always" },
+        "installEffectsKey": null
+      }
+    },
+    {
+      "toolKey": "antigravity",
+      "apiVersion": 1,
+      "capabilities": {
+        "history": true,
+        "resume": true,
+        "updateSemantics": "version",
+        "managedUpdate": { "mode": "always" },
+        "installEffectsKey": null
+      }
+    },
+    {
+      "toolKey": "grok",
+      "apiVersion": 1,
+      "capabilities": {
+        "history": true,
+        "resume": true,
+        "updateSemantics": "version",
+        "managedUpdate": {
+          "mode": "sourceVerified",
+          "deniedReasonKey": "settings.grokUpdateSourceDenied"
+        },
+        "installEffectsKey": "grok"
+      }
+    },
+    {
+      "toolKey": "hermes",
+      "apiVersion": 1,
+      "capabilities": {
+        "history": true,
+        "resume": true,
+        "updateSemantics": "branch",
+        "managedUpdate": {
+          "mode": "sourceVerified",
+          "deniedReasonKey": "settings.hermesUpdateSourceDenied"
+        },
+        "installEffectsKey": "hermes"
+      }
+    }
+  ]
+}
