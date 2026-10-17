@@ -3,7 +3,6 @@ use tokio::process::Command;
 
 use crate::models::install::{InstallKind, InstallPlan};
 use crate::models::tool::ToolKey;
-use crate::platform::detect;
 
 /// Build the structured install/update command for a tool. Sources are the
 /// official channels documented in `docs/tooling-and-installation.md`.
@@ -70,7 +69,9 @@ pub fn verify_expected_fingerprint(plan: &InstallPlan, expected_fingerprint: &st
 pub(crate) fn resolve_program(program: &str) -> Result<String> {
     #[cfg(windows)]
     if program.eq_ignore_ascii_case("powershell") {
-        return Ok(detect::system32("WindowsPowerShell\\v1.0\\powershell.exe"));
+        return Ok(crate::platform::detect::system32(
+            "WindowsPowerShell\\v1.0\\powershell.exe",
+        ));
     }
     crate::platform::executable_resolver::resolve_blocking(
         &[program],
