@@ -95,15 +95,22 @@ mod tests {
             })
             .unwrap_or_default();
         let captured = LaunchEnvironment::capture().path_dirs();
-        let captured_lower: HashSet<String> = captured
-            .iter()
-            .map(|directory| directory.to_string_lossy().to_ascii_lowercase())
-            .collect();
+        // The merge de-duplicates directories ignoring case and a trailing separator, so a process
+        // PATH that lists `C:\dotnet` and `C:\dotnet\` keeps only the first spelling.
+        let identity = |directory: &PathBuf| {
+            directory
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_ascii_lowercase()
+        };
+        let captured_identities: HashSet<String> = captured.iter().map(identity).collect();
 
         assert_eq!(captured.first(), process_dirs.first());
         for directory in &process_dirs {
-            let key = directory.to_string_lossy().to_ascii_lowercase();
-            assert!(captured_lower.contains(&key), "{directory:?} 丢失");
+            assert!(
+                captured_identities.contains(&identity(directory)),
+                "{directory:?} 丢失"
+            );
         }
     }
 
