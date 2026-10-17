@@ -66,7 +66,6 @@ fn first_output_line(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::first_output_line;
-    use crate::services::cli_adapters::hermes::version::HermesVersionProbeHome;
 
     #[test]
     fn version_output_uses_first_non_empty_line() {
@@ -74,57 +73,5 @@ mod tests {
             first_output_line(b"\r\ncodex-cli 0.147.0\r\nextra\r\n").as_deref(),
             Some("codex-cli 0.147.0")
         );
-    }
-
-    #[test]
-    fn hermes_version_probe_config_disables_passive_update_checks_and_cleans_up() {
-        let home = HermesVersionProbeHome::create().unwrap();
-        let path = home.path().to_path_buf();
-        let config = std::fs::read_to_string(path.join("config.yaml")).unwrap();
-
-        assert_eq!(config, "updates:\n  check: false\n");
-        drop(home);
-        assert!(!path.exists());
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn hermes_version_probe_passes_isolated_home_to_cli() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory = tempfile::tempdir().unwrap();
-        let script = directory.path().join("hermes");
-        std::fs::write(
-            &script,
-            "#!/bin/sh\nif grep -Fq 'check: false' \"$HERMES_HOME/config.yaml\"; then echo 'Hermes Agent test'; else exit 7; fi\n",
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script, permissions).unwrap();
-
-        let version =
-            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
-                .await
-                .unwrap();
-        assert_eq!(version, "Hermes Agent test");
-    }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn hermes_version_probe_passes_isolated_home_to_cli() {
-        let directory = tempfile::tempdir().unwrap();
-        let script = directory.path().join("hermes.cmd");
-        std::fs::write(
-            &script,
-            "@echo off\r\nfindstr /C:\"check: false\" \"%HERMES_HOME%\\config.yaml\" >nul\r\nif errorlevel 1 exit /b 7\r\necho Hermes Agent test\r\n",
-        )
-        .unwrap();
-
-        let version =
-            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
-                .await
-                .unwrap();
-        assert_eq!(version, "Hermes Agent test");
     }
 }

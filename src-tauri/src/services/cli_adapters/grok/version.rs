@@ -5,7 +5,7 @@ use crate::platform::process::{self, BoundedOutput};
 use crate::services::version_service::first_output_line;
 
 const GROK_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
-pub(crate) fn fetch_grok_update_check(
+pub(super) fn fetch_grok_update_check(
     path: Option<&std::path::Path>,
 ) -> Result<(GrokUpdateCheck, bool, Option<String>), String> {
     let path = path.ok_or_else(|| "未检测到可运行的 Grok Build CLI".to_string())?;
@@ -16,14 +16,14 @@ pub(crate) fn fetch_grok_update_check(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GrokUpdateCheck {
-    pub(crate) latest_version: String,
-    pub(crate) installer: Option<String>,
+pub(super) struct GrokUpdateCheck {
+    pub(super) latest_version: String,
+    pub(super) installer: Option<String>,
 }
 
 /// Read the official CLI's update status from the exact executable selected by
 /// detection. This does not install or update the CLI.
-pub(crate) fn inspect_grok_update_check(path: &std::path::Path) -> Result<GrokUpdateCheck, String> {
+pub(super) fn inspect_grok_update_check(path: &std::path::Path) -> Result<GrokUpdateCheck, String> {
     let output = run_grok_update_check(path)?;
     if output.truncated {
         return Err("Grok Build 官方版本检查输出超过安全读取上限".to_string());
@@ -40,11 +40,11 @@ pub(crate) fn inspect_grok_update_check(path: &std::path::Path) -> Result<GrokUp
 /// The CLI's update check reports the installation source. Trust its `internal`
 /// result regardless of executable location so custom paths for a native
 /// install still use the official `grok update` command.
-pub(crate) fn grok_update_management_message(installer: Option<&str>) -> Option<String> {
+fn grok_update_management_message(installer: Option<&str>) -> Option<String> {
     grok_update_management_message_for(installer)
 }
 
-pub(crate) fn grok_update_management_message_for(installer: Option<&str>) -> Option<String> {
+fn grok_update_management_message_for(installer: Option<&str>) -> Option<String> {
     match installer {
         Some("internal") => None,
         Some("npm") => Some(
@@ -62,11 +62,11 @@ pub(crate) fn grok_update_management_message_for(installer: Option<&str>) -> Opt
     }
 }
 
-pub(crate) fn validate_grok_native_update_source(installer: Option<&str>) -> Result<(), String> {
+pub(super) fn validate_grok_native_update_source(installer: Option<&str>) -> Result<(), String> {
     grok_update_management_message(installer).map_or(Ok(()), Err)
 }
 
-pub(crate) fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {
+pub(super) fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
     if let Some(custom_dir) = std::env::var_os("GROK_BIN_DIR") {
         dirs.push(std::path::PathBuf::from(custom_dir));
@@ -82,7 +82,7 @@ pub(crate) fn grok_native_install_dirs() -> Vec<std::path::PathBuf> {
     dirs
 }
 
-pub(crate) fn grok_update_check_command(path: &std::path::Path) -> Command {
+fn grok_update_check_command(path: &std::path::Path) -> Command {
     let mut process = process::cli_std_command(path, ["update", "--check", "--json"]);
     // pnpm's marker makes Grok choose its npm updater even when this is the
     // official native installation. Keep the source check independent of it.
@@ -106,11 +106,11 @@ fn run_grok_update_check(path: &std::path::Path) -> Result<BoundedOutput, String
 }
 
 #[cfg(test)]
-pub(crate) fn parse_grok_latest(body: &str) -> Result<String, String> {
+fn parse_grok_latest(body: &str) -> Result<String, String> {
     parse_grok_update_check(body).map(|check| check.latest_version)
 }
 
-pub(crate) fn parse_grok_update_check(body: &str) -> Result<GrokUpdateCheck, String> {
+fn parse_grok_update_check(body: &str) -> Result<GrokUpdateCheck, String> {
     let value: serde_json::Value =
         serde_json::from_str(body).map_err(|_| "Grok Build 官方版本响应格式无效".to_string())?;
     match value.get("error") {
@@ -183,4 +183,53 @@ fn valid_semver_identifiers(value: &str, is_prerelease: bool) -> bool {
                         .chars()
                         .all(|character| character.is_ascii_digit()))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_grok_official_update_check_json() {
+        let check = parse_grok_update_check(
+            r#"{"currentVersion":"0.1.10","latestVersion":"0.1.12","updateAvailable":true,"installer":"internal","channel":"stable","autoUpdate":null,"error":null}"#,
+        )
+        .unwrap();
+        assert_eq!(check.latest_version, "0.1.12");
+        assert_eq!(check.installer.as_deref(), Some("internal"));
+    }
+
+    #[test]
+    fn rejects_grok_check_errors_and_missing_or_invalid_latest_versions() {
+        assert!(parse_grok_latest(r#"{"latestVersion":null,"error":"offline"}"#).is_err());
+        assert!(parse_grok_latest(r#"{"error":null}"#).is_err());
+        assert!(parse_grok_latest(r#"{"latestVersion":"unknown"}"#).is_err());
+        assert!(parse_grok_latest(r#"{"latestVersion":"0.1.03"}"#).is_err());
+        assert!(parse_grok_latest(r#"{"latestVersion":"0.1.3-01"}"#).is_err());
+        assert!(parse_grok_latest(r#"{"latestVersion":"0.1.3","error":false}"#).is_err());
+    }
+
+    #[test]
+    fn grok_parser_accepts_valid_prerelease_and_build_metadata() {
+        assert_eq!(
+            parse_grok_latest(r#"{"latestVersion":"0.1.12-alpha.1+build.7"}"#).unwrap(),
+            "0.1.12-alpha.1+build.7"
+        );
+    }
+
+    #[test]
+    fn grok_update_check_ignores_pnpm_installer_hint() {
+        let command = grok_update_check_command(std::path::Path::new("grok"));
+
+        assert!(command.get_envs().any(|(key, value)| {
+            key == std::ffi::OsStr::new("npm_config_user_agent") && value.is_none()
+        }));
+    }
+
+    #[test]
+    fn grok_update_management_trusts_reported_official_native_source() {
+        assert_eq!(grok_update_management_message_for(Some("internal")), None);
+        assert!(grok_update_management_message_for(Some("npm")).is_some());
+        assert!(grok_update_management_message_for(None).is_some());
+    }
 }

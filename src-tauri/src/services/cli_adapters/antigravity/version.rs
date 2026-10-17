@@ -1,4 +1,4 @@
-pub(crate) fn parse_antigravity_latest(body: &str) -> Result<String, String> {
+pub(super) fn parse_antigravity_latest(body: &str) -> Result<String, String> {
     let value: serde_json::Value =
         serde_json::from_str(body).map_err(|_| "Antigravity 官方版本响应格式无效".to_string())?;
     let version = value
@@ -9,11 +9,11 @@ pub(crate) fn parse_antigravity_latest(body: &str) -> Result<String, String> {
         .ok_or_else(|| "Antigravity 官方版本号无效".to_string())
 }
 
-pub(crate) fn platform() -> Result<&'static str, String> {
+pub(super) fn platform() -> Result<&'static str, String> {
     platform_for(std::env::consts::OS, std::env::consts::ARCH)
 }
 
-pub(crate) fn platform_for(os: &str, arch: &str) -> Result<&'static str, String> {
+fn platform_for(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
         ("windows", "x86_64") => Ok("windows_amd64"),
         ("windows", "aarch64") => Ok("windows_arm64"),
@@ -22,5 +22,45 @@ pub(crate) fn platform_for(os: &str, arch: &str) -> Result<&'static str, String>
         ("linux", "x86_64") => Ok("linux_amd64"),
         ("linux", "aarch64") => Ok("linux_arm64"),
         _ => Err("当前平台尚未配置 Antigravity 官方版本查询".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::platform_for as antigravity_platform_for;
+    use super::*;
+
+    #[test]
+    fn parses_antigravity_manifest_version() {
+        assert_eq!(
+            parse_antigravity_latest(r#"{"version":"1.1.14","url":"https://example.test"}"#)
+                .unwrap(),
+            "1.1.14"
+        );
+    }
+
+    #[test]
+    fn maps_antigravity_windows_macos_and_linux_platforms() {
+        assert_eq!(
+            antigravity_platform_for("windows", "x86_64").unwrap(),
+            "windows_amd64"
+        );
+        assert_eq!(
+            antigravity_platform_for("macos", "aarch64").unwrap(),
+            "darwin_arm64"
+        );
+        assert_eq!(
+            antigravity_platform_for("macos", "x86_64").unwrap(),
+            "darwin_amd64"
+        );
+        assert_eq!(
+            antigravity_platform_for("linux", "x86_64").unwrap(),
+            "linux_amd64"
+        );
+        assert_eq!(
+            antigravity_platform_for("linux", "aarch64").unwrap(),
+            "linux_arm64"
+        );
+        assert!(antigravity_platform_for("freebsd", "x86_64").is_err());
     }
 }

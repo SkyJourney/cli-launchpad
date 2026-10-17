@@ -11,11 +11,11 @@ const HERMES_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const HERMES_OUTPUT_LIMIT: usize = 64 * 1024;
 const HERMES_VERSION_PROBE_CONFIG: &str = "updates:\n  check: false\n";
 
-pub(crate) fn hermes_install_dirs() -> Vec<PathBuf> {
+pub(super) fn hermes_install_dirs() -> Vec<PathBuf> {
     super::platform::install_dirs()
 }
 
-pub(crate) async fn probe_current_version(path: &Path) -> Result<String, String> {
+pub(super) async fn probe_current_version(path: &Path) -> Result<String, String> {
     let home = HermesVersionProbeHome::create()?;
     let environment = [(
         "HERMES_HOME".to_string(),
@@ -24,12 +24,12 @@ pub(crate) async fn probe_current_version(path: &Path) -> Result<String, String>
     detect::probe_version_with_env(path, &environment).await
 }
 
-pub(crate) struct HermesVersionProbeHome {
+struct HermesVersionProbeHome {
     path: PathBuf,
 }
 
 impl HermesVersionProbeHome {
-    pub(crate) fn create() -> Result<Self, String> {
+    fn create() -> Result<Self, String> {
         let path =
             std::env::temp_dir().join(format!("cli-launchpad-hermes-version-{}", Uuid::new_v4()));
         std::fs::create_dir(&path)
@@ -41,7 +41,7 @@ impl HermesVersionProbeHome {
         Ok(Self { path })
     }
 
-    pub(crate) fn path(&self) -> &Path {
+    fn path(&self) -> &Path {
         &self.path
     }
 }
@@ -52,17 +52,17 @@ impl Drop for HermesVersionProbeHome {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HermesUpdateCheck {
-    pub(crate) update_available: Option<bool>,
-    pub(crate) commits_behind: Option<u32>,
-    pub(crate) error: Option<String>,
-    pub(crate) managed_update_allowed: bool,
-    pub(crate) management_message: Option<String>,
+pub(super) struct HermesUpdateCheck {
+    pub(super) update_available: Option<bool>,
+    pub(super) commits_behind: Option<u32>,
+    pub(super) error: Option<String>,
+    pub(super) managed_update_allowed: bool,
+    pub(super) management_message: Option<String>,
 }
 
 /// Inspect Hermes' default managed source installation and compare it with
 /// the updater's default channel. This is called only for an explicit refresh.
-pub(crate) fn fetch_hermes_update_check(
+pub(super) fn fetch_hermes_update_check(
     path: Option<&Path>,
     home: &Path,
 ) -> Result<HermesUpdateCheck, String> {
@@ -145,7 +145,7 @@ fn inspect_hermes_managed_install(path: &std::path::Path, home: &Path) -> Result
     super::platform::validate_managed_update_install(path, home)
 }
 
-pub(crate) fn validate_managed_install(path: &std::path::Path) -> Result<(), String> {
+pub(super) fn validate_managed_install(path: &std::path::Path) -> Result<(), String> {
     let home = crate::services::session_service::home_dir()
         .map_err(|error| format!("无法确认 Hermes 用户目录：{error}"))?;
     inspect_hermes_managed_install(path, &home)
@@ -174,7 +174,7 @@ fn combined_output(output: &BoundedOutput) -> String {
     strip_ansi_sequences(&combined)
 }
 
-pub(crate) fn parse_hermes_update_check(output: &str) -> Result<(bool, Option<u32>), String> {
+fn parse_hermes_update_check(output: &str) -> Result<(bool, Option<u32>), String> {
     let cleaned = strip_ansi_sequences(output).replace("up-to-date", "up to date");
     let mut result = None;
     for line in cleaned.lines() {
@@ -238,4 +238,89 @@ fn strip_ansi_sequences(input: &str) -> String {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_hermes_main_branch_update_status_without_semver() {
+        assert_eq!(
+            parse_hermes_update_check("Update available: 7 commits behind origin/main.").unwrap(),
+            (true, Some(7))
+        );
+        assert_eq!(
+            parse_hermes_update_check("Already up to date with origin/main.").unwrap(),
+            (false, None)
+        );
+        assert_eq!(
+            parse_hermes_update_check("Update available; commit count unavailable.").unwrap(),
+            (true, None)
+        );
+        assert_eq!(
+            parse_hermes_update_check(
+                "warning: local branch is behind metadata cache\n✓ Already up to date."
+            )
+            .unwrap(),
+            (false, None)
+        );
+        assert_eq!(
+            parse_hermes_update_check("No updates available on origin/main.").unwrap(),
+            (false, None)
+        );
+        assert!(parse_hermes_update_check("network request failed").is_err());
+    }
+
+    #[test]
+    fn hermes_version_probe_config_disables_passive_update_checks_and_cleans_up() {
+        let home = HermesVersionProbeHome::create().unwrap();
+        let path = home.path().to_path_buf();
+        let config = std::fs::read_to_string(path.join("config.yaml")).unwrap();
+
+        assert_eq!(config, "updates:\n  check: false\n");
+        drop(home);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hermes_version_probe_passes_isolated_home_to_cli() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hermes");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nif grep -Fq 'check: false' \"$HERMES_HOME/config.yaml\"; then echo 'Hermes Agent test'; else exit 7; fi\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let version =
+            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
+                .await
+                .unwrap();
+        assert_eq!(version, "Hermes Agent test");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn hermes_version_probe_passes_isolated_home_to_cli() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hermes.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\nfindstr /C:\"check: false\" \"%HERMES_HOME%\\config.yaml\" >nul\r\nif errorlevel 1 exit /b 7\r\necho Hermes Agent test\r\n",
+        )
+        .unwrap();
+
+        let version =
+            crate::services::cli_adapters::hermes::version::probe_current_version(&script)
+                .await
+                .unwrap();
+        assert_eq!(version, "Hermes Agent test");
+    }
 }
