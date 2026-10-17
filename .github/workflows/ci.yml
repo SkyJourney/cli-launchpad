@@ -104,6 +104,10 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run build
 
+      - name: Check production HTML for CSP compatibility
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
+        run: node scripts/ci/assert-dist-html-csp.mjs dist/index.html
+
       - name: Check Rust formatting
         if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check

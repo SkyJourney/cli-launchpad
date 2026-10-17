@@ -854,6 +854,9 @@ fn production_csp_matches_exact_directive_contract() {
         ("font-src", &["'self'", "data:"]),
         ("worker-src", &["'self'", "blob:"]),
         ("connect-src", &["'self'", "ipc:", "http://ipc.localhost"]),
+        ("object-src", &["'none'"]),
+        ("base-uri", &["'none'"]),
+        ("form-action", &["'none'"]),
     ]);
     assert_eq!(production, expected_production);
 
@@ -3686,4 +3689,66 @@ fn no_code_enables_new_window_creation() {
         .find(|(file, _)| file == "services/navigation_guard.rs")
         .expect("navigation_guard.rs exists");
     assert!(guard.1.contains("fn plugin"));
+}
+
+// ---- m6-066: configuration switches that keep the CSP meaningful (tauri.conf.json, capabilities).
+
+#[test]
+fn tauri_config_keeps_global_tauri_and_asset_protocol_closed() {
+    let config: Value = serde_json::from_str(TAURI_CONFIG_JSON).expect("parse tauri config");
+    let app = &config["app"];
+    assert!(
+        matches!(app.get("withGlobalTauri"), None | Some(Value::Bool(false))),
+        "withGlobalTauri must stay off: {:?}",
+        app.get("withGlobalTauri")
+    );
+    let security = &app["security"];
+    assert!(
+        matches!(
+            security.get("dangerousDisableAssetCspModification"),
+            None | Some(Value::Bool(false))
+        ),
+        "dangerousDisableAssetCspModification must stay off"
+    );
+    if let Some(asset_protocol) = security.get("assetProtocol") {
+        assert_ne!(
+            asset_protocol.get("enable"),
+            Some(&Value::Bool(true)),
+            "the asset protocol must stay disabled"
+        );
+    }
+    for overlay in [
+        include_str!("../../tauri.macos.conf.json"),
+        include_str!("../../tauri.windows.conf.json"),
+        include_str!("../../tauri.offline.conf.json"),
+    ] {
+        let value: Value = serde_json::from_str(overlay).expect("parse config overlay");
+        assert!(
+            value["app"].get("withGlobalTauri").is_none(),
+            "overlays must not set withGlobalTauri"
+        );
+        // Reverse: the overlay was really read.
+        assert!(
+            value.get("bundle").is_some(),
+            "overlay without a bundle section"
+        );
+    }
+    for capability in [
+        include_str!("../../capabilities/default.json"),
+        include_str!("../../capabilities/terminal-window.json"),
+        include_str!("../../capabilities/workspace-content-window.json"),
+    ] {
+        let value: Value = serde_json::from_str(capability).expect("parse capability");
+        assert!(
+            value.get("remote").is_none(),
+            "capabilities must not be remote"
+        );
+        // Reverse: the file was really read.
+        assert!(!value["permissions"]
+            .as_array()
+            .expect("permissions")
+            .is_empty());
+    }
+    // Reverse: the configuration was really read.
+    assert!(!security["csp"].as_str().expect("csp").is_empty());
 }

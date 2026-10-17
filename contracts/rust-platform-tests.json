@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 668,
-    "Linux": 675,
-    "macOS": 673
+    "Windows": 669,
+    "Linux": 676,
+    "macOS": 674
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,7 @@
   ],
   "required": {
     "all": [
+      "contracts::tauri_config_keeps_global_tauri_and_asset_protocol_closed",
       "contracts::navigation_guard_plugin_is_registered_after_single_instance",
       "contracts::no_code_enables_new_window_creation",
       "contracts::command_caller_check_contract_covers_every_registered_command",

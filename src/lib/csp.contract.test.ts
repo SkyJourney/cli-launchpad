@@ -31,8 +31,11 @@ describe("content security policy", () => {
       "font-src": ["'self'", "data:"],
       "worker-src": ["'self'", "blob:"],
       "connect-src": ["'self'", "http://ipc.localhost", "ipc:"],
+      "object-src": ["'none'"],
+      "base-uri": ["'none'"],
+      "form-action": ["'none'"],
     });
-    expect(Object.keys(production)).toHaveLength(7);
+    expect(Object.keys(production)).toHaveLength(10);
   });
 
   it("extends development only with Vite eval and dev server origins", () => {
