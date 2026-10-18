@@ -1,27 +1,25 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import appCommands from "../../contracts/app-commands.json";
-import checks from "../../contracts/command-caller-checks.json";
 import windowKinds from "../../contracts/window-kinds.json";
 
-type Check = { command: string; callerCheck: string; kinds?: string[] };
-const entries = checks.items as Check[];
+type Check = { name: string; callerCheck: string; kinds?: string[] };
+const entries = appCommands.items as unknown as Check[];
+const commandNames = entries.map((entry) => entry.name);
 
 describe("command caller checks", () => {
   it("declares a caller check for every registered app command", () => {
-    expect(entries.map((entry) => entry.command).sort()).toEqual(
-      [...appCommands.items].sort(),
+    expect(entries.map((entry) => entry.name).sort()).toEqual(
+      [...commandNames].sort(),
     );
-    expect(new Set(entries.map((entry) => entry.command)).size).toBe(
+    expect(new Set(entries.map((entry) => entry.name)).size).toBe(
       entries.length,
     );
     for (const entry of entries) {
-      expect(["require", "acl-only"], entry.command).toContain(
-        entry.callerCheck,
-      );
+      expect(["require", "acl-only"], entry.name).toContain(entry.callerCheck);
     }
     // Reverse: the contract is as large as the command list.
-    expect(entries.length).toBe(appCommands.items.length);
+    expect(entries.length).toBe(commandNames.length);
     expect(entries.length).toBeGreaterThanOrEqual(72);
   });
 
@@ -31,9 +29,7 @@ describe("command caller checks", () => {
       if (kind.id === "main") continue;
       const granted = kind.appCommands as string[];
       for (const command of granted) {
-        const entry = entries.find(
-          (candidate) => candidate.command === command,
-        );
+        const entry = entries.find((candidate) => candidate.name === command);
         expect(entry?.callerCheck, `${kind.id}: ${command}`).toBe("require");
         expect(entry?.kinds, `${kind.id}: ${command}`).toContain(kind.id);
         checked += 1;
@@ -46,7 +42,7 @@ describe("command caller checks", () => {
         .flatMap((kind) => kind.appCommands as string[]),
     );
     for (const entry of entries.filter((e) => e.callerCheck === "acl-only")) {
-      expect(childCommands.has(entry.command), entry.command).toBe(false);
+      expect(childCommands.has(entry.name), entry.name).toBe(false);
     }
     // Reverse: terminal 14 + workspaceContent 5 commands were all checked.
     expect(checked).toBe(19);
@@ -72,7 +68,7 @@ describe("command caller checks", () => {
     ];
     for (const command of required) {
       expect(
-        entries.find((entry) => entry.command === command)?.callerCheck,
+        entries.find((entry) => entry.name === command)?.callerCheck,
         command,
       ).toBe("require");
     }
@@ -84,9 +80,24 @@ describe("command caller checks", () => {
       "save_project_text_file",
     ]) {
       expect(
-        entries.find((entry) => entry.command === command)?.callerCheck,
+        entries.find((entry) => entry.name === command)?.callerCheck,
         command,
       ).toBe("acl-only");
+    }
+  });
+
+  it("keeps the caller check inside the app command manifest and has no companion file", () => {
+    const files = Object.keys(import.meta.glob("../../contracts/*.json"));
+
+    expect(
+      files.some((file) => file.endsWith("/command-caller-checks.json")),
+    ).toBe(false);
+    expect(files.some((file) => file.endsWith("/app-commands.json"))).toBe(
+      true,
+    );
+    for (const item of appCommands.items as unknown as Check[]) {
+      expect(["require", "acl-only"], item.name).toContain(item.callerCheck);
+      expect("command" in item, item.name).toBe(false);
     }
   });
 });

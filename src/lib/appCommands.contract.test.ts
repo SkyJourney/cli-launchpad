@@ -103,11 +103,13 @@ describe("app command usage", () => {
   it("wraps exactly the registered app commands in tauri.ts", () => {
     const wrappers = wrapperCommands();
 
-    expect([...wrappers.values()].sort()).toEqual(
-      [...appCommands.items].sort(),
+    const commandNames = appCommands.items.map(
+      (item: { name: string }) => item.name,
     );
+
+    expect([...wrappers.values()].sort()).toEqual([...commandNames].sort());
     expect(new Set(wrappers.values()).size).toBe(wrappers.size);
-    expect(wrappers.size).toBe(appCommands.items.length);
+    expect(wrappers.size).toBe(commandNames.length);
     expect(wrappers.has("createPtySession")).toBe(true);
     expect(wrappers.get("createPtySession")).toBe("create_pty_session");
   });

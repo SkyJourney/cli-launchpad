@@ -41,12 +41,19 @@ fn item_ids(manifest: &Value) -> Vec<String> {
         .collect()
 }
 
-/// The registered app command names (`contracts/app-commands.json`).
+/// The registered app command names (`contracts/app-commands.json`, `items[].name`).
 fn app_command_names() -> Vec<String> {
-    json_strings(
-        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app command contract")
-            ["items"],
-    )
+    serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app command contract")["items"]
+        .as_array()
+        .expect("app command items must be an array")
+        .iter()
+        .map(|item| {
+            item["name"]
+                .as_str()
+                .expect("every app command item has a name")
+                .to_string()
+        })
+        .collect()
 }
 
 fn json_strings(value: &Value) -> Vec<String> {
@@ -3252,12 +3259,9 @@ fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
     );
 }
 
-// ---- m6-064: command caller checks (contracts/command-caller-checks.json).
+// ---- m6-064: command caller checks (contracts/app-commands.json since m6-074c).
 
-const COMMAND_CALLER_CHECKS_JSON: &str =
-    include_str!("../../../contracts/command-caller-checks.json");
-
-/// One entry of the companion contract: `require` commands list the window kinds they accept.
+/// One entry of `contracts/app-commands.json`: `require` commands list the window kinds they accept.
 struct CallerCheck {
     command: String,
     require: bool,
@@ -3266,13 +3270,13 @@ struct CallerCheck {
 
 fn caller_checks() -> Vec<CallerCheck> {
     let contract: Value =
-        serde_json::from_str(COMMAND_CALLER_CHECKS_JSON).expect("parse command caller checks");
+        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
     contract["items"]
         .as_array()
         .expect("commands must be an array")
         .iter()
         .map(|entry| CallerCheck {
-            command: entry["command"].as_str().expect("command name").to_string(),
+            command: entry["name"].as_str().expect("command name").to_string(),
             require: match entry["callerCheck"].as_str() {
                 Some("require") => true,
                 Some("acl-only") => false,
@@ -3414,7 +3418,17 @@ fn command_caller_check_contract_covers_every_registered_command() {
         names.len(),
         "no duplicates"
     );
-    assert_eq!(sorted_strings(names), sorted_strings(registered));
+    assert_eq!(sorted_strings(names), sorted_strings(registered.clone()));
+    // m6-074c: the manifest is now the only file, so check it against the command sources directly.
+    let defined: Vec<String> = command_definitions()
+        .into_iter()
+        .map(|command| command.name)
+        .collect();
+    assert_eq!(
+        sorted_strings(defined),
+        sorted_strings(registered),
+        "contracts/app-commands.json 必须恰好列出源码里的全部命令"
+    );
     let allowed = ["main", "terminal", "workspaceContent"];
     for check in &checks {
         if check.require {
@@ -3821,10 +3835,9 @@ fn tool_capabilities_contract_matches_adapter_descriptors() {
 
 #[test]
 fn contract_manifests_use_the_common_envelope() {
-    const MANIFESTS: [(&str, &[&str]); 11] = [
+    const MANIFESTS: [(&str, &[&str]); 10] = [
         ("api-versions.json", &[]),
         ("app-commands.json", &[]),
-        ("command-caller-checks.json", &[]),
         ("content-kinds.json", &[]),
         (
             "error-codes.json",
@@ -4416,4 +4429,35 @@ fn api_versions_contract_matches_the_rust_protocol_constants() {
     sorted.sort();
     assert_eq!(versions, sorted, "api-versions.json 的条目必须按 id 排序");
     assert_eq!(versions.len(), 7);
+}
+
+#[test]
+fn command_manifest_has_no_companion_caller_check_file() {
+    let companion = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../contracts/command-caller-checks.json");
+    assert!(
+        !companion.exists(),
+        "命令授权规则已并入 contracts/app-commands.json，伴随文件不应存在: {}",
+        companion.display()
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let items = manifest["items"].as_array().expect("items array");
+    assert!(items.len() >= 70, "命令数量过少: {}", items.len());
+    for item in items {
+        let object = item.as_object().expect("every command item is an object");
+        let name = object
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .expect("every command item has a name");
+        assert!(
+            object.contains_key("callerCheck"),
+            "{name} 缺少 callerCheck"
+        );
+        assert!(
+            !object.contains_key("command"),
+            "{name} 仍带有旧字段 command"
+        );
+    }
 }

@@ -14,8 +14,9 @@ fn main() {
         .expect("contracts/app-commands.json must have an items array")
         .iter()
         .map(|item| {
-            item.as_str()
-                .expect("app command must be a string")
+            item["name"]
+                .as_str()
+                .expect("every item in contracts/app-commands.json must have a name")
                 .to_string()
         })
         .collect();

@@ -70,8 +70,11 @@ describe("shared contracts", () => {
       "terminal",
       "workspaceContent",
     ]);
-    expect(appCommands.items.length).toBeGreaterThan(0);
-    expect(new Set(appCommands.items).size).toBe(appCommands.items.length);
+    const commandNames = appCommands.items.map(
+      (item: { name: string }) => item.name,
+    );
+    expect(commandNames.length).toBeGreaterThan(0);
+    expect(new Set(commandNames).size).toBe(commandNames.length);
 
     const terminalWindow = windowKinds.items.find(
       (kind) => kind.id === "terminal",

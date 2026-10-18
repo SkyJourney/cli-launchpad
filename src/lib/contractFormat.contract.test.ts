@@ -9,7 +9,6 @@ const files = import.meta.glob("../../contracts/*.json", {
 const MANIFESTS: Record<string, readonly string[]> = {
   "api-versions.json": [],
   "app-commands.json": [],
-  "command-caller-checks.json": [],
   "content-kinds.json": [],
   "error-codes.json": ["frontendCodes", "reservedCodes", "aliases"],
   "events.json": [],
