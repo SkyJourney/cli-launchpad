@@ -178,6 +178,37 @@ describe("useThemeSync", () => {
       useAppStore.getState().applyRemoteThemeMode("system");
     }
   });
+
+  it("pushes the tray labels again only when the language changes, not when the theme changes", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    renderHook(() => useThemeSync());
+    const trayCalls = () =>
+      tauriMock.state.invokeCalls.filter(
+        (call) => call.command === "set_tray_menu_labels",
+      );
+    await vi.waitFor(() => expect(trayCalls()).toHaveLength(1));
+
+    await act(async () => {
+      useAppStore.getState().applyRemoteThemeMode("dark");
+    });
+    await vi.waitFor(() =>
+      expect(
+        tauriMock.state.emittedEvents.some(
+          (event) =>
+            event.eventName === "app-preferences" &&
+            (event.payload as { theme?: string }).theme === "dark",
+        ),
+      ).toBe(true),
+    );
+    expect(trayCalls()).toHaveLength(1);
+
+    await setAppLanguage("ar");
+    await vi.waitFor(() => expect(trayCalls()).toHaveLength(2));
+    expect(trayCalls()[1].args).toEqual({
+      show: "إظهار النافذة الرئيسية",
+      quit: "إنهاء",
+    });
+  });
 });
 
 describe("useThemeSync diagnostics", () => {

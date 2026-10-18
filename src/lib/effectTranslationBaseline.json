@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "key": "src/components/PtyTerminal.tsx::PtyTerminal::useEffect#1",
+      "reason": "存量（m6-073 基线）：effect 回调引用 t 而依赖数组不含 t，语言切换后闭包里的文案停留在旧语言，待 R-FE-1 后续目标消除"
+    },
+    {
+      "key": "src/workspace/views/WorkspaceLayoutManager.tsx::WorkspaceLayoutManager::useEffect#1",
+      "reason": "存量（m6-073 基线）：经 refreshPresets 依赖 t，语言切换会重新执行该 effect，待 R-FE-1 后续目标消除"
+    },
+    {
+      "key": "src/workspace/views/WorkspacePaneView.tsx::WorkspacePaneView::useEffect#1",
+      "reason": "存量（m6-073 基线）：effect 回调引用 t 而依赖数组不含 t，语言切换后闭包里的文案停留在旧语言，待 R-FE-1 后续目标消除"
+    }
+  ]
+}

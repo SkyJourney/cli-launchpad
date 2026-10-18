@@ -20,6 +20,7 @@ import {
   resolveCurrentTheme,
 } from "../lib/themes";
 import { setTrayMenuLabels } from "../lib/tauri";
+import { MAIN_WINDOW_LABEL } from "../lib/windowKinds";
 import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import { useAppStore } from "../store/appStore";
 
@@ -116,17 +117,22 @@ export function useThemeSync() {
     };
   }, [currentWindowLabel]);
 
+  // R-FE-1:language-sync
   useEffect(() => {
-    if (currentWindowLabel !== "main") return;
+    if (currentWindowLabel !== MAIN_WINDOW_LABEL) return;
     void setTrayMenuLabels({
       show: t("tray.show"),
       quit: t("tray.quit"),
     }).catch((error: unknown) =>
       reportWindowSyncFailure("window.tray_menu_sync_failed", error),
     );
+  }, [currentWindowLabel, translation.resolvedLanguage]);
+
+  useEffect(() => {
+    if (currentWindowLabel !== MAIN_WINDOW_LABEL) return;
     void publishAppPreferences(currentAppPreferences(themeMode)).catch(
       (error: unknown) =>
         reportWindowSyncFailure("window.preferences_publish_failed", error),
     );
-  }, [currentWindowLabel, themeMode, language, t, translation.language]);
+  }, [currentWindowLabel, themeMode, language]);
 }

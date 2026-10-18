@@ -106,7 +106,7 @@
 
 ### R-FE-1 前端：业务 effect 不依赖翻译函数，监听只依赖稳定身份
 
-- `useEffect`、`useLayoutEffect` 以及被它们间接调用的 `useCallback`/`useMemo` 的依赖闭包中，不得出现 `t`、`i18n` 或 `translation.language`。唯一例外是“语言同步 effect”（例如托盘文案推送），它必须以 `i18n.resolvedLanguage` 为键且只负责推送已翻译的文案。
+- `useEffect`、`useLayoutEffect` 以及被它们间接调用的 `useCallback`/`useMemo` 的依赖闭包中，不得出现 `t`、`i18n` 或 `translation.language`。唯一例外是“语言同步 effect”（例如托盘文案推送），它必须以 `i18n.resolvedLanguage` 为键且只负责推送已翻译的文案。该规则由 `src/lib/effectTranslationDependencies.contract.test.ts` 的 AST 扫描守护：语言同步 effect 必须在语句前写注释 `// R-FE-1:language-sync` 并以 `*.resolvedLanguage` 为键；存量违规登记在 `src/lib/effectTranslationBaseline.json`，只允许减少，修复后必须删除对应条目，不得新增。
 - 注册 Tauri 命令回调、事件、跨窗协议监听的 effect，依赖只能是稳定身份（窗口 label、token、documentId 等）；业务回调通过 ref（latest-ref / useEvent 模式）读取最新逻辑，语言切换、查询刷新和派生集合的对象身份变化都不得导致监听注销重建、hydrate 重新执行或布局保存。
 - 翻译函数只在渲染路径和事件处理函数的最外层使用。异步回调、服务代码和错误处理里需要文案时使用 `i18n.t` 或 latest-ref；state 中保存结构化消息（`{ code, params, fallback }`），渲染时再格式化，不要在 catch 时就把本地化字符串存进 state。
 - hydrate、持久化等“命令式动作”只能由显式入口触发（挂载、重试、恢复完成事件、命令执行器的提交后调度），不得靠依赖数组副作用隐式触发。
