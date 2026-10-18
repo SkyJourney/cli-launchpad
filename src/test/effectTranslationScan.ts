@@ -51,8 +51,8 @@ function enclosingFunctions(node: ts.Node): FunctionLike[] {
   return chain;
 }
 
-/** 在该函数自己的作用域里（不含嵌套函数）声明了 name 吗：参数或局部变量。 */
-function declaredInScope(scope: FunctionLike, name: string): boolean {
+/** `var` 声明会提升到所在函数（不含嵌套函数）：函数参数与整个函数体里的 `var` 都算该函数的名字。 */
+function declaresInFunction(scope: FunctionLike, name: string): boolean {
   for (const parameter of scope.parameters) {
     if (bindingNames(parameter.name).includes(name)) return true;
   }
@@ -63,8 +63,11 @@ function declaredInScope(scope: FunctionLike, name: string): boolean {
     if (found) return;
     if (node !== body && isFunctionLike(node)) return;
     if (
-      ts.isVariableDeclaration(node) &&
-      bindingNames(node.name).includes(name)
+      ts.isVariableDeclarationList(node) &&
+      !(node.flags & ts.NodeFlags.BlockScoped) &&
+      node.declarations.some((declaration) =>
+        bindingNames(declaration.name).includes(name),
+      )
     ) {
       found = true;
       return;
@@ -73,6 +76,67 @@ function declaredInScope(scope: FunctionLike, name: string): boolean {
   };
   visit(body);
   return found;
+}
+
+/** 块、for 头、catch 子句自己拥有的块级声明（let、const、class、函数声明）。 */
+function declaresInBlockScope(node: ts.Node, name: string): boolean {
+  const listDeclares = (list: ts.ForInitializer | undefined) =>
+    !!list &&
+    ts.isVariableDeclarationList(list) &&
+    !!(list.flags & ts.NodeFlags.BlockScoped) &&
+    list.declarations.some((declaration) =>
+      bindingNames(declaration.name).includes(name),
+    );
+  if (ts.isBlock(node) || ts.isCaseBlock(node) || ts.isSourceFile(node)) {
+    const statements = ts.isCaseBlock(node)
+      ? node.clauses.flatMap((clause) => [...clause.statements])
+      : [...node.statements];
+    return statements.some(
+      (statement) =>
+        (ts.isVariableStatement(statement) &&
+          listDeclares(statement.declarationList)) ||
+        ((ts.isFunctionDeclaration(statement) ||
+          ts.isClassDeclaration(statement)) &&
+          statement.name?.text === name),
+    );
+  }
+  if (
+    ts.isForStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isForInStatement(node)
+  ) {
+    return listDeclares(node.initializer);
+  }
+  if (ts.isCatchClause(node)) {
+    return (
+      !!node.variableDeclaration &&
+      bindingNames(node.variableDeclaration.name).includes(name)
+    );
+  }
+  return false;
+}
+
+/**
+ * 从标识符向上走到持有 `useTranslation()` 的函数为止，途中任何一层声明了同名绑定就算被遮蔽：
+ * 内层函数的参数与 `var`、途中各块的块级声明、for 头与 catch 变量；持有函数自己的最外层函数体不算。
+ */
+function shadowedOnPath(
+  identifier: ts.Identifier,
+  owner: FunctionLike,
+  name: string,
+): boolean {
+  for (
+    let current: ts.Node | undefined = identifier.parent;
+    current && current !== owner;
+    current = current.parent
+  ) {
+    if (isFunctionLike(current) && declaresInFunction(current, name)) {
+      return true;
+    }
+    if (current === owner.body) continue;
+    if (declaresInBlockScope(current, name)) return true;
+  }
+  return false;
 }
 
 /** 该函数里（不含嵌套函数）由 `useTranslation()` 解构出的名字。 */
@@ -112,10 +176,7 @@ function isTranslationReference(identifier: ts.Identifier): boolean {
   const chain = enclosingFunctions(identifier);
   for (let index = 0; index < chain.length; index += 1) {
     if (translationBindings(chain[index]).has(name)) {
-      for (let inner = 0; inner < index; inner += 1) {
-        if (declaredInScope(chain[inner], name)) return false;
-      }
-      return true;
+      return !shadowedOnPath(identifier, chain[index], name);
     }
   }
   return false;

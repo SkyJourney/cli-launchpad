@@ -28,7 +28,7 @@ const productionSources = Object.fromEntries(
 let cachedScan: ReturnType<typeof scanSources> | undefined;
 const productionScan = () => (cachedScan ??= scanSources(productionSources));
 
-const HEAD = `import { useEffect, useCallback, useMemo } from "react";
+const HEAD = `import { useEffect, useInsertionEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 `;
@@ -119,6 +119,79 @@ export function E() {
 
     expect(violations).toHaveLength(1);
     expect(violations[0].problems[0]).toContain("回调引用 t");
+  });
+
+  it("follows an aliased translation function and the insertion effect hook", () => {
+    const text = `${HEAD}
+export function F() {
+  const { t: tr } = useTranslation();
+  useInsertionEffect(() => { toast(tr("x")); }, []);
+  return null;
+}`;
+
+    const violations = scanSource("src/F.tsx", text);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].key).toBe("src/F.tsx::F::useInsertionEffect#1");
+    expect(violations[0].problems[0]).toContain("回调引用 tr");
+  });
+
+  it("lets a block scoped declaration shadow the name only inside that block", () => {
+    const hidden = `${HEAD}
+export function G() {
+  const { t } = useTranslation();
+  useEffect(() => {
+    {
+      const t = (key: string) => key;
+      run(t("x"));
+    }
+    for (const t of ["a"]) run(t);
+    try { run(); } catch (t) { run(t); }
+  }, []);
+  return null;
+}`;
+    expect(scanSource("src/G.tsx", hidden)).toHaveLength(0);
+
+    const leaked = `${HEAD}
+export function H() {
+  const { t } = useTranslation();
+  useEffect(() => {
+    {
+      const t = (key: string) => key;
+      run(t("x"));
+    }
+    toast(t("y"));
+  }, []);
+  return null;
+}`;
+    const violations = scanSource("src/H.tsx", leaked);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].problems).toHaveLength(1);
+    expect(violations[0].problems[0]).toContain("回调引用 t");
+  });
+
+  it("does not let a var inside a nested block leak out of its own function", () => {
+    const text = `${HEAD}
+export function J() {
+  const { t } = useTranslation();
+  useEffect(() => {
+    const inner = () => {
+      if (run()) {
+        var t = (key: string) => key;
+      }
+      return t("x");
+    };
+    inner();
+    toast(t("y"));
+  }, []);
+  return null;
+}`;
+
+    const violations = scanSource("src/J.tsx", text);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].problems).toHaveLength(1);
   });
 
   it("production code has no translation dependency outside the baseline", () => {
