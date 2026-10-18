@@ -26,7 +26,7 @@ pub const MAX_ENVELOPE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct MessageManifest {
-    messages: Vec<MessageRule>,
+    items: Vec<MessageRule>,
 }
 
 #[derive(Deserialize)]
@@ -47,7 +47,7 @@ fn rules() -> &'static [MessageRule] {
     RULES.get_or_init(|| {
         serde_json::from_str::<MessageManifest>(WINDOW_MESSAGES_JSON)
             .expect("window-messages.json must be valid")
-            .messages
+            .items
     })
 }
 

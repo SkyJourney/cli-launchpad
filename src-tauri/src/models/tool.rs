@@ -76,7 +76,14 @@ mod tests {
         }
         assert_eq!(seen.len(), VARIANT_COUNT);
 
-        let contract: Vec<String> = serde_json::from_str(TOOL_KEYS_JSON).expect("parse tool keys");
+        let manifest: serde_json::Value =
+            serde_json::from_str(TOOL_KEYS_JSON).expect("parse tool keys");
+        let contract: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("tool keys must be an items array")
+            .iter()
+            .map(|key| key.as_str().expect("tool key").to_string())
+            .collect();
         for value in &contract {
             let key = ToolKey::from_key(value).unwrap_or_else(|| panic!("{value} has no ToolKey"));
             assert_eq!(key.as_str(), value);

@@ -79,7 +79,7 @@ describe("error code contract", () => {
 
   it("maps exactly the codes listed by the contract", () => {
     const expected = [
-      ...errorCodes.codes,
+      ...errorCodes.items,
       ...errorCodes.frontendCodes,
       ...errorCodes.reservedCodes,
       ...aliasKeys,
@@ -98,14 +98,14 @@ describe("error code contract", () => {
   it("accepts only dotted codes plus the aliases the contract lists", () => {
     const dotted = /^[a-z]+(\.[a-z0-9_]+)+$/;
     for (const code of [
-      ...errorCodes.codes,
+      ...errorCodes.items,
       ...errorCodes.frontendCodes,
       ...errorCodes.reservedCodes,
     ]) {
       expect(code).toMatch(dotted);
     }
     for (const [alias, target] of Object.entries(errorCodes.aliases)) {
-      expect(errorCodes.codes).toContain(target);
+      expect(errorCodes.items).toContain(target);
       expect(normalizeAppErrorCode(alias)).toBe(target);
       const translator = (key: string) => `t:${key}`;
       expect(

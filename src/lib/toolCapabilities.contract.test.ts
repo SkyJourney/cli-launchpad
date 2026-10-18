@@ -43,7 +43,7 @@ describe("tool capability contract", () => {
   it("declares exactly the contract tool keys in display order", () => {
     const keys = listProviderDescriptors().map((item) => item.toolKey);
 
-    expect(keys).toEqual(toolKeys);
+    expect(keys).toEqual(toolKeys.items);
     expect(keys).toEqual(TOOLS.map((tool) => tool.key));
     expect(getProviderDescriptor("hermes").toolKey).toBe("hermes");
     expect(() => getProviderDescriptor("future-cli" as never)).toThrow(

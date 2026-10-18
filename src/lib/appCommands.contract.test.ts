@@ -98,9 +98,11 @@ describe("app command usage", () => {
   it("wraps exactly the registered app commands in tauri.ts", () => {
     const wrappers = wrapperCommands();
 
-    expect([...wrappers.values()].sort()).toEqual([...appCommands].sort());
+    expect([...wrappers.values()].sort()).toEqual(
+      [...appCommands.items].sort(),
+    );
     expect(new Set(wrappers.values()).size).toBe(wrappers.size);
-    expect(wrappers.size).toBe(appCommands.length);
+    expect(wrappers.size).toBe(appCommands.items.length);
     expect(wrappers.has("createPtySession")).toBe(true);
     expect(wrappers.get("createPtySession")).toBe("create_pty_session");
   });
@@ -134,7 +136,7 @@ describe("app command usage", () => {
     "only references wrappers allowed for %s windows",
     (kindId) => {
       const { commands } = commandsUsedBy(kindId);
-      const allowed = windowKinds.kinds.find((kind) => kind.id === kindId)
+      const allowed = windowKinds.items.find((kind) => kind.id === kindId)
         ?.appCommands as string[];
 
       expect(
@@ -171,7 +173,7 @@ describe("app command usage", () => {
         expect(wrappers.has(name)).toBe(true);
         expect(used).toContain(name);
         for (const kindId of kindsContaining) {
-          const allowed = windowKinds.kinds.find((kind) => kind.id === kindId)
+          const allowed = windowKinds.items.find((kind) => kind.id === kindId)
             ?.appCommands as string[];
           expect(allowed).not.toContain(wrappers.get(name));
         }

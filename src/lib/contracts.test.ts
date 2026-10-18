@@ -21,6 +21,8 @@ import {
   windowRouteOf,
 } from "./windowKinds";
 
+const contentKindIds = contentKinds.items.map((item) => item.id);
+
 const toolKeyTypeCoverage: Record<ToolKey, true> = {
   claude: true,
   codex: true,
@@ -46,31 +48,31 @@ describe("shared contracts", () => {
   });
 
   it("matches the TypeScript CLI registry and union", () => {
-    expect(TOOLS.map((tool) => tool.key)).toEqual(toolKeys);
-    expect(Object.keys(toolKeyTypeCoverage)).toEqual(toolKeys);
+    expect(TOOLS.map((tool) => tool.key)).toEqual(toolKeys.items);
+    expect(Object.keys(toolKeyTypeCoverage)).toEqual(toolKeys.items);
   });
 
   it("matches the TypeScript workspace content kinds", () => {
     expect(contentKinds.adapterApiVersion).toBe(3);
     expect(
       Object.keys(contentKindTypeCoverage).filter((kind) => kind !== "unknown"),
-    ).toEqual(contentKinds.kinds);
+    ).toEqual(contentKindIds);
   });
 
   it("declares each current window kind and registered app command", () => {
-    expect(windowKinds.version).toBe(1);
-    expect(windowKinds.kinds.map((kind) => kind.id)).toEqual([
+    expect(windowKinds.formatVersion).toBe(1);
+    expect(windowKinds.items.map((kind) => kind.id)).toEqual([
       "main",
       "terminal",
       "workspaceContent",
     ]);
-    expect(appCommands.length).toBeGreaterThan(0);
-    expect(new Set(appCommands).size).toBe(appCommands.length);
+    expect(appCommands.items.length).toBeGreaterThan(0);
+    expect(new Set(appCommands.items).size).toBe(appCommands.items.length);
 
-    const terminalWindow = windowKinds.kinds.find(
+    const terminalWindow = windowKinds.items.find(
       (kind) => kind.id === "terminal",
     );
-    const workspaceContentWindow = windowKinds.kinds.find(
+    const workspaceContentWindow = windowKinds.items.find(
       (kind) => kind.id === "workspaceContent",
     );
     expect(terminalWindow?.labelPrefix).toBe("terminal-");
@@ -93,8 +95,8 @@ describe("shared contracts", () => {
   });
 
   it("keeps built-in adapter kinds and API versions in the content-kind contract", () => {
-    expect(contentKinds.kinds).toEqual(["pty", "file"]);
-    for (const kind of contentKinds.kinds) {
+    expect(contentKindIds).toEqual(["pty", "file"]);
+    for (const kind of contentKindIds) {
       expect(
         getWorkspaceContentAdapter(kind as "pty" | "file").apiVersion,
       ).toBe(contentKinds.adapterApiVersion);
@@ -111,7 +113,7 @@ describe("shared contracts", () => {
   });
 
   it("accepts drag payloads exactly for the contract kinds", () => {
-    for (const kind of contentKinds.kinds) {
+    for (const kind of contentKindIds) {
       const raw = encodeWorkspaceContentDrag({
         key: `${kind}:x`,
         sourcePaneId: "p",

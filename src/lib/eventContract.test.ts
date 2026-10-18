@@ -20,18 +20,18 @@ const REGISTRY_FILES = [
 
 describe("event contract", () => {
   it("lists the same Rust events as the TypeScript registry", () => {
-    const rustEvents = events.events
+    const rustEvents = events.items
       .filter((event) => event.allowedSourceKinds.includes("rust"))
       .map((event) => event.name)
       .sort();
     expect(Object.values(RUST_EVENTS).sort()).toEqual(rustEvents);
-    expect(events.events.map((event) => event.name).sort()).toEqual(
+    expect(events.items.map((event) => event.name).sort()).toEqual(
       [...Object.values(RUST_EVENTS), APP_PREFERENCES_EVENT].sort(),
     );
   });
 
   it("never spells a contract event name outside the registry modules", () => {
-    const names = events.events.map((event) => event.name);
+    const names = events.items.map((event) => event.name);
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(sources)) {
       if (REGISTRY_FILES.includes(path)) continue;
@@ -51,9 +51,9 @@ describe("event contract", () => {
   });
 
   it("has well formed entries", () => {
-    const kindIds = windowKinds.kinds.map((kind) => kind.id);
+    const kindIds = windowKinds.items.map((kind) => kind.id);
     const seen = new Set<string>();
-    for (const event of events.events) {
+    for (const event of events.items) {
       expect(seen.has(event.name), event.name).toBe(false);
       seen.add(event.name);
       expect(event.name).toMatch(/^[a-z]+(-[a-z]+)*$/);

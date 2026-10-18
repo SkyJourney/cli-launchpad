@@ -68,7 +68,9 @@ export function readPtyLaunchParams(
   const instanceId = search.get(names.instanceId);
   if (!sessionId || !handoffToken || !instanceId) return null;
   const rawToolKey = search.get(names.toolKey);
-  const toolKey = (toolKeys as readonly string[]).includes(rawToolKey ?? "")
+  const toolKey = (toolKeys.items as readonly string[]).includes(
+    rawToolKey ?? "",
+  )
     ? (rawToolKey as ToolKey)
     : undefined;
   const title = search.get(names.title);

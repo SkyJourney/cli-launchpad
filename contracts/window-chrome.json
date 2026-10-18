@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "platform": "macos",
+      "nativeControls": true,
+      "titlebarInset": 82,
+      "trafficLightPosition": { "x": 14, "y": 20 }
+    },
+    {
+      "platform": "windows",
+      "nativeControls": false,
+      "titlebarInset": 0,
+      "trafficLightPosition": null
+    },
+    {
+      "platform": "linux",
+      "nativeControls": false,
+      "titlebarInset": 0,
+      "trafficLightPosition": null
+    }
+  ]
+}

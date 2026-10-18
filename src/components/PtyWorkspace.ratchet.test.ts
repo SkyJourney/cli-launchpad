@@ -68,7 +68,7 @@ describe("PtyWorkspace ratchet", () => {
   });
 
   it("does not grow kind branches in the host", () => {
-    expect(KIND_BRANCH_BASELINE).toBe(contentKinds.kinds.length);
+    expect(KIND_BRANCH_BASELINE).toBe(contentKinds.items.length);
     const count = countKindBranches(hostSource);
     expect(count).toBeLessThanOrEqual(KIND_BRANCH_BASELINE);
     expect(count).toBeLessThanOrEqual(HOST_KIND_BRANCHES_AT_M6_098);

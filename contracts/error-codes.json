@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "codes": [
+  "formatVersion": 1,
+  "items": [
     "app.data_replace_blocked",
     "app.data_replace_in_progress",
     "app.error",

@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "events": [
+  "formatVersion": 1,
+  "items": [
     {
       "name": "app-exit-requested",
       "mechanism": "inbox",

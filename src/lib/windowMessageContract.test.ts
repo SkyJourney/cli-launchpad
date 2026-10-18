@@ -95,7 +95,7 @@ const DIRECTIONS: ReadonlyArray<
 
 describe("window message contract", () => {
   it("lists exactly the protocol message types plus the two preference types", () => {
-    const contract = messages.messages.map((message) => message.type).sort();
+    const contract = messages.items.map((message) => message.type).sort();
     const expected = [
       ...WORKSPACE_CONTENT_WINDOW_MESSAGE_TYPES,
       APP_PREFERENCES_REQUEST_MESSAGE,
@@ -108,16 +108,16 @@ describe("window message contract", () => {
   });
 
   it("declares the protocol directions literally", () => {
-    expect(messages.messages).toHaveLength(DIRECTIONS.length);
+    expect(messages.items).toHaveLength(DIRECTIONS.length);
     for (const [type, from, to, contentKind] of DIRECTIONS) {
-      const entry = messages.messages.find((message) => message.type === type);
+      const entry = messages.items.find((message) => message.type === type);
       expect(entry, type).toBeDefined();
       expect(entry?.from, `${type} from`).toEqual(from);
       expect(entry?.to, `${type} to`).toEqual(to);
       expect(entry?.contentKind, `${type} contentKind`).toBe(contentKind);
     }
     // No type is both sent and received by terminal windows.
-    for (const message of messages.messages) {
+    for (const message of messages.items) {
       expect(
         message.from.includes("terminal") && message.to.includes("terminal"),
         message.type,
@@ -148,7 +148,7 @@ describe("window message contract", () => {
   });
 
   it("matches every send call site to the contract direction", () => {
-    const byType = new Map(messages.messages.map((m) => [m.type, m]));
+    const byType = new Map(messages.items.map((m) => [m.type, m]));
     const pattern =
       /(?:\.emit|emitWorkspaceContentWindowEvent|sendWindowMessage)\(\s*([^,]+?),\s*"([a-z0-9-]+)"/g;
     const violations: string[] = [];
@@ -186,7 +186,7 @@ describe("window message contract", () => {
   });
 
   it("lists the relay event in the TypeScript registry", () => {
-    const names = events.events.map((event) => event.name);
+    const names = events.items.map((event) => event.name);
 
     expect(RUST_EVENTS.windowMessage).toBe("window-message");
     expect(names).toContain("window-message");

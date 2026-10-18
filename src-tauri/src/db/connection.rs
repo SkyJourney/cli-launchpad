@@ -156,9 +156,15 @@ mod tests {
             .expect("query seeded tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read seeded tool keys");
-        let mut contract_keys: Vec<String> =
+        let manifest: serde_json::Value =
             serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
                 .expect("parse ToolKey contract");
+        let mut contract_keys: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("tool keys must be an items array")
+            .iter()
+            .map(|key| key.as_str().expect("tool key").to_string())
+            .collect();
         contract_keys.sort();
         assert_eq!(seeded_keys, contract_keys);
     }

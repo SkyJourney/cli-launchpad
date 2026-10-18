@@ -25,6 +25,29 @@ fn sorted_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     values
 }
 
+/// The `id` of every entry of a `{ formatVersion, items }` manifest whose items are objects.
+fn item_ids(manifest: &Value) -> Vec<String> {
+    manifest["items"]
+        .as_array()
+        .expect("manifest items must be an array")
+        .iter()
+        .map(|item| {
+            item["id"]
+                .as_str()
+                .expect("manifest item needs an id")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The registered app command names (`contracts/app-commands.json`).
+fn app_command_names() -> Vec<String> {
+    json_strings(
+        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app command contract")
+            ["items"],
+    )
+}
+
 fn json_strings(value: &Value) -> Vec<String> {
     value
         .as_array()
@@ -362,8 +385,8 @@ fn parse_csp(policy: &str) -> Result<BTreeMap<String, BTreeSet<String>>, String>
 
 #[test]
 fn tool_key_contract_matches_the_rust_registry() {
-    let contract: Vec<String> =
-        serde_json::from_str(TOOL_KEYS_JSON).expect("parse ToolKey contract");
+    let manifest: Value = serde_json::from_str(TOOL_KEYS_JSON).expect("parse ToolKey contract");
+    let contract = json_strings(&manifest["items"]);
     let rust_keys = crate::models::tool::ToolKey::ALL
         .into_iter()
         .map(|key| key.as_str().to_string())
@@ -424,7 +447,7 @@ fn content_kind_contract_matches_rust_serialization() {
         file["kind"].as_str().unwrap().to_string(),
     ];
 
-    assert_eq!(json_strings(&contract["kinds"]), serialized_kinds);
+    assert_eq!(item_ids(&contract), serialized_kinds);
 }
 
 #[test]
@@ -433,7 +456,7 @@ fn window_kind_contract_matches_rust_registry() {
 
     let manifest: Value =
         serde_json::from_str(WINDOW_KINDS_JSON).expect("parse WindowKind contract");
-    let kinds = manifest["kinds"]
+    let kinds = manifest["items"]
         .as_array()
         .expect("window kinds must be an array");
     for kind in kinds {
@@ -461,8 +484,7 @@ fn window_kind_contract_matches_rust_registry() {
 
 #[test]
 fn app_command_contract_matches_the_registered_handler() {
-    let commands: Vec<String> =
-        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let commands: Vec<String> = app_command_names();
     let command_set: HashSet<&str> = commands.iter().map(String::as_str).collect();
     assert_eq!(commands.len(), command_set.len(), "duplicate app command");
 
@@ -507,8 +529,8 @@ fn app_command_contract_matches_the_registered_handler() {
 fn window_kind_contract_matches_capabilities() {
     let manifest: Value =
         serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kind contract");
-    assert_eq!(manifest["version"].as_u64(), Some(1));
-    let kinds = manifest["kinds"]
+    assert_eq!(manifest["formatVersion"].as_u64(), Some(1));
+    let kinds = manifest["items"]
         .as_array()
         .expect("window kinds must be an array");
     let mut by_capability = HashMap::new();
@@ -527,8 +549,7 @@ fn window_kind_contract_matches_capabilities() {
         );
     }
 
-    let app_commands: Vec<String> =
-        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let app_commands: Vec<String> = app_command_names();
     let capability_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
     let mut found_capabilities = HashSet::new();
     for entry in fs::read_dir(capability_dir).expect("read capability directory") {
@@ -585,7 +606,7 @@ fn real_capability(file: &str) -> Value {
 }
 
 fn kind_of(manifest: &Value, id: &str) -> Value {
-    manifest["kinds"]
+    manifest["items"]
         .as_array()
         .expect("window kinds must be an array")
         .iter()
@@ -642,8 +663,7 @@ fn handler_parser_ignores_comments_and_rejects_malformed_entries() {
     assert!(parse_handler_commands("generate_handler![]").is_err());
     assert!(parse_handler_commands("generate_handler![commands::one]").is_err());
     // 5. 真实 lib.rs
-    let contract: Vec<String> =
-        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let contract: Vec<String> = app_command_names();
     assert_eq!(
         sorted_strings(parse_handler_commands(LIB_RS).expect("parse lib.rs")),
         sorted_strings(contract)
@@ -654,8 +674,7 @@ fn handler_parser_ignores_comments_and_rejects_malformed_entries() {
 fn capability_comparator_rejects_extra_plugin_and_object_permissions() {
     let manifest: Value =
         serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kind contract");
-    let app_commands: Vec<String> =
-        serde_json::from_str(APP_COMMANDS_JSON).expect("parse app command contract");
+    let app_commands: Vec<String> = app_command_names();
     let terminal_kind = kind_of(&manifest, "terminal");
     let content_kind = kind_of(&manifest, "workspaceContent");
     let main_kind = kind_of(&manifest, "main");
@@ -788,7 +807,7 @@ fn content_kind_contract_covers_every_known_variant() {
         serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kind contract");
     assert_eq!(
         sorted_strings(samples.iter().map(|(kind, _)| (*kind).to_string())),
-        sorted_strings(json_strings(&contract["kinds"]))
+        sorted_strings(item_ids(&contract))
     );
     for (kind, value) in &samples {
         let parsed: WorkspacePaneContentRef =
@@ -2285,7 +2304,7 @@ fn production_rust_sources() -> Vec<(String, String)> {
 #[test]
 fn error_code_contract_matches_rust_registry() {
     let contract: serde_json::Value = serde_json::from_str(ERROR_CODES_JSON).unwrap();
-    let mut codes = string_array(&contract["codes"], "codes");
+    let mut codes = string_array(&contract["items"], "codes");
     codes.sort();
     let mut registry: Vec<String> = crate::error_codes::ALL
         .iter()
@@ -2410,7 +2429,7 @@ fn reserved_and_frontend_codes_have_no_rust_producer() {
 #[test]
 fn event_contract_matches_rust_event_constants() {
     let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
-    let events = contract["events"]
+    let events = contract["items"]
         .as_array()
         .expect("events must be an array");
     let mut rust_emitted: Vec<String> = events
@@ -2442,7 +2461,7 @@ fn rust_event_names_are_only_spelled_in_the_events_module() {
         "the scanner must read the production tree, found {}",
         sources.len()
     );
-    for event in contract["events"].as_array().unwrap() {
+    for event in contract["items"].as_array().unwrap() {
         let name = event["name"].as_str().unwrap();
         if !string_array(&event["allowedSourceKinds"], "allowedSourceKinds")
             .contains(&"rust".to_string())
@@ -2472,7 +2491,7 @@ fn rust_event_names_are_only_spelled_in_the_events_module() {
 fn event_contract_entries_are_well_formed() {
     let kinds: serde_json::Value =
         serde_json::from_str(include_str!("../../../contracts/window-kinds.json")).unwrap();
-    let kind_ids: Vec<String> = kinds["kinds"]
+    let kind_ids: Vec<String> = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -2480,7 +2499,7 @@ fn event_contract_entries_are_well_formed() {
         .collect();
     let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
     let mut seen = std::collections::HashSet::new();
-    for event in contract["events"].as_array().unwrap() {
+    for event in contract["items"].as_array().unwrap() {
         let name = event["name"].as_str().unwrap();
         assert!(seen.insert(name.to_string()), "duplicate event {name}");
         assert!(
@@ -2974,7 +2993,7 @@ fn child_processes_are_spawned_only_through_the_supervised_primitives() {
 fn rust_to_window_events_use_the_inbox_mechanism() {
     let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
     let mut inbox_events = Vec::new();
-    for event in contract["events"].as_array().unwrap() {
+    for event in contract["items"].as_array().unwrap() {
         let name = event["name"].as_str().unwrap();
         if event["direction"] == "rust-to-window" {
             assert_eq!(event["mechanism"], "inbox", "{name} must use the inbox");
@@ -3048,7 +3067,7 @@ const WINDOW_MESSAGES_JSON: &str = include_str!("../../../contracts/window-messa
 #[test]
 fn window_message_contract_is_well_formed() {
     let contract: serde_json::Value = serde_json::from_str(WINDOW_MESSAGES_JSON).unwrap();
-    let messages = contract["messages"].as_array().unwrap();
+    let messages = contract["items"].as_array().unwrap();
     assert_eq!(messages.len(), 20);
     let names: Vec<&str> = messages
         .iter()
@@ -3157,7 +3176,7 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
                 "{kind_id} must not have {forbidden}"
             );
         }
-        let kind = kinds["kinds"]
+        let kind = kinds["items"]
             .as_array()
             .unwrap()
             .iter()
@@ -3185,7 +3204,7 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
         .unwrap()
         .iter()
         .any(|permission| permission == "allow-send-window-message"));
-    let main_kind = kinds["kinds"]
+    let main_kind = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -3197,7 +3216,7 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
 #[test]
 fn event_contract_lists_the_relay_event_and_not_the_retired_ones() {
     let contract: serde_json::Value = serde_json::from_str(EVENTS_JSON).unwrap();
-    let events = contract["events"].as_array().unwrap();
+    let events = contract["items"].as_array().unwrap();
     let find = |name: &str| events.iter().find(|event| event["name"] == name);
 
     let relay = find("window-message").expect("window-message is registered");
@@ -3239,7 +3258,7 @@ struct CallerCheck {
 fn caller_checks() -> Vec<CallerCheck> {
     let contract: Value =
         serde_json::from_str(COMMAND_CALLER_CHECKS_JSON).expect("parse command caller checks");
-    contract["commands"]
+    contract["items"]
         .as_array()
         .expect("commands must be an array")
         .iter()
@@ -3352,10 +3371,9 @@ fn kind_id(variant: &str) -> &'static str {
 
 /// The window kinds the ACL (`window-kinds.json`) grants a command to.
 fn acl_kinds(command: &str, manifest: &Value) -> BTreeSet<String> {
-    let app_commands: Vec<String> =
-        json_strings(&serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse commands"));
+    let app_commands: Vec<String> = app_command_names();
     assert!(app_commands.iter().any(|name| name == command), "{command}");
-    manifest["kinds"]
+    manifest["items"]
         .as_array()
         .expect("window kinds")
         .iter()
@@ -3370,9 +3388,7 @@ fn acl_kinds(command: &str, manifest: &Value) -> BTreeSet<String> {
 #[test]
 fn command_caller_check_contract_covers_every_registered_command() {
     let checks = caller_checks();
-    let registered: Vec<String> = json_strings(
-        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app commands"),
-    );
+    let registered: Vec<String> = app_command_names();
 
     let names: Vec<String> = checks.iter().map(|check| check.command.clone()).collect();
     assert_eq!(names, sorted_strings(names.clone()), "dictionary order");
@@ -3430,9 +3446,7 @@ fn command_caller_check_contract_covers_every_registered_command() {
 #[test]
 fn acl_only_commands_are_main_only_and_take_no_window_parameter() {
     let definitions = command_definitions();
-    let registered: Vec<String> = json_strings(
-        &serde_json::from_str::<Value>(APP_COMMANDS_JSON).expect("parse app commands"),
-    );
+    let registered: Vec<String> = app_command_names();
     // Reverse: the parser found every registered command (it cannot silently skip one).
     assert_eq!(definitions.len(), registered.len());
 
@@ -3621,7 +3635,7 @@ fn window_inbox_commands_accept_every_window_kind() {
     // wrong-kind caller to reject, so a behavioural "not allowed" test cannot exist; what protects
     // them is that the guard exists and lists exactly all window kinds.
     let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
-    let all_kinds: BTreeSet<String> = manifest["kinds"]
+    let all_kinds: BTreeSet<String> = manifest["items"]
         .as_array()
         .expect("window kinds")
         .iter()
@@ -3777,11 +3791,87 @@ fn tool_capabilities_contract_matches_adapter_descriptors() {
         .collect();
     let tool_keys: serde_json::Value =
         serde_json::from_str(TOOL_KEYS_JSON).expect("parse tool keys");
-    let tool_keys: Vec<&str> = tool_keys
+    let tool_keys: Vec<&str> = tool_keys["items"]
         .as_array()
         .expect("tool keys")
         .iter()
         .map(|value| value.as_str().expect("tool key"))
         .collect();
     assert_eq!(keys, tool_keys, "契约顺序必须等于 tool-keys.json");
+}
+
+// ---- m6-070: contract manifest envelope, window kind roles, window chrome (contracts/*.json).
+
+#[test]
+fn contract_manifests_use_the_common_envelope() {
+    const MANIFESTS: [(&str, &[&str]); 10] = [
+        ("app-commands.json", &[]),
+        ("command-caller-checks.json", &[]),
+        ("content-kinds.json", &["adapterApiVersion"]),
+        (
+            "error-codes.json",
+            &["aliases", "frontendCodes", "reservedCodes"],
+        ),
+        ("events.json", &[]),
+        ("tool-capabilities.json", &[]),
+        ("tool-keys.json", &[]),
+        ("window-chrome.json", &[]),
+        ("window-kinds.json", &[]),
+        ("window-messages.json", &[]),
+    ];
+    const EXEMPT: [&str; 3] = [
+        "rust-platform-tests.json",
+        "serde-lint-allowlist.json",
+        "window-label-fixtures.json",
+    ];
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("read contracts directory")
+        .filter_map(|entry| {
+            let entry = entry.expect("read contract entry");
+            entry
+                .file_type()
+                .expect("contract file type")
+                .is_file()
+                .then(|| entry.file_name().to_string_lossy().to_string())
+        })
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    names.sort();
+
+    let mut classified: Vec<String> = MANIFESTS
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .chain(EXEMPT.iter().map(|name| (*name).to_string()))
+        .collect();
+    classified.sort();
+    assert_eq!(names, classified, "contracts/*.json 必须全部归类");
+
+    for (name, allowed) in MANIFESTS {
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(directory.join(name)).expect("read manifest"),
+        )
+        .expect("parse manifest");
+        let object = value
+            .as_object()
+            .unwrap_or_else(|| panic!("{name} 不能是裸数组"));
+        assert!(
+            object
+                .get("formatVersion")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|version| version >= 1),
+            "{name} 缺少 formatVersion"
+        );
+        assert!(
+            object.get("items").is_some_and(serde_json::Value::is_array),
+            "{name} 的 items 必须是数组"
+        );
+        let mut extra: Vec<&str> = object
+            .keys()
+            .map(String::as_str)
+            .filter(|key| *key != "formatVersion" && *key != "items")
+            .collect();
+        extra.sort();
+        assert_eq!(extra, allowed, "{name} 的额外顶层键");
+    }
 }

@@ -67,7 +67,7 @@ describe("window kind contract", () => {
 
 describe("window kind type", () => {
   it("declares exactly the kinds listed in the contract", () => {
-    expect(manifest.kinds.map((kind) => kind.id).sort()).toEqual(
+    expect(manifest.items.map((kind) => kind.id).sort()).toEqual(
       [...WINDOW_KINDS].sort(),
     );
   });

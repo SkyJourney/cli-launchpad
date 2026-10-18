@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "messages": [
+  "formatVersion": 1,
+  "items": [
     {
       "type": "app-preferences-reply",
       "from": ["main"],

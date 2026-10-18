@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "commands": [
+  "formatVersion": 1,
+  "items": [
     {
       "command": "acknowledge_pty_output",
       "callerCheck": "require",

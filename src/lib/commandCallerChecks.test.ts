@@ -5,12 +5,12 @@ import checks from "../../contracts/command-caller-checks.json";
 import windowKinds from "../../contracts/window-kinds.json";
 
 type Check = { command: string; callerCheck: string; kinds?: string[] };
-const entries = checks.commands as Check[];
+const entries = checks.items as Check[];
 
 describe("command caller checks", () => {
   it("declares a caller check for every registered app command", () => {
     expect(entries.map((entry) => entry.command).sort()).toEqual(
-      [...appCommands].sort(),
+      [...appCommands.items].sort(),
     );
     expect(new Set(entries.map((entry) => entry.command)).size).toBe(
       entries.length,
@@ -21,13 +21,13 @@ describe("command caller checks", () => {
       );
     }
     // Reverse: the contract is as large as the command list.
-    expect(entries.length).toBe(appCommands.length);
+    expect(entries.length).toBe(appCommands.items.length);
     expect(entries.length).toBeGreaterThanOrEqual(72);
   });
 
   it("requires a caller check for every command granted to a child window kind", () => {
     let checked = 0;
-    for (const kind of windowKinds.kinds) {
+    for (const kind of windowKinds.items) {
       if (kind.id === "main") continue;
       const granted = kind.appCommands as string[];
       for (const command of granted) {
@@ -41,7 +41,7 @@ describe("command caller checks", () => {
     }
     // Every acl-only command stays out of the child window kinds.
     const childCommands = new Set(
-      windowKinds.kinds
+      windowKinds.items
         .filter((kind) => kind.id !== "main")
         .flatMap((kind) => kind.appCommands as string[]),
     );

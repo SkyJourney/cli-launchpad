@@ -14,7 +14,7 @@ pub enum WindowKind {
 
 #[derive(Deserialize)]
 struct WindowKindsManifest {
-    kinds: Vec<WindowKindDefinition>,
+    items: Vec<WindowKindDefinition>,
 }
 
 #[derive(Deserialize)]
@@ -30,7 +30,7 @@ fn definitions() -> &'static [WindowKindDefinition] {
     DEFINITIONS.get_or_init(|| {
         serde_json::from_str::<WindowKindsManifest>(WINDOW_KINDS_JSON)
             .expect("window-kinds.json must be valid")
-            .kinds
+            .items
     })
 }
 

@@ -183,7 +183,7 @@ function checkCommand(command: string): void {
     return;
   }
   const { label, kind } = resolveCaller();
-  const commands = windowKindsManifest.kinds.find(
+  const commands = windowKindsManifest.items.find(
     (candidate) => candidate.id === kind,
   )?.appCommands;
   if (commands === "all") {

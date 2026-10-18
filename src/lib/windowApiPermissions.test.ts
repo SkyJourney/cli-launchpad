@@ -180,7 +180,7 @@ function pluginPermissionViolations(
   capability: { permissions: PermissionEntry[] },
 ): string[] {
   const violations: string[] = [];
-  const declaredEntries = windowKinds.kinds.find((kind) => kind.id === kindId)!
+  const declaredEntries = windowKinds.items.find((kind) => kind.id === kindId)!
     .pluginPermissions as PermissionEntry[];
   const declared = declaredEntries.map(canonicalJson);
   const actual: PermissionEntry[] = [];
@@ -221,7 +221,7 @@ function pluginPermissionViolations(
 }
 
 describe("native API permissions by window kind", () => {
-  it.each(windowKinds.kinds)("grants APIs used by $id", (kind) => {
+  it.each(windowKinds.items)("grants APIs used by $id", (kind) => {
     const kindId = kind.id as WindowKindId;
 
     expect(findMissingPermissions(kindId, CAPABILITIES[kindId])).toEqual([]);
@@ -366,7 +366,7 @@ describe("native API permissions by window kind", () => {
     );
   });
 
-  it.each(windowKinds.kinds)(
+  it.each(windowKinds.items)(
     "matches the plugin permissions declared in window-kinds.json for $id",
     (kind) => {
       const kindId = kind.id as WindowKindId;
