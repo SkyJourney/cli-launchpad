@@ -54,6 +54,28 @@ describe("theme registry", () => {
     }
   });
 
+  it("gives the terminal the same colours in every theme", () => {
+    // PD-07：终端固定深色，但背景、前景、选区仍从当前主题的 CSS token 读取；
+    // 任何主题块改了这三个值，终端就会随主题变色，与 PD-07 相悖。
+    const terminalTokens = [
+      "--color-terminal-background",
+      "--color-terminal-foreground",
+      "--color-terminal-selection",
+    ];
+    const valueOf = (block, token) =>
+      block.match(new RegExp(`^\\s*${token}:\\s*([^;]+);`, "m"))?.[1].trim();
+
+    for (const token of terminalTokens) {
+      const expected = valueOf(tokenBlock("light"), token);
+      expect(expected, `${token} 在 light 主题块中有值`).toBeTruthy();
+      for (const themeId of THEME_IDS) {
+        expect(valueOf(tokenBlock(themeId), token), `${themeId} ${token}`).toBe(
+          expected,
+        );
+      }
+    }
+  });
+
   it("declares no raw colour literals outside theme token blocks", () => {
     const blocks = styles.match(THEME_BLOCK_PATTERN) ?? [];
     expect(blocks.length, "每个已注册主题恰有一个 token 块").toBe(

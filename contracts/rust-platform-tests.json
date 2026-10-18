@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 699,
-    "Linux": 706,
-    "macOS": 704
+    "Windows": 700,
+    "Linux": 707,
+    "macOS": 705
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,7 @@
   ],
   "required": {
     "all": [
+      "services::cli_adapters::antigravity::platform::context_tests::update_plan_accepts_every_spelling_of_the_primary_command",
       "services::cli_adapters::claude::platform::context_tests::update_plan_uses_the_injected_executable_path",
       "services::cli_adapters::claude::platform::context_tests::update_plan_requires_a_detected_executable",
       "services::cli_adapters::codex::platform::context_tests::update_plan_uses_the_injected_executable_path",

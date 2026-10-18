@@ -109,6 +109,20 @@ mod context_tests {
     }
 
     #[test]
+    fn update_plan_accepts_every_spelling_of_the_primary_command() {
+        for path in [
+            "custom-bin/agy.exe",
+            "custom-bin/agy.cmd",
+            "custom-bin/AGY.EXE",
+        ] {
+            let plan = build_plan(InstallKind::Update, &context(Some(path))).unwrap();
+
+            assert_eq!(plan.program, PathBuf::from(path).display().to_string());
+            assert_eq!(plan.args, vec!["update".to_string()]);
+        }
+    }
+
+    #[test]
     fn update_plan_rejects_the_compatibility_command() {
         for path in ["custom-bin/antigravity", "custom-bin/antigravity.exe"] {
             let error = build_plan(InstallKind::Update, &context(Some(path))).unwrap_err();

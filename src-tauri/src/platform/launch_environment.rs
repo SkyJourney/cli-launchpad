@@ -1,4 +1,5 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
+#[cfg(any(test, not(windows)))]
 use std::path::PathBuf;
 
 /// The environment every CLI operation (detection, install plans, launch
@@ -23,17 +24,17 @@ impl LaunchEnvironment {
         Self { path }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // no production consumer yet; decide keep-or-remove when m6-069 closes
+    #[cfg(test)]
     pub fn from_path(path: Option<OsString>) -> Self {
         Self { path }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // no production consumer yet; decide keep-or-remove when m6-069 closes
-    pub fn path(&self) -> Option<&OsStr> {
+    #[cfg(test)]
+    pub fn path(&self) -> Option<&std::ffi::OsStr> {
         self.path.as_deref()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // no production consumer yet; decide keep-or-remove when m6-069 closes
+    #[cfg(any(test, not(windows)))]
     pub fn path_dirs(&self) -> Vec<PathBuf> {
         self.path
             .as_deref()
@@ -52,7 +53,7 @@ impl LaunchEnvironment {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // no production consumer yet; decide keep-or-remove when m6-069 closes
+    #[cfg(test)]
     pub fn apply_to_tokio(&self, command: &mut tokio::process::Command) {
         if let Some(path) = &self.path {
             command.env("PATH", path);
