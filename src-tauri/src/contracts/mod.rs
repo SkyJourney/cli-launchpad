@@ -1149,12 +1149,6 @@ fn ipc_dto_variants_serialize_with_camel_case_field_names() {
             &["/finishedAtMs", "/exitCode", "/errorMessage"],
         ),
         (
-            "InstallPlan",
-            "installFull",
-            "installMinimal",
-            &["/effects"],
-        ),
-        (
             "LatestVersion",
             "latestFull",
             "latestMinimal",

@@ -13,7 +13,6 @@ const plan: InstallPlan = {
   fingerprint: "new-fingerprint",
   source: "native updater",
   preview: "codex update",
-  effects: null,
 };
 
 describe("install plan confirmation refresh", () => {

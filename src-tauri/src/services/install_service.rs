@@ -53,7 +53,6 @@ pub(crate) fn resolved_plan(
         fingerprint: String::new(),
         source: source.to_string(),
         preview,
-        effects: None,
     };
     plan.refresh_fingerprint();
     plan

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 717,
-    "Linux": 724,
-    "macOS": 722
+    "Windows": 719,
+    "Linux": 726,
+    "macOS": 724
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,8 @@
   ],
   "required": {
     "all": [
+      "models::install::tests::install_plan_serializes_without_an_effects_field",
+      "models::install::tests::install_plan_ignores_a_legacy_effects_key",
       "contracts::command_manifest_has_no_companion_caller_check_file",
       "services::workspace_layout_service::tests::applying_preset_preserves_detached_unknown_contents",
       "contracts::api_versions_contract_matches_the_rust_protocol_constants",

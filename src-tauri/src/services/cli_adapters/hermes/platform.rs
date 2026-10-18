@@ -117,7 +117,6 @@ pub(super) fn build_plan(
                 fingerprint: String::new(),
                 source: "Hermes Agent 官方源码安装内置更新命令（任务启动前校验安装来源）"
                     .to_string(),
-                effects: None,
             });
         }
     }

@@ -285,7 +285,6 @@ export interface InstallPlan {
   fingerprint: string;
   source: string;
   preview: string;
-  effects: string | null;
 }
 
 export type ExecutionStatus =

@@ -72,7 +72,6 @@ pub(crate) fn grok_update_plan_for(path: &str) -> InstallPlan {
         fingerprint: String::new(),
         source: "Grok Build 官方原生更新器（任务启动后校验 CLI 来源）".to_string(),
         preview: format!("{} update", quote_command_path(path)),
-        effects: None,
     }
 }
 

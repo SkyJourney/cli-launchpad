@@ -758,26 +758,17 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
     // InstallPlan
     let mut cases = Vec::new();
     let name = "InstallPlan";
-    for (case, effects) in [
-        (
-            "installFull",
-            Some("Writes the CLI into the user profile.".to_string()),
-        ),
-        ("installMinimal", None),
-    ] {
-        let mut plan = InstallPlan {
-            tool_key: ToolKey::Grok,
-            kind: InstallKind::Install,
-            program: "C:\\tools\\installer.exe".to_string(),
-            args: vec!["--stable".to_string()],
-            fingerprint: String::new(),
-            source: "official installer".to_string(),
-            preview: "C:\\tools\\installer.exe --stable".to_string(),
-            effects,
-        };
-        plan.refresh_fingerprint();
-        sample(&mut cases, name, case, plan);
-    }
+    let mut plan = InstallPlan {
+        tool_key: ToolKey::Grok,
+        kind: InstallKind::Install,
+        program: "C:\\tools\\installer.exe".to_string(),
+        args: vec!["--stable".to_string()],
+        fingerprint: String::new(),
+        source: "official installer".to_string(),
+        preview: "C:\\tools\\installer.exe --stable".to_string(),
+    };
+    plan.refresh_fingerprint();
+    sample(&mut cases, name, "install", plan);
     all.push(DtoSamples {
         fixture_file: Some("install-plan.json"),
         type_name: name,

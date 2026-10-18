@@ -545,7 +545,6 @@ mod tests {
             fingerprint: String::new(),
             source: "test".to_string(),
             preview: "hermes update".to_string(),
-            effects: None,
         };
 
         assert_eq!(

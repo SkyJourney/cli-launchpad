@@ -42,9 +42,6 @@ pub struct InstallPlan {
     pub source: String,
     /// Human-readable command preview shown before execution.
     pub preview: String,
-    /// Optional read-only details that explain the effect of an operation.
-    #[serde(default)]
-    pub effects: Option<String>,
 }
 
 impl InstallPlan {
@@ -128,7 +125,6 @@ mod tests {
             fingerprint: String::new(),
             source: "native updater".to_string(),
             preview: "codex update".to_string(),
-            effects: None,
         }
     }
 
@@ -175,5 +171,44 @@ mod tests {
         let serialized = serde_json::to_string(&expected).unwrap();
         assert!(serialized.contains("reasonKey"), "{serialized}");
         assert!(!serialized.contains("reason_key"), "{serialized}");
+    }
+
+    const PLAN_WITHOUT_EFFECTS: &str = r#"{"toolKey":"claude","kind":"update","program":"claude","args":["update"],"fingerprint":"f","source":"s","preview":"p"}"#;
+
+    #[test]
+    fn install_plan_serializes_without_an_effects_field() {
+        let plan: InstallPlan =
+            serde_json::from_str(PLAN_WITHOUT_EFFECTS).expect("plan without effects");
+        let value = serde_json::to_value(&plan).expect("serialize plan");
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("plan object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "args",
+                "fingerprint",
+                "kind",
+                "preview",
+                "program",
+                "source",
+                "toolKey"
+            ]
+        );
+        assert!(value.get("effects").is_none());
+    }
+
+    #[test]
+    fn install_plan_ignores_a_legacy_effects_key() {
+        let with_null = PLAN_WITHOUT_EFFECTS.replace('}', ",\"effects\":null}");
+        let with_text = PLAN_WITHOUT_EFFECTS.replace('}', ",\"effects\":\"old text\"}");
+        for json in [with_null, with_text] {
+            let plan: InstallPlan = serde_json::from_str(&json).expect("legacy payload");
+            assert_eq!(plan.program, "claude");
+        }
     }
 }

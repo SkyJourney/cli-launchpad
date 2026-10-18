@@ -139,7 +139,6 @@ const PLAN = keysOf<InstallPlan>()([
   "fingerprint",
   "source",
   "preview",
-  "effects",
 ]);
 const CLI_STATUS = keysOf<CliStatus>()([
   "toolKey",

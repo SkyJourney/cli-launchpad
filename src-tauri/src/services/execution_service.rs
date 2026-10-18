@@ -1278,7 +1278,6 @@ mod tests {
                 fingerprint: "test-fingerprint".to_string(),
                 source: "test".to_string(),
                 preview: "C:\\tool.exe update".to_string(),
-                effects: None,
             }
         }
 
@@ -1455,7 +1454,6 @@ mod tests {
             fingerprint: "test-fingerprint".to_string(),
             source: "test".to_string(),
             preview: "C:\\tool.exe update".to_string(),
-            effects: None,
         }
     }
 

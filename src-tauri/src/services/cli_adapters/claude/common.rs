@@ -172,7 +172,6 @@ mod tests {
             fingerprint: String::new(),
             source: "test".to_string(),
             preview: "claude update".to_string(),
-            effects: None,
         };
 
         let command = ADAPTER.prepare_command(&plan);
@@ -243,7 +242,6 @@ mod preflight_tests {
             fingerprint: String::new(),
             source: "test".to_string(),
             preview: "claude".to_string(),
-            effects: None,
         }
     }
 
