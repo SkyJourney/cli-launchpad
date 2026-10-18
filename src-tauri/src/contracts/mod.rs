@@ -4270,3 +4270,99 @@ fn event_payload_fixtures_cover_every_payload_event() {
         }
     }
 }
+
+#[test]
+fn layout_fixtures_are_accepted_or_rejected_consistently() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/fixtures/layouts");
+    let read = |directory: &str| -> Vec<(String, String)> {
+        let mut files: Vec<(String, String)> = std::fs::read_dir(root.join(directory))
+            .unwrap_or_else(|error| panic!("读取 layouts/{directory} 失败：{error}"))
+            .map(|entry| entry.expect("read entry").path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .map(|path| {
+                (
+                    path.file_name().unwrap().to_string_lossy().to_string(),
+                    std::fs::read_to_string(&path).expect("read layout fixture"),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let valid = read("valid");
+    let invalid = read("invalid");
+    assert_eq!(valid.len(), 3, "valid 样例必须恰为 3 个");
+    assert_eq!(invalid.len(), 8, "invalid 样例必须恰为 8 个");
+    for (name, text) in &valid {
+        assert!(
+            crate::models::workspace_layout::WorkspaceLayoutDocument::from_json(text).is_ok(),
+            "valid/{name} 应被 Rust 接受"
+        );
+    }
+    for (name, text) in &invalid {
+        assert!(
+            crate::models::workspace_layout::WorkspaceLayoutDocument::from_json(text).is_err(),
+            "invalid/{name} 应被 Rust 拒绝"
+        );
+    }
+}
+
+#[test]
+fn golden_layout_fixtures_match_generated_documents() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/fixtures/layouts");
+    let update = std::env::var_os("UPDATE_CONTRACT_FIXTURES").is_some();
+    let documents = fixtures::layout_fixture_documents();
+    assert_eq!(
+        documents
+            .iter()
+            .filter(|(kind, _, _)| *kind == "valid")
+            .count(),
+        3
+    );
+    assert_eq!(
+        documents
+            .iter()
+            .filter(|(kind, _, _)| *kind == "invalid")
+            .count(),
+        8
+    );
+
+    for (kind, name, value) in &documents {
+        let expected = fixtures::render_fixture(value);
+        let path = root.join(kind).join(format!("{name}.json"));
+        if update {
+            std::fs::create_dir_all(path.parent().unwrap())
+                .expect("create layout fixture directory");
+            std::fs::write(&path, &expected).expect("write layout fixture");
+        }
+        let actual = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 {kind}/{name}.json 失败：{error}。运行 UPDATE_CONTRACT_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --locked golden_layout_fixtures 重新生成"))
+            .replace("\r\n", "\n");
+        assert_eq!(actual, expected, "{kind}/{name}.json 与生成结果不一致");
+    }
+    for kind in ["valid", "invalid"] {
+        let mut on_disk: Vec<String> = std::fs::read_dir(root.join(kind))
+            .expect("read layout fixture directory")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        on_disk.sort();
+        let mut expected: Vec<String> = documents
+            .iter()
+            .filter(|(candidate, _, _)| candidate == &kind)
+            .map(|(_, name, _)| format!("{name}.json"))
+            .collect();
+        expected.sort();
+        assert_eq!(on_disk, expected, "{kind} 目录里不能有多余或缺少的文件");
+    }
+}

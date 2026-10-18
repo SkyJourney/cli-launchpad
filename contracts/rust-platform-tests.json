@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 712,
-    "Linux": 719,
-    "macOS": 717
+    "Windows": 714,
+    "Linux": 721,
+    "macOS": 719
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,8 @@
   ],
   "required": {
     "all": [
+      "contracts::layout_fixtures_are_accepted_or_rejected_consistently",
+      "contracts::golden_layout_fixtures_match_generated_documents",
       "contracts::command_definitions_extract_the_return_type",
       "contracts::every_command_return_dto_has_a_golden_fixture",
       "contracts::dto_samples_cover_option_fields_with_some_and_none",

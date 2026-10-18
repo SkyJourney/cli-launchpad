@@ -1469,3 +1469,178 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
 
     all
 }
+
+const LAYOUT_SLOT_A: &str = "8e783338-f464-4b10-b15e-b534748c6241";
+const LAYOUT_SLOT_B: &str = "9f3a1c52-6d7e-4a8b-9c0d-1e2f3a4b5c6d";
+const LAYOUT_DOC_A: &str = "11111111-2222-4333-8444-555555555555";
+const LAYOUT_DOC_B: &str = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+
+fn layout_slot(instance_id: &str, sequence: u32) -> serde_json::Value {
+    serde_json::json!({
+        "instanceId": instance_id,
+        "directoryId": 1,
+        "directoryPath": "/work/demo",
+        "projectName": "demo",
+        "toolKey": "claude",
+        "sequence": sequence,
+        "sessionId": null,
+        "resumeSessionId": null,
+        "title": { "kind": "automatic" }
+    })
+}
+
+fn layout_document_ref(id: &str, relative_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "directoryId": 1,
+        "directoryPath": "/work/demo",
+        "relativePath": relative_path
+    })
+}
+
+fn layout_pty(slot_id: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "pty", "slotId": slot_id })
+}
+
+fn layout_file(document_id: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "file", "documentId": document_id })
+}
+
+fn layout_pane(id: &str, number: u32, contents: Vec<serde_json::Value>) -> serde_json::Value {
+    let active = contents.first().cloned();
+    serde_json::json!({
+        "kind": "pane",
+        "id": id,
+        "paneNumber": number,
+        "contents": contents,
+        "activeContent": active
+    })
+}
+
+fn layout_document(
+    tree: serde_json::Value,
+    focused_pane_id: &str,
+    slots: Vec<serde_json::Value>,
+    documents: Vec<serde_json::Value>,
+    detached: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": 5,
+        "tree": tree,
+        "focusedPaneId": focused_pane_id,
+        "slots": slots,
+        "documents": documents,
+        "detachedContents": detached
+    })
+}
+
+fn layout_split_base() -> serde_json::Value {
+    layout_document(
+        serde_json::json!({
+            "kind": "split",
+            "id": "split-1",
+            "direction": "horizontal",
+            "ratio": 0.5,
+            "first": layout_pane("pane-1", 1, vec![layout_pty(LAYOUT_SLOT_A)]),
+            "second": layout_pane("pane-2", 2, vec![layout_file(LAYOUT_DOC_A)])
+        }),
+        "pane-1",
+        vec![layout_slot(LAYOUT_SLOT_A, 1)],
+        vec![layout_document_ref(LAYOUT_DOC_A, "src/main.rs")],
+        vec![],
+    )
+}
+
+/// (目录 "valid" 或 "invalid", 文件名不含扩展名, 文档)。valid 由 Rust 与 TypeScript 都接受，
+/// invalid 由两端都拒绝；这些文档只覆盖两端都实现了的校验。
+pub(crate) fn layout_fixture_documents() -> Vec<(&'static str, &'static str, serde_json::Value)> {
+    let base = layout_split_base();
+    let mut out: Vec<(&'static str, &'static str, serde_json::Value)> = Vec::new();
+
+    out.push((
+        "valid",
+        "single-pane",
+        layout_document(
+            layout_pane("pane-1", 1, vec![layout_pty(LAYOUT_SLOT_A)]),
+            "pane-1",
+            vec![layout_slot(LAYOUT_SLOT_A, 1)],
+            vec![],
+            vec![],
+        ),
+    ));
+    out.push(("valid", "split-with-file", base.clone()));
+    out.push((
+        "valid",
+        "detached-slot",
+        layout_document(
+            layout_pane("pane-1", 1, vec![layout_pty(LAYOUT_SLOT_A)]),
+            "pane-1",
+            vec![layout_slot(LAYOUT_SLOT_A, 1), layout_slot(LAYOUT_SLOT_B, 2)],
+            vec![],
+            vec![layout_pty(LAYOUT_SLOT_B)],
+        ),
+    ));
+
+    let mutate = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut copy = base.clone();
+        change(&mut copy);
+        copy
+    };
+    out.push((
+        "invalid",
+        "duplicate-slot-id",
+        mutate(&|doc| {
+            doc["slots"] =
+                serde_json::json!([layout_slot(LAYOUT_SLOT_A, 1), layout_slot(LAYOUT_SLOT_A, 2)])
+        }),
+    ));
+    out.push((
+        "invalid",
+        "unsupported-schema-version",
+        mutate(&|doc| doc["schemaVersion"] = serde_json::json!(99)),
+    ));
+    out.push((
+        "invalid",
+        "pane-references-missing-slot",
+        mutate(&|doc| doc["slots"] = serde_json::json!([])),
+    ));
+    out.push((
+        "invalid",
+        "focused-pane-missing",
+        mutate(&|doc| doc["focusedPaneId"] = serde_json::json!("pane-9")),
+    ));
+    out.push((
+        "invalid",
+        "slot-owned-twice",
+        mutate(&|doc| doc["detachedContents"] = serde_json::json!([layout_pty(LAYOUT_SLOT_A)])),
+    ));
+    out.push((
+        "invalid",
+        "unowned-slot",
+        mutate(&|doc| {
+            doc["slots"] =
+                serde_json::json!([layout_slot(LAYOUT_SLOT_A, 1), layout_slot(LAYOUT_SLOT_B, 2)])
+        }),
+    ));
+    out.push((
+        "invalid",
+        "duplicate-document-id",
+        mutate(&|doc| {
+            doc["documents"] = serde_json::json!([
+                layout_document_ref(LAYOUT_DOC_A, "src/main.rs"),
+                layout_document_ref(LAYOUT_DOC_A, "src/lib.rs")
+            ])
+        }),
+    ));
+    out.push((
+        "invalid",
+        "unowned-document",
+        mutate(&|doc| {
+            doc["documents"] = serde_json::json!([
+                layout_document_ref(LAYOUT_DOC_A, "src/main.rs"),
+                layout_document_ref(LAYOUT_DOC_B, "src/other.rs")
+            ])
+        }),
+    ));
+    out
+}
