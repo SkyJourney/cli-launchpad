@@ -665,7 +665,7 @@ export function SettingsView() {
                 </span>
                 <span>
                   {branchUpdateStatus
-                    ? t("settings.hermesUpdateStatus")
+                    ? t("settings.branchUpdateStatus")
                     : t("settings.latest")}
                   {activeTask
                     ? t(
@@ -680,19 +680,19 @@ export function SettingsView() {
                         : branchUpdateStatus
                           ? latestEntry?.updateAvailability === "available"
                             ? latestEntry.commitsBehind == null
-                              ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
-                              : `${t("settings.hermesUpdateBehind", {
+                              ? `${t("settings.branchUpdateBehindUnknown")}${latestStatusAnnotation}`
+                              : `${t("settings.branchUpdateBehind", {
                                   count: latestEntry.commitsBehind,
                                 })}${latestStatusAnnotation}`
                             : latestEntry?.updateAvailability === "upToDate"
-                              ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
+                              ? `${t("settings.branchUpToDate")}${latestStatusAnnotation}`
                               : availability === "missing"
                                 ? "—"
                                 : latestRefreshError
                                   ? t("settings.unavailableWithError", {
                                       error: latestRefreshError,
                                     })
-                                  : t("settings.hermesRefreshPrompt")
+                                  : t("settings.branchRefreshPrompt")
                           : latestVersion
                             ? `${latestVersion}${latestStatusAnnotation}`
                             : latestRefreshError

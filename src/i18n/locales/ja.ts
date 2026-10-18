@@ -419,11 +419,12 @@ export const ja = {
     latest: "最新: ",
     unavailableWithError: "利用できません（{{error}}）",
     unknownRefresh: "不明です。右上から再検出してください",
-    hermesRefreshPrompt: "main ブランチを確認するには手動で更新してください",
-    hermesUpToDate: "main の最新状態です",
-    hermesUpdateBehind: "main より {{count}} コミット遅れています",
-    hermesUpdateBehindUnknown: "main に更新があります（コミット数は不明）",
-    hermesUpdateStatus: "更新状態: ",
+    branchRefreshPrompt: "上流ブランチを確認するには手動で更新してください",
+    branchUpToDate: "上流ブランチの最新状態です",
+    branchUpdateBehind: "上流ブランチより {{count}} コミット遅れています",
+    branchUpdateBehindUnknown:
+      "上流ブランチに更新があります（コミット数は不明）",
+    branchUpdateStatus: "更新状態: ",
     hermesInstallEffectsHeading: "公式インストーラーは次の操作を行います:",
     hermesInstallEffectRuntime:
       "現在のユーザー向けに Hermes CLI、管理対象の Python/Node ランタイム、依存関係をインストールします。",

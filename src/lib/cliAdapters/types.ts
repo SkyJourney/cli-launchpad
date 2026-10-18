@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { LocaleKey } from "../../i18n/localeKeys";
 import type { ExecutionStream, InstallKind, ToolKey } from "../tauri";
 
 export type TerminalPasteBehavior = {
@@ -7,8 +8,8 @@ export type TerminalPasteBehavior = {
 };
 
 export interface InstallEffectsNotice {
-  headingKey: string;
-  effectKeys: string[];
+  headingKey: LocaleKey;
+  effectKeys: LocaleKey[];
 }
 
 export type CliPlatform = "windows" | "macos" | "linux";

@@ -417,12 +417,12 @@ export const ru = {
     unavailableWithError: "Недоступно ({{error}})",
     unknownRefresh:
       "Неизвестно; выполните обнаружение повторно в правом верхнем углу",
-    hermesRefreshPrompt: "Обновите вручную, чтобы проверить ветку main",
-    hermesUpToDate: "Обновлено до состояния main",
-    hermesUpdateBehind: "Отставание от main: {{count}} коммитов",
-    hermesUpdateBehindUnknown:
-      "Есть обновления в main (число коммитов недоступно)",
-    hermesUpdateStatus: "Состояние обновления: ",
+    branchRefreshPrompt: "Обновите вручную, чтобы проверить вышестоящую ветку",
+    branchUpToDate: "Обновлено до состояния вышестоящей ветки",
+    branchUpdateBehind: "Отставание от вышестоящей ветки: {{count}} коммитов",
+    branchUpdateBehindUnknown:
+      "Есть обновления в вышестоящей ветке (число коммитов недоступно)",
+    branchUpdateStatus: "Состояние обновления: ",
     hermesInstallEffectsHeading:
       "Официальный установщик выполнит следующие действия:",
     hermesInstallEffectRuntime:

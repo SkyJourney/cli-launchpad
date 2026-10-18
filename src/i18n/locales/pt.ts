@@ -425,12 +425,13 @@ export const pt = {
     latest: "Mais recente: ",
     unavailableWithError: "Indisponível ({{error}})",
     unknownRefresh: "Desconhecido; detecte novamente no canto superior direito",
-    hermesRefreshPrompt: "Atualize manualmente para verificar a branch main",
-    hermesUpToDate: "Atualizado com a main",
-    hermesUpdateBehind: "{{count}} commits atrás da main",
-    hermesUpdateBehindUnknown:
-      "Há atualizações na main (quantidade de commits indisponível)",
-    hermesUpdateStatus: "Status da atualização: ",
+    branchRefreshPrompt:
+      "Atualize manualmente para verificar a branch upstream",
+    branchUpToDate: "Atualizado com a branch upstream",
+    branchUpdateBehind: "{{count}} commits atrás da branch upstream",
+    branchUpdateBehindUnknown:
+      "Há atualizações na branch upstream (quantidade de commits indisponível)",
+    branchUpdateStatus: "Status da atualização: ",
     hermesInstallEffectsHeading: "O instalador oficial irá:",
     hermesInstallEffectRuntime:
       "Instalar a CLI Hermes, os ambientes Python/Node gerenciados e as dependências para o usuário atual.",

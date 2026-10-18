@@ -404,12 +404,12 @@ export const ko = {
     latest: "최신: ",
     unavailableWithError: "사용할 수 없음 ({{error}})",
     unknownRefresh: "알 수 없음. 오른쪽 위에서 다시 검색하세요",
-    hermesRefreshPrompt: "main 브랜치를 확인하려면 수동으로 새로 고치세요",
-    hermesUpToDate: "main과 동기화됨",
-    hermesUpdateBehind: "main보다 {{count}}개 커밋 뒤처짐",
-    hermesUpdateBehindUnknown:
-      "main에 업데이트가 있습니다(커밋 수를 알 수 없음)",
-    hermesUpdateStatus: "업데이트 상태: ",
+    branchRefreshPrompt: "업스트림 브랜치를 확인하려면 수동으로 새로 고치세요",
+    branchUpToDate: "업스트림 브랜치와 동기화됨",
+    branchUpdateBehind: "업스트림 브랜치보다 {{count}}개 커밋 뒤처짐",
+    branchUpdateBehindUnknown:
+      "업스트림 브랜치에 업데이트가 있습니다(커밋 수를 알 수 없음)",
+    branchUpdateStatus: "업데이트 상태: ",
     hermesInstallEffectsHeading: "공식 설치 프로그램이 다음 작업을 수행합니다:",
     hermesInstallEffectRuntime:
       "현재 사용자를 위해 Hermes CLI, 관리되는 Python/Node 런타임 및 종속성을 설치합니다.",

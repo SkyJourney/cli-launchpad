@@ -431,12 +431,13 @@ export const de = {
     latest: "Neueste: ",
     unavailableWithError: "Nicht verfügbar ({{error}})",
     unknownRefresh: "Unbekannt; oben rechts erneut erkennen",
-    hermesRefreshPrompt: "Manuell aktualisieren, um den main-Branch zu prüfen",
-    hermesUpToDate: "Auf dem neuesten Stand von main",
-    hermesUpdateBehind: "{{count}} Commits hinter main",
-    hermesUpdateBehindUnknown:
-      "Updates auf main (Anzahl der Commits nicht verfügbar)",
-    hermesUpdateStatus: "Update-Status: ",
+    branchRefreshPrompt:
+      "Manuell aktualisieren, um den Upstream-Branch zu prüfen",
+    branchUpToDate: "Auf dem neuesten Stand mit dem Upstream-Branch",
+    branchUpdateBehind: "{{count}} Commits hinter dem Upstream-Branch",
+    branchUpdateBehindUnknown:
+      "Updates auf dem Upstream-Branch (Anzahl der Commits nicht verfügbar)",
+    branchUpdateStatus: "Update-Status: ",
     hermesInstallEffectsHeading: "Das offizielle Installationsprogramm wird:",
     hermesInstallEffectRuntime:
       "Hermes CLI, die verwalteten Python-/Node-Laufzeiten und Abhängigkeiten für den aktuellen Benutzer installieren.",

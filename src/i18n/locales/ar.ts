@@ -399,12 +399,13 @@ export const ar = {
     latest: "الأحدث: ",
     unavailableWithError: "غير متاح ({{error}})",
     unknownRefresh: "غير معروف؛ أعد الاكتشاف من أعلى اليمين",
-    hermesRefreshPrompt: "حدّث يدويًا للتحقق من الفرع main",
-    hermesUpToDate: "محدّث إلى main",
-    hermesUpdateBehind: "متأخر عن main بمقدار {{count}} التزامات",
-    hermesUpdateBehindUnknown:
-      "تتوفر تحديثات على main (عدد الالتزامات غير متاح)",
-    hermesUpdateStatus: "حالة التحديث: ",
+    branchRefreshPrompt: "حدّث يدويًا للتحقق من الفرع الأعلى (upstream)",
+    branchUpToDate: "محدّث إلى الفرع الأعلى (upstream)",
+    branchUpdateBehind:
+      "متأخر عن الفرع الأعلى (upstream) بمقدار {{count}} التزامات",
+    branchUpdateBehindUnknown:
+      "تتوفر تحديثات على الفرع الأعلى (upstream) (عدد الالتزامات غير متاح)",
+    branchUpdateStatus: "حالة التحديث: ",
     hermesInstallEffectsHeading: "سيقوم المثبّت الرسمي بما يلي:",
     hermesInstallEffectRuntime:
       "تثبيت Hermes CLI وبيئات Python/Node المُدارة والتبعيات للمستخدم الحالي.",
