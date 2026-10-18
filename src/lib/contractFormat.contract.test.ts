@@ -7,9 +7,10 @@ const files = import.meta.glob("../../contracts/*.json", {
 
 /** 清单：必须是 { formatVersion, items }，顶层额外键只允许下表登记的名字。 */
 const MANIFESTS: Record<string, readonly string[]> = {
+  "api-versions.json": [],
   "app-commands.json": [],
   "command-caller-checks.json": [],
-  "content-kinds.json": ["adapterApiVersion"],
+  "content-kinds.json": [],
   "error-codes.json": ["frontendCodes", "reservedCodes", "aliases"],
   "events.json": [],
   "tool-capabilities.json": [],

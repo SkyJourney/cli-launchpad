@@ -1,4 +1,5 @@
 import appCommands from "../../contracts/app-commands.json";
+import apiVersions from "../../contracts/api-versions.json";
 import contentKinds from "../../contracts/content-kinds.json";
 import toolKeys from "../../contracts/tool-keys.json";
 import windowKinds from "../../contracts/window-kinds.json";
@@ -22,6 +23,9 @@ import {
 } from "./windowKinds";
 
 const contentKindIds = contentKinds.items.map((item) => item.id);
+const contentAdapterVersion = apiVersions.items.find(
+  (item) => item.id === "workspaceContentAdapter",
+)?.version as number;
 
 const toolKeyTypeCoverage: Record<ToolKey, true> = {
   claude: true,
@@ -53,7 +57,7 @@ describe("shared contracts", () => {
   });
 
   it("matches the TypeScript workspace content kinds", () => {
-    expect(contentKinds.adapterApiVersion).toBe(3);
+    expect(contentAdapterVersion).toBe(3);
     expect(
       Object.keys(contentKindTypeCoverage).filter((kind) => kind !== "unknown"),
     ).toEqual(contentKindIds);
@@ -99,17 +103,15 @@ describe("shared contracts", () => {
     for (const kind of contentKindIds) {
       expect(
         getWorkspaceContentAdapter(kind as "pty" | "file").apiVersion,
-      ).toBe(contentKinds.adapterApiVersion);
+      ).toBe(contentAdapterVersion);
     }
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "contract-test.markdown",
-        apiVersion: contentKinds.adapterApiVersion + 1,
+        apiVersion: contentAdapterVersion + 1,
         kind: "markdownPreview",
       } as never),
-    ).toThrow(
-      `不支持内容适配器 API 版本: ${contentKinds.adapterApiVersion + 1}`,
-    );
+    ).toThrow(`不支持内容适配器 API 版本: ${contentAdapterVersion + 1}`);
   });
 
   it("accepts drag payloads exactly for the contract kinds", () => {

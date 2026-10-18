@@ -459,6 +459,7 @@ Platform primitives and persistent execution task manager
 - **可执行文件解析与启动环境统一（m6-069 已落地）：** 检测、安装计划、启动解析与 PTY 子进程使用同一个 `platform::launch_environment::LaunchEnvironment`（进程 PATH，Windows 上合并注册表中的机器与用户 PATH）和同一个 `platform::executable_resolver`（`resolve` 异步带预算，`resolve_blocking` 只在阻塞线程里调用；Windows 的 `where.exe` 只在这里调用，并使用 `LaunchEnvironment` 的 PATH）。适配器版本查询的超时与 panic 隔离由 `services::cli_runtime::run` 在外层统一执行一次，适配器内部的 `blocking_latest` 不再自己加超时。更新计划使用 `AdapterContext::resolved_path`（`claude_update_plan_for`、`antigravity_update_plan_for`、Codex 与 Grok、Hermes 同形），构造计划上下文时总是解析可执行文件；Antigravity 的更新只接受主命令 `agy`。适配器专属测试位于各自的 `history.rs`、`version.rs`，适配器内部函数不再因测试放宽可见性。仍未收口：共享工具下沉到 `cli_adapters/support/`、`models`、`db` 对 `services` 的反向依赖、会话读取与归属校验的预算统一（S3I-A17、S3I-A19 部分关闭）。
 - **契约外层格式与窗口角色（m6-070 已落地）：** `contracts/` 下的清单统一为 `{ "formatVersion": 1, "items": [...] }`（`content-kinds.json` 额外保留顶层 `adapterApiVersion`，`error-codes.json` 额外保留顶层 `frontendCodes`、`reservedCodes`、`aliases`）；`rust-platform-tests.json`、`window-label-fixtures.json`、`serde-lint-allowlist.json` 与 `fixtures/` 不是清单，在两端的格式测试里以豁免表登记，新增任何 `contracts/*.json` 都必须归类。`window-kinds.json` 的每个窗口类别声明角色：`primary`（唯一主窗口）、`ptyHost`（可显示 PTY 视图）、`ownsPty`（销毁时归还 PTY 会话）、`fileGrant`（持有文件授权）、`contentKinds`（可渲染的内容 kind）；`content-kinds.json` 的每项声明 `windowKind` 与 `dragAllowed`。Rust 经 `WindowKind::is_primary/is_pty_host/owns_pty/has_file_grant` 读取（`services/` 的生产代码不再按窗口类别变体分支，PTY 交接方向由 `ptyHost` 与 `primary` 推出），前端经 `windowRoleOf`、`windowKindOfContent`、`isDraggableContentKind`、`registeredContentKinds` 与 `MAIN_WINDOW_LABEL` 读取；拖放来源窗口、窗口 label 前缀、adapter 注册白名单、`App` 路由（`route`）不再有手写副本。`"main"` 字面量有增长上限（前端 55 处；Rust 生产代码 0 处，纯测试文件不计）。`contracts/window-chrome.json` 统一 macOS 交通灯位置与标题栏 inset：`windowChrome.ts` 的 inset 与原生控件判定读它，子窗口工厂经 `getChildWindowChromeOptions` 在 macOS 上传 `trafficLightPosition`，`tauri.macos.conf.json` 由两端契约测试核对；内容 kind 的 Rust 枚举副本（`workspace_layout.rs`）与前端联合类型仍是手写，依赖编译期覆盖与契约测试。
 - **DTO 与事件载荷的 golden fixture、`AppCommand` 类型（m6-071 已落地）：** 每个 Tauri 命令的返回 DTO 都在 `src-tauri/src/contracts/fixtures.rs` 的 `ipc_dto_samples()` 里登记并生成 `contracts/fixtures/*.json`（`UPDATE_CONTRACT_FIXTURES=1 cargo test golden_fixtures` 重新生成，CI 校验无变化）；自动完整性测试 `every_command_return_dto_has_a_golden_fixture` 按命令签名的返回类型（`CommandDef.return_type`）保证新增命令返回的新 DTO 必须登记样本。前端 `src/lib/dtoShapes.contract.test.ts` 用 `keysOf<T>()` 在编译期要求键清单覆盖 TypeScript 类型的全部键，并在运行期断言它等于 Rust 序列化的键集合。事件载荷（`workspace-content-window-lost`、`pty-session-owner-lost`）与收件箱消息 `InboxMessage` 有 fixture，`events.json` 的每个事件都映射到载荷 fixture 或登记为无 Rust 载荷。`scripts/gen-contracts.mjs` 从 `contracts/app-commands.json` 生成 `src/generated/appCommands.ts`（`AppCommand`），`invokeApp` 是前端调用命令的唯一入口（`tauri.ts` 里不再有裸 `invoke`，`appCommands.contract.test.ts` 只豁免 `invokeApp.ts`），CI 校验生成物无变化。布局共享样例 `contracts/fixtures/layouts/{valid,invalid}` 由 Rust 生成，Rust 与 TypeScript 的布局校验对同一批文件给出同样的结论。命令的参数键仍不受静态约束；ts-rs 等代码生成不在本阶段范围。
+- **版本化规则与版本号登记表（m6-072 进行中，072a 已落地）：** 版本规则 R1 至 R5 与登记表见“版本化规则与版本号登记表”小节，`src/lib/versionRegistry.contract.test.ts` 扫描 Rust 与 TypeScript 的版本常量保证登记完整；扩展点 API 版本来自 `contracts/api-versions.json`（三个扩展点注册表在运行时读取，`content-kinds.json` 不再有顶层 `adapterApiVersion`）。线协议版本不匹配的告警与失败回送属 072b。
 - 历史适配器只负责定位各 CLI 的本地事实来源、读取所需 metadata、校验项目归属并映射到规范会话 DTO。公共历史服务、SQLite FTS 索引和搜索负责统一分页、查询、别名合并和去重，去重键为 `ToolKey + session_id`；适配器不各自建立检索引擎，也不把完整 transcript 或项目路径写入搜索缓存。
 - 适配器上下文由 `cli_adapters::context_within_budget` 构造：只有声明 `requires_executable_path()` 的适配器（Codex、Grok、Hermes）才在 `spawn_blocking` 内解析可执行文件，解析与适配器调用共享同一预算，解析耗尽即该工具超时且适配器不被调用，解析 panic 视为未找到。会话列表、索引刷新与归属校验通过 `session_service::*_with` 入口注入解析器；会话列表与归属校验各有 30 秒预算，索引刷新中任一工具的失败、超时、panic 或标识不符只让该工具变为不完整，`home_dir()` 不可用时整批降级为不完整。`build_plan` 的同步解析对所有适配器执行（更新计划总是需要可执行文件），并要求在阻塞线程中调用。
 - CLI 图标与名称属于展示能力，存放在前端适配器/注册表中，并使用与 Rust 相同的 `ToolKey`；不把 React 资源塞进 Rust CLI 适配器。公共 UI 负责选择展示，不复制各 CLI 的交互状态逻辑。
@@ -632,6 +633,43 @@ App Server cursor。前端为每个 CLI 保留独立无限查询，点击“更�
 即恢复 CLI 原始标题。
 
 恢复会话通过 `create_pty_session` 命令的 `resume_session_id` 参数进入内置 PTY（不再有独立的 `resume_session` 命令）：命令先按工具校验会话 ID 格式并复核该会话仍归属当前项目目录，再由各适配器的 `resume_args` 拼装内部恢复参数——Claude 用 `--resume <id>`，Codex 用 `resume <id>`，Antigravity 用 `--conversation=<id>`，Grok Build 用 `--resume <id>`，Hermes Agent 用 `--resume <id> --no-restore-cwd`。恢复参数与普通启动共用 `launch_service` 的参数组合，以结构化数组传给 PTY 进程。会话 ID 校验的公共规则为 `safe_session_id`（字符集 `[A-Za-z0-9_-]`、最长 200、拒绝前导 `-`），注册表层 `valid_session_id` 再次拒绝前导 `-`；Grok 强制 UUID，Claude/Codex 目前未强制规范 UUID（B1-F05 部分关闭；已确认 PD-08：Claude/Codex 仅接受规范小写 UUID，待落地）。
+
+## 版本化规则与版本号登记表
+
+版本号只有四类，各有各的含义，不得混用：`schemaVersion`（持久化数据）、`apiVersion`（进程内扩展契约）、`protocolVersion`（线协议）、`formatVersion`（契约清单格式）。改动某个格式的 PR 负责递增对应版本，并在同一提交里更新下面的登记表；`src/lib/versionRegistry.contract.test.ts` 扫描代码里的版本常量并核对登记表。
+
+- **R1 持久化数据用 `schemaVersion`。** 版本只存一处（payload）；数据库列若保留，只是只读镜像，CAS 只比较 `revision`。迁移链只在 Rust 一处实现，TypeScript 只断言版本等于当前值。读到旧版本时迁移并在同一事务内回写；读到更新的版本时进入 `needsReset` 并保留原始数据；写入方永远写当前版本。
+- **R2 进程内扩展契约用 `apiVersion`。** 每个注册表声明 `supportedApiVersions`，取值来自 `contracts/api-versions.json`，源码里不写字面量；版本不符只拒绝这一项贡献并记录日志，不中断整个启动；只有破坏性改动才递增。
+- **R3 线协议用 `protocolVersion`。** 同一构建内要求精确匹配；不匹配时必须打 `console.warn` 并回送失败消息（有失败对应物的请求回送，其余只告警），不能静默丢弃。已知例外：线协议的字段名当前仍是信封里的 `apiVersion` 与 `contracts/window-messages.json` 里的 `payloadVersion`，R3 要求的统一结构 `{ protocol, protocolVersion }` 尚未实施（改名会同时改动 Rust relay、20 个消息、拖放载荷与全部相关测试，另开目标）。
+- **R4 契约清单用 `formatVersion`。** 外层固定为 `{ "formatVersion": 1, "items": [...] }`（顶层额外键只允许格式测试里登记的白名单）；`formatVersion` 只在格式变化时递增，与内容增减无关；扩展点 API 版本集中在 `contracts/api-versions.json`。
+- **R5 版本号登记表与扫描测试。** 下表是全部版本号的登记处；新增版本常量必须先登记，否则扫描测试失败；增加数据库迁移时同一提交更新“数据库 user_version”一行。
+
+<!-- version-registry:start -->
+
+| 名字                       | 类别            | 当前值     | 来源                                                                                   | 谁递增、何时递增                                                      | 遇到更新版本时              |
+| -------------------------- | --------------- | ---------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | --------------------------- |
+| 布局 schemaVersion（Rust） | schemaVersion   | 5          | `rs:src-tauri/src/models/workspace_layout.rs:WORKSPACE_LAYOUT_SCHEMA_VERSION`          | 布局 JSON 有不兼容变化时，由改动该格式的 PR 递增并增加 Rust 迁移步骤  | 进入 needsReset，保留原数据 |
+| 布局 schemaVersion（前端） | schemaVersion   | 5          | `ts:src/lib/workspaceLayoutPersistence.ts:WORKSPACE_LAYOUT_SCHEMA_VERSION`             | 与 Rust 常量同一提交递增，值必须相等                                  | 抛错，不迁移                |
+| 配置交换格式               | schemaVersion   | 4          | `rs:src-tauri/src/models/config_bundle.rs:CONFIG_BUNDLE_VERSION`                       | 导出格式有不兼容变化时                                                | 拒绝导入                    |
+| 数据库 user_version        | schemaVersion   | 14         | `migrations:src-tauri/migrations`                                                      | 新增迁移文件时（编号等于新版本）                                      | 拒绝启动                    |
+| 备份清单 schemaVersion     | schemaVersion   | 14         | `same-as:数据库 user_version`                                                          | 等于数据库版本，不单独递增                                            | 拒绝恢复                    |
+| Provider 描述              | apiVersion      | 1          | `rs:src-tauri/src/services/cli_adapters/descriptor.rs:PROVIDER_DESCRIPTOR_API_VERSION` | ProviderDescriptor 字段有破坏性变化时                                 | 契约测试失败                |
+| Provider 描述（契约）      | apiVersion      | 1          | `json:contracts/api-versions.json:providerDescriptor`                                  | 与 Rust 常量同一提交递增                                              | 契约测试失败                |
+| 内容 adapter               | apiVersion      | 3          | `json:contracts/api-versions.json:workspaceContentAdapter`                             | adapter 接口有破坏性变化时                                            | 拒绝该项贡献并记录日志      |
+| 编辑器引擎                 | apiVersion      | 1          | `json:contracts/api-versions.json:workspaceEditorEngine`                               | 引擎接口有破坏性变化时                                                | 拒绝该项贡献并记录日志      |
+| 主题                       | apiVersion      | 1          | `json:contracts/api-versions.json:theme`                                               | 主题定义有破坏性变化时                                                | 拒绝该项贡献并记录日志      |
+| 窗口消息协议               | protocolVersion | 1          | `ts:src/lib/windowMessages.ts:WINDOW_MESSAGE_API_VERSION`                              | 信封或载荷有不兼容变化时，同时更新契约                                | 告警并回送失败消息          |
+| 窗口消息协议（契约）       | protocolVersion | 1          | `json:contracts/api-versions.json:windowMessage`                                       | 与前端常量同一提交递增，并同步 window-messages.json 的 payloadVersion | 告警并回送失败消息          |
+| 偏好协议                   | protocolVersion | 1          | `ts:src/lib/appPreferences.ts:APP_PREFERENCES_API_VERSION`                             | 偏好载荷有不兼容变化时                                                | 告警并忽略                  |
+| 偏好协议（契约）           | protocolVersion | 1          | `json:contracts/api-versions.json:appPreferences`                                      | 与前端常量同一提交递增                                                | 告警并忽略                  |
+| 内容拖放载荷               | protocolVersion | 2          | `prefix:src/lib/workspaceContentDrag.ts:cli-launchpad-content-v2:`                     | 拖放载荷有不兼容变化时，前缀版本递增                                  | 解析返回 null               |
+| 内容拖放载荷（契约）       | protocolVersion | 2          | `json:contracts/api-versions.json:workspaceContentDrag`                                | 与前缀同一提交递增                                                    | 契约测试失败                |
+| 契约清单格式               | formatVersion   | 1          | `json:contracts/tool-keys.json:formatVersion`                                          | 清单外层格式变化时                                                    | 格式测试失败                |
+| 应用版本                   | release         | 见三处文件 | `app:package.json,src-tauri/Cargo.toml,src-tauri/tauri.conf.json`                      | 发布时三处同时修改                                                    | 不适用                      |
+
+<!-- version-registry:end -->
+
+规则 R1 至 R5 与登记表按 m6-072 落地；已知例外只有 R3 的字段统一改名一项。
 
 ## 安全边界
 

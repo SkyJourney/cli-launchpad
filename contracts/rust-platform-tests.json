@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 714,
-    "Linux": 721,
-    "macOS": 719
+    "Windows": 715,
+    "Linux": 722,
+    "macOS": 720
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,7 @@
   ],
   "required": {
     "all": [
+      "contracts::api_versions_contract_matches_the_rust_protocol_constants",
       "contracts::layout_fixtures_are_accepted_or_rejected_consistently",
       "contracts::golden_layout_fixtures_match_generated_documents",
       "contracts::command_definitions_extract_the_return_type",

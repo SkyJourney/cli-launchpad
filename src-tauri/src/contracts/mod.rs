@@ -13,6 +13,7 @@ const APP_COMMANDS_JSON: &str = include_str!("../../../contracts/app-commands.js
 const TOOL_KEYS_JSON: &str = include_str!("../../../contracts/tool-keys.json");
 const TOOL_CAPABILITIES_JSON: &str = include_str!("../../../contracts/tool-capabilities.json");
 const CONTENT_KINDS_JSON: &str = include_str!("../../../contracts/content-kinds.json");
+const API_VERSIONS_JSON: &str = include_str!("../../../contracts/api-versions.json");
 const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
 const LIB_RS: &str = include_str!("../lib.rs");
 const TAURI_CONFIG_JSON: &str = include_str!("../../tauri.conf.json");
@@ -433,7 +434,15 @@ fn content_kind_contract_matches_rust_serialization() {
 
     let contract: Value =
         serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kind contract");
-    assert_eq!(contract["adapterApiVersion"], 3);
+    let api_versions: Value =
+        serde_json::from_str(API_VERSIONS_JSON).expect("parse api versions contract");
+    let adapter_api_version = api_versions["items"]
+        .as_array()
+        .expect("api version items")
+        .iter()
+        .find(|item| item["id"] == "workspaceContentAdapter")
+        .expect("workspaceContentAdapter entry");
+    assert_eq!(adapter_api_version["version"], 3);
     let pty = serde_json::to_value(WorkspacePaneContentRef::Pty {
         slot_id: "slot".to_string(),
     })
@@ -3812,10 +3821,11 @@ fn tool_capabilities_contract_matches_adapter_descriptors() {
 
 #[test]
 fn contract_manifests_use_the_common_envelope() {
-    const MANIFESTS: [(&str, &[&str]); 10] = [
+    const MANIFESTS: [(&str, &[&str]); 11] = [
+        ("api-versions.json", &[]),
         ("app-commands.json", &[]),
         ("command-caller-checks.json", &[]),
-        ("content-kinds.json", &["adapterApiVersion"]),
+        ("content-kinds.json", &[]),
         (
             "error-codes.json",
             &["aliases", "frontendCodes", "reservedCodes"],
@@ -4365,4 +4375,45 @@ fn golden_layout_fixtures_match_generated_documents() {
         expected.sort();
         assert_eq!(on_disk, expected, "{kind} 目录里不能有多余或缺少的文件");
     }
+}
+
+#[test]
+fn api_versions_contract_matches_the_rust_protocol_constants() {
+    let contract: serde_json::Value =
+        serde_json::from_str(API_VERSIONS_JSON).expect("parse api versions contract");
+    let version_of = |id: &str| -> u64 {
+        contract["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|item| item["id"] == id)
+            .unwrap_or_else(|| panic!("api-versions.json 缺少 {id}"))["version"]
+            .as_u64()
+            .expect("version must be a number")
+    };
+
+    assert_eq!(
+        u64::from(crate::services::cli_adapters::PROVIDER_DESCRIPTOR_API_VERSION),
+        version_of("providerDescriptor")
+    );
+    let messages: serde_json::Value =
+        serde_json::from_str(WINDOW_MESSAGES_JSON).expect("parse window messages contract");
+    for item in messages["items"].as_array().expect("messages") {
+        assert_eq!(
+            item["payloadVersion"].as_u64(),
+            Some(version_of("windowMessage")),
+            "{}",
+            item["type"]
+        );
+    }
+    let versions: Vec<&str> = contract["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect();
+    let mut sorted = versions.clone();
+    sorted.sort();
+    assert_eq!(versions, sorted, "api-versions.json 的条目必须按 id 排序");
+    assert_eq!(versions.len(), 7);
 }

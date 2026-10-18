@@ -9,8 +9,12 @@ import {
   workspaceContentProjectContext,
 } from "./workspaceContentAdapterRegistry";
 import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
-import contentKinds from "../../contracts/content-kinds.json";
+import apiVersions from "../../contracts/api-versions.json";
 import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
+
+const contentAdapterVersion = apiVersions.items.find(
+  (item) => item.id === "workspaceContentAdapter",
+)?.version as number;
 
 const labels = {
   menu: "menu",
@@ -279,10 +283,10 @@ describe("content adapter contract version 3", () => {
   });
 
   it("accepts exactly the version declared in the content-kinds contract", () => {
-    expect(contentKinds.adapterApiVersion).toBe(3);
+    expect(contentAdapterVersion).toBe(3);
     const dispose = registerWorkspaceContentAdapter({
       id: "test.contract",
-      apiVersion: contentKinds.adapterApiVersion as never,
+      apiVersion: contentAdapterVersion as never,
       kind: "file",
       render: () => null,
       presentation: () => ({
@@ -302,7 +306,7 @@ describe("content adapter contract version 3", () => {
     expect(() =>
       registerWorkspaceContentAdapter({
         id: "test.contract-plus-one",
-        apiVersion: (contentKinds.adapterApiVersion + 1) as never,
+        apiVersion: (contentAdapterVersion + 1) as never,
         kind: "file",
         render: () => null,
         presentation: () => ({
