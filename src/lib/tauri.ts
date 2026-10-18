@@ -1,4 +1,5 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import { invokeApp } from "./invokeApp";
 
 export type ToolKey = "antigravity" | "codex" | "claude" | "grok" | "hermes";
 
@@ -387,11 +388,15 @@ export interface CliStatus {
 
 // Directories
 export function listDirectories() {
-  return invoke<Directory[]>("list_directories");
+  return invokeApp<Directory[]>("list_directories");
 }
 
 export function addDirectory(name: string, path: string, note?: string | null) {
-  return invoke<Directory>("add_directory", { name, path, note: note ?? null });
+  return invokeApp<Directory>("add_directory", {
+    name,
+    path,
+    note: note ?? null,
+  });
 }
 
 export function updateDirectory(
@@ -399,23 +404,23 @@ export function updateDirectory(
   name: string,
   note?: string | null,
 ) {
-  return invoke<void>("update_directory", { id, name, note: note ?? null });
+  return invokeApp<void>("update_directory", { id, name, note: note ?? null });
 }
 
 export function removeDirectory(id: number) {
-  return invoke<void>("remove_directory", { id });
+  return invokeApp<void>("remove_directory", { id });
 }
 
 export function setDirectoryPinned(id: number, pinned: boolean) {
-  return invoke<void>("set_directory_pinned", { id, pinned });
+  return invokeApp<void>("set_directory_pinned", { id, pinned });
 }
 
 export function reorderDirectories(orderedIds: number[], pinned: boolean) {
-  return invoke<void>("reorder_directories", { orderedIds, pinned });
+  return invokeApp<void>("reorder_directories", { orderedIds, pinned });
 }
 
 export function openProjectDirectory(id: number) {
-  return invoke<void>("open_project_directory", { id });
+  return invokeApp<void>("open_project_directory", { id });
 }
 
 export function listProjectFiles(
@@ -423,7 +428,7 @@ export function listProjectFiles(
   directoryPath: string,
   relativePath = "",
 ) {
-  return invoke<ProjectDirectoryListing>("list_project_files", {
+  return invokeApp<ProjectDirectoryListing>("list_project_files", {
     directoryId,
     directoryPath,
     relativePath,
@@ -435,7 +440,7 @@ export function openProjectFile(
   directoryPath: string,
   relativePath: string,
 ) {
-  return invoke<ProjectFileOpenResult>("open_project_file", {
+  return invokeApp<ProjectFileOpenResult>("open_project_file", {
     directoryId,
     directoryPath,
     relativePath,
@@ -449,7 +454,7 @@ export function saveProjectTextFile(
   content: string,
   expectedRevision: string,
 ) {
-  return invoke<ProjectTextFileSaveResult>("save_project_text_file", {
+  return invokeApp<ProjectTextFileSaveResult>("save_project_text_file", {
     directoryId,
     directoryPath,
     relativePath,
@@ -464,7 +469,7 @@ export function grantContentWindowFile(
   directoryPath: string,
   relativePath: string,
 ) {
-  return invoke<void>("grant_content_window_file", {
+  return invokeApp<void>("grant_content_window_file", {
     targetLabel,
     directoryId,
     directoryPath,
@@ -473,25 +478,25 @@ export function grantContentWindowFile(
 }
 
 export function openGrantedFile() {
-  return invoke<ProjectFileOpenResult>("open_granted_file");
+  return invokeApp<ProjectFileOpenResult>("open_granted_file");
 }
 
 export function saveGrantedTextFile(content: string, expectedRevision: string) {
-  return invoke<ProjectTextFileSaveResult>("save_granted_text_file", {
+  return invokeApp<ProjectTextFileSaveResult>("save_granted_text_file", {
     content,
     expectedRevision,
   });
 }
 
 export function revokeContentWindowFile(targetLabel: string) {
-  return invoke<boolean>("revoke_content_window_file", { targetLabel });
+  return invokeApp<boolean>("revoke_content_window_file", { targetLabel });
 }
 
 export function listProjectFileCasResidues(
   directoryId: number,
   directoryPath: string,
 ) {
-  return invoke<ProjectFileCasResidueListing>(
+  return invokeApp<ProjectFileCasResidueListing>(
     "list_project_file_cas_residues",
     { directoryId, directoryPath },
   );
@@ -502,7 +507,7 @@ export function removeProjectFileCasResidue(
   directoryPath: string,
   residue: ProjectFileCasResidue,
 ) {
-  return invoke<void>("remove_project_file_cas_residue", {
+  return invokeApp<void>("remove_project_file_cas_residue", {
     directoryId,
     directoryPath,
     relativePath: residue.relativePath,
@@ -514,64 +519,64 @@ export function removeProjectFileCasResidue(
 
 // CLI detection
 export function detectCliStatus(toolKey?: ToolKey, force = false) {
-  return invoke<CliStatus[]>("detect_cli_status", { force, toolKey });
+  return invokeApp<CliStatus[]>("detect_cli_status", { force, toolKey });
 }
 
 // Config backup (file-based)
 export function exportConfigToPath(path: string) {
-  return invoke<void>("export_config_to_path", { path });
+  return invokeApp<void>("export_config_to_path", { path });
 }
 
 export function importConfigFromPath(path: string) {
-  return invoke<void>("import_config_from_path", { path });
+  return invokeApp<void>("import_config_from_path", { path });
 }
 
 export function exportDiagnosticsToPath(path: string) {
-  return invoke<void>("export_diagnostics_to_path", { path });
+  return invokeApp<void>("export_diagnostics_to_path", { path });
 }
 
 export function listBackups() {
-  return invoke<BackupManifest[]>("list_backups");
+  return invokeApp<BackupManifest[]>("list_backups");
 }
 
 export function createBackup() {
-  return invoke<BackupManifest>("create_backup");
+  return invokeApp<BackupManifest>("create_backup");
 }
 
 export function restoreBackup(backupId: string) {
-  return invoke<BackupManifest>("restore_backup", { backupId });
+  return invokeApp<BackupManifest>("restore_backup", { backupId });
 }
 
 export function listLaunchHistory() {
-  return invoke<LaunchHistoryEntry[]>("list_launch_history");
+  return invokeApp<LaunchHistoryEntry[]>("list_launch_history");
 }
 
 export function clearLaunchHistory() {
-  return invoke<void>("clear_launch_history");
+  return invokeApp<void>("clear_launch_history");
 }
 
 export function getLaunchHistoryLimit() {
-  return invoke<number>("get_launch_history_limit");
+  return invokeApp<number>("get_launch_history_limit");
 }
 
 export function setLaunchHistoryLimit(limit: number) {
-  return invoke<void>("set_launch_history_limit", { limit });
+  return invokeApp<void>("set_launch_history_limit", { limit });
 }
 
 // Version & install/update
 export function fetchLatestVersion(toolKey: ToolKey, force = false) {
-  return invoke<LatestVersion>("fetch_latest_version", {
+  return invokeApp<LatestVersion>("fetch_latest_version", {
     toolKey,
     force,
   });
 }
 
 export function getInstallPlan(toolKey: ToolKey, kind: InstallKind) {
-  return invoke<InstallPlan>("get_install_plan", { toolKey, kind });
+  return invokeApp<InstallPlan>("get_install_plan", { toolKey, kind });
 }
 
 export function startExecutionTask(plan: InstallPlan) {
-  return invoke<ExecutionTask>("start_execution_task", {
+  return invokeApp<ExecutionTask>("start_execution_task", {
     toolKey: plan.toolKey,
     kind: plan.kind,
     expectedFingerprint: plan.fingerprint,
@@ -579,46 +584,46 @@ export function startExecutionTask(plan: InstallPlan) {
 }
 
 export function listExecutionTasks() {
-  return invoke<ExecutionTask[]>("list_execution_tasks");
+  return invokeApp<ExecutionTask[]>("list_execution_tasks");
 }
 
 export function getExecutionTask(taskId: string) {
-  return invoke<ExecutionTaskDetail>("get_execution_task", { taskId });
+  return invokeApp<ExecutionTaskDetail>("get_execution_task", { taskId });
 }
 
 export function cancelExecutionTask(taskId: string) {
-  return invoke<ExecutionTask>("cancel_execution_task", { taskId });
+  return invokeApp<ExecutionTask>("cancel_execution_task", { taskId });
 }
 
 export function clearExecutionTask(taskId: string) {
-  return invoke<void>("clear_execution_task", { taskId });
+  return invokeApp<void>("clear_execution_task", { taskId });
 }
 
 export function clearExecutionHistory() {
-  return invoke<number>("clear_execution_history");
+  return invokeApp<number>("clear_execution_history");
 }
 
 // Embedded PTY sessions
 export function getWorkspaceLayout() {
-  return invoke<WorkspaceLayoutStateRead>("get_workspace_layout");
+  return invokeApp<WorkspaceLayoutStateRead>("get_workspace_layout");
 }
 
 export function saveWorkspaceLayout(
   revision: number,
   layout: WorkspaceLayoutDocument,
 ) {
-  return invoke<WorkspaceLayoutSaveResult>("save_workspace_layout", {
+  return invokeApp<WorkspaceLayoutSaveResult>("save_workspace_layout", {
     revision,
     layout,
   });
 }
 
 export function resetWorkspaceLayout() {
-  return invoke<number>("reset_workspace_layout");
+  return invokeApp<number>("reset_workspace_layout");
 }
 
 export function listWorkspaceLayoutPresets() {
-  return invoke<WorkspaceLayoutPresetSummary[]>(
+  return invokeApp<WorkspaceLayoutPresetSummary[]>(
     "list_workspace_layout_presets",
   );
 }
@@ -627,7 +632,7 @@ export function createWorkspaceLayoutPreset(
   name: string,
   layout: WorkspaceLayoutDocument,
 ) {
-  return invoke<WorkspaceLayoutPresetSummary>(
+  return invokeApp<WorkspaceLayoutPresetSummary>(
     "create_workspace_layout_preset",
     { name, layout },
   );
@@ -637,22 +642,22 @@ export function updateWorkspaceLayoutPreset(
   id: string,
   layout: WorkspaceLayoutDocument,
 ) {
-  return invoke<boolean>("update_workspace_layout_preset", { id, layout });
+  return invokeApp<boolean>("update_workspace_layout_preset", { id, layout });
 }
 
 export function renameWorkspaceLayoutPreset(id: string, name: string) {
-  return invoke<boolean>("rename_workspace_layout_preset", { id, name });
+  return invokeApp<boolean>("rename_workspace_layout_preset", { id, name });
 }
 
 export function deleteWorkspaceLayoutPreset(id: string) {
-  return invoke<boolean>("delete_workspace_layout_preset", { id });
+  return invokeApp<boolean>("delete_workspace_layout_preset", { id });
 }
 
 export function planApplyWorkspaceLayoutPreset(
   id: string,
   activeLayout: WorkspaceLayoutDocument,
 ) {
-  return invoke<WorkspaceLayoutApplyPlan>(
+  return invokeApp<WorkspaceLayoutApplyPlan>(
     "plan_apply_workspace_layout_preset",
     { id, activeLayout },
   );
@@ -665,7 +670,7 @@ export function createPtySession(
   onEvent: Channel<PtyEvent>,
   resumeSessionId?: string,
 ) {
-  return invoke<PtySession>("create_pty_session", {
+  return invokeApp<PtySession>("create_pty_session", {
     directoryId,
     toolKey,
     size,
@@ -675,7 +680,7 @@ export function createPtySession(
 }
 
 export function beginPtyHandoff(sessionId: string, targetWindowLabel: string) {
-  return invoke<PtyHandoff>("begin_pty_handoff", {
+  return invokeApp<PtyHandoff>("begin_pty_handoff", {
     sessionId,
     targetWindowLabel,
   });
@@ -687,7 +692,7 @@ export function stagePtyHandoffSnapshot(
   sequence: number,
   snapshot: PtyTerminalSnapshot,
 ) {
-  return invoke<void>("stage_pty_handoff_snapshot", {
+  return invokeApp<void>("stage_pty_handoff_snapshot", {
     sessionId,
     token,
     sequence,
@@ -700,7 +705,7 @@ export function completePtyHandoff(
   token: string,
   onEvent: Channel<PtyEvent>,
 ) {
-  return invoke<PtySession>("complete_pty_handoff", {
+  return invokeApp<PtySession>("complete_pty_handoff", {
     sessionId,
     token,
     onEvent,
@@ -712,18 +717,25 @@ export function finalizePtyHandoff(
   token: string,
   size: PtySizeUpdate,
 ) {
-  return invoke<PtySession>("finalize_pty_handoff", { sessionId, token, size });
+  return invokeApp<PtySession>("finalize_pty_handoff", {
+    sessionId,
+    token,
+    size,
+  });
 }
 
 export function cancelPtyHandoff(sessionId: string, token: string) {
-  return invoke<void>("cancel_pty_handoff", { sessionId, token });
+  return invokeApp<void>("cancel_pty_handoff", { sessionId, token });
 }
 
 export async function getPtySessionWindowStatus(sessionId: string) {
   return toPtySessionWindowStatus(
-    await invoke<PtySessionWindowStatusDto>("get_pty_session_window_status", {
-      sessionId,
-    }),
+    await invokeApp<PtySessionWindowStatusDto>(
+      "get_pty_session_window_status",
+      {
+        sessionId,
+      },
+    ),
   );
 }
 
@@ -734,7 +746,7 @@ export function reattachPtySession(
   sequence: number,
   size: PtySizeUpdate,
 ) {
-  return invoke<PtySession>("reattach_pty_session", {
+  return invokeApp<PtySession>("reattach_pty_session", {
     sessionId,
     onEvent,
     snapshot,
@@ -744,37 +756,37 @@ export function reattachPtySession(
 }
 
 export function writePtySession(sessionId: string, data: string) {
-  return invoke<void>("write_pty_session", { sessionId, data });
+  return invokeApp<void>("write_pty_session", { sessionId, data });
 }
 
 export function resizePtySession(sessionId: string, size: PtySizeUpdate) {
-  return invoke<void>("resize_pty_session", { sessionId, size });
+  return invokeApp<void>("resize_pty_session", { sessionId, size });
 }
 
 export function acknowledgePtyOutput(sessionId: string, sequence: number) {
-  return invoke<void>("acknowledge_pty_output", { sessionId, sequence });
+  return invokeApp<void>("acknowledge_pty_output", { sessionId, sequence });
 }
 
 export function reportPtyFrontendStage(
   sessionId: string,
   stage: PtyFrontendStage,
 ) {
-  return invoke<void>("report_pty_frontend_stage", { sessionId, stage });
+  return invokeApp<void>("report_pty_frontend_stage", { sessionId, stage });
 }
 
 export function reportWindowSyncFailureToBackend(
   code: string,
   message: string,
 ) {
-  return invoke<void>("report_window_sync_failure", { code, message });
+  return invokeApp<void>("report_window_sync_failure", { code, message });
 }
 
 export function terminatePtySession(sessionId: string) {
-  return invoke<void>("terminate_pty_session", { sessionId });
+  return invokeApp<void>("terminate_pty_session", { sessionId });
 }
 
 export function confirmAppExit(requestId: string) {
-  return invoke<void>("confirm_app_exit", { requestId });
+  return invokeApp<void>("confirm_app_exit", { requestId });
 }
 
 export interface WindowInboxSource {
@@ -798,7 +810,9 @@ export interface WindowInboxSubscription {
 
 /** Use `onInboxEvent` from `./windowInbox` instead of calling this directly. */
 export function subscribeWindowInbox(onEvent: Channel<InboxMessage>) {
-  return invoke<WindowInboxSubscription>("subscribe_window_inbox", { onEvent });
+  return invokeApp<WindowInboxSubscription>("subscribe_window_inbox", {
+    onEvent,
+  });
 }
 
 export interface SendWindowMessageResult {
@@ -815,7 +829,7 @@ export function sendWindowMessageCommand(
   messageType: string,
   payload: unknown,
 ) {
-  return invoke<SendWindowMessageResult>("send_window_message", {
+  return invokeApp<SendWindowMessageResult>("send_window_message", {
     target,
     messageType,
     payload,
@@ -828,19 +842,19 @@ export interface StartupNotice {
 }
 
 export function takeStartupNotices() {
-  return invoke<StartupNotice[]>("take_startup_notices");
+  return invokeApp<StartupNotice[]>("take_startup_notices");
 }
 
 export function getCloseBehavior() {
-  return invoke<CloseBehavior>("get_close_behavior");
+  return invokeApp<CloseBehavior>("get_close_behavior");
 }
 
 export function setCloseBehavior(closeBehavior: CloseBehavior) {
-  return invoke<void>("set_close_behavior", { closeBehavior });
+  return invokeApp<void>("set_close_behavior", { closeBehavior });
 }
 
 export function setTrayMenuLabels(labels: { show: string; quit: string }) {
-  return invoke<void>("set_tray_menu_labels", labels);
+  return invokeApp<void>("set_tray_menu_labels", labels);
 }
 
 // Sessions
@@ -850,7 +864,7 @@ export function listSessionPage(
   cursor: string | null = null,
   limit = 10,
 ) {
-  return invoke<SessionPage>("list_sessions", {
+  return invokeApp<SessionPage>("list_sessions", {
     directoryId,
     toolKey,
     cursor,
@@ -859,14 +873,14 @@ export function listSessionPage(
 }
 
 export function searchSessions(directoryId: number, query: string) {
-  return invoke<SessionSearchResults>("search_sessions", {
+  return invokeApp<SessionSearchResults>("search_sessions", {
     directoryId,
     query,
   });
 }
 
 export function refreshSessionSearchIndex(directoryId: number) {
-  return invoke<SessionSearchIndexRefresh>("refresh_session_search_index", {
+  return invokeApp<SessionSearchIndexRefresh>("refresh_session_search_index", {
     directoryId,
   });
 }
@@ -877,7 +891,7 @@ export function setSessionAlias(
   sessionId: string,
   alias: string,
 ) {
-  return invoke<void>("set_session_alias", {
+  return invokeApp<void>("set_session_alias", {
     directoryId,
     toolKey,
     sessionId,
@@ -890,7 +904,7 @@ export function deleteSessionAlias(
   toolKey: ToolKey,
   sessionId: string,
 ) {
-  return invoke<void>("delete_session_alias", {
+  return invokeApp<void>("delete_session_alias", {
     directoryId,
     toolKey,
     sessionId,
@@ -898,9 +912,9 @@ export function deleteSessionAlias(
 }
 
 export function getCacheStats() {
-  return invoke<CacheStats>("get_cache_stats");
+  return invokeApp<CacheStats>("get_cache_stats");
 }
 
 export function clearCache() {
-  return invoke<void>("clear_cache");
+  return invokeApp<void>("clear_cache");
 }

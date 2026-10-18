@@ -2593,7 +2593,7 @@ fn confirm_app_exit_takes_a_request_id_and_frontend_reads_the_payload_field() {
         TAURI_TS.contains("requestId: string"),
         "confirmAppExit must take requestId"
     );
-    assert!(TAURI_TS.contains("invoke<void>(\"confirm_app_exit\", { requestId })"));
+    assert!(TAURI_TS.contains("invokeApp<void>(\"confirm_app_exit\", { requestId })"));
 }
 
 // ---- m6-059b: Db privacy, with_sync confinement and the PTY diagnostics log level

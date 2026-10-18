@@ -10,6 +10,9 @@ import {
 import { closureOfWindowKind, type WindowKindId } from "../test/windowClosures";
 
 const TAURI_MODULE = "src/lib/tauri.ts";
+// m6-071b：invokeApp 是前端调用命令的唯一入口，也是 tauri.ts 之外唯一允许导入 invoke 的文件
+// （用户 2026-10-18 裁定的显式豁免）。
+const INVOKE_APP_MODULE = "src/lib/invokeApp.ts";
 
 // 主窗口专用调用：这些封装只在主窗口执行路径中被调用，子窗口闭包因为静态导入而包含它们。
 // PtyTerminal.tsx 的 createPtySession/reattachPtySession 只在主窗口创建或恢复会话时调用，
@@ -36,7 +39,9 @@ function wrapperCommands(): Map<string, string> {
   for (const part of parts) {
     const name = /^export (?:async )?function (\w+)/.exec(part)?.[1];
     const command =
-      /\binvoke\s*(?:<[\s\S]*?>)?\s*\(\s*["']([a-z_0-9]+)["']/.exec(part)?.[1];
+      /\binvokeApp\s*(?:<[\s\S]*?>)?\s*\(\s*["']([a-z_0-9]+)["']/.exec(
+        part,
+      )?.[1];
     if (!name || !command) {
       throw new Error(`unparsed wrapper: ${part.slice(0, 80)}`);
     }
@@ -110,7 +115,12 @@ describe("app command usage", () => {
   it("does not import invoke outside tauri.ts", () => {
     const violations: string[] = [];
     for (const [path, source] of Object.entries(projectSources)) {
-      if (path === TAURI_MODULE || isExcludedFromClosure(path)) continue;
+      if (
+        path === TAURI_MODULE ||
+        path === INVOKE_APP_MODULE ||
+        isExcludedFromClosure(path)
+      )
+        continue;
       if (
         /import\s*(?:type\s*)?\{[^}]*\binvoke\b[^}]*\}\s*from\s*["']@tauri-apps\/api\/core["']/.test(
           source,
@@ -129,6 +139,10 @@ describe("app command usage", () => {
     expect(violations).toEqual([]);
     expect(importSpecifiers(projectSources[TAURI_MODULE])).toContain(
       "@tauri-apps/api/core",
+    );
+    // 豁免不能变成死代码：invokeApp.ts 确实导入了 invoke。
+    expect(projectSources[INVOKE_APP_MODULE]).toMatch(
+      /import\s*\{[^}]*\binvoke\b[^}]*\}\s*from\s*["']@tauri-apps\/api\/core["']/,
     );
   });
 

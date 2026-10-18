@@ -158,6 +158,12 @@ jobs:
         if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
         run: git diff --exit-code -- contracts/fixtures
 
+      - name: Assert generated contract bindings are unchanged
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/gen-contracts.mjs
+          git diff --exit-code -- src/generated
+
       - name: Check Rust test anti-patterns
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: bash scripts/ci/check-rust-test-antipatterns.sh
