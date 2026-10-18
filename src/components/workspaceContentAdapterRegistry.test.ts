@@ -61,6 +61,7 @@ describe("workspace content adapter registry", () => {
     try {
       const view = getWorkspaceContentAdapter("pty").render({
         content: { kind: "pty", slotId: "terminal-a" },
+        theme: { id: "dark", base: "dark" },
         pty: { portalTarget },
       });
 

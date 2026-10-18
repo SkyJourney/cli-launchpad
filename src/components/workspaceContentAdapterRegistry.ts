@@ -11,6 +11,7 @@ import type {
   WorkspaceSlotStateKind,
 } from "../lib/tauri";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
+import type { ResolvedTheme } from "../lib/themes";
 import type {
   WorkspaceContentBeforeCloseHook,
   WorkspaceContentDisposalImpact,
@@ -24,6 +25,7 @@ import type {
 
 export interface WorkspaceContentRenderContext {
   content: WorkspacePaneContentRef;
+  theme: ResolvedTheme;
   pty?: {
     portalTarget: HTMLElement | undefined;
   };

@@ -11,7 +11,7 @@ import { releaseEditorDocument } from "../workspaceEditorEngineRegistry";
 import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
 import { registerContributionSafely } from "../../lib/registerContribution";
 import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
+import type { ResolvedTheme } from "../../lib/themes";
 
 const unsupportedReasonKeys = {
   binary: "workspaceFiles.unsupported.binary",
@@ -41,17 +41,18 @@ function TextFileContentAdapter({
   fileDocument,
   fileBuffer,
   readOnly,
+  theme,
   onEditFile,
   onSaveFile,
 }: {
   fileDocument: WorkspaceFileDocument | undefined;
   fileBuffer: WorkspaceFileBuffer | undefined;
   readOnly: boolean;
+  theme: ResolvedTheme;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const { id: theme } = useResolvedTheme();
 
   if (!fileDocument) return null;
 
@@ -135,7 +136,7 @@ function TextFileContentAdapter({
           fileDocument.id,
           fileBuffer.epoch,
         )}
-        theme={theme}
+        theme={theme.id}
         readOnly={readOnly}
         onChange={(content) => onEditFile(fileDocument.id, content)}
         onSave={() => void onSaveFile(fileDocument.id)}
@@ -223,6 +224,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
         fileDocument={context.file.document}
         fileBuffer={context.file.buffer}
         readOnly={context.file.readOnly}
+        theme={context.theme}
         onEditFile={context.file.edit}
         onSaveFile={context.file.save}
       />

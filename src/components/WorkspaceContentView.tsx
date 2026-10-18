@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspacePaneContentRef } from "../lib/tauri";
 import type { WorkspaceFileDocument } from "../lib/tauri";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
   getWorkspaceContentAdapterRevision,
   subscribeWorkspaceContentAdapters,
@@ -52,6 +53,7 @@ export function WorkspaceContentView({
     getWorkspaceContentAdapterRevision,
     getWorkspaceContentAdapterRevision,
   );
+  const theme = useResolvedTheme();
   if (!content) return null;
   if (content.kind === "unknown") {
     return (
@@ -72,6 +74,7 @@ export function WorkspaceContentView({
   }
   const renderContext: WorkspaceContentRenderContext = {
     content,
+    theme,
     ...(content.kind === "pty"
       ? { pty: { portalTarget: ptyPortalTarget } }
       : {}),
