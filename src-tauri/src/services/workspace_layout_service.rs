@@ -379,6 +379,7 @@ impl PendingApplyPlan {
 
         remove_slot_references(&mut layout.tree, &detached_tree_slot_ids);
         layout.detached_contents = detached_contents;
+        preserve_detached_unknown_contents(&mut layout, active_layout);
         preserve_detached_file_contents(&mut layout, active_layout);
 
         let mut slot_states = resolve_layout_slots_with(&facts, &mut layout, running);
@@ -761,6 +762,21 @@ fn remove_file_references(node: &mut WorkspaceLayoutNode, removed_document_ids: 
         WorkspaceLayoutNode::Split { first, second, .. } => {
             remove_file_references(first, removed_document_ids);
             remove_file_references(second, removed_document_ids);
+        }
+    }
+}
+
+/// `Unknown` 内容来自更新版本写入的布局：应用命名布局时必须原样保留，
+/// 不能因为当前版本不认识就丢弃（它们不属于任何 slot 或文档，保留不影响其他校验）。
+fn preserve_detached_unknown_contents(
+    layout: &mut WorkspaceLayoutDocument,
+    active_layout: &WorkspaceLayoutDocument,
+) {
+    for detached in &active_layout.detached_contents {
+        if matches!(detached, WorkspacePaneContentRef::Unknown { .. })
+            && !layout.detached_contents.contains(detached)
+        {
+            layout.detached_contents.push(detached.clone());
         }
     }
 }
@@ -1458,6 +1474,49 @@ mod tests {
         plan.layout
             .validate()
             .expect("detached file layout is valid");
+    }
+
+    #[test]
+    fn applying_preset_preserves_detached_unknown_contents() {
+        let mut connection = database();
+        let preset = create_preset(&mut connection, "未来内容布局", &empty_layout()).unwrap();
+        let unknown = WorkspacePaneContentRef::Unknown {
+            original_kind: "markdownPreview".to_string(),
+            raw: serde_json::json!({
+                "kind": "markdownPreview",
+                "documentId": "8e783338-f464-4b10-b15e-b534748c6241"
+            }),
+        };
+        let mut active = empty_layout();
+        active.detached_contents.push(unknown.clone());
+        active
+            .validate()
+            .expect("active layout with a detached unknown content is valid");
+
+        let plan = plan_apply_preset(&connection, &preset.id, &active, &HashSet::new()).unwrap();
+
+        let kept: Vec<&WorkspacePaneContentRef> = plan
+            .layout
+            .detached_contents
+            .iter()
+            .filter(|content| matches!(content, WorkspacePaneContentRef::Unknown { .. }))
+            .collect();
+        assert_eq!(kept, vec![&unknown]);
+        plan.layout
+            .validate()
+            .expect("layout with a preserved unknown content is valid");
+
+        let repeated =
+            plan_apply_preset(&connection, &preset.id, &plan.layout, &HashSet::new()).unwrap();
+        assert_eq!(
+            repeated
+                .layout
+                .detached_contents
+                .iter()
+                .filter(|content| matches!(content, WorkspacePaneContentRef::Unknown { .. }))
+                .count(),
+            1
+        );
     }
 
     #[test]
