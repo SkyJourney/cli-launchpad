@@ -19,6 +19,25 @@ import { onWindowMessage, sendWindowMessage } from "./windowMessages";
  */
 export type AppPreferencesPath = "broadcast" | "reply";
 
+/** A preferences payload that is well formed but speaks another protocol version is not silent. */
+function warnOnPreferencesVersionMismatch(payload: unknown) {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload)
+  ) {
+    const version = (payload as Record<string, unknown>).apiVersion;
+    if (
+      typeof version === "number" &&
+      version !== APP_PREFERENCES_API_VERSION
+    ) {
+      console.warn(
+        `[protocol.version_mismatch] ${APP_PREFERENCES_EVENT}: 期望 ${APP_PREFERENCES_API_VERSION}，收到 ${version}`,
+      );
+    }
+  }
+}
+
 export async function listenForAppPreferences(
   onPreferences: (preferences: AppPreferences) => void,
   onPartialFailure?: (path: AppPreferencesPath, reason: unknown) => void,
@@ -28,10 +47,12 @@ export async function listenForAppPreferences(
       APP_PREFERENCES_EVENT,
       ({ payload }) => {
         if (isAppPreferences(payload)) onPreferences(payload);
+        else warnOnPreferencesVersionMismatch(payload);
       },
     ),
     onWindowMessage<unknown>(APP_PREFERENCES_REPLY_MESSAGE, ({ payload }) => {
       if (isAppPreferences(payload)) onPreferences(payload);
+      else warnOnPreferencesVersionMismatch(payload);
     }),
   ]);
   const stops = results.flatMap((result) =>

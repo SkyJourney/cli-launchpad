@@ -31,8 +31,13 @@ export async function respondToAppPreferencesRequests(
         return;
       }
       const request = payload as Record<string, unknown>;
+      if (request.apiVersion !== APP_PREFERENCES_API_VERSION) {
+        console.warn(
+          `[protocol.version_mismatch] ${APP_PREFERENCES_REQUEST_MESSAGE}: 期望 ${APP_PREFERENCES_API_VERSION}，收到 ${String(request.apiVersion)}`,
+        );
+        return;
+      }
       if (
-        request.apiVersion !== APP_PREFERENCES_API_VERSION ||
         typeof request.windowLabel !== "string" ||
         request.windowLabel !== source.label
       ) {

@@ -1,3 +1,4 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { RUST_EVENTS } from "./eventNames";
 import { sendWindowMessageCommand, type WindowInboxSource } from "./tauri";
 import { onInboxEvent, type Unlisten } from "./windowInbox";
@@ -50,8 +51,10 @@ export async function sendWindowMessage(
 }
 
 /**
- * Listens for one message type. Messages without a stamped source, with another API version or
- * with a malformed envelope are dropped.
+ * Listens for one message type. Messages without a stamped source or with a malformed envelope
+ * are dropped with a warning. A message with another API version never reaches the handler:
+ * it is reported as `[protocol.version_mismatch]` and, for the request types that have a failure
+ * counterpart, answered to its sender (m6-072b, `windowProtocolVersion.ts`).
  */
 export function onWindowMessage<T = unknown>(
   type: string,
@@ -65,7 +68,29 @@ export function onWindowMessage<T = unknown>(
     const envelope = event.payload;
     if (envelope.type !== type) return;
     if (envelope.apiVersion !== WINDOW_MESSAGE_API_VERSION) {
-      console.warn("window_message.unsupported_version", type);
+      // Rust stamps every relayed message; without a sender there is nobody to answer.
+      if (event.source === null) {
+        console.warn("window_message.missing_source", type);
+        return;
+      }
+      const source = event.source;
+      const seq = event.seq;
+      // Dynamic import: windowProtocolVersion.ts sends through this module (no static cycle).
+      void import("./windowProtocolVersion")
+        .then((module) =>
+          module.handleVersionMismatch({
+            type,
+            expected: WINDOW_MESSAGE_API_VERSION,
+            received: envelope.apiVersion,
+            source,
+            seq,
+            payload: envelope.payload,
+            currentWindowLabel: getCurrentWebviewWindow().label,
+          }),
+        )
+        .catch((error: unknown) => {
+          console.warn(`[protocol.version_mismatch_unanswered] ${type}`, error);
+        });
       return;
     }
     if (event.source === null) {
