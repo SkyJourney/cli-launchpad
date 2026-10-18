@@ -4014,3 +4014,26 @@ fn production_code_does_not_add_main_window_label_literals() {
         "生产代码里的 \"main\" 字面量增加到 {count}，上限 {MAIN_LITERALS_RS_BASELINE}"
     );
 }
+
+#[test]
+fn window_chrome_contract_matches_the_macos_config() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/window-chrome.json"))
+            .expect("parse window chrome contract");
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.macos.conf.json"))
+            .expect("parse macOS config");
+    let macos = contract["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["platform"] == "macos")
+        .expect("macos entry");
+
+    assert_eq!(
+        macos["trafficLightPosition"],
+        config["app"]["windows"][0]["trafficLightPosition"]
+    );
+    assert_eq!(config["app"]["windows"][0]["titleBarStyle"], "Overlay");
+    assert_eq!(contract["items"].as_array().unwrap().len(), 3);
+}

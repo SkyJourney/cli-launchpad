@@ -1,3 +1,6 @@
+import { LogicalPosition } from "@tauri-apps/api/dpi";
+import windowChromeContract from "../../contracts/window-chrome.json";
+
 export interface WindowChromeOptions {
   decorations: boolean;
   titleBarStyle?: "overlay";
@@ -10,6 +13,24 @@ export interface WindowChromePolicy {
   platform: WindowPlatform;
   hasNativeWindowControls: boolean;
   trafficLightInset: number;
+}
+
+interface WindowChromeContractItem {
+  platform: WindowPlatform;
+  nativeControls: boolean;
+  titlebarInset: number;
+  trafficLightPosition: { x: number; y: number } | null;
+}
+
+const chromeContract =
+  windowChromeContract.items as unknown as WindowChromeContractItem[];
+
+function chromeContractFor(platform: WindowPlatform): WindowChromeContractItem {
+  const item = chromeContract.find(
+    (candidate) => candidate.platform === platform,
+  );
+  if (!item) throw new Error(`窗口外观契约缺少平台：${platform}`);
+  return item;
 }
 
 export interface TerminalKeyIntent {
@@ -34,10 +55,11 @@ export function getWindowChromePolicy(userAgent: string): WindowChromePolicy {
     : isMacOSUserAgent(userAgent)
       ? "macos"
       : "linux";
+  const item = chromeContractFor(platform);
   return {
     platform,
-    hasNativeWindowControls: platform === "macos",
-    trafficLightInset: platform === "macos" ? 82 : 0,
+    hasNativeWindowControls: item.nativeControls,
+    trafficLightInset: item.titlebarInset,
   };
 }
 
@@ -77,4 +99,19 @@ export function getWindowChromeOptions(userAgent: string): WindowChromeOptions {
   }
 
   return { decorations: false };
+}
+
+/** Chrome options for detached child windows: macOS also gets the contract traffic light position. */
+export function getChildWindowChromeOptions(
+  userAgent: string,
+): WindowChromeOptions & { trafficLightPosition?: LogicalPosition } {
+  const base = getWindowChromeOptions(userAgent);
+  const { platform } = getWindowChromePolicy(userAgent);
+  const position = chromeContractFor(platform).trafficLightPosition;
+  return position
+    ? {
+        ...base,
+        trafficLightPosition: new LogicalPosition(position.x, position.y),
+      }
+    : base;
 }

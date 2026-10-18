@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 707,
-    "Linux": 714,
-    "macOS": 712
+    "Windows": 708,
+    "Linux": 715,
+    "macOS": 713
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,7 @@
   ],
   "required": {
     "all": [
+      "contracts::window_chrome_contract_matches_the_macos_config",
       "models::window_kind::tests::role_queries_match_the_contract_roles",
       "models::window_kind::tests::detached_labels_are_the_non_primary_kinds",
       "contracts::content_kinds_and_window_kinds_reference_each_other_consistently",
