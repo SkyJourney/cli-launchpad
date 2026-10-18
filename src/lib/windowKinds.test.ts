@@ -118,7 +118,7 @@ describe("window kind roles", () => {
       import: "default",
     }) as Record<string, string>;
     // 基线 MAIN_LITERALS_TS 来自 m6-070 的前置检查 #14（2026-10-18 实测），只减不增。
-    const MAIN_LITERALS_TS_BASELINE = 55;
+    const MAIN_LITERALS_TS_BASELINE = 54;
     const count = Object.entries(sources)
       .filter(([path]) => !path.includes(".test.") && !path.includes("/test/"))
       .reduce(
