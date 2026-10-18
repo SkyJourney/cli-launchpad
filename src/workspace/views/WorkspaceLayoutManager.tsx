@@ -30,6 +30,9 @@ export function WorkspaceLayoutManager({
   onApply: (presetId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  // R-FE-1：刷新预设的回调读取最新翻译函数，语言切换不会重新拉取列表。
+  const tRef = useRef(t);
+  tRef.current = t;
   const anchorRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [presets, setPresets] = useState<WorkspaceLayoutPresetSummary[]>([]);
@@ -48,13 +51,16 @@ export function WorkspaceLayoutManager({
     try {
       setPresets(await listWorkspaceLayoutPresets());
     } catch (reason) {
+      const translate = tRef.current;
       toast.error(
-        t("pty.layoutActionFailed", { error: formatAppError(reason, t) }),
+        translate("pty.layoutActionFailed", {
+          error: formatAppError(reason, translate),
+        }),
       );
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     if (open) void refreshPresets();

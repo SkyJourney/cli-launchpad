@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import baselineFile from "./effectTranslationBaseline.json";
 import { scanSource, scanSources } from "../test/effectTranslationScan";
 
-// 存量违规数量的上限：只减不增。基线来源与记录日期：m6-073 步骤 4（2026-10-18）。
-const BASELINE_MAX = 3;
+// 存量违规数量的上限：只减不增。基线来源：m6-073 步骤 4（2026-10-18）；m6-b24-cleanup-C2 清零（2026-10-18），此后不得再登记。
+const BASELINE_MAX = 0;
 
 const baseline = baselineFile.items as Array<{ key: string; reason: string }>;
 

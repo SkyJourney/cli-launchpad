@@ -236,12 +236,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
                 rows: nextSize.rows,
               });
               void resizePtySession(active.sessionId, nextSize).catch(
-                (reason) => setError(formatAppError(reason, t)),
+                (reason) => setError(formatAppError(reason, tRef.current)),
               );
             }
           }
         } catch (reason) {
-          setError(formatAppError(reason, t));
+          setError(formatAppError(reason, tRef.current));
         }
       };
       let resizeFrame = 0;
@@ -293,7 +293,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           const selectedText = terminal.getSelection();
           if (selectedText) {
             void writeClipboardText(selectedText).catch((reason) =>
-              setError(formatAppError(reason, t)),
+              setError(formatAppError(reason, tRef.current)),
             );
           }
           return false;
@@ -308,7 +308,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               })
               .catch((reason) => {
                 if (!isClipboardTextUnavailable(reason)) {
-                  setError(formatAppError(reason, t));
+                  setError(formatAppError(reason, tRef.current));
                 }
               });
           }

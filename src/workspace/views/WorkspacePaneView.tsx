@@ -95,6 +95,9 @@ export function WorkspacePaneView({
   pane: Extract<WorkspaceNode, { kind: "pane" }>;
 }) {
   const { t } = useTranslation();
+  // R-FE-1：异步回调读取最新翻译函数，不让 effect 依赖 t。
+  const tRef = useRef(t);
+  tRef.current = t;
   const paneName = t("pty.paneNumber", { number: pane.paneNumber });
   const presentationContext: WorkspaceContentPresentationContext = {
     directories,
@@ -255,7 +258,7 @@ export function WorkspacePaneView({
   useEffect(() => {
     if (activeFileId && !activeFileBuffer) {
       void onLoadFile(activeFileId).catch((reason) =>
-        toast.error(formatAppError(reason, t)),
+        toast.error(formatAppError(reason, tRef.current)),
       );
     }
   }, [activeFileBuffer, activeFileId, onLoadFile]);
