@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "name": "withItems",
+      "value": {
+        "items": [
+          {
+            "alias": "build",
+            "lastActiveMs": 1700000000000,
+            "sessionId": "11111111-2222-4333-8444-555555555552",
+            "title": "Fix the build",
+            "toolKey": "claude"
+          },
+          {
+            "alias": null,
+            "lastActiveMs": null,
+            "sessionId": "session-2",
+            "title": "Review",
+            "toolKey": "codex"
+          }
+        ],
+        "nextCursor": "cursor-2"
+      }
+    },
+    {
+      "name": "lastPage",
+      "value": {
+        "items": [],
+        "nextCursor": null
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "SessionPage"
+}

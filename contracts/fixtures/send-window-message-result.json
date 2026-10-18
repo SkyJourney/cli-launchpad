@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "name": "delivered",
+      "value": {
+        "delivered": true
+      }
+    },
+    {
+      "name": "notDelivered",
+      "value": {
+        "delivered": false
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "SendWindowMessageResult"
+}

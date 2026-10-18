@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "partial",
+      "value": {
+        "incompleteTools": [
+          "codex"
+        ],
+        "indexedSessions": 3
+      }
+    },
+    {
+      "name": "complete",
+      "value": {
+        "incompleteTools": [],
+        "indexedSessions": 0
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "SessionSearchIndexRefresh"
+}

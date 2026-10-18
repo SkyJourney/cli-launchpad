@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 708,
-    "Linux": 715,
-    "macOS": 713
+    "Windows": 712,
+    "Linux": 719,
+    "macOS": 717
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,10 @@
   ],
   "required": {
     "all": [
+      "contracts::command_definitions_extract_the_return_type",
+      "contracts::every_command_return_dto_has_a_golden_fixture",
+      "contracts::dto_samples_cover_option_fields_with_some_and_none",
+      "contracts::event_payload_fixtures_cover_every_payload_event",
       "contracts::window_chrome_contract_matches_the_macos_config",
       "models::window_kind::tests::role_queries_match_the_contract_roles",
       "models::window_kind::tests::detached_labels_are_the_non_primary_kinds",

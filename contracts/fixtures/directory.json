@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "name": "pinnedWithNote",
+      "value": {
+        "id": 1,
+        "lastUsedAt": "2023-11-14T22:13:20Z",
+        "name": "sample",
+        "note": "main project",
+        "path": "C:\\Projects\\sample",
+        "pinned": true,
+        "sortOrder": 3
+      }
+    },
+    {
+      "name": "plain",
+      "value": {
+        "id": 2,
+        "lastUsedAt": null,
+        "name": "other",
+        "note": null,
+        "path": "C:\\Projects\\other",
+        "pinned": false,
+        "sortOrder": 4
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "Directory"
+}

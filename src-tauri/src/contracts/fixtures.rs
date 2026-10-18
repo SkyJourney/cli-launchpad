@@ -7,29 +7,42 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::error::AppError;
+use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::{BackupManifest, BackupReason};
 use crate::models::cache::CacheStats;
 use crate::models::cli_status::{CliAvailability, CliStatus};
+use crate::models::directory::Directory;
 use crate::models::execution::{
-    ExecutionLogChunk, ExecutionStatus, ExecutionStream, ExecutionTask,
+    ExecutionLogChunk, ExecutionStatus, ExecutionStream, ExecutionTask, ExecutionTaskDetail,
 };
 use crate::models::install::{
     InstallKind, InstallPlan, LatestVersion, ManagedUpdateStatus, UpdateAvailability,
 };
+use crate::models::launch_history::{LaunchAction, LaunchHistoryEntry};
 use crate::models::pty_session::{
     PtyEvent, PtyHandoff, PtySession, PtySessionWindowStatus, PtySessionWindowStatusReport,
 };
+use crate::models::session::{
+    SessionInfo, SessionPage, SessionSearchIndexRefresh, SessionSearchResults,
+};
 use crate::models::tool::ToolKey;
+use crate::models::window_kind::WindowKind;
 use crate::models::workspace_layout::{
     WorkspaceFileDocument, WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutNode,
-    WorkspaceLayoutSaveRejection, WorkspaceLayoutSaveResult, WorkspaceLayoutSlot,
-    WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus, WorkspacePaneContentRef,
-    WorkspaceSlotState, WorkspaceSlotStateKind, WorkspaceSlotTitle, WorkspaceSplitDirection,
+    WorkspaceLayoutPresetSummary, WorkspaceLayoutSaveRejection, WorkspaceLayoutSaveResult,
+    WorkspaceLayoutSlot, WorkspaceLayoutStateRead, WorkspaceLayoutStateStatus,
+    WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind, WorkspaceSlotTitle,
+    WorkspaceSplitDirection,
 };
 use crate::services::file_service::{
-    ProjectDirectoryListing, ProjectFileEntry, ProjectFileKind, ProjectFileOpenResult,
-    ProjectFileUnsupportedReason, ProjectTextFileSaveResult, ProjectTextFileSaveWarning,
+    ProjectDirectoryListing, ProjectFileCasResidue, ProjectFileCasResidueListing, ProjectFileEntry,
+    ProjectFileKind, ProjectFileOpenResult, ProjectFileUnsupportedReason,
+    ProjectTextFileSaveResult, ProjectTextFileSaveWarning,
 };
+use crate::services::startup_notices::{StartupNotice, StartupNoticeKind};
+use crate::services::window_inbox::{InboxMessage, InboxSource, WindowInboxSubscription};
+use crate::services::window_lifecycle::AppEvent;
+use crate::services::window_relay::SendWindowMessageResult;
 
 pub(crate) struct DtoSamples {
     pub fixture_file: Option<&'static str>,
@@ -129,6 +142,12 @@ fn sample_serialize_only<T: Serialize>(
     let json = serde_json::to_value(&value)
         .unwrap_or_else(|error| panic!("serialize {type_name}.{name}: {error}"));
     cases.push((name.to_string(), json));
+}
+
+/// Registers a sample whose value is already a JSON value (for example an event
+/// payload built by its production constructor). No round trip is possible.
+pub(crate) fn sample_value(cases: &mut Vec<(String, Value)>, name: &str, value: Value) {
+    cases.push((name.to_string(), value));
 }
 
 const SLOT_ID: &str = "11111111-2222-4333-8444-555555555551";
@@ -348,7 +367,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("project-directory-listing.json"),
         type_name: name,
         cases,
     });
@@ -471,7 +490,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("pty-session.json"),
         type_name: name,
         cases,
     });
@@ -489,7 +508,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("pty-handoff.json"),
         type_name: name,
         cases,
     });
@@ -731,7 +750,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("execution-log-chunk.json"),
         type_name: name,
         cases,
     });
@@ -799,7 +818,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("latest-version.json"),
         type_name: name,
         cases,
     });
@@ -878,8 +897,28 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             size_bytes: 4096,
         },
     );
+    for (case, reason) in [
+        ("manual", BackupReason::Manual),
+        ("preImport", BackupReason::PreImport),
+        ("preRestore", BackupReason::PreRestore),
+        ("preMigration", BackupReason::PreMigration),
+    ] {
+        sample(
+            &mut cases,
+            name,
+            case,
+            BackupManifest {
+                id: format!("backup-{case}"),
+                created_at_ms: TIMESTAMP_MS,
+                reason,
+                schema_version: 14,
+                database_filename: "cli-launchpad.db".to_string(),
+                size_bytes: 4096,
+            },
+        );
+    }
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("backup-manifest.json"),
         type_name: name,
         cases,
     });
@@ -910,7 +949,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         },
     );
     all.push(DtoSamples {
-        fixture_file: None,
+        fixture_file: Some("cache-stats.json"),
         type_name: name,
         cases,
     });
@@ -990,6 +1029,440 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
     );
     all.push(DtoSamples {
         fixture_file: Some("exit-requested-payload.json"),
+        type_name: name,
+        cases,
+    });
+
+    // Directory (m6-071)
+    let mut cases = Vec::new();
+    let name = "Directory";
+    sample(
+        &mut cases,
+        name,
+        "pinnedWithNote",
+        Directory {
+            id: 1,
+            name: "sample".to_string(),
+            path: PROJECT_PATH.to_string(),
+            sort_order: 3,
+            pinned: true,
+            last_used_at: Some("2023-11-14T22:13:20Z".to_string()),
+            note: Some("main project".to_string()),
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "plain",
+        Directory {
+            id: 2,
+            name: "other".to_string(),
+            path: "C:\\Projects\\other".to_string(),
+            sort_order: 4,
+            pinned: false,
+            last_used_at: None,
+            note: None,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("directory.json"),
+        type_name: name,
+        cases,
+    });
+
+    // WorkspaceLayoutPresetSummary (m6-071)
+    let mut cases = Vec::new();
+    let name = "WorkspaceLayoutPresetSummary";
+    sample(
+        &mut cases,
+        name,
+        "summary",
+        WorkspaceLayoutPresetSummary {
+            id: "preset-1".to_string(),
+            name: "Review".to_string(),
+            schema_version: 5,
+            created_at_ms: TIMESTAMP_MS,
+            updated_at_ms: TIMESTAMP_MS + 1_000,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("workspace-layout-preset-summary.json"),
+        type_name: name,
+        cases,
+    });
+
+    // LaunchHistoryEntry (m6-071)
+    let mut cases = Vec::new();
+    let name = "LaunchHistoryEntry";
+    sample(
+        &mut cases,
+        name,
+        "successWithSession",
+        LaunchHistoryEntry {
+            id: 1,
+            directory_name: "sample".to_string(),
+            directory_path: PROJECT_PATH.to_string(),
+            tool_key: ToolKey::Claude,
+            action: LaunchAction::Launch,
+            success: true,
+            error_category: None,
+            launched_at: "2023-11-14T22:13:20Z".to_string(),
+            pty_session_id: Some(SESSION_ID.to_string()),
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "failureWithoutSession",
+        LaunchHistoryEntry {
+            id: 2,
+            directory_name: "sample".to_string(),
+            directory_path: PROJECT_PATH.to_string(),
+            tool_key: ToolKey::Codex,
+            action: LaunchAction::Resume,
+            success: false,
+            error_category: Some("spawn_failed".to_string()),
+            launched_at: "2023-11-14T22:14:20Z".to_string(),
+            pty_session_id: None,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("launch-history-entry.json"),
+        type_name: name,
+        cases,
+    });
+
+    // ProjectFileCasResidueListing (m6-071)
+    let mut cases = Vec::new();
+    let name = "ProjectFileCasResidueListing";
+    sample(
+        &mut cases,
+        name,
+        "withEntries",
+        ProjectFileCasResidueListing {
+            entries: vec![ProjectFileCasResidue {
+                relative_path: "src/.main.rs.cas-1".to_string(),
+                size_bytes: 12,
+                modified_at_ms: 1_700_000_000_000,
+                file_identity: "file-id-1".to_string(),
+            }],
+            truncated: true,
+            skipped_count: 2,
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "empty",
+        ProjectFileCasResidueListing {
+            entries: Vec::new(),
+            truncated: false,
+            skipped_count: 0,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("project-file-cas-residue-listing.json"),
+        type_name: name,
+        cases,
+    });
+
+    // SessionPage (m6-071)
+    let mut cases = Vec::new();
+    let name = "SessionPage";
+    sample(
+        &mut cases,
+        name,
+        "withItems",
+        SessionPage {
+            items: vec![
+                SessionInfo {
+                    tool_key: ToolKey::Claude,
+                    session_id: SESSION_ID.to_string(),
+                    title: "Fix the build".to_string(),
+                    alias: Some("build".to_string()),
+                    last_active_ms: Some(TIMESTAMP_MS),
+                },
+                SessionInfo {
+                    tool_key: ToolKey::Codex,
+                    session_id: "session-2".to_string(),
+                    title: "Review".to_string(),
+                    alias: None,
+                    last_active_ms: None,
+                },
+            ],
+            next_cursor: Some("cursor-2".to_string()),
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "lastPage",
+        SessionPage {
+            items: Vec::new(),
+            next_cursor: None,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("session-page.json"),
+        type_name: name,
+        cases,
+    });
+
+    // SessionSearchIndexRefresh (m6-071)
+    let mut cases = Vec::new();
+    let name = "SessionSearchIndexRefresh";
+    sample(
+        &mut cases,
+        name,
+        "partial",
+        SessionSearchIndexRefresh {
+            incomplete_tools: vec![ToolKey::Codex],
+            indexed_sessions: 3,
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "complete",
+        SessionSearchIndexRefresh {
+            incomplete_tools: Vec::new(),
+            indexed_sessions: 0,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("session-search-index-refresh.json"),
+        type_name: name,
+        cases,
+    });
+
+    // SessionSearchResults (m6-071)
+    let mut cases = Vec::new();
+    let name = "SessionSearchResults";
+    sample(
+        &mut cases,
+        name,
+        "withIncompleteTools",
+        SessionSearchResults {
+            items: vec![SessionInfo {
+                tool_key: ToolKey::Grok,
+                session_id: "session-3".to_string(),
+                title: "Search hit".to_string(),
+                alias: None,
+                last_active_ms: Some(TIMESTAMP_MS),
+            }],
+            incomplete_tools: vec![ToolKey::Hermes],
+        },
+    );
+    sample(
+        &mut cases,
+        name,
+        "empty",
+        SessionSearchResults {
+            items: Vec::new(),
+            incomplete_tools: Vec::new(),
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("session-search-results.json"),
+        type_name: name,
+        cases,
+    });
+
+    // ExecutionTaskDetail (m6-071)
+    let mut cases = Vec::new();
+    let name = "ExecutionTaskDetail";
+    sample(
+        &mut cases,
+        name,
+        "withLogs",
+        ExecutionTaskDetail {
+            task: ExecutionTask {
+                id: "task-2".to_string(),
+                tool_key: ToolKey::Codex,
+                kind: InstallKind::Install,
+                source: "Codex installer".to_string(),
+                preview: "codex install".to_string(),
+                status: ExecutionStatus::Failed,
+                started_at_ms: TIMESTAMP_MS,
+                finished_at_ms: Some(TIMESTAMP_MS + 2_000),
+                exit_code: Some(1),
+                error_message: Some("exit status 1".to_string()),
+                log_truncated: true,
+            },
+            logs: vec![
+                ExecutionLogChunk {
+                    task_id: "task-2".to_string(),
+                    sequence: 1,
+                    stream: ExecutionStream::Stdout,
+                    content: "downloading".to_string(),
+                    created_at_ms: TIMESTAMP_MS,
+                },
+                ExecutionLogChunk {
+                    task_id: "task-2".to_string(),
+                    sequence: 2,
+                    stream: ExecutionStream::System,
+                    content: "exit status 1".to_string(),
+                    created_at_ms: TIMESTAMP_MS + 2_000,
+                },
+            ],
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("execution-task-detail.json"),
+        type_name: name,
+        cases,
+    });
+
+    // CloseBehavior (m6-071): one case per variant.
+    let mut cases = Vec::new();
+    let name = "CloseBehavior";
+    sample(
+        &mut cases,
+        name,
+        "minimizeToTray",
+        CloseBehavior::MinimizeToTray,
+    );
+    sample(&mut cases, name, "quit", CloseBehavior::Quit);
+    all.push(DtoSamples {
+        fixture_file: Some("close-behavior.json"),
+        type_name: name,
+        cases,
+    });
+
+    // Commands whose results are serialize-only (m6-071: R-1 found them returned without a fixture).
+    let mut cases = Vec::new();
+    let name = "SendWindowMessageResult";
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "delivered",
+        SendWindowMessageResult { delivered: true },
+    );
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "notDelivered",
+        SendWindowMessageResult { delivered: false },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("send-window-message-result.json"),
+        type_name: name,
+        cases,
+    });
+
+    let mut cases = Vec::new();
+    let name = "StartupNotice";
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "abnormalExitWithStart",
+        StartupNotice {
+            kind: StartupNoticeKind::AbnormalExitDetected,
+            started_at_ms: Some(TIMESTAMP_MS),
+        },
+    );
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "abnormalExitWithoutStart",
+        StartupNotice {
+            kind: StartupNoticeKind::AbnormalExitDetected,
+            started_at_ms: None,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("startup-notice.json"),
+        type_name: name,
+        cases,
+    });
+
+    let mut cases = Vec::new();
+    let name = "WindowInboxSubscription";
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "first",
+        WindowInboxSubscription {
+            replaced: false,
+            flushed: 0,
+            dropped: 0,
+        },
+    );
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "replacedAfterBuffering",
+        WindowInboxSubscription {
+            replaced: true,
+            flushed: 2,
+            dropped: 1,
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("window-inbox-subscription.json"),
+        type_name: name,
+        cases,
+    });
+
+    // Event payloads built by their production constructors (m6-071).
+    let lost_payload = AppEvent::WorkspaceContentWindowLost {
+        window_label: "workspace-content-8e783338-f464-4b10-b15e-b534748c6241".to_string(),
+    }
+    .payload();
+    let mut cases = Vec::new();
+    let name = "WorkspaceContentWindowLostPayload";
+    sample_value(&mut cases, "lost", lost_payload.clone());
+    all.push(DtoSamples {
+        fixture_file: Some("event-workspace-content-window-lost.json"),
+        type_name: name,
+        cases,
+    });
+
+    let mut cases = Vec::new();
+    let name = "PtySessionOwnerLostPayload";
+    sample_value(
+        &mut cases,
+        "lost",
+        AppEvent::PtySessionOwnerLost {
+            session_id: "8e783338-f464-4b10-b15e-b534748c6241".to_string(),
+        }
+        .payload(),
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("event-pty-session-owner-lost.json"),
+        type_name: name,
+        cases,
+    });
+
+    let mut cases = Vec::new();
+    let name = "InboxMessage";
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "withoutSource",
+        InboxMessage {
+            seq: 1,
+            event: "workspace-content-window-lost".to_string(),
+            payload: lost_payload,
+            source: None,
+        },
+    );
+    sample_serialize_only(
+        &mut cases,
+        name,
+        "withSource",
+        InboxMessage {
+            seq: 2,
+            event: "window-message".to_string(),
+            payload: json!({"apiVersion": 1, "type": "pty-detached-ready", "payload": {}}),
+            source: Some(InboxSource {
+                label: "terminal-8e783338-f464-4b10-b15e-b534748c6241".to_string(),
+                kind: WindowKind::Terminal,
+            }),
+        },
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("event-inbox-message.json"),
         type_name: name,
         cases,
     });

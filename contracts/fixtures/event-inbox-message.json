@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "name": "withoutSource",
+      "value": {
+        "event": "workspace-content-window-lost",
+        "payload": {
+          "windowLabel": "workspace-content-8e783338-f464-4b10-b15e-b534748c6241"
+        },
+        "seq": 1,
+        "source": null
+      }
+    },
+    {
+      "name": "withSource",
+      "value": {
+        "event": "window-message",
+        "payload": {
+          "apiVersion": 1,
+          "payload": {},
+          "type": "pty-detached-ready"
+        },
+        "seq": 2,
+        "source": {
+          "kind": "terminal",
+          "label": "terminal-8e783338-f464-4b10-b15e-b534748c6241"
+        }
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "InboxMessage"
+}

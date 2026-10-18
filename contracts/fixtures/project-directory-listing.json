@@ -1,0 +1,50 @@
+{
+  "cases": [
+    {
+      "name": "withEntries",
+      "value": {
+        "entries": [
+          {
+            "hidden": false,
+            "ignored": true,
+            "kind": "file",
+            "name": "main.rs",
+            "relativePath": "src/main.rs",
+            "size": 128,
+            "symbolicLink": false
+          },
+          {
+            "hidden": true,
+            "ignored": false,
+            "kind": "directory",
+            "name": "src",
+            "relativePath": "src",
+            "size": 0,
+            "symbolicLink": true
+          },
+          {
+            "hidden": false,
+            "ignored": false,
+            "kind": "other",
+            "name": "fifo",
+            "relativePath": "fifo",
+            "size": 0,
+            "symbolicLink": false
+          }
+        ],
+        "skippedCount": 3,
+        "truncated": true
+      }
+    },
+    {
+      "name": "empty",
+      "value": {
+        "entries": [],
+        "skippedCount": 0,
+        "truncated": false
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ProjectDirectoryListing"
+}

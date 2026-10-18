@@ -28,19 +28,42 @@ const fixtures = import.meta.glob("../../contracts/fixtures/*.json", {
   import: "default",
 }) as Record<string, FixtureFile>;
 
-// 期望的 13 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
+// 期望的 35 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
 const EXPECTED_FIXTURES: Record<string, string> = {
   "app-error.json": "AppError",
+  "backup-manifest.json": "BackupManifest",
+  "cache-stats.json": "CacheStats",
   "cli-status.json": "CliStatus",
+  "close-behavior.json": "CloseBehavior",
+  "directory.json": "Directory",
+  "event-inbox-message.json": "InboxMessage",
+  "event-pty-session-owner-lost.json": "PtySessionOwnerLostPayload",
+  "event-workspace-content-window-lost.json":
+    "WorkspaceContentWindowLostPayload",
+  "execution-log-chunk.json": "ExecutionLogChunk",
+  "execution-task-detail.json": "ExecutionTaskDetail",
   "execution-task.json": "ExecutionTask",
   "exit-requested-payload.json": "ExitRequestedPayload",
   "install-plan.json": "InstallPlan",
+  "latest-version.json": "LatestVersion",
+  "launch-history-entry.json": "LaunchHistoryEntry",
   "managed-update-status.json": "ManagedUpdateStatus",
+  "project-directory-listing.json": "ProjectDirectoryListing",
+  "project-file-cas-residue-listing.json": "ProjectFileCasResidueListing",
   "project-file-open-result.json": "ProjectFileOpenResult",
   "project-text-file-save-result.json": "ProjectTextFileSaveResult",
   "pty-event.json": "PtyEvent",
+  "pty-handoff.json": "PtyHandoff",
   "pty-session-window-status.json": "PtySessionWindowStatusReport",
+  "pty-session.json": "PtySession",
+  "send-window-message-result.json": "SendWindowMessageResult",
+  "session-page.json": "SessionPage",
+  "session-search-index-refresh.json": "SessionSearchIndexRefresh",
+  "session-search-results.json": "SessionSearchResults",
+  "startup-notice.json": "StartupNotice",
+  "window-inbox-subscription.json": "WindowInboxSubscription",
   "workspace-layout-apply-plan.json": "WorkspaceLayoutApplyPlan",
+  "workspace-layout-preset-summary.json": "WorkspaceLayoutPresetSummary",
   "workspace-layout-save-result.json": "WorkspaceLayoutSaveResult",
   "workspace-layout-state-read.json": "WorkspaceLayoutStateRead",
 };
@@ -132,7 +155,7 @@ describe("IPC DTO golden fixtures", () => {
 
   it("covers every variant fixture exported by the Rust golden fixture generator", () => {
     const paths = Object.keys(fixtures);
-    expect(paths.length, REGENERATE).toBe(13);
+    expect(paths.length, REGENERATE).toBe(35);
     const names = paths.map((path) => path.split("/").pop() as string).sort();
     expect(names).toEqual(Object.keys(EXPECTED_FIXTURES).sort());
 

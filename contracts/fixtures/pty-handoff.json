@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {
+      "name": "handoff",
+      "value": {
+        "sequence": 7,
+        "token": "token-1"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "PtyHandoff"
+}

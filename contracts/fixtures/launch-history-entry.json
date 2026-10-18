@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "name": "successWithSession",
+      "value": {
+        "action": "launch",
+        "directoryName": "sample",
+        "directoryPath": "C:\\Projects\\sample",
+        "errorCategory": null,
+        "id": 1,
+        "launchedAt": "2023-11-14T22:13:20Z",
+        "ptySessionId": "11111111-2222-4333-8444-555555555552",
+        "success": true,
+        "toolKey": "claude"
+      }
+    },
+    {
+      "name": "failureWithoutSession",
+      "value": {
+        "action": "resume",
+        "directoryName": "sample",
+        "directoryPath": "C:\\Projects\\sample",
+        "errorCategory": "spawn_failed",
+        "id": 2,
+        "launchedAt": "2023-11-14T22:14:20Z",
+        "ptySessionId": null,
+        "success": false,
+        "toolKey": "codex"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "LaunchHistoryEntry"
+}

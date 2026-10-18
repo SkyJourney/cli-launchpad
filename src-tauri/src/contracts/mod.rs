@@ -1234,7 +1234,7 @@ fn golden_fixtures_match_serialized_dtos() {
         }
     }
 
-    assert_eq!(expected_files.len(), 13, "fixture 映射表必须恰好 13 个文件");
+    assert_eq!(expected_files.len(), 35, "fixture 映射表必须恰好 35 个文件");
     let found: BTreeSet<String> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
         .map(|entry| entry.expect("read fixture entry").path())
@@ -3282,6 +3282,9 @@ struct CommandDef {
     file: String,
     name: String,
     signature: String,
+    /// The text between the parameter list and the body, without the arrow (empty when the
+    /// command returns nothing); m6-071 reads the DTO a command returns from it.
+    return_type: String,
     body: String,
 }
 
@@ -3322,6 +3325,11 @@ fn command_definitions() -> Vec<CommandDef> {
                 file: file.clone(),
                 name: command.name.clone(),
                 signature: text[open + 1..close].to_string(),
+                return_type: rest[..brace]
+                    .trim()
+                    .trim_start_matches("->")
+                    .trim()
+                    .to_string(),
                 body: rest[brace + 1..].to_string(),
             });
         }
@@ -4036,4 +4044,229 @@ fn window_chrome_contract_matches_the_macos_config() {
     );
     assert_eq!(config["app"]["windows"][0]["titleBarStyle"], "Overlay");
     assert_eq!(contract["items"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn command_definitions_extract_the_return_type() {
+    // m6-071: `CommandDef.return_type` is the text between the parameter list and the body, without
+    // the arrow; a command without a return type has an empty one.
+    let definitions = command_definitions();
+    let return_type = |name: &str| {
+        definitions
+            .iter()
+            .find(|command| command.name == name)
+            .unwrap_or_else(|| panic!("缺少命令 {name}"))
+            .return_type
+            .clone()
+    };
+
+    assert_eq!(
+        return_type("list_directories"),
+        "Result<Vec<Directory>, AppError>"
+    );
+    assert_eq!(
+        return_type("get_close_behavior"),
+        "Result<CloseBehavior, AppError>"
+    );
+    assert!(definitions
+        .iter()
+        .all(|command| !command.return_type.starts_with("->")));
+    assert!(
+        definitions
+            .iter()
+            .filter(|command| command.return_type.starts_with("Result<"))
+            .count()
+            >= 60,
+        "大多数命令返回 Result<_, AppError>"
+    );
+}
+
+#[test]
+fn every_command_return_dto_has_a_golden_fixture() {
+    const PRIMITIVES: [&str; 6] = ["()", "bool", "i64", "usize", "u32", "String"];
+
+    fn payload_type(return_type: &str) -> Option<String> {
+        if return_type.is_empty() {
+            return None;
+        }
+        let mut text = return_type.trim().to_string();
+        if let Some(rest) = text.strip_prefix("Result<") {
+            let end = rest
+                .rfind(", AppError>")
+                .expect("commands must return Result<_, AppError>");
+            text = rest[..end].trim().to_string();
+        }
+        loop {
+            let inner = ["Vec<", "Option<"].iter().find_map(|prefix| {
+                text.strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_suffix('>'))
+                    .map(|rest| rest.trim().to_string())
+            });
+            match inner {
+                Some(inner) => text = inner,
+                None => break,
+            }
+        }
+        Some(text.rsplit("::").next().unwrap_or(&text).to_string())
+    }
+
+    let samples = fixtures::ipc_dto_samples();
+    let with_file: std::collections::BTreeSet<&str> = samples
+        .iter()
+        .filter(|sample| sample.fixture_file.is_some())
+        .map(|sample| sample.type_name)
+        .collect();
+    let commands = command_definitions();
+    assert!(
+        commands.len() >= 60,
+        "命令解析异常：只解析到 {} 个",
+        commands.len()
+    );
+
+    let mut missing = std::collections::BTreeSet::new();
+    for command in &commands {
+        let Some(dto) = payload_type(&command.return_type) else {
+            continue;
+        };
+        if PRIMITIVES.contains(&dto.as_str()) {
+            continue;
+        }
+        if !with_file.contains(dto.as_str()) {
+            missing.insert(format!("{}（命令 {}）", dto, command.name));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "这些命令返回的 DTO 没有 golden fixture：{missing:?}"
+    );
+}
+
+#[test]
+fn dto_samples_cover_option_fields_with_some_and_none() {
+    let samples = fixtures::ipc_dto_samples();
+    let cases_of = |type_name: &str| -> Vec<(String, serde_json::Value)> {
+        samples
+            .iter()
+            .find(|sample| sample.type_name == type_name)
+            .unwrap_or_else(|| panic!("缺少样本类型 {type_name}"))
+            .cases
+            .clone()
+    };
+
+    // Directory：lastUsedAt、note 同时有 Some 与 None。
+    let directory = cases_of("Directory");
+    for key in ["lastUsedAt", "note"] {
+        assert!(
+            directory.iter().any(|(_, value)| !value[key].is_null()),
+            "Directory.{key} 缺 Some"
+        );
+        assert!(
+            directory.iter().any(|(_, value)| value[key].is_null()),
+            "Directory.{key} 缺 None"
+        );
+    }
+    // LaunchHistoryEntry：errorCategory、ptySessionId 同时有 Some 与 None。
+    let history = cases_of("LaunchHistoryEntry");
+    for key in ["errorCategory", "ptySessionId"] {
+        assert!(
+            history.iter().any(|(_, value)| !value[key].is_null()),
+            "LaunchHistoryEntry.{key} 缺 Some"
+        );
+        assert!(
+            history.iter().any(|(_, value)| value[key].is_null()),
+            "LaunchHistoryEntry.{key} 缺 None"
+        );
+    }
+    // SessionPage：nextCursor 同时有 Some 与 None；items 里的 alias、lastActiveMs 同时有 Some 与 None。
+    let pages = cases_of("SessionPage");
+    assert!(pages
+        .iter()
+        .any(|(_, value)| !value["nextCursor"].is_null()));
+    assert!(pages.iter().any(|(_, value)| value["nextCursor"].is_null()));
+    let mut items = Vec::new();
+    for (_, value) in &pages {
+        for item in value["items"].as_array().cloned().unwrap_or_default() {
+            items.push(item);
+        }
+    }
+    for key in ["alias", "lastActiveMs"] {
+        assert!(
+            items.iter().any(|item| !item[key].is_null()),
+            "SessionInfo.{key} 缺 Some"
+        );
+        assert!(
+            items.iter().any(|item| item[key].is_null()),
+            "SessionInfo.{key} 缺 None"
+        );
+    }
+    // 每个新增类型都至少有一个 case，且 case 名唯一。
+    for type_name in [
+        "Directory",
+        "BackupManifest",
+        "WorkspaceLayoutPresetSummary",
+        "LaunchHistoryEntry",
+        "ProjectFileCasResidueListing",
+        "SessionPage",
+        "SessionSearchIndexRefresh",
+        "SessionSearchResults",
+        "ExecutionTaskDetail",
+        "CloseBehavior",
+        "ProjectDirectoryListing",
+        "CacheStats",
+        "PtyHandoff",
+        "PtySession",
+        "LatestVersion",
+        "ExecutionLogChunk",
+    ] {
+        let cases = cases_of(type_name);
+        assert!(!cases.is_empty(), "{type_name} 没有样本");
+        let names: std::collections::BTreeSet<&str> =
+            cases.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names.len(), cases.len(), "{type_name} 的 case 名重复");
+    }
+}
+
+#[test]
+fn event_payload_fixtures_cover_every_payload_event() {
+    // 事件名 -> 载荷 fixture 文件；None 表示没有 Rust 载荷（单元值或前端定义的载荷）。
+    const EVENT_PAYLOADS: [(&str, Option<&str>); 8] = [
+        ("app-exit-requested", Some("exit-requested-payload.json")),
+        ("app-preferences", None),
+        ("execution-task-log", Some("execution-log-chunk.json")),
+        ("execution-task-updated", Some("execution-task.json")),
+        (
+            "pty-session-owner-lost",
+            Some("event-pty-session-owner-lost.json"),
+        ),
+        ("window-message", Some("event-inbox-message.json")),
+        (
+            "workspace-content-window-lost",
+            Some("event-workspace-content-window-lost.json"),
+        ),
+        ("workspace-data-restored", None),
+    ];
+    let events: serde_json::Value = serde_json::from_str(EVENTS_JSON).expect("parse events");
+    let mut contract: Vec<&str> = events["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["name"].as_str().expect("event name"))
+        .collect();
+    contract.sort();
+    let mut table: Vec<&str> = EVENT_PAYLOADS.iter().map(|(name, _)| *name).collect();
+    table.sort();
+    assert_eq!(contract, table, "events.json 的事件集合必须等于映射表");
+
+    let files: std::collections::BTreeSet<&str> = fixtures::ipc_dto_samples()
+        .iter()
+        .filter_map(|sample| sample.fixture_file)
+        .collect();
+    for (name, file) in EVENT_PAYLOADS {
+        if let Some(file) = file {
+            assert!(
+                files.contains(file),
+                "事件 {name} 的载荷 fixture {file} 没有登记"
+            );
+        }
+    }
 }

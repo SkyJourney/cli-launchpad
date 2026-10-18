@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "name": "chunk",
+      "value": {
+        "content": "downloading",
+        "createdAtMs": 1700000000000,
+        "sequence": 1,
+        "stream": "stdout",
+        "taskId": "task-1"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ExecutionLogChunk"
+}

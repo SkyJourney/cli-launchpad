@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "name": "runningMinimal",
+      "value": {
+        "directoryId": 42,
+        "endedAtMs": null,
+        "exitCode": null,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "startedAtMs": 1700000000000,
+        "state": "running",
+        "toolKey": "claude",
+        "workingDirectory": "C:\\Projects\\sample"
+      }
+    },
+    {
+      "name": "endedFull",
+      "value": {
+        "directoryId": 42,
+        "endedAtMs": 1700000001000,
+        "exitCode": 0,
+        "sessionId": "11111111-2222-4333-8444-555555555552",
+        "startedAtMs": 1700000000000,
+        "state": "exited",
+        "toolKey": "claude",
+        "workingDirectory": "C:\\Projects\\sample"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "PtySession"
+}

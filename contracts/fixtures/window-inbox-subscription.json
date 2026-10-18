@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "first",
+      "value": {
+        "dropped": 0,
+        "flushed": 0,
+        "replaced": false
+      }
+    },
+    {
+      "name": "replacedAfterBuffering",
+      "value": {
+        "dropped": 1,
+        "flushed": 2,
+        "replaced": true
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "WindowInboxSubscription"
+}

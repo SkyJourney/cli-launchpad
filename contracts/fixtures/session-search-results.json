@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "name": "withIncompleteTools",
+      "value": {
+        "incompleteTools": [
+          "hermes"
+        ],
+        "items": [
+          {
+            "alias": null,
+            "lastActiveMs": 1700000000000,
+            "sessionId": "session-3",
+            "title": "Search hit",
+            "toolKey": "grok"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty",
+      "value": {
+        "incompleteTools": [],
+        "items": []
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "SessionSearchResults"
+}

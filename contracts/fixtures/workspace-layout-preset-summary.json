@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "name": "summary",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "id": "preset-1",
+        "name": "Review",
+        "schemaVersion": 5,
+        "updatedAtMs": 1700000001000
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "WorkspaceLayoutPresetSummary"
+}
