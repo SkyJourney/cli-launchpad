@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { createRegistry } from "../lib/createRegistry";
+import { safeAdapterCall } from "../lib/safeAdapterCall";
 import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
 import { registeredContentKinds } from "../lib/windowKinds";
 import type {
@@ -227,9 +228,15 @@ export function presentWorkspaceContent(
   const adapter = tryGetWorkspaceContentAdapter(content.kind) as
     | WorkspaceContentAdapter<any>
     | undefined;
-  return (
-    adapter?.presentation(content, context) ??
-    unsupportedPresentation(content.kind)
+  if (!adapter) return unsupportedPresentation(content.kind);
+  // An adapter that throws must not take the whole workspace render down (render has an
+  // ErrorBoundary, these synchronous hooks did not): degrade to the "unsupported" placeholder.
+  return safeAdapterCall(
+    `presentation:${content.kind}`,
+    () =>
+      adapter.presentation(content, context) ??
+      unsupportedPresentation(content.kind),
+    () => unsupportedPresentation(content.kind),
   );
 }
 
@@ -241,7 +248,12 @@ export function workspaceContentProjectContext(
   const adapter = tryGetWorkspaceContentAdapter(content.kind) as
     | WorkspaceContentAdapter<any>
     | undefined;
-  return adapter?.projectContextOf(content, context) ?? null;
+  if (!adapter) return null;
+  return safeAdapterCall(
+    `projectContext:${content.kind}`,
+    () => adapter.projectContextOf(content, context) ?? null,
+    () => null,
+  );
 }
 
 export function getWorkspaceContentAdapterRevision(): number {

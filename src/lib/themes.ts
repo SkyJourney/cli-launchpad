@@ -119,3 +119,18 @@ export function resolveThemeMode(
   const id = mode === "system" ? (systemPrefersDark ? "dark" : "light") : mode;
   return { id, base: getThemeDefinition(id).base };
 }
+
+export const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
+
+/** 当前窗口的系统暗色偏好；没有 `matchMedia`（测试环境）时按非暗色处理。 */
+export function prefersDarkScheme(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window.matchMedia?.(DARK_SCHEME_QUERY).matches ?? false)
+  );
+}
+
+/** 已解析主题的唯一产出函数：`appStore` 的初始状态与 `useThemeSync` 都经过它。 */
+export function resolveCurrentTheme(mode: ThemeMode): ResolvedTheme {
+  return resolveThemeMode(mode, prefersDarkScheme());
+}

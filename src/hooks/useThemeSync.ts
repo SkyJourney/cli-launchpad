@@ -14,12 +14,14 @@ import {
   publishAppPreferences,
   respondToAppPreferencesRequests,
 } from "../lib/appPreferencesMain";
-import { getThemeDefinition, resolveThemeMode } from "../lib/themes";
+import {
+  DARK_SCHEME_QUERY,
+  getThemeDefinition,
+  resolveCurrentTheme,
+} from "../lib/themes";
 import { setTrayMenuLabels } from "../lib/tauri";
 import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import { useAppStore } from "../store/appStore";
-
-const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
 export function useThemeSync() {
   const themeMode = useAppStore((state) => state.themeMode);
@@ -31,7 +33,7 @@ export function useThemeSync() {
     const systemTheme = window.matchMedia(DARK_SCHEME_QUERY);
 
     const applyTheme = () => {
-      const resolvedTheme = resolveThemeMode(themeMode, systemTheme.matches);
+      const resolvedTheme = resolveCurrentTheme(themeMode);
       useAppStore.getState().setResolvedTheme(resolvedTheme);
       document.documentElement.dataset.theme = resolvedTheme.id;
       document.documentElement.style.colorScheme = resolvedTheme.base;

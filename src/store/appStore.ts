@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import {
   isThemeMode,
-  resolveThemeMode,
+  resolveCurrentTheme,
   type ResolvedTheme,
   type ThemeMode,
 } from "../lib/themes";
@@ -35,13 +35,6 @@ function getStoredThemeMode(): ThemeMode {
 }
 
 const initialThemeMode = getStoredThemeMode();
-
-function getInitialResolvedTheme(): ResolvedTheme {
-  const systemPrefersDark =
-    typeof window !== "undefined" &&
-    (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
-  return resolveThemeMode(initialThemeMode, systemPrefersDark);
-}
 
 function getStoredDirectoryId(): number | null {
   const stored = getBrowserStorage()?.getItem(LAST_DIRECTORY_STORAGE_KEY);
@@ -82,7 +75,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   view: initialDirectoryId == null ? "projects" : "detail",
   themeMode: initialThemeMode,
-  resolvedTheme: getInitialResolvedTheme(),
+  resolvedTheme: resolveCurrentTheme(initialThemeMode),
   selectedDirectoryId: initialDirectoryId,
   sidebarOpen: getStoredSidebarOpen(),
   contextPanelOpen: getStoredContextPanelOpen(),

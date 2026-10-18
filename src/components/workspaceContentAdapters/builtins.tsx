@@ -7,10 +7,7 @@ import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import type { WorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { registerWorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { createWorkspaceEditorModelUri } from "../../lib/workspaceEditorModel";
-import {
-  defaultEngineId,
-  resolveEditorEngine,
-} from "../workspaceEditorEngineRegistry";
+import { releaseEditorDocument } from "../workspaceEditorEngineRegistry";
 import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
 import { registerContributionSafely } from "../../lib/registerContribution";
 import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
@@ -241,8 +238,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),
-    dispose: ({ content }) =>
-      resolveEditorEngine(defaultEngineId)?.releaseDocument(content.documentId),
+    dispose: ({ content }) => releaseEditorDocument(content.documentId),
   },
   presentation: (content, context) => {
     const document = context.fileDocuments.find(

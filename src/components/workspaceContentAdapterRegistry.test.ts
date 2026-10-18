@@ -11,6 +11,7 @@ import {
 import { registerBuiltinWorkspaceContentAdapters } from "./workspaceContentAdapters/builtins";
 import apiVersions from "../../contracts/api-versions.json";
 import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
+import { resetSafeAdapterCallReports } from "../lib/safeAdapterCall";
 
 const contentAdapterVersion = apiVersions.items.find(
   (item) => item.id === "workspaceContentAdapter",
@@ -262,6 +263,131 @@ describe("content adapter contract version 3", () => {
     expect(() => getWorkspaceContentAdapter("file")).toThrow(
       "未注册内容适配器: file",
     );
+  });
+
+  it("degrades to the placeholder when an adapter presentation throws and keeps other kinds working", () => {
+    resetSafeAdapterCallReports();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const context = {
+      directories: [],
+      ptySlots: [],
+      ptySessionsById: {},
+      fileDocuments: [],
+      fileBuffers: {},
+      selectedDirectoryId: null,
+    };
+    const disposeFile = registerWorkspaceContentAdapter({
+      id: "test.throwing-file",
+      apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION as never,
+      kind: "file",
+      render: () => null,
+      presentation: () => {
+        throw new Error("presentation boom");
+      },
+      labels,
+      projectContextOf: () => null,
+    } as never);
+    const disposePty = registerWorkspaceContentAdapter({
+      id: "test.working-pty",
+      apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION as never,
+      kind: "pty",
+      render: () => null,
+      presentation: () => ({
+        title: "working",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => null,
+    } as never);
+
+    try {
+      const file = { kind: "file" as const, documentId: "file-1" };
+      expect(presentWorkspaceContent(file, context)).toMatchObject({
+        title: "file",
+        icon: null,
+        tooltip: "file",
+        closeLabelKey: "workspaceContent.closeUnsupported",
+      });
+      expect(
+        presentWorkspaceContent({ kind: "pty", slotId: "slot-1" }, context)
+          .title,
+      ).toBe("working");
+      presentWorkspaceContent(file, context);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[workspace.adapter_call_failed] presentation:file",
+        expect.any(Error),
+      );
+    } finally {
+      disposePty();
+      disposeFile();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("returns null when an adapter projectContextOf throws and still serves other kinds", () => {
+    resetSafeAdapterCallReports();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const context = {
+      directories: [],
+      ptySlots: [],
+      ptySessionsById: {},
+      fileDocuments: [],
+      fileBuffers: {},
+      selectedDirectoryId: null,
+    };
+    const disposeFile = registerWorkspaceContentAdapter({
+      id: "test.throwing-project-file",
+      apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION as never,
+      kind: "file",
+      render: () => null,
+      presentation: () => ({
+        title: "file",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => {
+        throw new Error("projectContext boom");
+      },
+    } as never);
+    const disposePty = registerWorkspaceContentAdapter({
+      id: "test.project-pty",
+      apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION as never,
+      kind: "pty",
+      render: () => null,
+      presentation: () => ({
+        title: "pty",
+        icon: null,
+        closeLabelKey: "close",
+      }),
+      labels,
+      projectContextOf: () => 7,
+    } as never);
+
+    try {
+      expect(
+        workspaceContentProjectContext(
+          { kind: "file", documentId: "file-1" },
+          context,
+        ),
+      ).toBeNull();
+      expect(
+        workspaceContentProjectContext(
+          { kind: "pty", slotId: "slot-1" },
+          context,
+        ),
+      ).toBe(7);
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[workspace.adapter_call_failed] projectContext:file",
+        expect.any(Error),
+      );
+    } finally {
+      disposePty();
+      disposeFile();
+      errorSpy.mockRestore();
+    }
   });
 
   it("rejects an adapter whose content kind is not registered in the contract", () => {

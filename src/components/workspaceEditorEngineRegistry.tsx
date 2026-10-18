@@ -65,3 +65,34 @@ export function getWorkspaceEditorEngineRevision(): number {
 export function subscribeWorkspaceEditorEngines(listener: () => void) {
   return registry.subscribe(listener);
 }
+
+const engineUse = new Map<string, string>();
+
+/** 记录某个文档实际使用的编辑器引擎；`dispose` 时据此释放。 */
+export function recordEditorEngineUse(
+  documentKey: string,
+  engineId: string,
+): void {
+  engineUse.set(documentKey, engineId);
+}
+
+export function recordedEditorEngineId(
+  documentKey: string,
+): string | undefined {
+  return engineUse.get(documentKey);
+}
+
+/**
+ * 释放文档在编辑器引擎里的资源：有记录则释放记录的引擎（该引擎已被注销则无事可做），
+ * 没有记录则回退默认引擎，保持记录功能加入之前的行为。
+ */
+export function releaseEditorDocument(
+  documentKey: string,
+): void | Promise<void> {
+  const recorded = engineUse.get(documentKey);
+  engineUse.delete(documentKey);
+  if (recorded !== undefined) {
+    return registry.get(recorded)?.releaseDocument(documentKey);
+  }
+  return resolveEditorEngine()?.releaseDocument(documentKey);
+}
