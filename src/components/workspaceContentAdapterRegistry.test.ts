@@ -260,6 +260,24 @@ describe("content adapter contract version 3", () => {
     );
   });
 
+  it("rejects an adapter whose content kind is not registered in the contract", () => {
+    expect(() =>
+      registerWorkspaceContentAdapter({
+        id: "test.unregistered",
+        apiVersion: WORKSPACE_CONTENT_ADAPTER_API_VERSION as never,
+        kind: "markdownPreview" as never,
+        render: () => null,
+        presentation: () => ({
+          title: "t",
+          icon: null,
+          closeLabelKey: "close",
+        }),
+        labels,
+        projectContextOf: () => null,
+      } as never),
+    ).toThrow("内容类型未在契约登记: markdownPreview");
+  });
+
   it("accepts exactly the version declared in the content-kinds contract", () => {
     expect(contentKinds.adapterApiVersion).toBe(3);
     const dispose = registerWorkspaceContentAdapter({

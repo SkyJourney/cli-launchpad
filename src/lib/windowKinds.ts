@@ -1,3 +1,4 @@
+import contentKindManifest from "../../contracts/content-kinds.json";
 import manifest from "../../contracts/window-kinds.json";
 
 export type WindowKind = "main" | "terminal" | "workspaceContent";
@@ -13,7 +14,12 @@ interface WindowKindDefinition {
   id: WindowKind;
   label?: string;
   labelPrefix?: string;
-  route?: string;
+  route: string;
+  primary: boolean;
+  ptyHost: boolean;
+  ownsPty: boolean;
+  fileGrant: boolean;
+  contentKinds: readonly string[];
 }
 
 const definitions = manifest.items as unknown as WindowKindDefinition[];
@@ -61,4 +67,54 @@ export function windowRouteOf(label: string): string | null {
   return (
     definitions.find((definition) => definition.id === kind)?.route ?? null
   );
+}
+
+export interface ContentKindDefinition {
+  id: string;
+  windowKind: WindowKind;
+  dragAllowed: boolean;
+}
+
+const contentDefinitions =
+  contentKindManifest.items as unknown as ContentKindDefinition[];
+
+/** The label of the single primary (main) window, taken from the contract. */
+export const MAIN_WINDOW_LABEL: string = (() => {
+  const primary = definitions.find((definition) => definition.primary);
+  if (!primary?.label) throw new Error("契约里没有 primary 窗口类别的 label");
+  return primary.label;
+})();
+
+export function windowRoleOf(kind: WindowKind) {
+  const definition = definitions.find((candidate) => candidate.id === kind);
+  if (!definition) throw new Error(`未登记的窗口类别：${kind}`);
+  return {
+    primary: definition.primary,
+    ptyHost: definition.ptyHost,
+    ownsPty: definition.ownsPty,
+    fileGrant: definition.fileGrant,
+    contentKinds: definition.contentKinds,
+  } as const;
+}
+
+export function registeredContentKinds(): readonly string[] {
+  return contentDefinitions.map((definition) => definition.id);
+}
+
+export function windowKindOfContent(contentKind: string): WindowKind | null {
+  return (
+    contentDefinitions.find((definition) => definition.id === contentKind)
+      ?.windowKind ?? null
+  );
+}
+
+export function isDraggableContentKind(contentKind: string): boolean {
+  return (
+    contentDefinitions.find((definition) => definition.id === contentKind)
+      ?.dragAllowed === true
+  );
+}
+
+export function contentKindsOf(kind: WindowKind): readonly string[] {
+  return windowRoleOf(kind).contentKinds;
 }

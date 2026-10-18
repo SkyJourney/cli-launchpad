@@ -3875,3 +3875,142 @@ fn contract_manifests_use_the_common_envelope() {
         assert_eq!(extra, allowed, "{name} 的额外顶层键");
     }
 }
+
+#[test]
+fn content_kinds_and_window_kinds_reference_each_other_consistently() {
+    let content: serde_json::Value =
+        serde_json::from_str(CONTENT_KINDS_JSON).expect("parse content kinds");
+    let windows: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    let content_items = content["items"].as_array().expect("content items");
+    let window_items = windows["items"].as_array().expect("window items");
+    let content_ids: Vec<&str> = content_items
+        .iter()
+        .map(|item| item["id"].as_str().expect("content id"))
+        .collect();
+    let window_ids: Vec<&str> = window_items
+        .iter()
+        .map(|item| item["id"].as_str().expect("window id"))
+        .collect();
+
+    for item in content_items {
+        let id = item["id"].as_str().unwrap();
+        let window = item["windowKind"].as_str().expect("windowKind");
+        assert!(
+            window_ids.contains(&window),
+            "{id} 的 windowKind {window} 未登记"
+        );
+        assert!(item["dragAllowed"].is_boolean(), "{id} 缺少 dragAllowed");
+        let owner = window_items
+            .iter()
+            .find(|candidate| candidate["id"] == window)
+            .unwrap();
+        assert!(
+            owner["contentKinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|kind| kind == id),
+            "{window} 的 contentKinds 缺少 {id}"
+        );
+    }
+    for item in window_items {
+        for kind in item["contentKinds"].as_array().expect("contentKinds") {
+            assert!(
+                content_ids.contains(&kind.as_str().unwrap()),
+                "{} 的 contentKinds 含未登记内容类型 {kind}",
+                item["id"]
+            );
+            // A window kind lists only its own content kinds; the primary window hosts all of them.
+            let owner = content_items
+                .iter()
+                .find(|candidate| candidate["id"] == *kind)
+                .unwrap()["windowKind"]
+                .clone();
+            assert!(
+                item["primary"] == true || owner == item["id"],
+                "{} 不能列出属于 {owner} 的内容类型 {kind}",
+                item["id"]
+            );
+        }
+    }
+    let primaries = window_items
+        .iter()
+        .filter(|item| item["primary"] == true)
+        .count();
+    assert_eq!(primaries, 1, "有且只有一个 primary 窗口类别");
+}
+
+#[test]
+fn window_kind_roles_are_exclusive_where_the_policy_requires() {
+    let windows: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    let items = windows["items"].as_array().expect("items");
+    let count = |field: &str| items.iter().filter(|item| item[field] == true).count();
+
+    assert_eq!(count("primary"), 1);
+    assert_eq!(count("ownsPty"), 1, "只有终端窗口类别拥有 PTY");
+    assert_eq!(count("fileGrant"), 1, "只有内容窗口类别持有文件授权");
+    for item in items {
+        assert!(
+            !(item["primary"] == true && item["ownsPty"] == true),
+            "主窗口不能同时是 PTY 所有者类别"
+        );
+        if item["ownsPty"] == true {
+            assert_eq!(item["ptyHost"], true, "拥有 PTY 的类别必须能承载 PTY");
+        }
+    }
+}
+
+#[test]
+fn services_do_not_branch_on_window_kind_variants() {
+    // `production_text` removes every `#[cfg(test)]` item, so test-only helpers declared earlier in a
+    // file do not hide the production code after them (the first-marker split of the goal text does).
+    let files: Vec<(String, String)> = production_rust_sources()
+        .into_iter()
+        .filter(|(path, _)| path.starts_with("services/") && !path.ends_with("/tests.rs"))
+        .collect();
+    assert!(
+        files.len() >= 20,
+        "扫描到的 services 文件数异常：{}",
+        files.len()
+    );
+
+    let mut offenders = Vec::new();
+    for (path, production) in &files {
+        for pattern in ["WindowKind::Terminal", "WindowKind::WorkspaceContent"] {
+            if production.contains(pattern) {
+                offenders.push(format!("{path} 含 {pattern}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "services 不应按窗口类别变体分支：{offenders:?}"
+    );
+}
+
+#[test]
+fn production_code_does_not_add_main_window_label_literals() {
+    // 基线 MAIN_LITERALS_RS 来自 m6-070 的前置检查 #15，只减不增。与文档的偏差：只统计生产文件
+    // （`production_rust_sources` 已跳过整模块是 #[cfg(test)] 的 `contracts/`，这里再排除整文件都是
+    // 测试的 `tests.rs`），否则这些测试文件里的 "main" 会占满上限，真正的生产代码新增字面量反而发现
+    // 不了。排除后实测基线为 0。
+    const MAIN_LITERALS_RS_BASELINE: usize = 0;
+    let sources = production_rust_sources();
+    assert!(
+        sources.len() >= 50,
+        "扫描到的源文件数异常：{}",
+        sources.len()
+    );
+
+    let count: usize = sources
+        .iter()
+        .filter(|(path, _)| !path.ends_with("/tests.rs"))
+        .map(|(_, production)| production.matches("\"main\"").count())
+        .sum();
+    assert!(
+        count <= MAIN_LITERALS_RS_BASELINE,
+        "生产代码里的 \"main\" 字面量增加到 {count}，上限 {MAIN_LITERALS_RS_BASELINE}"
+    );
+}

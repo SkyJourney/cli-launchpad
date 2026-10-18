@@ -73,7 +73,7 @@ import {
 } from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
-import { windowKindOf } from "./lib/windowKinds";
+import { windowRouteOf } from "./lib/windowKinds";
 import { RUST_EVENTS } from "./lib/eventNames";
 import {
   readFileLaunchParams,
@@ -83,10 +83,10 @@ import {
 export function App() {
   const { t } = useTranslation();
   useThemeSync();
-  const windowKind = windowKindOf(getCurrentWindow().label);
+  const route = windowRouteOf(getCurrentWindow().label);
   const search = new URLSearchParams(window.location.search);
   const fileParams =
-    windowKind === "workspaceContent" ? readFileLaunchParams(search) : null;
+    route === "workspace-content" ? readFileLaunchParams(search) : null;
   if (fileParams) {
     return (
       <Suspense fallback={null}>
@@ -98,8 +98,7 @@ export function App() {
       </Suspense>
     );
   }
-  const ptyParams =
-    windowKind === "terminal" ? readPtyLaunchParams(search) : null;
+  const ptyParams = route === "terminal" ? readPtyLaunchParams(search) : null;
   if (ptyParams) {
     return (
       <Suspense fallback={null}>
@@ -114,7 +113,7 @@ export function App() {
       </Suspense>
     );
   }
-  if (windowKind !== "main") return null;
+  if (route !== "main") return null;
   return (
     <PtyWorkspaceProvider>
       <AppContent />

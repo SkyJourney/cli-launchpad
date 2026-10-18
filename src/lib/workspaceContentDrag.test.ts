@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isDraggableContentKind } from "./windowKinds";
 import {
   encodeWorkspaceContentDrag,
   parseWorkspaceContentDrag,
@@ -60,5 +61,37 @@ describe("workspace content drag payload", () => {
         'cli-launchpad-content-v2:{"key":"pty:s1","sourceWindowLabel":"main","sourcePaneId":"p"}',
       ),
     ).toEqual({ key: "pty:s1", sourceWindowLabel: "main", sourcePaneId: "p" });
+  });
+});
+
+describe("contract driven drag validation", () => {
+  it("rejects a drag whose source window label is not a registered detached window", () => {
+    const key = "pty:slot-1";
+    const bad = [
+      "terminal-not-a-uuid",
+      "main",
+      "terminal-8e783338-f464-0b10-b15e-b534748c6241",
+      "settings",
+    ];
+    for (const sourceWindowLabel of bad) {
+      expect(
+        parseWorkspaceContentDrag(
+          encodeWorkspaceContentDrag({ key, sourceWindowLabel } as never),
+        ),
+        sourceWindowLabel,
+      ).toBeNull();
+    }
+    const good = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+    expect(
+      parseWorkspaceContentDrag(
+        encodeWorkspaceContentDrag({ key, sourceWindowLabel: good }),
+      ),
+    ).toEqual({ key, sourceWindowLabel: good });
+  });
+
+  it("derives the draggable content kinds from the contract", () => {
+    expect(isDraggableContentKind("pty")).toBe(true);
+    expect(isDraggableContentKind("file")).toBe(true);
+    expect(isDraggableContentKind("markdownPreview")).toBe(false);
   });
 });

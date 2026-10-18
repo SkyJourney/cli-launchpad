@@ -1,3 +1,4 @@
+import { isDetachedWindowLabel, isDraggableContentKind } from "./windowKinds";
 import { contentRefFromKey } from "./workspaceContentKey";
 
 export const WORKSPACE_CONTENT_DRAG_TYPE =
@@ -23,7 +24,13 @@ export function parseWorkspaceContentDrag(
     const value: unknown = JSON.parse(raw.slice(DRAG_PREFIX.length));
     if (!value || typeof value !== "object") return null;
     const data = value as Record<string, unknown>;
-    if (typeof data.key !== "string" || !contentRefFromKey(data.key)) {
+    const ref =
+      typeof data.key === "string" ? contentRefFromKey(data.key) : null;
+    if (
+      typeof data.key !== "string" ||
+      !ref ||
+      !isDraggableContentKind(ref.kind)
+    ) {
       return null;
     }
     if (data.sourceWindowLabel === "main") {
@@ -38,9 +45,7 @@ export function parseWorkspaceContentDrag(
     }
     if (
       typeof data.sourceWindowLabel !== "string" ||
-      !/^(terminal|workspace-content)-[0-9a-f-]{36}$/i.test(
-        data.sourceWindowLabel,
-      ) ||
+      !isDetachedWindowLabel(data.sourceWindowLabel) ||
       data.sourcePaneId !== undefined
     ) {
       return null;

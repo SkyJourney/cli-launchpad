@@ -41,7 +41,7 @@ use registry::SessionRegistry;
 use route::EventRoute;
 use session::{ManagedSession, RouteAndHandoff, TerminalState};
 
-use crate::models::window_kind::{is_main_label, main_window_label, WindowKind, WindowLabel};
+use crate::models::window_kind::{is_main_label, main_window_label, WindowLabel};
 use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
 
 use crate::{
@@ -79,13 +79,8 @@ impl Default for PtySessionManager {
 }
 
 fn is_supported_workspace_window(window_label: &str) -> bool {
-    matches!(
-        crate::models::window_kind::window_kind_of(window_label),
-        Some(
-            crate::models::window_kind::WindowKind::Main
-                | crate::models::window_kind::WindowKind::Terminal
-        )
-    )
+    crate::models::window_kind::window_kind_of(window_label)
+        .is_some_and(crate::models::window_kind::WindowKind::is_pty_host)
 }
 
 fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppError> {
@@ -956,7 +951,7 @@ pub(crate) use test_support::{failing_channel, recording_channel, TestRoute, Tes
 
 impl WindowScopedResource for PtySessionManager {
     fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
-        if window.kind() != WindowKind::Terminal {
+        if !window.kind().owns_pty() {
             return Vec::new();
         }
         self.reclaim_window(window.as_str())

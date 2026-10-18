@@ -18,7 +18,7 @@ use crate::{
     error_codes::WINDOW_NOT_ALLOWED,
     models::{
         pty_session::{PtyEvent, PtyHandoff, PtyTerminalSnapshot},
-        window_kind::{window_kind_of, WindowKind, WindowLabel},
+        window_kind::{window_kind_of, WindowLabel},
     },
     AppError,
 };
@@ -80,11 +80,12 @@ pub(super) fn validate_handoff_target(
     target_label: &str,
 ) -> Result<(), AppError> {
     let target = WindowLabel::parse(target_label)?;
-    let allowed = match window_kind_of(source_label) {
-        Some(WindowKind::Main) => target.kind() == WindowKind::Terminal,
-        Some(WindowKind::Terminal) => target.kind() == WindowKind::Main,
-        _ => false,
-    };
+    // Exactly one side is the primary window and both sides can host a terminal view.
+    let allowed = window_kind_of(source_label).is_some_and(|source| {
+        source.is_pty_host()
+            && target.kind().is_pty_host()
+            && source.is_primary() != target.kind().is_primary()
+    });
     if allowed {
         Ok(())
     } else {

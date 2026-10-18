@@ -23,6 +23,50 @@ struct WindowKindDefinition {
     label: Option<String>,
     #[serde(rename = "labelPrefix")]
     label_prefix: Option<String>,
+    primary: bool,
+    #[serde(rename = "ptyHost")]
+    pty_host: bool,
+    #[serde(rename = "ownsPty")]
+    owns_pty: bool,
+    #[serde(rename = "fileGrant")]
+    file_grant: bool,
+    #[cfg(test)]
+    #[serde(rename = "contentKinds")]
+    content_kinds: Vec<String>,
+}
+
+impl WindowKind {
+    fn definition(self) -> &'static WindowKindDefinition {
+        definitions()
+            .iter()
+            .find(|definition| definition.id == self)
+            .expect("window kind must be registered")
+    }
+
+    /// The single main application window.
+    pub fn is_primary(self) -> bool {
+        self.definition().primary
+    }
+
+    /// Windows of this kind can show a PTY terminal view.
+    pub fn is_pty_host(self) -> bool {
+        self.definition().pty_host
+    }
+
+    /// Destroying a window of this kind must hand its PTY sessions back.
+    pub fn owns_pty(self) -> bool {
+        self.definition().owns_pty
+    }
+
+    /// Windows of this kind hold file grants.
+    pub fn has_file_grant(self) -> bool {
+        self.definition().file_grant
+    }
+
+    #[cfg(test)]
+    pub fn content_kinds(self) -> &'static [String] {
+        &self.definition().content_kinds
+    }
 }
 
 fn definitions() -> &'static [WindowKindDefinition] {
@@ -69,10 +113,7 @@ pub fn create_window_label(kind: WindowKind) -> String {
 
 #[allow(dead_code)] // Kept as the Rust-side counterpart to the shared TypeScript predicate.
 pub fn is_detached_window_label(label: &str) -> bool {
-    matches!(
-        window_kind_of(label),
-        Some(WindowKind::Terminal | WindowKind::WorkspaceContent)
-    )
+    window_kind_of(label).is_some_and(|kind| !kind.is_primary())
 }
 
 use crate::error_codes::{WINDOW_LABEL_INVALID, WINDOW_NOT_ALLOWED};
@@ -180,6 +221,57 @@ mod tests {
 
     const WINDOW_LABEL_FIXTURES_JSON: &str =
         include_str!("../../../contracts/window-label-fixtures.json");
+
+    #[test]
+    fn role_queries_match_the_contract_roles() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/window-kinds.json"))
+                .expect("parse window kinds");
+        let items = manifest["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3);
+        for item in items {
+            let kind: WindowKind =
+                serde_json::from_value(item["id"].clone()).expect("window kind id");
+            assert_eq!(kind.is_primary(), item["primary"].as_bool().unwrap());
+            assert_eq!(kind.is_pty_host(), item["ptyHost"].as_bool().unwrap());
+            assert_eq!(kind.owns_pty(), item["ownsPty"].as_bool().unwrap());
+            assert_eq!(kind.has_file_grant(), item["fileGrant"].as_bool().unwrap());
+            let contract_kinds: Vec<&str> = item["contentKinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                kind.content_kinds()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                contract_kinds
+            );
+        }
+        // 固定语义：只有 main 是 primary；只有 terminal 拥有 PTY；只有 workspaceContent 持有文件授权。
+        assert!(WindowKind::Main.is_primary());
+        assert!(!WindowKind::Terminal.is_primary() && !WindowKind::WorkspaceContent.is_primary());
+        assert!(WindowKind::Terminal.owns_pty() && !WindowKind::Main.owns_pty());
+        assert!(WindowKind::WorkspaceContent.has_file_grant());
+        assert!(!WindowKind::Terminal.has_file_grant() && !WindowKind::Main.has_file_grant());
+        assert!(WindowKind::Main.is_pty_host() && WindowKind::Terminal.is_pty_host());
+        assert!(!WindowKind::WorkspaceContent.is_pty_host());
+    }
+
+    #[test]
+    fn detached_labels_are_the_non_primary_kinds() {
+        assert!(!is_detached_window_label("main"));
+        assert!(is_detached_window_label(
+            "terminal-8e783338-f464-4b10-b15e-b534748c6241"
+        ));
+        assert!(is_detached_window_label(
+            "workspace-content-8e783338-f464-4b10-b15e-b534748c6241"
+        ));
+        assert!(!is_detached_window_label("settings"));
+        assert_eq!(super::main_window_label(), "main");
+    }
 
     #[test]
     fn window_label_fixture_vectors_match_rust_registry() {

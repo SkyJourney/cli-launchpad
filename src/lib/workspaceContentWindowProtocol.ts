@@ -2,7 +2,12 @@ import type { WindowInboxSource, WorkspaceFileDocument } from "./tauri";
 import type { Unlisten } from "./windowInbox";
 import { onWindowMessage, sendWindowMessage } from "./windowMessages";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
-import { windowLabelPrefix } from "./windowKinds";
+import {
+  windowKindOfContent,
+  windowLabelPrefix,
+  windowRoleOf,
+  type DetachedWindowKind,
+} from "./windowKinds";
 
 export interface WorkspaceContentWindowEventPayloads {
   "pty-detached-ready": {
@@ -353,7 +358,11 @@ export function emitWorkspaceContentWindowEvent<
 export function getWorkspaceContentWindowLabelPrefix(
   kind: "pty" | "file",
 ): "terminal-" | "workspace-content-" {
-  return windowLabelPrefix(kind === "pty" ? "terminal" : "workspaceContent") as
+  const windowKind = windowKindOfContent(kind);
+  if (!windowKind || windowRoleOf(windowKind).primary) {
+    throw new Error(`内容类型没有对应的独立窗口类别：${kind}`);
+  }
+  return windowLabelPrefix(windowKind as DetachedWindowKind) as
     | "terminal-"
     | "workspace-content-";
 }

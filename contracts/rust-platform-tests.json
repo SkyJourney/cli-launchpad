@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 701,
-    "Linux": 708,
-    "macOS": 706
+    "Windows": 707,
+    "Linux": 714,
+    "macOS": 712
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -12,6 +12,12 @@
   ],
   "required": {
     "all": [
+      "models::window_kind::tests::role_queries_match_the_contract_roles",
+      "models::window_kind::tests::detached_labels_are_the_non_primary_kinds",
+      "contracts::content_kinds_and_window_kinds_reference_each_other_consistently",
+      "contracts::window_kind_roles_are_exclusive_where_the_policy_requires",
+      "contracts::services_do_not_branch_on_window_kind_variants",
+      "contracts::production_code_does_not_add_main_window_label_literals",
       "contracts::contract_manifests_use_the_common_envelope",
       "services::cli_adapters::antigravity::platform::context_tests::update_plan_accepts_every_spelling_of_the_primary_command",
       "services::cli_adapters::claude::platform::context_tests::update_plan_uses_the_injected_executable_path",

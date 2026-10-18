@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createRegistry } from "../lib/createRegistry";
 import { WORKSPACE_CONTENT_ADAPTER_API_VERSION } from "../lib/extensionApiVersions";
+import { registeredContentKinds } from "../lib/windowKinds";
 import type {
   PtySession,
   ToolKey,
@@ -169,6 +170,9 @@ const registry = createRegistry<WorkspaceContentAdapter<any>>({
   },
   keyOf: (adapter) => adapter.kind,
   validate: (adapter) => {
+    if (!registeredContentKinds().includes(adapter.kind)) {
+      throw new Error(`内容类型未在契约登记: ${adapter.kind}`);
+    }
     const handoffHooks = [
       adapter.lifecycle?.prepareHandoff,
       adapter.lifecycle?.attachHandoff,

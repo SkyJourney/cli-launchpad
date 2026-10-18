@@ -21,7 +21,7 @@ pub struct ContentWindowGrantRegistry {
 
 impl ContentWindowGrantRegistry {
     pub fn grant(&self, label: &str, grant: ContentWindowFileGrant) -> Result<()> {
-        if window_kind_of(label) != Some(WindowKind::WorkspaceContent) {
+        if !window_kind_of(label).is_some_and(WindowKind::has_file_grant) {
             bail!("文件授权目标不是已登记的内容窗口");
         }
         ProjectDirectory::validate_relative_path(&grant.relative_path)?;
@@ -41,7 +41,7 @@ impl ContentWindowGrantRegistry {
     }
 
     pub fn get(&self, label: &str) -> Result<ContentWindowFileGrant> {
-        if window_kind_of(label) != Some(WindowKind::WorkspaceContent) {
+        if !window_kind_of(label).is_some_and(WindowKind::has_file_grant) {
             bail!("调用窗口不是已登记的内容窗口");
         }
         self.grants
@@ -64,7 +64,7 @@ impl ContentWindowGrantRegistry {
 
 impl WindowScopedResource for ContentWindowGrantRegistry {
     fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
-        if window.kind() != WindowKind::WorkspaceContent {
+        if !window.kind().has_file_grant() {
             return Vec::new();
         }
         if let Err(error) = self.revoke(window.as_str()) {
