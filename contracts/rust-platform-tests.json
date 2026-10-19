@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 752,
-    "Linux": 758,
-    "macOS": 754
+    "Windows": 765,
+    "Linux": 771,
+    "macOS": 767
   },
   "allowedIgnored": [
     "contracts::error_codes_are_never_raw_strings",
