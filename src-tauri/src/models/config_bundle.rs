@@ -17,7 +17,8 @@ pub struct ExportedDirectory {
 pub struct ConfigBundle {
     pub version: u32,
     pub directories: Vec<ExportedDirectory>,
-    #[serde(default)]
+    // Read for compatibility with v1-v3 bundles; never written (m6-078, PD-05).
+    #[serde(default, skip_serializing)]
     pub shell_profiles: Vec<ExportedShellProfile>,
     #[serde(default)]
     pub close_behavior: Option<CloseBehavior>,

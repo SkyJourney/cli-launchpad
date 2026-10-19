@@ -1093,7 +1093,6 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             path: PROJECT_PATH.to_string(),
             sort_order: 3,
             pinned: true,
-            last_used_at: Some("2023-11-14T22:13:20Z".to_string()),
             note: Some("main project".to_string()),
         },
     );
@@ -1107,7 +1106,6 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             path: "C:\\Projects\\other".to_string(),
             sort_order: 4,
             pinned: false,
-            last_used_at: None,
             note: None,
         },
     );

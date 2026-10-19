@@ -358,7 +358,7 @@ mod tests {
         let json = r#"{"version":2,"directories":[],"tools":[],"shellProfiles":[{"name":"bad","terminalExe":"evil.exe","shellExe":"evil.exe","shellArgs":"-Command bad","initScript":"Start-Process calc","isDefault":true,"kind":"cmd"}]}"#;
         import_json(&db, json).unwrap();
         let exported = export_json(&db).unwrap();
-        assert!(exported.contains("\"shellProfiles\": []"));
+        assert!(!exported.contains("shellProfiles"));
     }
 
     #[test]
@@ -381,15 +381,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_parameter_fields_are_ignored_without_deleting_saved_values() {
+    fn legacy_parameter_fields_in_old_bundles_are_ignored() {
         let db = seeded_db();
         let path = absolute_test_path("legacy");
-        let directory = directory_repo::add(&db, "legacy", &path, None).unwrap();
-        db.execute(
-            "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', ?2)",
-            rusqlite::params![directory.id, "--existing-project"],
-        )
-        .unwrap();
+        directory_repo::add(&db, "legacy", &path, None).unwrap();
 
         let legacy = format!(
             r#"{{"version":3,"directories":[{{"name":"renamed","path":"{}","pinned":false,"note":null,"toolArgs":[{{"toolKey":"claude","args":"--ignored-project"}}]}}],"tools":[{{"key":"codex","globalArgs":"--ignored-global"}}],"shellProfiles":[]}}"#,
@@ -397,16 +392,102 @@ mod tests {
         );
         import_json(&db, &legacy).unwrap();
 
-        let project_args: String = db
+        // The import matches the existing project by path and does not add a second one.
+        let projects: i64 = db
             .query_row(
-                "select args from directory_tool_args where directory_id = ?1 and tool_key = 'claude'",
-                [directory.id],
+                "select count(*) from directories where path = ?1",
+                [&path],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(project_args, "--existing-project");
+        assert_eq!(projects, 1);
         let exported = export_json(&db).unwrap();
         assert!(!exported.contains("--ignored-global"));
-        assert!(!exported.contains("--existing-project"));
+        assert!(!exported.contains("--ignored-project"));
+        // Reverse: the legacy table is not recreated by the import.
+        let legacy_tables: i64 = db
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tables, 0);
+    }
+
+    #[test]
+    fn version_one_to_three_bundles_with_legacy_fields_remain_importable() {
+        let db = seeded_db();
+        let v1 = serde_json::json!({ "version": 1, "directories": [], "tools": [] }).to_string();
+        let v2 = serde_json::json!({
+            "version": 2,
+            "directories": [],
+            "tools": [],
+            "shellProfiles": [{
+                "name": "old",
+                "terminalExe": "wt.exe",
+                "shellExe": "pwsh.exe",
+                "shellArgs": "-NoLogo",
+                "initScript": "",
+                "isDefault": true,
+                "kind": "wt-pwsh"
+            }]
+        })
+        .to_string();
+        let v3 = serde_json::json!({
+            "version": 3,
+            "directories": [{
+                "name": "d",
+                "path": absolute_test_path("legacy-v3"),
+                "pinned": false,
+                "note": null,
+                "toolArgs": [{ "toolKey": "claude", "args": "--ignored" }]
+            }],
+            "tools": [{ "key": "codex", "globalArgs": "--ignored-global" }],
+            "shellProfiles": []
+        })
+        .to_string();
+        for json in [&v1, &v2, &v3] {
+            import_json(&db, json).unwrap();
+        }
+        assert!(crate::db::directory_repo::list(&db)
+            .unwrap()
+            .iter()
+            .any(|directory| directory.name == "d"));
+        let exported = export_json(&db).unwrap();
+        assert!(!exported.contains("--ignored"));
+        assert!(!exported.contains("--ignored-global"));
+        // Reverse: the import neither recreates nor writes the legacy table.
+        let legacy_tables: i64 = db
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tables, 0);
+    }
+
+    #[test]
+    fn exported_bundles_do_not_contain_shell_profiles() {
+        let db = seeded_db();
+        db.execute(
+            "insert into directories (id, name, path) values (50, 'Exported', ?1)",
+            [absolute_test_path("exported")],
+        )
+        .unwrap();
+        let exported = export_json(&db).unwrap();
+        assert!(!exported.contains("shellProfiles"));
+        let value: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        let object = value.as_object().expect("bundle is an object");
+        for key in object.keys() {
+            assert!(
+                ["closeBehavior", "directories", "version"].contains(&key.as_str()),
+                "unexpected key {key}"
+            );
+        }
+        assert_eq!(value["version"], 4);
+        // Reverse: the exported bundle imports back.
+        import_json(&db, &exported).unwrap();
     }
 }

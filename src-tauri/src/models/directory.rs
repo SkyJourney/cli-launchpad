@@ -8,6 +8,5 @@ pub struct Directory {
     pub path: String,
     pub sort_order: i64,
     pub pinned: bool,
-    pub last_used_at: Option<String>,
     pub note: Option<String>,
 }

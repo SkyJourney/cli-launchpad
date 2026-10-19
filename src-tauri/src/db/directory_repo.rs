@@ -9,17 +9,15 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Directory> {
         path: row.get("path")?,
         sort_order: row.get("sort_order")?,
         pinned: row.get::<_, i64>("pinned")? != 0,
-        last_used_at: row.get("last_used_at")?,
         note: row.get("note")?,
     })
 }
 
-const SELECT: &str =
-    "select id, name, path, sort_order, pinned, last_used_at, note from directories";
+const SELECT: &str = "select id, name, path, sort_order, pinned, note from directories";
 
 pub fn list(conn: &Connection) -> rusqlite::Result<Vec<Directory>> {
     let mut stmt = conn.prepare(&format!(
-        "{SELECT} order by pinned desc, sort_order asc, last_used_at desc, name asc"
+        "{SELECT} order by pinned desc, sort_order asc, name asc"
     ))?;
     let rows = stmt.query_map([], map_row)?;
     rows.collect()
@@ -164,5 +162,35 @@ mod tests {
 
         let fourth = add(&connection, "fourth", "C:\\fourth", None).unwrap();
         assert_eq!(list(&connection).unwrap().last().unwrap().id, fourth.id);
+    }
+
+    #[test]
+    fn directory_list_order_is_pinned_then_sort_order_then_name() {
+        let connection = database();
+        let b = add(&connection, "b", "C:\\b", None).unwrap();
+        let a = add(&connection, "a", "C:\\a", None).unwrap();
+        let c = add(&connection, "c", "C:\\c", None).unwrap();
+        let d = add(&connection, "d", "C:\\d", None).unwrap();
+        set_pinned(&connection, c.id, true).unwrap();
+        connection
+            .execute(
+                "update directories set sort_order = 5 where id in (?1, ?2)",
+                rusqlite::params![a.id, b.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "update directories set sort_order = 1 where id = ?1",
+                [d.id],
+            )
+            .unwrap();
+
+        let names: Vec<String> = list(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|directory| directory.name)
+            .collect();
+        // Pinned first; then sort order; equal sort orders fall back to the name.
+        assert_eq!(names, ["c", "d", "a", "b"]);
     }
 }

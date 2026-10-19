@@ -4,7 +4,6 @@
       "name": "pinnedWithNote",
       "value": {
         "id": 1,
-        "lastUsedAt": "2023-11-14T22:13:20Z",
         "name": "sample",
         "note": "main project",
         "path": "C:\\Projects\\sample",
@@ -16,7 +15,6 @@
       "name": "plain",
       "value": {
         "id": 2,
-        "lastUsedAt": null,
         "name": "other",
         "note": null,
         "path": "C:\\Projects\\other",

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 766,
-    "Linux": 772,
-    "macOS": 768
+    "Windows": 774,
+    "Linux": 780,
+    "macOS": 776
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -483,7 +483,15 @@
       "services::project_path_semantics::tests::a_late_unknown_does_not_replace_a_known_answer",
       "platform::file_identity::tests::index_field_holds_the_full_native_value",
       "services::workspace_layout_service::tests::a_stale_save_with_case_variants_reports_stale_not_case_duplicate",
-      "services::project_path_semantics::tests::probe_semantics_answers_unknown_when_the_probe_exceeds_its_budget"
+      "services::project_path_semantics::tests::probe_semantics_answers_unknown_when_the_probe_exceeds_its_budget",
+      "db::connection::tests::migration_0015_removes_the_legacy_objects_on_a_fresh_database",
+      "db::connection::tests::migration_0015_keeps_tools_as_a_tool_key_registry",
+      "db::connection::tests::upgrading_a_schema_14_database_removes_legacy_objects_and_keeps_project_data",
+      "services::backup_service::tests::restoring_a_schema_14_backup_leaves_no_legacy_objects",
+      "services::config_service::tests::version_one_to_three_bundles_with_legacy_fields_remain_importable",
+      "services::config_service::tests::exported_bundles_do_not_contain_shell_profiles",
+      "db::directory_repo::tests::directory_list_order_is_pinned_then_sort_order_then_name",
+      "db::connection::tests::unknown_tool_keys_are_rejected_by_foreign_keys_on_fresh_and_upgraded_databases"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

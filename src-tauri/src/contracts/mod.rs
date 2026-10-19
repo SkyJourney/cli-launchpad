@@ -4250,9 +4250,9 @@ fn dto_samples_cover_option_fields_with_some_and_none() {
             .clone()
     };
 
-    // Directory：lastUsedAt、note 同时有 Some 与 None。
+    // Directory：note 同时有 Some 与 None。
     let directory = cases_of("Directory");
-    for key in ["lastUsedAt", "note"] {
+    for key in ["note"] {
         assert!(
             directory.iter().any(|(_, value)| !value[key].is_null()),
             "Directory.{key} 缺 Some"

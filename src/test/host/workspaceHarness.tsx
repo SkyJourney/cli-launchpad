@@ -76,7 +76,6 @@ export const DIRECTORY: Directory = {
   path: "C:/project",
   sortOrder: 0,
   pinned: false,
-  lastUsedAt: null,
   note: null,
 };
 

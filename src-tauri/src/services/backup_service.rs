@@ -488,17 +488,17 @@ mod tests {
 
         restore(&mut connection, &paths, id).unwrap();
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
         assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
         assert_eq!(
             connection
                 .query_row(
-                    "select args from directory_tool_args where directory_id = 8 and tool_key = 'claude'",
+                    "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
                     [],
-                    |row| row.get::<_, String>(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            "--legacy-project-args"
+            0
         );
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
@@ -546,7 +546,7 @@ mod tests {
 
         assert!(restore(&mut connection, &paths, id).is_err());
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
         assert_eq!(
             directory_repo::list(&connection).unwrap()[0].name,
             "Keep current"
@@ -1126,5 +1126,65 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+    }
+
+    #[test]
+    fn restoring_a_schema_14_backup_leaves_no_legacy_objects() {
+        let (_directory, paths, mut connection) = setup();
+        let id = "0-3-0-schema-14";
+        let filename = format!("cli-launchpad-{id}.db");
+        let backup_file = paths.backup_database_dir.join(&filename);
+        let legacy = Connection::open(&backup_file).unwrap();
+        legacy.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations_through(&legacy, 14).unwrap();
+        legacy
+            .execute(
+                "insert into directories (id, name, path, pinned, note, last_used_at) values (8, 'Legacy', 'C:\\legacy', 1, 'preserve', '2026-09-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "insert into directory_tool_args (directory_id, tool_key, args) values (8, 'claude', '--legacy-project-args')",
+                [],
+            )
+            .unwrap();
+        legacy.close().unwrap();
+
+        let manifest = BackupManifest {
+            id: id.to_string(),
+            created_at_ms: 10,
+            reason: BackupReason::Manual,
+            schema_version: 14,
+            database_filename: filename,
+            size_bytes: fs::metadata(&backup_file).unwrap().len(),
+        };
+        write_manifest(&paths, &manifest).unwrap();
+
+        restore(&mut connection, &paths, id).unwrap();
+
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
+        assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
+        let legacy_objects: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name in ('shell_profiles', 'directory_tool_args')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_objects, 0);
+        let launch_target: i64 = connection
+            .query_row(
+                "select count(*) from application_settings where key = 'launch_target'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(launch_target, 0);
+        // Reverse: the guard backup taken before the restore is still there.
+        assert!(list(&paths)
+            .unwrap()
+            .iter()
+            .any(|item| matches!(item.reason, BackupReason::PreRestore)));
     }
 }

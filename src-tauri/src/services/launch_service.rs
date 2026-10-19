@@ -147,13 +147,6 @@ mod tests {
             None,
         )
         .unwrap();
-        // directory_tool_args 在目标 078 的迁移 0015 中删除；届时 078 负责去掉这段插入并断言该表已不存在（RS-T26）。
-        connection
-            .execute(
-                "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', '--ignored-project')",
-                [record.id],
-            )
-            .unwrap();
 
         let directory_path =
             resolve_launch_directory(&connection, record.id, ToolKey::Claude).unwrap();
@@ -169,6 +162,15 @@ mod tests {
         assert!(payload.tool_args.is_empty());
         assert_eq!(payload.tool_executable, "claude");
         assert_eq!(payload.directory, directory_path);
+        // The legacy table is gone after migration 0015 (RS-T26), so nothing can be read from it.
+        let legacy_tables: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tables, 0);
     }
 
     #[tokio::test]

@@ -118,7 +118,6 @@ export interface Directory {
   path: string;
   sortOrder: number;
   pinned: boolean;
-  lastUsedAt: string | null;
   note: string | null;
 }
 

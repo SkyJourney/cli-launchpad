@@ -67,7 +67,6 @@ const DIRECTORY = keysOf<Directory>()([
   "path",
   "sortOrder",
   "pinned",
-  "lastUsedAt",
   "note",
 ]);
 const BACKUP = keysOf<BackupManifest>()([
