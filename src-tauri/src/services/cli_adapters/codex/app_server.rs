@@ -175,6 +175,27 @@ mod tests {
         path
     }
 
+    /// Starts a fake server with retries for `ETXTBSY` ("Text file busy", Linux only). A fork in another
+    /// test thread can inherit the script's write descriptor for a moment, so `exec` races it. The failed
+    /// start never spawned a child, so a retry leaves no process behind; timeouts and assertions are unchanged.
+    async fn request_retrying_busy_script(
+        executable: &Path,
+        method: &str,
+        params: Value,
+        budget: Duration,
+    ) -> Result<Value> {
+        let mut retries = 0;
+        loop {
+            match request(Some(executable), method, params.clone(), budget).await {
+                Err(error) if retries < 5 && error.to_string().contains("Text file busy") => {
+                    retries += 1;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Windows fake server: a cmd wrapper that starts the test binary's tree worker
     /// (platform::execution_process::tree_worker). The worker joins the server's
     /// kill-on-close job before it spawns the grandchild and publishes the grandchild
@@ -299,7 +320,7 @@ mod tests {
             Duration::from_millis(6000),
         );
 
-        let error = request(Some(&script), "thread/list", json!({}), timeout)
+        let error = request_retrying_busy_script(&script, "thread/list", json!({}), timeout)
             .await
             .unwrap_err();
 
@@ -336,14 +357,10 @@ mod tests {
             ),
         );
 
-        let value = request(
-            Some(&script),
-            "thread/list",
-            json!({}),
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
+        let value =
+            request_retrying_busy_script(&script, "thread/list", json!({}), Duration::from_secs(5))
+                .await
+                .unwrap();
 
         assert_eq!(value["data"], json!([]));
         let pid = wait_for_pid_file(&pidfile, Duration::from_secs(1))
