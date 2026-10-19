@@ -17,7 +17,9 @@ pub struct ExportedDirectory {
 pub struct ConfigBundle {
     pub version: u32,
     pub directories: Vec<ExportedDirectory>,
-    // Read for compatibility with v1-v3 bundles; never written (m6-078, PD-05).
+    // Read for compatibility with v1-v3 bundles; never written (m6-078, PD-05). Deserialization is
+    // the only use, which the dead-code lint does not count.
+    #[allow(dead_code)]
     #[serde(default, skip_serializing)]
     pub shell_profiles: Vec<ExportedShellProfile>,
     #[serde(default)]
