@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 765,
-    "Linux": 771,
-    "macOS": 767
+    "Windows": 766,
+    "Linux": 772,
+    "macOS": 768
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
