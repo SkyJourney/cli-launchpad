@@ -67,6 +67,8 @@
     "allow-reorder-directories",
     "allow-open-project-directory",
     "allow-list-project-files",
+    "allow-get-project-path-semantics",
+    "allow-check-project-files-same-identity",
     "allow-open-project-file",
     "allow-save-project-text-file",
     "allow-grant-content-window-file",

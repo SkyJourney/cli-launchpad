@@ -1,0 +1,738 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "insensitive-same-identity-merges-into-first-seen",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": [],
+            "active": null
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "insensitive-different-identity-does-not-merge",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "different"
+      },
+      "expected": {
+        "documents": ["d1", "d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d2"],
+            "active": "d2"
+          }
+        ],
+        "detached": [],
+        "merged": []
+      }
+    },
+    {
+      "name": "insensitive-unavailable-identity-merges-by-flag",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "unavailable"
+      },
+      "expected": {
+        "documents": ["d1"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": [],
+            "active": null
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-never-merges",
+      "semantics": {
+        "1": {
+          "case": "unknown",
+          "normalizationInsensitive": "unknown"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d2"],
+            "active": "d2"
+          }
+        ],
+        "detached": [],
+        "merged": []
+      }
+    },
+    {
+      "name": "sensitive-never-merges",
+      "semantics": {
+        "1": {
+          "case": "sensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d2"],
+            "active": "d2"
+          }
+        ],
+        "detached": [],
+        "merged": []
+      }
+    },
+    {
+      "name": "canonical-is-the-first-seen-in-tree-order",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d2"],
+          "active": "d2"
+        },
+        {
+          "id": "p2",
+          "contents": ["d1"],
+          "active": "d1"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "A.txt|a.txt": "same"
+      },
+      "expected": {
+        "documents": ["d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d2"],
+            "active": "d2"
+          },
+          {
+            "id": "p2",
+            "contents": [],
+            "active": null
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d2",
+            "variants": ["d1"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewrites-references-and-keeps-the-first-pane",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        },
+        {
+          "id": "d3",
+          "directoryId": 1,
+          "relativePath": "b.txt"
+        },
+        {
+          "id": "d4",
+          "directoryId": 1,
+          "relativePath": "c.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1", "d3"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2", "d4"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d3", "d4"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1", "d3"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d4"],
+            "active": "d4"
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "detached-contents-are-merged-the-same-way",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        },
+        {
+          "id": "d3",
+          "directoryId": 1,
+          "relativePath": "b.txt"
+        },
+        {
+          "id": "d4",
+          "directoryId": 1,
+          "relativePath": "B.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": [],
+          "active": null
+        }
+      ],
+      "detached": ["d2", "d3", "d4"],
+      "fileIdentity": {
+        "a.txt|A.txt": "same",
+        "b.txt|B.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d3"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": [],
+            "active": null
+          }
+        ],
+        "detached": ["d3"],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          },
+          {
+            "canonical": "d3",
+            "variants": ["d4"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "active-content-moves-to-the-neighbour-when-its-duplicate-is-removed",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        },
+        {
+          "id": "d3",
+          "directoryId": 1,
+          "relativePath": "b.txt"
+        },
+        {
+          "id": "d4",
+          "directoryId": 1,
+          "relativePath": "c.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d3", "d2", "d4"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d3", "d4"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d3", "d4"],
+            "active": "d4"
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "two-variants-in-one-pane-collapse-into-one-tab",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1", "d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d2"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mixed-identity-in-a-three-member-group",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 1,
+          "relativePath": "A.txt"
+        },
+        {
+          "id": "d3",
+          "directoryId": 1,
+          "relativePath": "a.TXT"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        },
+        {
+          "id": "p3",
+          "contents": ["d3"],
+          "active": "d3"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "different",
+        "a.txt|a.TXT": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d2"],
+            "active": "d2"
+          },
+          {
+            "id": "p3",
+            "contents": [],
+            "active": null
+          }
+        ],
+        "detached": [],
+        "merged": [
+          {
+            "canonical": "d1",
+            "variants": ["d3"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "documents-in-different-directories-are-never-merged",
+      "semantics": {
+        "1": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        },
+        "2": {
+          "case": "insensitive",
+          "normalizationInsensitive": "no"
+        }
+      },
+      "documents": [
+        {
+          "id": "d1",
+          "directoryId": 1,
+          "relativePath": "a.txt"
+        },
+        {
+          "id": "d2",
+          "directoryId": 2,
+          "relativePath": "A.txt"
+        }
+      ],
+      "panes": [
+        {
+          "id": "p1",
+          "contents": ["d1"],
+          "active": "d1"
+        },
+        {
+          "id": "p2",
+          "contents": ["d2"],
+          "active": "d2"
+        }
+      ],
+      "detached": [],
+      "fileIdentity": {
+        "a.txt|A.txt": "same"
+      },
+      "expected": {
+        "documents": ["d1", "d2"],
+        "panes": [
+          {
+            "id": "p1",
+            "contents": ["d1"],
+            "active": "d1"
+          },
+          {
+            "id": "p2",
+            "contents": ["d2"],
+            "active": "d2"
+          }
+        ],
+        "detached": [],
+        "merged": []
+      }
+    }
+  ]
+}

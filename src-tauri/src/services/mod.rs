@@ -16,6 +16,7 @@ pub mod install_service;
 pub mod launch_service;
 pub mod navigation_guard;
 pub mod project_directory;
+pub mod project_path_semantics;
 pub mod pty_session_service;
 pub mod session_service;
 pub mod startup_notices;

@@ -28,7 +28,7 @@ const fixtures = import.meta.glob("../../contracts/fixtures/*.json", {
   import: "default",
 }) as Record<string, FixtureFile>;
 
-// 期望的 35 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
+// 期望的 37 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
 const EXPECTED_FIXTURES: Record<string, string> = {
   "app-error.json": "AppError",
   "backup-manifest.json": "BackupManifest",
@@ -43,10 +43,12 @@ const EXPECTED_FIXTURES: Record<string, string> = {
   "execution-log-chunk.json": "ExecutionLogChunk",
   "execution-task-detail.json": "ExecutionTaskDetail",
   "execution-task.json": "ExecutionTask",
+  "file-identity-comparison.json": "FileIdentityComparison",
   "exit-requested-payload.json": "ExitRequestedPayload",
   "install-plan.json": "InstallPlan",
   "latest-version.json": "LatestVersion",
   "launch-history-entry.json": "LaunchHistoryEntry",
+  "path-semantics.json": "PathSemantics",
   "managed-update-status.json": "ManagedUpdateStatus",
   "project-directory-listing.json": "ProjectDirectoryListing",
   "project-file-cas-residue-listing.json": "ProjectFileCasResidueListing",
@@ -155,7 +157,7 @@ describe("IPC DTO golden fixtures", () => {
 
   it("covers every variant fixture exported by the Rust golden fixture generator", () => {
     const paths = Object.keys(fixtures);
-    expect(paths.length, REGENERATE).toBe(35);
+    expect(paths.length, REGENERATE).toBe(37);
     const names = paths.map((path) => path.split("/").pop() as string).sort();
     expect(names).toEqual(Object.keys(EXPECTED_FIXTURES).sort());
 

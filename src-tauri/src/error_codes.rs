@@ -15,6 +15,7 @@ pub const EXEC_PLAN_CHANGED: &str = "exec.plan_changed";
 pub const EXIT_NO_PENDING_REQUEST: &str = "exit.no_pending_request";
 pub const EXIT_REQUEST_MISMATCH: &str = "exit.request_mismatch";
 pub const INTERNAL_TASK_FAILED: &str = "internal.task_failed";
+pub const LAYOUT_CASE_DUPLICATE: &str = "layout.case_duplicate";
 pub const PROJECT_IDENTITY_CHANGED: &str = "project.identity_changed";
 pub const PROJECT_NOT_FOUND: &str = "project.not_found";
 pub const PTY_HANDOFF_TARGET_IS_SOURCE: &str = "pty.handoff_target_is_source";
@@ -43,6 +44,7 @@ pub const ALL: &[&str] = &[
     EXIT_NO_PENDING_REQUEST,
     EXIT_REQUEST_MISMATCH,
     INTERNAL_TASK_FAILED,
+    LAYOUT_CASE_DUPLICATE,
     PROJECT_IDENTITY_CHANGED,
     PROJECT_NOT_FOUND,
     PTY_HANDOFF_TARGET_IS_SOURCE,

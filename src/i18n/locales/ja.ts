@@ -37,6 +37,8 @@ export const ja = {
       "この終了要求は最新ではありません。もう一度終了してください。",
     layoutNeedsReset:
       "ワークスペースのレイアウトが無効です。リセットが必要です。",
+    layoutCaseDuplicate:
+      "レイアウトに、大文字と小文字だけが異なるパスのドキュメントが含まれています。",
     internal:
       "内部エラーが発生しました。もう一度お試しください。問題が続く場合はアプリを再起動してください。",
     appExiting: "アプリを終了しています。再起動後にもう一度お試しください。",
@@ -566,6 +568,8 @@ export const ja = {
       pre_import: "インポート前の自動バックアップ",
       pre_restore: "復元前の保護バックアップ",
       pre_migration: "アップグレード前の自動バックアップ",
+      pre_case_merge:
+        "大文字・小文字だけが異なるドキュメントを統合する前の自動バックアップ",
     },
     preservation: {
       exact: "完全に保持",
@@ -663,6 +667,8 @@ export const ja = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged:
+      "大文字・小文字だけが異なる {{count}} 件のドキュメントを統合しました。",
     rightPanelTabs: "右側パネルのタブ",
     files: "ファイル",
     git: "Git",

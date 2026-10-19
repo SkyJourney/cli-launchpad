@@ -18,6 +18,7 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "exit.no_pending_request": "errors.exitNoPendingRequest",
   "exit.request_mismatch": "errors.exitRequestMismatch",
   "internal.task_failed": "errors.internal",
+  "layout.case_duplicate": "errors.layoutCaseDuplicate",
   "project.identity_changed": "errors.fileIdentityChanged",
   "project.not_found": "errors.projectNotFound",
   "pty.handoff_target_is_source": "errors.ptyHandoffTargetIsSource",

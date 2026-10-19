@@ -27,6 +27,8 @@ export const en = {
     exitRequestMismatch:
       "This exit request is no longer current. Try quitting again.",
     layoutNeedsReset: "The workspace layout is invalid and needs to be reset.",
+    layoutCaseDuplicate:
+      "The layout contains documents whose paths differ only by letter case.",
     internal:
       "An internal error occurred. Try again, and restart the app if it keeps happening.",
     appExiting: "The app is exiting. Try again after it restarts.",
@@ -552,6 +554,7 @@ export const en = {
       pre_import: "Automatic pre-import backup",
       pre_restore: "Protective pre-restore backup",
       pre_migration: "Automatic pre-upgrade backup",
+      pre_case_merge: "Automatic backup before merging case-variant documents",
     },
     preservation: {
       exact: "Fully preserved",
@@ -650,6 +653,8 @@ export const en = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged:
+      "Merged {{count}} document(s) whose paths differed only by letter case.",
     rightPanelTabs: "Right panel tabs",
     files: "Files",
     git: "Git",

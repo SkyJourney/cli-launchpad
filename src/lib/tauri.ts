@@ -1,5 +1,8 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invokeApp } from "./invokeApp";
+import type { PathSemantics } from "./pathKey";
+
+export type { PathSemantics };
 
 export type ToolKey = "antigravity" | "codex" | "claude" | "grok" | "hermes";
 
@@ -123,10 +126,14 @@ export interface ProjectFileEntry {
   symbolicLink: boolean;
 }
 
+/** Whether two project files are the same file on disk (PD-10 safety net). */
+export type FileIdentityComparison = "same" | "different" | "unavailable";
+
 export interface ProjectDirectoryListing {
   entries: ProjectFileEntry[];
   truncated: boolean;
   skippedCount: number;
+  pathSemantics: PathSemantics;
 }
 
 export interface ProjectFileCasResidue {
@@ -343,7 +350,8 @@ export type BackupReason =
   | "manual"
   | "pre_import"
   | "pre_restore"
-  | "pre_migration";
+  | "pre_migration"
+  | "pre_case_merge";
 
 export interface BackupManifest {
   id: string;
@@ -432,6 +440,33 @@ export function listProjectFiles(
     directoryPath,
     relativePath,
   });
+}
+
+export function getProjectPathSemantics(
+  directoryId: number,
+  directoryPath: string,
+) {
+  return invokeApp<PathSemantics>("get_project_path_semantics", {
+    directoryId,
+    directoryPath,
+  });
+}
+
+export function checkProjectFilesSameIdentity(
+  directoryId: number,
+  directoryPath: string,
+  a: string,
+  b: string,
+) {
+  return invokeApp<FileIdentityComparison>(
+    "check_project_files_same_identity",
+    {
+      directoryId,
+      directoryPath,
+      a,
+      b,
+    },
+  );
 }
 
 export function openProjectFile(

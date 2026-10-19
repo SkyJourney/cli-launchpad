@@ -2,12 +2,16 @@ use std::collections::HashSet;
 
 use tauri::State;
 
+use crate::models::backup::BackupReason;
 use crate::models::workspace_layout::{
     WorkspaceLayoutApplyPlan, WorkspaceLayoutDocument, WorkspaceLayoutPresetSummary,
     WorkspaceLayoutSaveResult, WorkspaceLayoutStateRead,
 };
+use crate::services::backup_service;
+use crate::services::project_path_semantics::CaseSensitivityCache;
 use crate::services::pty_session_service::PtySessionManager;
-use crate::services::workspace_layout_service::{self, LayoutReadStage};
+use crate::services::storage_service::StoragePaths;
+use crate::services::workspace_layout_service::{self, LayoutReadStage, SaveContext};
 use crate::{blocking, budgets, AppError, Db};
 
 /// Open session ids from the in-memory table (the liveness authority). Earlier `finish` writes
@@ -66,12 +70,27 @@ async fn read_layout_with(
 #[tauri::command]
 pub async fn save_workspace_layout(
     state: State<'_, Db>,
+    semantics: State<'_, std::sync::Arc<CaseSensitivityCache>>,
+    paths: State<'_, StoragePaths>,
     revision: i64,
     layout: WorkspaceLayoutDocument,
 ) -> Result<WorkspaceLayoutSaveResult, AppError> {
+    let semantics = std::sync::Arc::clone(semantics.inner());
+    let paths = paths.inner().clone();
     state
         .call("workspace_layout.save", move |connection| {
-            workspace_layout_service::save_current(connection, revision, &layout)
+            let context = SaveContext {
+                semantics_of: &|directory_id, directory_path| {
+                    semantics.peek(directory_id, directory_path)
+                },
+                // The backup copies the database under the connection lock, as `create_with` does.
+                backup_before_case_merge: &|connection| {
+                    backup_service::create(connection, &paths, BackupReason::PreCaseMerge)
+                        .map(|_| ())
+                        .map_err(AppError::from)
+                },
+            };
+            workspace_layout_service::save_current(connection, revision, &layout, &context)
         })
         .await
 }
@@ -302,7 +321,13 @@ mod tests {
                 1,
             )
             .unwrap();
-            workspace_layout_service::save_current(&mut connection, 1, &layout).unwrap();
+            workspace_layout_service::save_current(
+                &mut connection,
+                1,
+                &layout,
+                &workspace_layout_service::SaveContext::INERT,
+            )
+            .unwrap();
         }
 
         // The row says `running`, but memory does not know the session: it has ended.

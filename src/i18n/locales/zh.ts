@@ -19,6 +19,7 @@ export const zh = {
     exitNoPendingRequest: "没有待处理的退出请求，请重新尝试退出。",
     exitRequestMismatch: "该退出请求已失效，请重新尝试退出。",
     layoutNeedsReset: "工作区布局无效，需要重置。",
+    layoutCaseDuplicate: "布局中存在仅大小写不同的重复文件。",
     internal: "发生内部错误。请重试，若问题持续请重启应用。",
     appExiting: "应用正在退出，请在重新启动后再试。",
     appExitDeferred: "恢复或导入仍在进行，暂时无法退出应用。",
@@ -502,6 +503,7 @@ export const zh = {
       pre_import: "导入前自动备份",
       pre_restore: "恢复前保护备份",
       pre_migration: "升级前自动备份",
+      pre_case_merge: "合并大小写重复文档前的自动备份",
     },
     preservation: {
       exact: "完整保留",
@@ -592,6 +594,7 @@ export const zh = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged: "已合并 {{count}} 个仅大小写不同的重复文档。",
     rightPanelTabs: "右侧面板标签",
     files: "文件",
     git: "Git",

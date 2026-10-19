@@ -12,3 +12,5 @@ pub mod session;
 pub mod tool;
 pub mod window_kind;
 pub mod workspace_layout;
+#[cfg(test)]
+mod workspace_layout_case_merge;

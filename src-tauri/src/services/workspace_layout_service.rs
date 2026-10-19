@@ -17,7 +17,9 @@ use crate::models::workspace_layout::{
     WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
     MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
+use crate::platform::case_sensitivity::{CaseSensitivity, PathSemantics};
 use crate::platform::path_identity::ProjectPathKey;
+use crate::platform::path_key::PathKey;
 use crate::{models::workspace_layout::WorkspaceLayoutError, AppError};
 
 pub enum LayoutReadStage {
@@ -117,15 +119,81 @@ pub fn read_current(
     })
 }
 
+/// What `save_current` needs from outside the database (PD-10). Neither member touches the
+/// filesystem: `semantics_of` reads the cache, `backup_before_case_merge` copies the database.
+pub struct SaveContext<'a> {
+    /// The cached semantics of a project root; `None` is read as `Unknown`.
+    pub semantics_of: &'a dyn Fn(i64, &str) -> Option<PathSemantics>,
+    /// Runs once, before the first write of a layout whose case duplicates were merged.
+    pub backup_before_case_merge: &'a dyn Fn(&Connection) -> Result<(), AppError>,
+}
+
+#[cfg(test)]
+impl SaveContext<'static> {
+    /// No cached semantics and no backup: the behaviour before PD-10.
+    pub const INERT: SaveContext<'static> = SaveContext {
+        semantics_of: &|_, _| None,
+        backup_before_case_merge: &|_| Ok(()),
+    };
+}
+
+/// Groups of file documents of one project whose paths differ only by case, judged by the
+/// cached semantics. Only an `Insensitive` project has groups: `Sensitive` and `Unknown`
+/// never fold. Ids inside a group and the groups themselves are sorted.
+fn case_duplicate_groups(
+    layout: &WorkspaceLayoutDocument,
+    context: &SaveContext,
+) -> Vec<Vec<String>> {
+    let mut groups: HashMap<(i64, PathKey), Vec<String>> = HashMap::new();
+    for document in &layout.documents {
+        let semantics = (context.semantics_of)(document.directory_id, &document.directory_path)
+            .unwrap_or(PathSemantics::UNKNOWN);
+        if semantics.case != CaseSensitivity::Insensitive {
+            continue;
+        }
+        groups
+            .entry((
+                document.directory_id,
+                PathKey::of(&document.relative_path, &semantics),
+            ))
+            .or_default()
+            .push(document.id.clone());
+    }
+    let mut groups: Vec<Vec<String>> = groups
+        .into_values()
+        .filter(|ids| ids.len() > 1)
+        .map(|mut ids| {
+            ids.sort();
+            ids
+        })
+        .collect();
+    groups.sort();
+    groups
+}
+
 pub fn save_current(
     connection: &mut Connection,
     revision: i64,
     layout: &WorkspaceLayoutDocument,
+    context: &SaveContext,
 ) -> Result<WorkspaceLayoutSaveResult, AppError> {
     if revision <= 0 {
         return Err(AppError::msg("工作区 revision 必须大于 0"));
     }
     let payload_json = serialize_layout(layout, false)?;
+
+    // Folding is decided by the cached semantics only. The front end merges case variants after
+    // hydrate; a layout that still holds them is refused so it can repair and retry once.
+    let duplicates = case_duplicate_groups(layout, context);
+    if !duplicates.is_empty() {
+        let mut document_ids = duplicates.concat();
+        document_ids.sort();
+        return Err(AppError::coded_with_params(
+            crate::error_codes::LAYOUT_CASE_DUPLICATE,
+            "布局中存在仅大小写不同的重复文件",
+            serde_json::json!({ "documentIds": document_ids }),
+        ));
+    }
 
     // Do not let routine autosaves replace data that needs explicit recovery.
     let mut observed_revision = 0;
@@ -143,7 +211,13 @@ pub fn save_current(
         if source_layout_version(&current.payload_json) != Some(current.schema_version) {
             return Err(AppError::msg("当前布局版本信息不一致；请先显式重置工作区"));
         }
-        let _ = stored;
+        // The stored layout still holds case duplicates that this one has merged: keep a copy
+        // of the database before the first merged layout is written. A stale save is refused
+        // by the repository and must not leave a backup behind (automatic backups share one
+        // retention pool with the protective ones).
+        if revision > current.revision && !case_duplicate_groups(&stored, context).is_empty() {
+            (context.backup_before_case_merge)(connection)?;
+        }
     }
 
     let outcome = workspace_layout_repo::save_current(
@@ -1033,7 +1107,8 @@ mod tests {
             WorkspaceLayoutStateStatus::NeedsReset(_)
         ));
         assert!(read.layout.is_none());
-        let error = save_current(&mut connection, 9, &empty_layout()).unwrap_err();
+        let error =
+            save_current(&mut connection, 9, &empty_layout(), &SaveContext::INERT).unwrap_err();
         assert!(error.to_string().contains("显式重置"));
         assert_eq!(reset_current(&mut connection).unwrap(), 9);
         assert!(matches!(
@@ -1057,7 +1132,7 @@ mod tests {
             read.status,
             WorkspaceLayoutStateStatus::NeedsReset(_)
         ));
-        assert!(save_current(&mut connection, 5, &empty_layout()).is_err());
+        assert!(save_current(&mut connection, 5, &empty_layout(), &SaveContext::INERT).is_err());
         let stored = workspace_layout_repo::get_current(&connection)
             .unwrap()
             .unwrap();
@@ -1068,7 +1143,7 @@ mod tests {
     #[test]
     fn recovery_reset_is_rejected_when_current_layout_is_valid() {
         let mut connection = database();
-        save_current(&mut connection, 1, &empty_layout()).unwrap();
+        save_current(&mut connection, 1, &empty_layout(), &SaveContext::INERT).unwrap();
 
         assert!(reset_current(&mut connection)
             .unwrap_err()
@@ -1773,7 +1848,7 @@ mod tests {
             assert_eq!(read.revision, Some(3), "v{version}");
             let layout = read.layout.clone().expect("ready read carries a layout");
 
-            let saved = save_current(&mut connection, 4, &layout).unwrap();
+            let saved = save_current(&mut connection, 4, &layout, &SaveContext::INERT).unwrap();
             assert!(saved.saved, "v{version}: the first save must be accepted");
             assert_eq!(saved.revision, 4, "v{version}");
             assert_eq!(saved.reason, None, "v{version}");
@@ -1796,7 +1871,7 @@ mod tests {
             let reread = read_current(&connection, &HashSet::new()).unwrap();
             assert_eq!(reread.layout, Some(layout.clone()), "v{version}");
 
-            let again = save_current(&mut connection, 4, &layout).unwrap();
+            let again = save_current(&mut connection, 4, &layout, &SaveContext::INERT).unwrap();
             assert!(!again.saved, "v{version}: the same revision is stale");
             assert_eq!(
                 again.reason,
@@ -1829,7 +1904,9 @@ mod tests {
                 .into_iter()
                 .map(|mut conn| {
                     let layout = &layout;
-                    scope.spawn(move || save_current(&mut conn, 4, layout).unwrap())
+                    scope.spawn(move || {
+                        save_current(&mut conn, 4, layout, &SaveContext::INERT).unwrap()
+                    })
                 })
                 .collect();
             handles
@@ -1889,7 +1966,8 @@ mod tests {
         let mut connection = database();
         insert_state_row(&connection, 99, 5, "{\"schemaVersion\":99}");
 
-        let error = save_current(&mut connection, 6, &empty_layout()).unwrap_err();
+        let error =
+            save_current(&mut connection, 6, &empty_layout(), &SaveContext::INERT).unwrap_err();
         assert!(error.to_string().contains("不受支持"), "{error}");
 
         let row = workspace_layout_repo::get_current(&connection)
@@ -1916,7 +1994,7 @@ mod tests {
         )
         .unwrap();
         let layout = layout_with_slot(directory.id, &directory.path, "work", Some(session_id));
-        save_current(&mut connection, 1, &layout).unwrap();
+        save_current(&mut connection, 1, &layout, &SaveContext::INERT).unwrap();
 
         let staged = match read_current_stage(&connection).unwrap() {
             LayoutReadStage::Resolve(pending) => pending.finish(&running_ids(&connection)),
@@ -2093,7 +2171,7 @@ mod tests {
         layout.validate().unwrap();
 
         let revision = read.revision.unwrap();
-        let saved = save_current(connection, revision + 1, &layout).unwrap();
+        let saved = save_current(connection, revision + 1, &layout, &SaveContext::INERT).unwrap();
         assert!(saved.saved, "a degraded layout must be saveable: {saved:?}");
 
         let reread = read_current(connection, &HashSet::new()).unwrap();
@@ -2144,7 +2222,7 @@ mod tests {
             WorkspaceLayoutStateStatus::NeedsReset(_)
         ));
         assert!(read.layout.is_none());
-        assert!(save_current(&mut connection, 4, &empty_layout()).is_err());
+        assert!(save_current(&mut connection, 4, &empty_layout(), &SaveContext::INERT).is_err());
     }
 
     #[test]
@@ -2215,5 +2293,213 @@ mod tests {
                 .unwrap();
             assert_eq!(stored, (i64::from(version), payload));
         }
+    }
+
+    /// A document id: layouts only accept UUIDs, so a readable name becomes a fixed one.
+    fn uuid_for(name: &str) -> String {
+        let number = name
+            .bytes()
+            .fold(0u128, |number, byte| number * 256 + u128::from(byte));
+        uuid::Uuid::from_u128(number).to_string()
+    }
+
+    fn files_layout(files: &[(&str, &str)]) -> WorkspaceLayoutDocument {
+        use crate::models::workspace_layout::WorkspaceFileDocument;
+        let contents: Vec<WorkspacePaneContentRef> = files
+            .iter()
+            .map(|(id, _)| WorkspacePaneContentRef::File {
+                document_id: uuid_for(id),
+            })
+            .collect();
+        WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                active_content: contents.first().cloned(),
+                contents,
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: Vec::new(),
+            documents: files
+                .iter()
+                .map(|(id, relative_path)| WorkspaceFileDocument {
+                    id: uuid_for(id),
+                    directory_id: 1,
+                    directory_path: "/work/project".to_string(),
+                    relative_path: (*relative_path).to_string(),
+                })
+                .collect(),
+            detached_contents: Vec::new(),
+        }
+    }
+
+    fn insensitive() -> PathSemantics {
+        PathSemantics {
+            case: CaseSensitivity::Insensitive,
+            normalization_insensitive: crate::platform::case_sensitivity::Tri::No,
+        }
+    }
+
+    #[test]
+    fn save_rejects_case_variants_only_when_the_cached_flag_is_insensitive() {
+        let variants = files_layout(&[("doc-b", "A.txt"), ("doc-a", "a.txt")]);
+        let sensitive = PathSemantics {
+            case: CaseSensitivity::Sensitive,
+            normalization_insensitive: crate::platform::case_sensitivity::Tri::No,
+        };
+        for (label, flag) in [
+            ("sensitive", Some(sensitive)),
+            ("unknown", Some(PathSemantics::UNKNOWN)),
+            ("cache miss", None),
+        ] {
+            let mut connection = database();
+            let semantics_of = move |_: i64, _: &str| flag;
+            let context = SaveContext {
+                semantics_of: &semantics_of,
+                backup_before_case_merge: &|_| Ok(()),
+            };
+            assert!(
+                save_current(&mut connection, 1, &variants, &context).is_ok(),
+                "{label} must not refuse case variants"
+            );
+        }
+
+        let mut connection = database();
+        let semantics_of = |_: i64, _: &str| Some(insensitive());
+        let context = SaveContext {
+            semantics_of: &semantics_of,
+            backup_before_case_merge: &|_| Ok(()),
+        };
+        let error = save_current(&mut connection, 1, &variants, &context).unwrap_err();
+        let value = serde_json::to_value(&error).unwrap();
+        assert_eq!(value["code"], "layout.case_duplicate");
+        let mut expected_ids = vec![uuid_for("doc-a"), uuid_for("doc-b")];
+        expected_ids.sort();
+        assert_eq!(
+            value["params"]["documentIds"],
+            serde_json::json!(expected_ids),
+            "both documents of the group, sorted"
+        );
+        assert!(
+            workspace_layout_repo::get_current(&connection)
+                .unwrap()
+                .is_none(),
+            "a refused layout is not stored"
+        );
+
+        // Reverse: an insensitive project without case variants saves normally.
+        let distinct = files_layout(&[("doc-a", "a.txt"), ("doc-b", "b.txt")]);
+        assert!(save_current(&mut connection, 1, &distinct, &context).is_ok());
+    }
+
+    #[test]
+    fn save_creates_a_protective_backup_before_the_first_merged_layout() {
+        use std::cell::{Cell, RefCell};
+
+        let mut connection = database();
+        let backups = Cell::new(0);
+        let revision_seen_by_backup = RefCell::new(Vec::new());
+        let flag = Cell::new(Some(PathSemantics::UNKNOWN));
+        let semantics_of = |_: i64, _: &str| flag.get();
+        let backup = |connection: &Connection| -> Result<(), AppError> {
+            backups.set(backups.get() + 1);
+            let revision = workspace_layout_repo::get_current(connection)
+                .unwrap()
+                .map(|row| row.revision);
+            revision_seen_by_backup.borrow_mut().push(revision);
+            Ok(())
+        };
+        let context = SaveContext {
+            semantics_of: &semantics_of,
+            backup_before_case_merge: &backup,
+        };
+
+        // 1. Case variants are stored while the project is `Unknown`: no backup.
+        let variants = files_layout(&[("doc-a", "a.txt"), ("doc-b", "A.txt")]);
+        assert!(
+            save_current(&mut connection, 1, &variants, &context)
+                .unwrap()
+                .saved
+        );
+        assert_eq!(backups.get(), 0);
+
+        // 2. The project turns out to be insensitive and the merged layout is saved: one backup,
+        //    taken before the write (the stored revision is still the old one).
+        flag.set(Some(insensitive()));
+        let merged = files_layout(&[("doc-a", "a.txt")]);
+        let saved = save_current(&mut connection, 2, &merged, &context).unwrap();
+        assert!(saved.saved);
+        assert_eq!(backups.get(), 1);
+        assert_eq!(*revision_seen_by_backup.borrow(), vec![Some(1)]);
+
+        // 3. Saving the merged layout again does not back up again.
+        assert!(
+            save_current(&mut connection, 3, &merged, &context)
+                .unwrap()
+                .saved
+        );
+        assert_eq!(backups.get(), 1);
+
+        // Reverse: an insensitive project that never had duplicates is never backed up.
+        let mut fresh = database();
+        assert!(
+            save_current(&mut fresh, 1, &merged, &context)
+                .unwrap()
+                .saved
+        );
+        assert_eq!(backups.get(), 1);
+    }
+
+    #[test]
+    fn a_stale_save_leaves_no_protective_backup_and_a_failed_backup_aborts_the_save() {
+        use std::cell::Cell;
+
+        let mut connection = database();
+        let flag = Cell::new(Some(PathSemantics::UNKNOWN));
+        let semantics_of = |_: i64, _: &str| flag.get();
+        let backups = Cell::new(0);
+        let counting_backup = |_: &Connection| -> Result<(), AppError> {
+            backups.set(backups.get() + 1);
+            Ok(())
+        };
+        let context = SaveContext {
+            semantics_of: &semantics_of,
+            backup_before_case_merge: &counting_backup,
+        };
+        let variants = files_layout(&[("doc-a", "a.txt"), ("doc-b", "A.txt")]);
+        let merged = files_layout(&[("doc-a", "a.txt")]);
+        assert!(
+            save_current(&mut connection, 5, &variants, &context)
+                .unwrap()
+                .saved
+        );
+
+        // The project is insensitive now; the merged layout arrives with an old revision.
+        flag.set(Some(insensitive()));
+        let stale = save_current(&mut connection, 5, &merged, &context).unwrap();
+        assert!(!stale.saved, "an old revision is refused");
+        assert_eq!(backups.get(), 0, "a refused save takes no backup");
+
+        // A backup that fails stops the save: the stored layout is unchanged.
+        let failing_backup =
+            |_: &Connection| -> Result<(), AppError> { Err(AppError::msg("backup failed")) };
+        let failing = SaveContext {
+            semantics_of: &semantics_of,
+            backup_before_case_merge: &failing_backup,
+        };
+        assert!(save_current(&mut connection, 6, &merged, &failing).is_err());
+        let stored = workspace_layout_repo::get_current(&connection)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.revision, 5);
+
+        // And with a working backup the same save goes through, once.
+        assert!(
+            save_current(&mut connection, 6, &merged, &context)
+                .unwrap()
+                .saved
+        );
+        assert_eq!(backups.get(), 1);
     }
 }

@@ -34,10 +34,11 @@ use crate::models::workspace_layout::{
     WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind, WorkspaceSlotTitle,
     WorkspaceSplitDirection,
 };
+use crate::platform::case_sensitivity::{CaseSensitivity, PathSemantics, Tri};
 use crate::services::file_service::{
-    ProjectDirectoryListing, ProjectFileCasResidue, ProjectFileCasResidueListing, ProjectFileEntry,
-    ProjectFileKind, ProjectFileOpenResult, ProjectFileUnsupportedReason,
-    ProjectTextFileSaveResult, ProjectTextFileSaveWarning,
+    FileIdentityComparison, ProjectDirectoryListing, ProjectFileCasResidue,
+    ProjectFileCasResidueListing, ProjectFileEntry, ProjectFileKind, ProjectFileOpenResult,
+    ProjectFileUnsupportedReason, ProjectTextFileSaveResult, ProjectTextFileSaveWarning,
 };
 use crate::services::startup_notices::{StartupNotice, StartupNoticeKind};
 use crate::services::window_inbox::{InboxMessage, InboxSource, WindowInboxSubscription};
@@ -354,6 +355,10 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             ],
             truncated: true,
             skipped_count: 3,
+            path_semantics: PathSemantics {
+                case: CaseSensitivity::Insensitive,
+                normalization_insensitive: Tri::Yes,
+            },
         },
     );
     sample(
@@ -364,10 +369,51 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             entries: Vec::new(),
             truncated: false,
             skipped_count: 0,
+            path_semantics: PathSemantics::UNKNOWN,
         },
     );
     all.push(DtoSamples {
         fixture_file: Some("project-directory-listing.json"),
+        type_name: name,
+        cases,
+    });
+
+    // PathSemantics（get_project_path_semantics 的返回值，列目录结果里也带一份）
+    let mut cases = Vec::new();
+    let name = "PathSemantics";
+    for (case, case_axis, normalization) in [
+        ("sensitiveNo", CaseSensitivity::Sensitive, Tri::No),
+        ("insensitiveYes", CaseSensitivity::Insensitive, Tri::Yes),
+        ("unknown", CaseSensitivity::Unknown, Tri::Unknown),
+    ] {
+        sample(
+            &mut cases,
+            name,
+            case,
+            PathSemantics {
+                case: case_axis,
+                normalization_insensitive: normalization,
+            },
+        );
+    }
+    all.push(DtoSamples {
+        fixture_file: Some("path-semantics.json"),
+        type_name: name,
+        cases,
+    });
+
+    // FileIdentityComparison（check_project_files_same_identity 的返回值）
+    let mut cases = Vec::new();
+    let name = "FileIdentityComparison";
+    for (case, comparison) in [
+        ("same", FileIdentityComparison::Same),
+        ("different", FileIdentityComparison::Different),
+        ("unavailable", FileIdentityComparison::Unavailable),
+    ] {
+        sample(&mut cases, name, case, comparison);
+    }
+    all.push(DtoSamples {
+        fixture_file: Some("file-identity-comparison.json"),
         type_name: name,
         cases,
     });
@@ -893,6 +939,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         ("preImport", BackupReason::PreImport),
         ("preRestore", BackupReason::PreRestore),
         ("preMigration", BackupReason::PreMigration),
+        ("preCaseMerge", BackupReason::PreCaseMerge),
     ] {
         sample(
             &mut cases,

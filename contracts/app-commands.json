@@ -25,6 +25,10 @@
       "kinds": ["main", "terminal"]
     },
     {
+      "name": "check_project_files_same_identity",
+      "callerCheck": "acl-only"
+    },
+    {
       "name": "clear_cache",
       "callerCheck": "acl-only"
     },
@@ -110,6 +114,10 @@
     },
     {
       "name": "get_launch_history_limit",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_project_path_semantics",
       "callerCheck": "acl-only"
     },
     {

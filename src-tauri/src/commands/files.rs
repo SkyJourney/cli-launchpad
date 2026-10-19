@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::models::window_kind::{window_kind_of, CallerWindow, WindowKind};
+use crate::platform::case_sensitivity::PathSemantics;
 use crate::services::content_window_grants::{ContentWindowFileGrant, ContentWindowGrantRegistry};
 use crate::services::file_service::{
-    self, ProjectDirectoryListing, ProjectFileCasResidue, ProjectFileCasResidueListing,
-    ProjectFileOpenResult, ProjectTextFileSaveResult,
+    self, FileIdentityComparison, ProjectDirectoryListing, ProjectFileCasResidue,
+    ProjectFileCasResidueListing, ProjectFileOpenResult, ProjectTextFileSaveResult,
 };
 use crate::services::project_directory::ProjectDirectory;
+use crate::services::project_path_semantics::{probe_semantics, CaseSensitivityCache};
 use crate::{blocking, blocking_unbounded, budgets, AppError, Db};
 
 /// Database stage (`Db::call`, no filesystem) followed by the filesystem
@@ -24,14 +28,64 @@ async fn open_project(
 #[tauri::command]
 pub async fn list_project_files(
     state: State<'_, Db>,
+    semantics: State<'_, Arc<CaseSensitivityCache>>,
     directory_id: i64,
     directory_path: String,
     relative_path: String,
 ) -> Result<ProjectDirectoryListing, AppError> {
-    let root = open_project(&state, directory_id, directory_path).await?;
-    blocking("project_files.list", budgets::FILE_OPERATION, move || {
-        file_service::list_directory_in(&root, &relative_path).map_err(AppError::from)
+    let root = Arc::new(open_project(&state, directory_id, directory_path.clone()).await?);
+    let listing_root = Arc::clone(&root);
+    let mut listing = blocking("project_files.list", budgets::FILE_OPERATION, move || {
+        file_service::list_directory_in(&listing_root, &relative_path).map_err(AppError::from)
     })
+    .await?;
+    // A separate stage with its own budget: a slow probe must not turn a listing into an error.
+    listing.path_semantics = probe_semantics(
+        Arc::clone(semantics.inner()),
+        directory_id,
+        directory_path,
+        root,
+    )
+    .await;
+    Ok(listing)
+}
+
+/// The probed case and normalization semantics of a project root. `Unknown` when the probe
+/// fails or exceeds its budget; the answer is cached per project.
+#[tauri::command]
+pub async fn get_project_path_semantics(
+    state: State<'_, Db>,
+    semantics: State<'_, Arc<CaseSensitivityCache>>,
+    directory_id: i64,
+    directory_path: String,
+) -> Result<PathSemantics, AppError> {
+    let root = Arc::new(open_project(&state, directory_id, directory_path.clone()).await?);
+    Ok(probe_semantics(
+        Arc::clone(semantics.inner()),
+        directory_id,
+        directory_path,
+        root,
+    )
+    .await)
+}
+
+/// Whether two project files are the same file on disk: the safety net behind every case-folded
+/// merge. A path outside the project is an error, a file that cannot be identified is
+/// `unavailable`.
+#[tauri::command]
+pub async fn check_project_files_same_identity(
+    state: State<'_, Db>,
+    directory_id: i64,
+    directory_path: String,
+    a: String,
+    b: String,
+) -> Result<FileIdentityComparison, AppError> {
+    let root = open_project(&state, directory_id, directory_path).await?;
+    blocking(
+        "project_files.same_identity",
+        budgets::FILE_OPERATION,
+        move || file_service::compare_file_identity_in(&root, &a, &b).map_err(AppError::from),
+    )
     .await
 }
 

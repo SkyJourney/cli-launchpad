@@ -4,9 +4,6 @@
 //! semantics probed for the project root. Equal keys only mean "candidate for
 //! the same file": callers confirm with a file identity before merging.
 
-// The callers arrive in m6-076b and m6-076c.
-#![allow(dead_code)]
-
 use unicase::UniCase;
 use unicode_normalization::UnicodeNormalization;
 
@@ -35,6 +32,7 @@ impl PathKey {
         PathKey(key)
     }
 
+    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.0
     }

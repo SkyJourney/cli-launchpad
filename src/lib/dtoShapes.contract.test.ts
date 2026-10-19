@@ -8,9 +8,11 @@ import type {
   ExecutionLogChunk,
   ExecutionTask,
   ExecutionTaskDetail,
+  FileIdentityComparison,
   InstallPlan,
   LatestVersion,
   LaunchHistoryEntry,
+  PathSemantics,
   ProjectDirectoryListing,
   ProjectFileCasResidue,
   ProjectFileCasResidueListing,
@@ -153,10 +155,15 @@ const REFRESH = keysOf<SessionSearchIndexRefresh>()([
   "incompleteTools",
   "indexedSessions",
 ]);
+const PATH_SEMANTICS = keysOf<PathSemantics>()([
+  "case",
+  "normalizationInsensitive",
+]);
 const LISTING = keysOf<ProjectDirectoryListing>()([
   "entries",
   "truncated",
   "skippedCount",
+  "pathSemantics",
 ]);
 const FILE_ENTRY = keysOf<ProjectFileEntry>()([
   "name",
@@ -263,8 +270,10 @@ const STRUCTS: Array<{
     nested: (value, label) => {
       for (const entry of value.entries as unknown[])
         expectKeys(`${label}.entries[]`, entry, FILE_ENTRY);
+      expectKeys(`${label}.pathSemantics`, value.pathSemantics, PATH_SEMANTICS);
     },
   },
+  { file: "path-semantics.json", type: "PathSemantics", keys: PATH_SEMANTICS },
   {
     file: "project-file-cas-residue-listing.json",
     type: "ProjectFileCasResidueListing",
@@ -448,6 +457,13 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
     }
   });
 
+  it("matches the FileIdentityComparison values", () => {
+    const values: FileIdentityComparison[] = cases(
+      "file-identity-comparison.json",
+    ).map(({ value }) => value as FileIdentityComparison);
+    expect([...values].sort()).toEqual(["different", "same", "unavailable"]);
+  });
+
   it("matches the CloseBehavior values", () => {
     const values = cases("close-behavior.json").map(({ value }) => value);
     expect(values.sort()).toEqual(["minimize_to_tray", "quit"]);
@@ -486,6 +502,7 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       "pty-event.json",
       "latest-version.json",
       "close-behavior.json",
+      "file-identity-comparison.json",
       "workspace-layout-state-read.json",
     ];
     const all = Object.keys(fixtureFiles).map(
@@ -497,9 +514,9 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       ...COVERED_ELSEWHERE,
     ]);
     expect(all.filter((file) => !known.has(file))).toEqual([]);
-    expect(all.length).toBe(35);
+    expect(all.length).toBe(37);
     expect(
       STRUCTS.length + VARIANT_TESTS.length + COVERED_ELSEWHERE.length,
-    ).toBe(35);
+    ).toBe(37);
   });
 });

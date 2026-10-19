@@ -36,6 +36,8 @@ export const fr = {
       "Cette demande de fermeture n’est plus à jour. Réessayez de quitter.",
     layoutNeedsReset:
       "La disposition de l’espace de travail est invalide et doit être réinitialisée.",
+    layoutCaseDuplicate:
+      "La disposition contient des documents dont les chemins ne diffèrent que par la casse.",
     internal:
       "Une erreur interne s'est produite. Réessayez et redémarrez l'application si le problème persiste.",
     appExiting:
@@ -579,6 +581,8 @@ export const fr = {
       pre_import: "Sauvegarde automatique avant importation",
       pre_restore: "Sauvegarde de protection avant restauration",
       pre_migration: "Sauvegarde automatique avant mise à niveau",
+      pre_case_merge:
+        "Sauvegarde automatique avant la fusion de documents ne différant que par la casse",
     },
     preservation: {
       exact: "Conservé intégralement",
@@ -681,6 +685,8 @@ export const fr = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged:
+      "{{count}} document(s) fusionné(s) dont les chemins ne différaient que par la casse.",
     rightPanelTabs: "Onglets du panneau droit",
     files: "Fichiers",
     git: "Git",

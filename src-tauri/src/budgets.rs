@@ -6,6 +6,8 @@ use std::time::Duration;
 
 /// Verifying a project path snapshot and opening the project directory.
 pub const PROJECT_DIRECTORY: Duration = Duration::from_secs(10);
+/// Probing the case and normalization semantics of a project root (PD-10); a timeout means `Unknown`.
+pub const CASE_PROBE: Duration = Duration::from_secs(2);
 /// File reads, writes, directory listings and CAS saves.
 pub const FILE_OPERATION: Duration = Duration::from_secs(30);
 /// Executable resolution (`where.exe`, `which`).

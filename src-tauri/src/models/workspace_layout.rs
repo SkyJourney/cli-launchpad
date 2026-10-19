@@ -1233,6 +1233,52 @@ mod tests {
     }
 
     #[test]
+    fn validate_keeps_literal_dedupe_for_case_variants() {
+        // Two documents that differ only by case are not duplicates for `validate`: folding is
+        // decided later from the probed semantics, never by this pure function.
+        let mut document = valid_document();
+        let mut ids = Vec::new();
+        for relative_path in ["a.txt", "A.txt"] {
+            let id = Uuid::new_v4().to_string();
+            document.documents.push(WorkspaceFileDocument {
+                id: id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: relative_path.to_string(),
+            });
+            ids.push(id);
+        }
+        let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        for id in &ids {
+            contents.push(WorkspacePaneContentRef::File {
+                document_id: id.clone(),
+            });
+        }
+        document.validate().expect("case variants stay valid");
+
+        // A literal duplicate is still rejected.
+        let duplicate = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: duplicate.clone(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\example".to_string(),
+            relative_path: "a.txt".to_string(),
+        });
+        let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        contents.push(WorkspacePaneContentRef::File {
+            document_id: duplicate,
+        });
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("同一项目文件不能重复打开")
+        ));
+    }
+
+    #[test]
     fn workspace_layout_rejects_detached_file_also_referenced_by_tree() {
         let mut document = valid_document();
         let document_id = Uuid::new_v4().to_string();

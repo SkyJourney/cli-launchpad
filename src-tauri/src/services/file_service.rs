@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::project_directory::ProjectDirectory;
+use crate::platform::case_sensitivity::{is_case_probe_residue_name, PathSemantics};
+use crate::platform::file_identity::of_entry;
 
 pub const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
@@ -102,6 +104,19 @@ pub struct ProjectDirectoryListing {
     pub entries: Vec<ProjectFileEntry>,
     pub truncated: bool,
     pub skipped_count: usize,
+    /// Semantics of the project root (PD-10). `list_directory_in` leaves it `UNKNOWN`; the
+    /// command fills it from the cache, because probing is not part of listing.
+    pub path_semantics: PathSemantics,
+}
+
+/// Whether two project-relative paths name the same file on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileIdentityComparison {
+    Same,
+    Different,
+    /// At least one of the files cannot be identified (missing, unreadable).
+    Unavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -336,7 +351,8 @@ fn list_directory_with_limit(
             skipped_count += 1;
             continue;
         }
-        if crate::platform::file_cas::is_temporary_name(&name) {
+        if crate::platform::file_cas::is_temporary_name(&name) || is_case_probe_residue_name(&name)
+        {
             continue;
         }
         let child_relative = if relative_path.is_empty() {
@@ -388,6 +404,31 @@ fn list_directory_with_limit(
         entries,
         truncated,
         skipped_count,
+        path_semantics: PathSemantics::UNKNOWN,
+    })
+}
+
+/// Compares the identity of two files of one project. A path that leaves the project or is
+/// not canonical is an error; a file that cannot be identified is `Unavailable`.
+pub(crate) fn compare_file_identity_in(
+    root: &ProjectDirectory,
+    first: &str,
+    second: &str,
+) -> Result<FileIdentityComparison> {
+    for relative in [first, second] {
+        if relative.is_empty() {
+            bail!("文件路径不能为空");
+        }
+        ProjectDirectory::validate_relative_path(relative)?;
+    }
+    let identity_of = |relative: &str| {
+        let location = root.locate(relative).ok()?;
+        of_entry(&location.parent, &location.name).ok()
+    };
+    Ok(match (identity_of(first), identity_of(second)) {
+        (Some(left), Some(right)) if left == right => FileIdentityComparison::Same,
+        (Some(_), Some(_)) => FileIdentityComparison::Different,
+        _ => FileIdentityComparison::Unavailable,
     })
 }
 
@@ -1394,5 +1435,88 @@ mod tests {
         assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_ok());
         value["documents"][0]["relativePath"] = serde_json::json!("line\nbreak.txt");
         assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn same_identity_reports_same_different_and_unavailable() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        fs::write(dir.path().join("b.txt"), b"b").unwrap();
+        fs::hard_link(dir.path().join("a.txt"), dir.path().join("hard.txt")).unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub").join("c.txt"), b"c").unwrap();
+        let root = ProjectDirectory::open(dir.path()).unwrap();
+
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "hard.txt").unwrap(),
+            FileIdentityComparison::Same
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "b.txt").unwrap(),
+            FileIdentityComparison::Different
+        );
+        // A missing file cannot be identified: neither `Different` nor an error.
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "missing.txt").unwrap(),
+            FileIdentityComparison::Unavailable
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "sub/c.txt").unwrap(),
+            FileIdentityComparison::Different
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "no-such-dir/c.txt").unwrap(),
+            FileIdentityComparison::Unavailable
+        );
+    }
+
+    #[test]
+    fn same_identity_rejects_paths_outside_the_project() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        fs::write(dir.path().join("b.txt"), b"b").unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub").join("c.txt"), b"c").unwrap();
+        let root = ProjectDirectory::open(dir.path()).unwrap();
+
+        let absolute = if cfg!(windows) {
+            "C:\\Windows\\win.ini"
+        } else {
+            "/etc/passwd"
+        };
+        for outside in ["../a.txt", absolute, "sub/../../a.txt"] {
+            assert!(
+                compare_file_identity_in(&root, "a.txt", outside).is_err(),
+                "{outside} must be rejected"
+            );
+            assert!(
+                compare_file_identity_in(&root, outside, "a.txt").is_err(),
+                "{outside} must be rejected as the first path too"
+            );
+        }
+        assert!(compare_file_identity_in(&root, "", "a.txt").is_err());
+    }
+
+    #[test]
+    fn listing_hides_case_probe_residue() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".clp-case-probe-abcdef0123456789"), b"x").unwrap();
+        fs::write(dir.path().join("visible.txt"), b"x").unwrap();
+        fs::write(dir.path().join(".hidden-but-listed"), b"x").unwrap();
+
+        let listing = list_directory(dir.path(), "").unwrap();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert!(names.contains(&"visible.txt"));
+        assert!(
+            names.contains(&".hidden-but-listed"),
+            "ordinary dot files stay"
+        );
+        assert!(!names.contains(&".clp-case-probe-abcdef0123456789"));
+        // The listing itself never probes: the semantics are filled in by the command.
+        assert_eq!(listing.path_semantics, PathSemantics::UNKNOWN);
     }
 }

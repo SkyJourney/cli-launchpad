@@ -1244,7 +1244,7 @@ fn golden_fixtures_match_serialized_dtos() {
         }
     }
 
-    assert_eq!(expected_files.len(), 35, "fixture 映射表必须恰好 35 个文件");
+    assert_eq!(expected_files.len(), 37, "fixture 映射表必须恰好 37 个文件");
     let found: BTreeSet<String> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
         .map(|entry| entry.expect("read fixture entry").path())
@@ -4452,6 +4452,53 @@ fn command_manifest_has_no_companion_caller_check_file() {
         assert!(
             !object.contains_key("command"),
             "{name} 仍带有旧字段 command"
+        );
+    }
+}
+
+/// PD-10: relative paths are compared in one place (`PathKey::of`). The three files that hold
+/// project-relative paths must not fold case or branch on the platform themselves.
+#[test]
+fn relative_path_identity_has_no_platform_branching() {
+    const FORBIDDEN: [&str; 5] = [
+        "relative_path.to_lowercase()",
+        "relative_path.to_ascii_lowercase()",
+        "eq_ignore_ascii_case(",
+        "cfg(windows)",
+        "cfg(target_os = \"macos\")",
+    ];
+    let violations = |text: &str| -> Vec<&'static str> {
+        FORBIDDEN
+            .iter()
+            .copied()
+            .filter(|pattern| text.contains(pattern))
+            .collect()
+    };
+
+    // Self-check: the scan must see a violation, or it would pass vacuously.
+    assert_eq!(
+        violations("let key = relative_path.to_lowercase();"),
+        vec!["relative_path.to_lowercase()"]
+    );
+
+    for (name, source) in [
+        (
+            "models/workspace_layout.rs",
+            include_str!("../models/workspace_layout.rs"),
+        ),
+        (
+            "services/file_service.rs",
+            include_str!("../services/file_service.rs"),
+        ),
+        (
+            "services/workspace_layout_service.rs",
+            include_str!("../services/workspace_layout_service.rs"),
+        ),
+    ] {
+        assert_eq!(
+            violations(&production_text(source)),
+            Vec::<&str>::new(),
+            "{name}: relative-path identity must go through PathKey::of"
         );
     }
 }

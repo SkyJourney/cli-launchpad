@@ -88,6 +88,10 @@ async fn remove_directory_reconciled(
 pub async fn remove_directory(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
+    path_semantics: State<
+        '_,
+        std::sync::Arc<crate::services::project_path_semantics::CaseSensitivityCache>,
+    >,
     sessions: State<'_, PtySessionManager>,
     id: i64,
 ) -> Result<(), AppError> {
@@ -104,6 +108,8 @@ pub async fn remove_directory(
         id,
     )
     .await?;
+    // The id may be reused later; an old answer must not follow it.
+    path_semantics.invalidate_project(id);
     cache
         .call("directory.remove_cache", move |connection| {
             cache_service::remove_prefix(connection, "sessions:")?;

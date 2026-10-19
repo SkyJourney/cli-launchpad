@@ -54,6 +54,10 @@ pub async fn restore_backup(
     caller: CallerWindow,
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
+    path_semantics: State<
+        '_,
+        std::sync::Arc<crate::services::project_path_semantics::CaseSensitivityCache>,
+    >,
     close_behavior_state: State<'_, CloseBehaviorState>,
     lifecycle: State<'_, AppLifecycle>,
     generation: State<'_, RestoreGeneration>,
@@ -81,6 +85,8 @@ pub async fn restore_backup(
         )
     })
     .await?;
+    // The restored database may give other projects the same ids.
+    path_semantics.invalidate_all();
 
     if let Some(warning) = &outcome.cache_warning {
         log::warn!("backup restore: {warning}");

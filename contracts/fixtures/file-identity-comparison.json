@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "name": "same",
+      "value": "same"
+    },
+    {
+      "name": "different",
+      "value": "different"
+    },
+    {
+      "name": "unavailable",
+      "value": "unavailable"
+    }
+  ],
+  "schema": 1,
+  "type": "FileIdentityComparison"
+}

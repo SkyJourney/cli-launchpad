@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 725,
-    "Linux": 735,
-    "macOS": 730
+    "Windows": 741,
+    "Linux": 751,
+    "macOS": 746
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -446,7 +446,23 @@
       "platform::case_sensitivity::tests::path_semantics_serializes_as_camel_case_strings",
       "platform::case_sensitivity::tests::probe_chain_short_circuits_in_order",
       "platform::case_sensitivity::tests::temp_probe_leaves_no_file_on_any_path",
-      "platform::case_sensitivity::tests::stale_probe_residue_is_removed_by_the_next_probe"
+      "platform::case_sensitivity::tests::stale_probe_residue_is_removed_by_the_next_probe",
+      "services::project_path_semantics::tests::probes_once_per_project_and_caches_by_id_and_path_snapshot",
+      "services::project_path_semantics::tests::unknown_results_expire_after_sixty_seconds_and_known_results_do_not",
+      "services::project_path_semantics::tests::invalidation_clears_removed_changed_and_restored_projects",
+      "services::project_path_semantics::tests::disabling_folding_forces_sensitive_semantics",
+      "services::file_service::tests::same_identity_reports_same_different_and_unavailable",
+      "services::file_service::tests::same_identity_rejects_paths_outside_the_project",
+      "services::file_service::tests::listing_hides_case_probe_residue",
+      "models::workspace_layout::tests::validate_keeps_literal_dedupe_for_case_variants",
+      "services::workspace_layout_service::tests::save_rejects_case_variants_only_when_the_cached_flag_is_insensitive",
+      "services::workspace_layout_service::tests::save_creates_a_protective_backup_before_the_first_merged_layout",
+      "models::workspace_layout_case_merge::tests::merge_case_variant_documents_applies_the_documented_rules",
+      "models::backup::tests::pre_case_merge_reason_serializes_as_snake_case",
+      "contracts::relative_path_identity_has_no_platform_branching",
+      "services::workspace_layout_service::tests::a_stale_save_leaves_no_protective_backup_and_a_failed_backup_aborts_the_save",
+      "services::project_path_semantics::tests::a_cached_answer_is_returned_without_probing",
+      "services::project_path_semantics::tests::a_late_unknown_does_not_replace_a_known_answer"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

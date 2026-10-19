@@ -37,6 +37,8 @@ export const de = {
       "Diese Beenden-Anfrage ist nicht mehr aktuell. Versuchen Sie es erneut.",
     layoutNeedsReset:
       "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
+    layoutCaseDuplicate:
+      "Das Layout enthält Dokumente, deren Pfade sich nur in der Groß-/Kleinschreibung unterscheiden.",
     internal:
       "Es ist ein interner Fehler aufgetreten. Versuchen Sie es erneut und starten Sie die App neu, falls das Problem bestehen bleibt.",
     appExiting:
@@ -581,6 +583,8 @@ export const de = {
       pre_import: "Automatische Sicherung vor dem Import",
       pre_restore: "Schutzsicherung vor der Wiederherstellung",
       pre_migration: "Automatische Sicherung vor dem Upgrade",
+      pre_case_merge:
+        "Automatische Sicherung vor dem Zusammenführen von Dokumenten mit unterschiedlicher Groß-/Kleinschreibung",
     },
     preservation: {
       exact: "Vollständig erhalten",
@@ -682,6 +686,8 @@ export const de = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged:
+      "{{count}} Dokument(e) zusammengeführt, deren Pfade sich nur in der Groß-/Kleinschreibung unterschieden.",
     rightPanelTabs: "Register der rechten Seitenleiste",
     files: "Dateien",
     git: "Git",

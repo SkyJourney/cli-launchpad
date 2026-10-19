@@ -195,6 +195,9 @@ pub fn run() {
             app.manage(pty_sessions);
             app.manage(services::session_service::RestoreGeneration::default());
             app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
+            app.manage(std::sync::Arc::new(
+                services::project_path_semantics::CaseSensitivityCache::new(),
+            ));
             app.manage(services::window_inbox::WindowInboxRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
@@ -262,6 +265,8 @@ pub fn run() {
             commands::directory::reorder_directories,
             commands::directory::open_project_directory,
             commands::files::list_project_files,
+            commands::files::get_project_path_semantics,
+            commands::files::check_project_files_same_identity,
             commands::files::open_project_file,
             commands::files::save_project_text_file,
             commands::files::grant_content_window_file,

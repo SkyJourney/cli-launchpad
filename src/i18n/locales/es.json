@@ -17,6 +17,7 @@
     "exitNoPendingRequest": "No hay ninguna solicitud de salida pendiente. Inténtalo de nuevo.",
     "exitRequestMismatch": "Esta solicitud de salida ya no está vigente. Inténtalo de nuevo.",
     "layoutNeedsReset": "El diseño del espacio de trabajo no es válido y debe restablecerse.",
+    "layoutCaseDuplicate": "El diseño contiene documentos cuyas rutas solo difieren en mayúsculas y minúsculas.",
     "internal": "Se produjo un error interno. Inténtalo de nuevo y reinicia la aplicación si el problema continúa.",
     "appExiting": "La aplicación se está cerrando. Inténtalo de nuevo después de reiniciarla.",
     "appExitDeferred": "Aún hay una restauración o importación en curso, por lo que la aplicación no puede cerrarse todavía.",
@@ -454,7 +455,8 @@
       "manual": "Punto de restauración manual",
       "pre_import": "Copia de seguridad automática previa a la importación",
       "pre_restore": "Copia de seguridad de protección previa a la restauración",
-      "pre_migration": "Copia de seguridad automática previa a la actualización"
+      "pre_migration": "Copia de seguridad automática previa a la actualización",
+      "pre_case_merge": "Copia de seguridad automática antes de fusionar documentos que solo difieren en mayúsculas y minúsculas"
     },
     "preservation": {
       "exact": "Totalmente conservado",
@@ -544,6 +546,7 @@
     }
   },
   "workspaceFiles": {
+    "caseVariantsMerged": "Se fusionaron {{count}} documento(s) cuyas rutas solo diferían en mayúsculas y minúsculas.",
     "rightPanelTabs": "Pestañas del panel derecho",
     "files": "Archivos",
     "git": "Git",

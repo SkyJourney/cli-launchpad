@@ -31,6 +31,8 @@ export const ko = {
     exitRequestMismatch:
       "이 종료 요청은 더 이상 유효하지 않습니다. 다시 종료해 보세요.",
     layoutNeedsReset: "작업 공간 레이아웃이 잘못되어 초기화해야 합니다.",
+    layoutCaseDuplicate:
+      "레이아웃에 대소문자만 다른 경로의 문서가 포함되어 있습니다.",
     internal:
       "내부 오류가 발생했습니다. 다시 시도하고, 문제가 계속되면 앱을 다시 시작하세요.",
     appExiting: "앱을 종료하는 중입니다. 다시 시작한 후 다시 시도하세요.",
@@ -550,6 +552,7 @@ export const ko = {
       pre_import: "가져오기 전 자동 백업",
       pre_restore: "복원 전 보호 백업",
       pre_migration: "업그레이드 전 자동 백업",
+      pre_case_merge: "대소문자만 다른 문서를 병합하기 전 자동 백업",
     },
     preservation: {
       exact: "완전히 보존됨",
@@ -644,6 +647,7 @@ export const ko = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged: "대소문자만 다른 문서 {{count}}개를 병합했습니다.",
     rightPanelTabs: "오른쪽 패널 탭",
     files: "파일",
     git: "Git",

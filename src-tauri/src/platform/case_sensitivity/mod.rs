@@ -8,9 +8,6 @@
 //! budget (2 seconds, `spawn_blocking` plus a timeout) and maps a timeout to
 //! `PathSemantics::UNKNOWN`.
 
-// The cache and the commands that call this module arrive in m6-076b.
-#![allow(dead_code)]
-
 use std::ffi::OsStr;
 use std::io::ErrorKind;
 use std::time::{Duration, SystemTime};

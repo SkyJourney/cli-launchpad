@@ -32,6 +32,10 @@
             "symbolicLink": false
           }
         ],
+        "pathSemantics": {
+          "case": "insensitive",
+          "normalizationInsensitive": "yes"
+        },
         "skippedCount": 3,
         "truncated": true
       }
@@ -40,6 +44,10 @@
       "name": "empty",
       "value": {
         "entries": [],
+        "pathSemantics": {
+          "case": "unknown",
+          "normalizationInsensitive": "unknown"
+        },
         "skippedCount": 0,
         "truncated": false
       }

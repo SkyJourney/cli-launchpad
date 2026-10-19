@@ -36,6 +36,8 @@ export const pt = {
       "Este pedido de saída não é mais o atual. Tente sair novamente.",
     layoutNeedsReset:
       "O layout do espaço de trabalho é inválido e precisa ser redefinido.",
+    layoutCaseDuplicate:
+      "O layout contém documentos cujos caminhos diferem apenas em maiúsculas e minúsculas.",
     internal:
       "Ocorreu um erro interno. Tente novamente e reinicie o aplicativo se o problema persistir.",
     appExiting:
@@ -578,6 +580,8 @@ export const pt = {
       pre_import: "Backup automático antes da importação",
       pre_restore: "Backup de proteção antes da restauração",
       pre_migration: "Backup automático antes da atualização",
+      pre_case_merge:
+        "Backup automático antes de mesclar documentos que diferem apenas em maiúsculas e minúsculas",
     },
     preservation: {
       exact: "Preservado integralmente",
@@ -679,6 +683,8 @@ export const pt = {
     },
   },
   workspaceFiles: {
+    caseVariantsMerged:
+      "{{count}} documento(s) mesclado(s) cujos caminhos diferiam apenas em maiúsculas e minúsculas.",
     rightPanelTabs: "Guias do painel direito",
     files: "Arquivos",
     git: "Git",

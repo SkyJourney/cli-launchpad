@@ -15,6 +15,7 @@
     "exit.no_pending_request",
     "exit.request_mismatch",
     "internal.task_failed",
+    "layout.case_duplicate",
     "project.identity_changed",
     "project.not_found",
     "pty.handoff_target_is_source",

@@ -54,6 +54,17 @@
         "schemaVersion": 14,
         "sizeBytes": 4096
       }
+    },
+    {
+      "name": "preCaseMerge",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-preCaseMerge",
+        "reason": "pre_case_merge",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
     }
   ],
   "schema": 1,
