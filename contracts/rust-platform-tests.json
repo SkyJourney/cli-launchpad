@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 741,
-    "Linux": 751,
-    "macOS": 746
+    "Windows": 746,
+    "Linux": 752,
+    "macOS": 747
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -462,7 +462,8 @@
       "contracts::relative_path_identity_has_no_platform_branching",
       "services::workspace_layout_service::tests::a_stale_save_leaves_no_protective_backup_and_a_failed_backup_aborts_the_save",
       "services::project_path_semantics::tests::a_cached_answer_is_returned_without_probing",
-      "services::project_path_semantics::tests::a_late_unknown_does_not_replace_a_known_answer"
+      "services::project_path_semantics::tests::a_late_unknown_does_not_replace_a_known_answer",
+      "platform::file_identity::tests::index_field_holds_the_full_native_value"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -499,7 +500,11 @@
       "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory",
       "services::workspace_layout_service::tests::current_layout_with_platform_invalid_file_name_degrades_the_item",
       "platform::execution_process::windows::tests::dropping_the_job_kills_attached_processes",
-      "platform::case_sensitivity::windows::tests::adapter_decoding_matches_the_confirmed_matrix"
+      "platform::case_sensitivity::windows::tests::adapter_decoding_matches_the_confirmed_matrix",
+      "platform::file_identity::tests::windows_identity_uses_the_128_bit_file_id",
+      "platform::file_identity::tests::windows_identity_falls_back_to_the_64_bit_index_without_a_file_id",
+      "platform::file_identity::tests::file_ids_that_differ_only_in_the_high_64_bits_are_different_identities",
+      "platform::file_identity::tests::windows_identity_ignores_an_all_zero_file_id_and_keeps_the_high_half"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",

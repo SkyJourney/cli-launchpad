@@ -67,8 +67,7 @@ pub(super) fn platform_api_step(root: &Dir) -> Option<PathSemantics> {
     collect_facts(root).and_then(|facts| decode(&facts))
 }
 
-/// Windows entries are compared by file index only; ReFS does not guarantee it is
-/// unique (a known limit, tracked outside PD-10).
+/// Windows file identities carry the 128-bit file id (m6-113), which is unique on ReFS as well.
 pub(super) fn identity_is_reliable(_root: &Dir) -> bool {
     true
 }
