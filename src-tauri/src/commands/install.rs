@@ -1,3 +1,4 @@
+use crate::models::cache::CacheKey;
 use crate::models::cli_status::{CliAvailability, CliStatus};
 use crate::models::install::{
     InstallKind, InstallPlan, LatestVersion, ManagedUpdateStatus, UpdateAvailability,
@@ -13,7 +14,7 @@ pub async fn fetch_latest_version(
     tool_key: ToolKey,
     force: Option<bool>,
 ) -> Result<LatestVersion, AppError> {
-    let key = format!("latest-version:{}", tool_key.as_str());
+    let key = CacheKey::LatestVersion(tool_key);
     let current_version = cached_current_version(&cache, tool_key).await?;
     if !force.unwrap_or(false) {
         let lookup_key = key.clone();
@@ -113,7 +114,7 @@ async fn cached_current_version(
     cache: &CacheDb,
     tool_key: ToolKey,
 ) -> Result<Option<String>, AppError> {
-    let key = format!("cli-status:{}", tool_key.as_str());
+    let key = CacheKey::CliStatus(tool_key);
     let statuses = cache
         .call("install.cached_current_version", move |connection| {
             Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
@@ -145,7 +146,7 @@ fn latest_result_is_cacheable(fetched: &LatestVersion) -> bool {
 
 async fn store_latest_result(
     cache: &CacheDb,
-    key: String,
+    key: CacheKey,
     fetched: LatestVersion,
 ) -> Result<(), AppError> {
     if !latest_result_is_cacheable(&fetched) {
@@ -195,10 +196,10 @@ mod tests {
     /// name, and the write itself runs through `store_latest_result`.
     fn cache_successful_latest_result(
         cache: &CacheDb,
-        key: &str,
+        key: &CacheKey,
         fetched: &LatestVersion,
     ) -> Result<(), AppError> {
-        tauri::async_runtime::block_on(store_latest_result(cache, key.to_string(), fetched.clone()))
+        tauri::async_runtime::block_on(store_latest_result(cache, *key, fetched.clone()))
     }
 
     #[test]
@@ -257,7 +258,12 @@ mod tests {
                 "create table cache_entries (key text primary key, value_json text not null, created_at_ms integer not null);",
             )
             .unwrap();
-        cache_service::put(&connection, "latest-version:codex", &latest(None, false)).unwrap();
+        cache_service::put(
+            &crate::runtime::CacheConn::for_test(&connection),
+            &CacheKey::LatestVersion(ToolKey::Codex),
+            &latest(None, false),
+        )
+        .unwrap();
         let original_timestamp: i64 = connection
             .query_row(
                 "select created_at_ms from cache_entries where key = ?1",
@@ -268,7 +274,8 @@ mod tests {
 
         let failed = latest(Some("network unavailable"), false);
         let cache = CacheDb::new(connection);
-        cache_successful_latest_result(&cache, "latest-version:codex", &failed).unwrap();
+        cache_successful_latest_result(&cache, &CacheKey::LatestVersion(ToolKey::Codex), &failed)
+            .unwrap();
 
         let connection = cache.lock_for_test();
         let current_timestamp: i64 = connection
@@ -278,9 +285,12 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let cached: LatestVersion = cache_service::get_any(&connection, "latest-version:codex")
-            .unwrap()
-            .unwrap();
+        let cached: LatestVersion = cache_service::get_any(
+            &crate::runtime::CacheConn::for_test(&connection),
+            &CacheKey::LatestVersion(ToolKey::Codex),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(current_timestamp, original_timestamp);
         assert_eq!(cached.error, None);
     }
@@ -304,8 +314,12 @@ mod tests {
             .unwrap();
         let cache = CacheDb::new(connection);
 
-        cache_successful_latest_result(&cache, "latest-version:codex", &latest(None, false))
-            .unwrap();
+        cache_successful_latest_result(
+            &cache,
+            &CacheKey::LatestVersion(ToolKey::Codex),
+            &latest(None, false),
+        )
+        .unwrap();
 
         let connection = cache.lock_for_test();
         let timestamp: i64 = connection

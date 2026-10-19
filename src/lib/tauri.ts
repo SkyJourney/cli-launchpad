@@ -382,7 +382,6 @@ export interface LaunchHistoryEntry {
 export interface CacheStats {
   sizeBytes: number;
   entryCount: number;
-  sessionEntryCount: number;
   newestEntryAtMs: number | null;
 }
 

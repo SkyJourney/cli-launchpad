@@ -28,6 +28,25 @@ pub struct Db(Arc<Mutex<Connection>>);
 #[derive(Clone)]
 pub struct CacheDb(Arc<Mutex<Connection>>);
 
+/// A borrowed cache connection. Only `CacheDb::call` and `CacheDb::with_sync` construct it, so the
+/// cache repositories cannot be handed the main database connection.
+pub struct CacheConn<'a>(&'a Connection);
+
+impl std::ops::Deref for CacheConn<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.0
+    }
+}
+
+#[cfg(test)]
+impl<'a> CacheConn<'a> {
+    pub(crate) fn for_test(connection: &'a Connection) -> Self {
+        Self(connection)
+    }
+}
+
 // Failures from these helpers carry codes from `error_codes::ErrorCode`.
 
 async fn run_on_blocking_pool<T: Send + 'static>(
@@ -107,7 +126,7 @@ impl CacheDb {
     pub fn with_sync<T>(
         &self,
         op: &'static str,
-        f: impl FnOnce(&Connection) -> Result<T, AppError>,
+        f: impl FnOnce(&CacheConn<'_>) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
         let connection = self.0.lock().map_err(|_| {
             AppError::coded_with_params(
@@ -116,7 +135,7 @@ impl CacheDb {
                 json!({ "op": op }),
             )
         })?;
-        f(&connection)
+        f(&CacheConn(&connection))
     }
 
     /// Test-only direct lock; see `Db::lock_for_test`.
@@ -129,7 +148,7 @@ impl CacheDb {
     pub async fn call<T: Send + 'static>(
         &self,
         op: &'static str,
-        f: impl FnOnce(&Connection) -> Result<T, AppError> + Send + 'static,
+        f: impl FnOnce(&CacheConn<'_>) -> Result<T, AppError> + Send + 'static,
     ) -> Result<T, AppError> {
         let cache = self.clone();
         run_on_blocking_pool(op, move || {
@@ -137,7 +156,7 @@ impl CacheDb {
                 .0
                 .lock()
                 .map_err(|_| AppError::coded(ErrorCode::DbPoisoned, "缓存数据库连接锁中毒"))?;
-            f(&connection)
+            f(&CacheConn(&connection))
         })
         .await
     }

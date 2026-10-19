@@ -6,10 +6,10 @@ use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::BackupReason;
 use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
 use crate::services::app_lifecycle::{AppLifecycle, DataReplaceKind, Operation};
+use crate::services::backup_service;
 use crate::services::session_service::RestoreGeneration;
 use crate::services::storage_service::StoragePaths;
-use crate::services::{backup_service, cache_service};
-use crate::{AppError, CacheDb, Db};
+use crate::{AppError, Db};
 
 /// Snapshot project configuration into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
@@ -55,19 +55,17 @@ pub fn export_with(db: &Db, path: &str) -> Result<(), AppError> {
     }
 }
 
-/// Imports a configuration file: a pre-import backup, the import and the session cache
-/// invalidation, all under a data-replace permit. Returns the imported close behavior. Runs on a
-/// blocking thread (the command wraps it in `blocking_unbounded`).
+/// Imports a configuration file: a pre-import backup and the import, under a data-replace permit.
+/// Returns the imported close behavior. Runs on a blocking thread (the command wraps it in `blocking_unbounded`).
 pub fn import_with(
     db: &Db,
-    cache: &CacheDb,
     storage: &StoragePaths,
     lifecycle: &AppLifecycle,
     generation: &RestoreGeneration,
     path: &str,
 ) -> Result<CloseBehavior, AppError> {
     let bundle = read_bundle_from_path(path)?;
-    // Held until the import and its cache invalidation finish.
+    // Held until the import finishes.
     let _data_replace_permit =
         lifecycle.admit(Operation::DataReplace(DataReplaceKind::ImportConfig))?;
     let close_behavior = db.with_sync("config.import", |conn| {
@@ -85,10 +83,6 @@ pub fn import_with(
                 Err(error.into())
             }
         }
-    })?;
-    cache.with_sync("config.import_cache", |connection| {
-        cache_service::remove_prefix(connection, "sessions:")?;
-        Ok(())
     })?;
     Ok(close_behavior)
 }
@@ -183,8 +177,8 @@ mod tests {
         }
     }
 
-    /// A storage root, a business database holding one directory, and a cache database.
-    fn import_scenario() -> (tempfile::TempDir, StoragePaths, Db, CacheDb, AppLifecycle) {
+    /// A storage root and a business database holding one directory.
+    fn import_scenario() -> (tempfile::TempDir, StoragePaths, Db, AppLifecycle) {
         let root = tempfile::tempdir().unwrap();
         let storage = StoragePaths::from_root(root.path().join(".cli-launchpad"));
         storage.create_directories().unwrap();
@@ -196,14 +190,11 @@ mod tests {
             None,
         )
         .unwrap();
-        let cache = CacheDb::new(
-            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
-        );
         let lifecycle = AppLifecycle::with_counters(
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         );
-        (root, storage, Db::new(connection), cache, lifecycle)
+        (root, storage, Db::new(connection), lifecycle)
     }
 
     fn write_bundle(root: &tempfile::TempDir, directory_path: &str) -> String {
@@ -218,14 +209,17 @@ mod tests {
     fn import_advances_the_generation_and_discards_an_in_flight_index_refresh() {
         use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
 
-        let (root, storage, db, cache, lifecycle) = import_scenario();
+        let (root, storage, db, lifecycle) = import_scenario();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
         let bundle = write_bundle(&root, &absolute_test_path("imported"));
 
-        import_with(&db, &cache, &storage, &lifecycle, &generation, &bundle).unwrap();
+        import_with(&db, &storage, &lifecycle, &generation, &bundle).unwrap();
 
         assert_eq!(generation.current(), g0 + 1);
+        let cache = crate::CacheDb::new(
+            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
+        );
         let connection = cache.lock_for_test();
         let stale = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
         assert!(matches!(stale, IndexWriteOutcome::Discarded));
@@ -240,13 +234,13 @@ mod tests {
     fn a_failed_import_keeps_the_generation_and_an_in_flight_refresh_valid() {
         use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
 
-        let (root, storage, db, cache, lifecycle) = import_scenario();
+        let (root, storage, db, lifecycle) = import_scenario();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
         // A relative directory identity makes the import fail and roll back.
         let bundle = write_bundle(&root, "relative/path");
 
-        let error = import_with(&db, &cache, &storage, &lifecycle, &generation, &bundle)
+        let error = import_with(&db, &storage, &lifecycle, &generation, &bundle)
             .expect_err("a relative directory identity must be rejected");
 
         // The pre-import backup was taken, so the failure came from the import itself.
@@ -259,6 +253,9 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["existing".to_string()]);
         assert_eq!(generation.current(), g0);
+        let cache = crate::CacheDb::new(
+            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
+        );
         let connection = cache.lock_for_test();
         let outcome = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
         assert!(matches!(outcome, IndexWriteOutcome::Written(_)));

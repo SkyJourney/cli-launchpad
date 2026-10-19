@@ -190,9 +190,7 @@ pub fn restore_with_runtime_invalidation(
     // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
     let cache_warning = cache.with_sync("backup.restore_cache", |connection| {
         let targeted = (|| -> anyhow::Result<()> {
-            crate::services::cache_service::remove_prefix(connection, "sessions:")?;
-            crate::services::cache_service::remove_prefix(connection, "workspace-file-index:")?;
-            crate::services::cache_service::clear_session_search(connection)?;
+            crate::services::cache_service::invalidate_after_data_replaced(connection)?;
             Ok(())
         })();
         if let Err(targeted_error) = targeted {
@@ -309,8 +307,10 @@ mod tests {
     use crate::db::{app_setting_repo, session_search_repo};
     use crate::db::{connection, directory_repo};
     use crate::models::app_setting::CloseBehavior;
+    use crate::models::cache::CacheKey;
     use crate::models::session::{SessionSearchIndexDocument, SessionSearchIndexSource};
     use crate::models::tool::ToolKey;
+    use crate::runtime::CacheConn;
     use crate::services::cache_service;
     use crate::services::session_service::RestoreGeneration;
     use std::collections::HashMap;
@@ -697,14 +697,34 @@ mod tests {
             .collect()
     }
 
+    /// Writes one session-search document for `directory_id`, so a restore can be seen to clear it.
+    fn index_query_document(connection: &Connection, directory_id: i64) {
+        session_search_repo::refresh(
+            connection,
+            directory_id,
+            &[SessionSearchIndexSource {
+                tool_key: ToolKey::Claude,
+                documents: Some(vec![SessionSearchIndexDocument {
+                    tool_key: ToolKey::Claude,
+                    session_id: "s1".to_string(),
+                    title: "query title".to_string(),
+                    last_active_ms: Some(1),
+                    fields: vec!["query title".to_string()],
+                }]),
+                incomplete: false,
+            }],
+        )
+        .unwrap();
+    }
+
     #[test]
     fn restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync() {
-        // 子场景 A：缓存清理两级都失败（缓存表被删除）。
+        // 子场景 A：缓存清理两级都失败（会话搜索表被删除，两级清理都要先清它）。
         {
             let (_directory, paths, db, cache, backup) = scenario();
             cache
                 .lock_for_test()
-                .execute("drop table cache_entries", [])
+                .execute("drop table session_search_documents", [])
                 .unwrap();
             let notifier = RecordingNotifier::ok();
             let outcome = restore_with_runtime_invalidation(
@@ -723,10 +743,16 @@ mod tests {
             assert_eq!(directory_names(&db), vec!["A".to_string()]);
         }
 
-        // 子场景 B：正常恢复，缓存被清空。
+        // 子场景 B：正常恢复，会话搜索索引被清除，活的缓存键保留。
         {
             let (_directory, paths, db, cache, backup) = scenario();
-            cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
+            index_query_document(&cache.lock_for_test(), 1);
+            cache_service::put(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll,
+                &"x",
+            )
+            .unwrap();
             let notifier = RecordingNotifier::ok();
             let outcome = restore_with_runtime_invalidation(
                 &db,
@@ -740,17 +766,35 @@ mod tests {
             .unwrap();
             assert!(outcome.cache_warning.is_none());
             assert_eq!(notifier.calls(), 1);
-            assert!(
-                cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
-                    .unwrap()
-                    .is_none()
+            assert!(session_search_repo::search(
+                &cache.lock_for_test(),
+                1,
+                "query",
+                &HashMap::new()
+            )
+            .unwrap()
+            .items
+            .is_empty());
+            assert_eq!(
+                cache_service::get_any::<String>(
+                    &CacheConn::for_test(&cache.lock_for_test()),
+                    &CacheKey::CliStatusAll
+                )
+                .unwrap()
+                .as_deref(),
+                Some("x")
             );
         }
 
         // 子场景 C：备份不存在，数据库未被替换，缓存与守卫都保持原样。
         {
             let (_directory, paths, db, cache, _backup) = scenario();
-            cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
+            cache_service::put(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll,
+                &"x",
+            )
+            .unwrap();
             let notifier = RecordingNotifier::ok();
             let lifecycle = test_lifecycle();
             let result = restore_with_runtime_invalidation(
@@ -764,11 +808,12 @@ mod tests {
             );
             assert!(result.is_err());
             assert_eq!(notifier.calls(), 0);
-            assert!(
-                cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(cache_service::get_any::<String>(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll
+            )
+            .unwrap()
+            .is_some());
             assert_eq!(directory_names(&db).len(), 2);
             // 反向断言：许可已释放，同一个 lifecycle 实例仍能准入 PTY 启动。
             assert!(lifecycle
@@ -778,28 +823,12 @@ mod tests {
     }
 
     #[test]
-    fn restore_invalidates_session_index_and_file_index_caches() {
+    fn restore_invalidates_the_session_search_index() {
         let (_directory, paths, db, cache, backup) = scenario();
         {
             let conn = cache.lock_for_test();
-            cache_service::put(&conn, "sessions:1:claude", &"x").unwrap();
-            cache_service::put(&conn, "workspace-file-index:1", &"y").unwrap();
-            session_search_repo::refresh(
-                &conn,
-                1,
-                &[SessionSearchIndexSource {
-                    tool_key: ToolKey::Claude,
-                    documents: Some(vec![SessionSearchIndexDocument {
-                        tool_key: ToolKey::Claude,
-                        session_id: "s1".to_string(),
-                        title: "query title".to_string(),
-                        last_active_ms: Some(1),
-                        fields: vec!["query title".to_string()],
-                    }]),
-                    incomplete: false,
-                }],
-            )
-            .unwrap();
+            cache_service::put(&CacheConn::for_test(&conn), &CacheKey::CliStatusAll, &"x").unwrap();
+            index_query_document(&conn, 1);
             // 反向基线：恢复前索引确实可搜到，否则“空结果”的断言会空洞地通过。
             assert_eq!(
                 session_search_repo::search(&conn, 1, "query", &HashMap::new())
@@ -822,19 +851,21 @@ mod tests {
         .unwrap();
         {
             let conn = cache.lock_for_test();
-            assert!(cache_service::get_any::<String>(&conn, "sessions:1:claude")
-                .unwrap()
-                .is_none());
-            assert!(
-                cache_service::get_any::<String>(&conn, "workspace-file-index:1")
-                    .unwrap()
-                    .is_none()
-            );
             assert!(
                 session_search_repo::search(&conn, 1, "query", &HashMap::new())
                     .unwrap()
                     .items
                     .is_empty()
+            );
+            // 活的状态缓存键在恢复后仍可读到。
+            assert_eq!(
+                cache_service::get_any::<String>(
+                    &CacheConn::for_test(&conn),
+                    &CacheKey::CliStatusAll
+                )
+                .unwrap()
+                .as_deref(),
+                Some("x")
             );
         }
         assert_eq!(notifier.calls(), 1);
@@ -844,7 +875,12 @@ mod tests {
     #[test]
     fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
         let (_directory, paths, db, cache, backup) = scenario();
-        cache_service::put(&cache.lock_for_test(), "sessions:1:claude", &"x").unwrap();
+        cache_service::put(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+            &"x",
+        )
+        .unwrap();
         let lifecycle = test_lifecycle();
         let notifier = RecordingNotifier::ok();
         let starting = lifecycle
@@ -871,11 +907,12 @@ mod tests {
         assert_eq!(notifier.calls(), 0);
         assert_eq!(directory_names(&db).len(), 2);
         // 反向断言：失败时缓存未被清理。
-        assert!(
-            cache_service::get_any::<String>(&cache.lock_for_test(), "sessions:1:claude")
-                .unwrap()
-                .is_some()
-        );
+        assert!(cache_service::get_any::<String>(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+        )
+        .unwrap()
+        .is_some());
 
         // 第二步：守卫释放后恢复成功并通知一次。
         drop(starting);
@@ -1084,12 +1121,17 @@ mod tests {
     #[test]
     fn generation_advances_even_when_cache_cleanup_fails() {
         let (_directory, paths, db, cache, backup) = scenario();
-        cache
-            .lock_for_test()
-            .execute("drop table cache_entries", [])
-            .unwrap();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
+        // Fail the cleanup's deletes with a trigger instead of dropping the table, so the table stays
+        // usable for the index writes below. The trigger fires per deleted row: index one document first.
+        index_query_document(&cache.lock_for_test(), 1);
+        cache
+            .lock_for_test()
+            .execute_batch(
+                "create trigger block_clear before delete on session_search_documents begin select raise(abort, 'injected'); end;",
+            )
+            .unwrap();
         let notifier = RecordingNotifier::ok();
         let outcome = restore_with_runtime_invalidation(
             &db,
@@ -1101,6 +1143,10 @@ mod tests {
             &generation,
         )
         .unwrap();
+        cache
+            .lock_for_test()
+            .execute_batch("drop trigger block_clear")
+            .unwrap();
         assert!(outcome.cache_warning.is_some());
         assert_eq!(generation.current(), g0 + 1);
         {

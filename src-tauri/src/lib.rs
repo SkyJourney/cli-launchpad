@@ -212,8 +212,6 @@ pub fn run() {
                         .map_err(|fallback| anyhow::anyhow!(fallback.to_string()))?
                 }
             };
-            services::cache_service::remove_prefix(&cache, "sessions:")
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             app.manage(CacheDb::new(cache));
             app.manage(
                 services::startup_notices::StartupNotices::from_previous_exit(&previous_exit),

@@ -1,3 +1,4 @@
+use crate::models::cache::CacheKey;
 use crate::models::cli_status::CliStatus;
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_detect_service};
@@ -70,10 +71,10 @@ pub async fn detect_cli_status(
     Ok(statuses)
 }
 
-fn cache_key(tool_key: Option<ToolKey>) -> String {
+fn cache_key(tool_key: Option<ToolKey>) -> CacheKey {
     match tool_key {
-        Some(tool_key) => format!("cli-status:{}", tool_key.as_str()),
-        None => "cli-status:all".to_string(),
+        Some(tool_key) => CacheKey::CliStatus(tool_key),
+        None => CacheKey::CliStatusAll,
     }
 }
 
@@ -110,9 +111,12 @@ mod tests {
 
     #[test]
     fn status_cache_keys_are_isolated_per_tool() {
-        assert_eq!(cache_key(Some(ToolKey::Claude)), "cli-status:claude");
-        assert_eq!(cache_key(Some(ToolKey::Codex)), "cli-status:codex");
-        assert_eq!(cache_key(None), "cli-status:all");
+        assert_eq!(
+            cache_key(Some(ToolKey::Claude)).as_key(),
+            "cli-status:claude"
+        );
+        assert_eq!(cache_key(Some(ToolKey::Codex)).as_key(), "cli-status:codex");
+        assert_eq!(cache_key(None).as_key(), "cli-status:all");
     }
 
     fn status(path: &str, version: Option<&str>) -> CliStatus {

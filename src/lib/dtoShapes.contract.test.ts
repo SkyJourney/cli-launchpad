@@ -98,7 +98,6 @@ const HISTORY = keysOf<LaunchHistoryEntry>()([
 const CACHE = keysOf<CacheStats>()([
   "sizeBytes",
   "entryCount",
-  "sessionEntryCount",
   "newestEntryAtMs",
 ]);
 const HANDOFF = keysOf<PtyHandoff>()(["token", "sequence"]);

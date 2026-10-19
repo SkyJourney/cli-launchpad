@@ -980,7 +980,6 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         CacheStats {
             size_bytes: 2048,
             entry_count: 5,
-            session_entry_count: 2,
             newest_entry_at_ms: Some(TIMESTAMP_MS),
         },
     );
@@ -991,7 +990,6 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         CacheStats {
             size_bytes: 0,
             entry_count: 0,
-            session_entry_count: 0,
             newest_entry_at_ms: None,
         },
     );

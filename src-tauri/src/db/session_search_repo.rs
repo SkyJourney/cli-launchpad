@@ -543,7 +543,8 @@ mod tests {
         )
         .unwrap();
 
-        crate::services::cache_service::clear(&connection).unwrap();
+        crate::services::cache_service::clear(&crate::runtime::CacheConn::for_test(&connection))
+            .unwrap();
 
         assert!(search(&connection, 1, "searchable", &HashMap::new())
             .unwrap()

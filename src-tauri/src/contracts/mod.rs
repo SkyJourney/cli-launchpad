@@ -4582,3 +4582,134 @@ fn relative_path_identity_has_no_platform_branching() {
         );
     }
 }
+
+/// Keys are typed: outside `models/cache.rs`, no source spells a persisted cache key as a literal.
+#[test]
+fn cache_keys_are_never_raw_strings() {
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (path, text) in sources {
+            if path == "models/cache.rs" {
+                continue;
+            }
+            for needle in [
+                "\"cli-status:",
+                "\"latest-version:",
+                "format!(\"cli-status",
+                "format!(\"latest-version",
+            ] {
+                if text.contains(needle) {
+                    found.push(format!("{path}: {needle}"));
+                }
+            }
+            for function in ["get_fresh", "get_any", "put"] {
+                let call = format!("cache_service::{function}(");
+                for (index, _) in text.match_indices(&call) {
+                    let rest = &text[index + call.len()..];
+                    let second_argument = rest.split_once(',').map(|(_, tail)| tail.trim_start());
+                    if second_argument.is_some_and(|tail| tail.starts_with('"')) {
+                        found.push(format!("{path}: {function} with a literal key"));
+                    }
+                }
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    assert!(
+        violations(&sources).is_empty(),
+        "{:?}",
+        violations(&sources)
+    );
+    // Reverse self-check: the scanner reports a literal key.
+    assert!(!violations(&[(
+        "x.rs".to_string(),
+        "cache_service::put(conn, \"status\", &v)".to_string()
+    )])
+    .is_empty());
+}
+
+/// The cache connection is built only by `runtime.rs`, inside the two `CacheDb` entry points.
+#[test]
+fn cache_conn_is_only_constructed_inside_runtime_and_tests() {
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (path, text) in sources {
+            if path == "runtime.rs" {
+                continue;
+            }
+            for needle in ["CacheConn(", "CacheConn::for_test"] {
+                if text.contains(needle) {
+                    found.push(format!("{path}: {needle}"));
+                }
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    assert!(
+        violations(&sources).is_empty(),
+        "{:?}",
+        violations(&sources)
+    );
+    let runtime = sources
+        .iter()
+        .find(|(path, _)| path == "runtime.rs")
+        .expect("runtime.rs is a production source")
+        .1
+        .clone();
+    let entry_points = runtime
+        .find("impl CacheDb {")
+        .expect("CacheDb entry points");
+    let constructions: Vec<usize> = runtime
+        .match_indices("CacheConn(")
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        constructions.len(),
+        2,
+        "call and with_sync construct the connection"
+    );
+    assert!(constructions.iter().all(|index| *index > entry_points));
+    // Reverse self-check: a constructed connection outside runtime.rs is reported.
+    assert!(
+        !violations(&[("x.rs".to_string(), "let c = CacheConn(&conn);".to_string())]).is_empty()
+    );
+}
+
+/// The two prefixes with no writer are gone; only the one-time startup cleanup spells them.
+#[test]
+fn dead_cache_prefixes_are_gone() {
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (path, text) in sources {
+            for needle in ["remove_prefix", "remove_workspace_file_index_for_directory"] {
+                if text.contains(needle) {
+                    found.push(format!("{path}: {needle}"));
+                }
+            }
+            // The startup cleanup in db/cache_connection.rs is the one place that names the prefixes.
+            if path == "db/cache_connection.rs" {
+                continue;
+            }
+            for needle in ["\"sessions:", "\"workspace-file-index:", "sessions:%"] {
+                if text.contains(needle) {
+                    found.push(format!("{path}: {needle}"));
+                }
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    assert!(
+        violations(&sources).is_empty(),
+        "{:?}",
+        violations(&sources)
+    );
+    // Reverse self-check: the scanner reports a call to the removed helper.
+    assert!(!violations(&[(
+        "x.rs".to_string(),
+        "remove_prefix(connection, \"sessions:\")".to_string()
+    )])
+    .is_empty());
+}

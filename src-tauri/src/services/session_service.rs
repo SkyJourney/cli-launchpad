@@ -887,7 +887,10 @@ mod tests {
         generation.advance();
         {
             let connection = cache.lock_for_test();
-            crate::db::cache_repo::clear_session_search(&connection).unwrap();
+            crate::db::cache_repo::clear_session_search(&crate::runtime::CacheConn::for_test(
+                &connection,
+            ))
+            .unwrap();
         }
         restored_tx.send(()).unwrap();
 
@@ -947,7 +950,10 @@ mod tests {
                     for _ in 0..100 {
                         generation.advance();
                         let connection = cache.lock_for_test();
-                        crate::db::cache_repo::clear_session_search(&connection).unwrap();
+                        crate::db::cache_repo::clear_session_search(
+                            &crate::runtime::CacheConn::for_test(&connection),
+                        )
+                        .unwrap();
                     }
                 });
             });

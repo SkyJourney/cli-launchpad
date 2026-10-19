@@ -5,7 +5,6 @@
       "value": {
         "entryCount": 5,
         "newestEntryAtMs": 1700000000000,
-        "sessionEntryCount": 2,
         "sizeBytes": 2048
       }
     },
@@ -14,7 +13,6 @@
       "value": {
         "entryCount": 0,
         "newestEntryAtMs": null,
-        "sessionEntryCount": 0,
         "sizeBytes": 0
       }
     }

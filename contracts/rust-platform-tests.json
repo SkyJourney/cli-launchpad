@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 774,
-    "Linux": 780,
-    "macOS": 776
+    "Windows": 783,
+    "Linux": 789,
+    "macOS": 785
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -147,7 +147,7 @@
       "services::cli_adapters::codex::app_server::tests::timed_out_request_terminates_the_whole_server_process_tree",
       "services::cli_adapters::codex::app_server::tests::tree_guard_drop_without_an_attached_process_is_harmless",
       "services::backup_service::tests::restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync",
-      "services::backup_service::tests::restore_invalidates_session_index_and_file_index_caches",
+      "services::backup_service::tests::restore_invalidates_the_session_search_index",
       "services::backup_service::tests::restore_releases_the_session_guard_and_does_not_notify_on_failure",
       "services::backup_service::tests::restore_notification_failure_is_logged_and_does_not_fail_the_restore",
       "budgets::tests::budgets_are_positive_and_bounded",
@@ -491,7 +491,18 @@
       "services::config_service::tests::version_one_to_three_bundles_with_legacy_fields_remain_importable",
       "services::config_service::tests::exported_bundles_do_not_contain_shell_profiles",
       "db::directory_repo::tests::directory_list_order_is_pinned_then_sort_order_then_name",
-      "db::connection::tests::unknown_tool_keys_are_rejected_by_foreign_keys_on_fresh_and_upgraded_databases"
+      "db::connection::tests::unknown_tool_keys_are_rejected_by_foreign_keys_on_fresh_and_upgraded_databases",
+      "models::cache::tests::cache_keys_keep_their_persisted_string_forms",
+      "models::cache::tests::cache_keys_are_distinct_per_tool_and_kind",
+      "db::cache_connection::tests::init_cache_removes_legacy_prefix_rows_once",
+      "db::cache_connection::tests::init_cache_keeps_live_entries_when_removing_legacy_rows",
+      "services::cache_service::tests::cache_stats_report_entries_and_newest_time_without_a_sessions_count",
+      "services::cache_service::tests::invalidating_a_removed_directory_clears_only_its_search_rows",
+      "services::cache_service::tests::invalidating_after_data_replaced_clears_search_and_keeps_live_entries",
+      "contracts::cache_conn_is_only_constructed_inside_runtime_and_tests",
+      "contracts::cache_keys_are_never_raw_strings",
+      "contracts::dead_cache_prefixes_are_gone",
+      "db::cache_connection::tests::failed_legacy_row_cleanup_keeps_the_cache_file_and_retries_on_next_start"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

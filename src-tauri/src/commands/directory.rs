@@ -113,9 +113,7 @@ pub async fn remove_directory(
     path_semantics.invalidate_project(id);
     cache
         .call("directory.remove_cache", move |connection| {
-            cache_service::remove_prefix(connection, "sessions:")?;
-            cache_service::remove_workspace_file_index_for_directory(connection, id)?;
-            crate::db::session_search_repo::remove_directory(connection, id)?;
+            cache_service::invalidate_directory(connection, id)?;
             Ok(())
         })
         .await
