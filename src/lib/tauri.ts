@@ -63,7 +63,13 @@ export interface WorkspaceFileDocument {
 export type WorkspaceLayoutStateStatus =
   | { status: "missing" }
   | { status: "ready" }
-  | { status: "needsReset"; reason: string };
+  | {
+      status: "needsReset";
+      reason: {
+        code: "unsupportedVersion" | "versionMismatch" | "invalidPayload";
+        detail: string;
+      };
+    };
 
 export type WorkspaceSlotStateKind =
   | "pending"

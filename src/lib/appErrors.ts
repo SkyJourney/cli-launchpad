@@ -38,6 +38,16 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "file.not_found": "errors.fileNotFound",
   "file.permission_denied": "errors.filePermissionDenied",
   "project.identity_unreadable": "errors.projectIdentityUnreadable",
+  "pty.session_not_found": "errors.ptySessionNotFound",
+  "pty.owner_mismatch": "errors.ptyOwnerMismatch",
+  "pty.handoff_expired": "errors.ptyHandoffExpired",
+  "pty.handoff_in_progress": "errors.ptyHandoffInProgress",
+  "internal.lock_poisoned": "errors.internal",
+  "exec.busy": "errors.execBusy",
+  "file.not_utf8": "errors.fileNotUtf8",
+  "file.not_regular": "errors.fileNotRegular",
+  "layout.name_exists": "errors.layoutNameExists",
+  "layout.preset_limit": "errors.layoutPresetLimit",
 };
 
 const ALIASES: Readonly<Record<string, string>> = errorCodes.aliases;

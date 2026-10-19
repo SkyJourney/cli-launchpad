@@ -1,3 +1,4 @@
+use crate::domain_errors::PtyError;
 use crate::error_codes::ErrorCode;
 use std::{
     collections::VecDeque,
@@ -433,7 +434,7 @@ impl PtySessionManager {
             return Ok(());
         };
         if !session.is_output_observer(window_label)? {
-            return Err(AppError::msg("该窗口当前不允许确认终端输出"));
+            return Err(AppError::from(PtyError::OwnerMismatch));
         }
         if let Err(error) = session.flow.acknowledge(sequence) {
             log::warn!(
@@ -475,7 +476,7 @@ impl PtySessionManager {
             .termination_requested
             .store(true, std::sync::atomic::Ordering::Release);
         let termination = session.tree_terminate().map_err(|error| match error {
-            TreeTerminateError::Poisoned => AppError::msg("PTY 进程树锁中毒"),
+            TreeTerminateError::Poisoned => AppError::from(PtyError::LockPoisoned("PTY 进程树")),
             TreeTerminateError::Failed(message) => {
                 AppError::msg(format!("终止 PTY 进程树失败：{message}"))
             }
@@ -507,7 +508,7 @@ impl PtySessionManager {
         let mut guard = session
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
         guard
             .handoff
             .begin(&session.flow, window_label, target_window_label)
@@ -527,7 +528,7 @@ impl PtySessionManager {
         let mut guard = session
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
         guard
             .handoff
             .stage(&session.flow, window_label, token, sequence, snapshot)
@@ -541,7 +542,10 @@ impl PtySessionManager {
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         if !is_supported_workspace_window(target_window_label) {
-            return Err(AppError::msg("目标窗口不允许接管终端"));
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "目标窗口不允许接管终端",
+            ));
         }
         let sink: Arc<dyn PtyEventSink> = Arc::new(on_event);
         let session = self.get(session_id)?;
@@ -549,7 +553,7 @@ impl PtySessionManager {
             let mut guard = session
                 .route_and_handoff
                 .lock()
-                .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+                .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
             guard
                 .handoff
                 .check_complete(&session.flow, session_id, target_window_label, token)?
@@ -561,7 +565,7 @@ impl PtySessionManager {
             let mut guard = session
                 .route_and_handoff
                 .lock()
-                .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+                .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
             guard
                 .handoff
                 .bind(&session.flow, target_window_label, token, sink)?;
@@ -577,14 +581,17 @@ impl PtySessionManager {
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
         if !is_supported_workspace_window(target_window_label) {
-            return Err(AppError::msg("目标窗口不允许接管终端"));
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "目标窗口不允许接管终端",
+            ));
         }
         validate_size(size)?;
         let session = self.get(session_id)?;
         let mut guard = session
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
         guard
             .handoff
             .check_finalize(&session.flow, target_window_label, token)?;
@@ -592,17 +599,17 @@ impl PtySessionManager {
         let source_window_label = guard
             .handoff
             .bound_source()
-            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?
+            .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?
             .to_string();
         // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
         // `cancel` or `reclaim_window` can still clean it up.
         if guard.route.window_label != source_window_label {
-            return Err(AppError::msg("终端控制权已经转移"));
+            return Err(AppError::from(PtyError::OwnerMismatch));
         }
         let bound = guard
             .handoff
             .commit_finalize()
-            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?;
+            .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?;
         let route = &mut guard.route;
         route.window_label = target_window_label.to_string();
         route.mirror = if is_main_label(target_window_label) {
@@ -637,7 +644,7 @@ impl PtySessionManager {
         let mut guard = session
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
         guard.handoff.cancel(&session.flow, window_label, token)
     }
 

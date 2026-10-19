@@ -2,6 +2,12 @@
   "errors": {
     "fileNotFound": "No se encontró el archivo.",
     "fileTooLarge": "El archivo supera el tamaño permitido.",
+    "ptySessionNotFound": "No se encontró la sesión de terminal o ya terminó.",
+    "ptyHandoffInProgress": "Este terminal se está transfiriendo a otra ventana. Inténtalo de nuevo en unos instantes.",
+    "fileNotUtf8": "Solo se pueden guardar archivos de texto UTF-8.",
+    "fileNotRegular": "Solo se pueden abrir o guardar archivos normales.",
+    "layoutNameExists": "Ya existe un diseño con ese nombre. Elige otro nombre.",
+    "layoutPresetLimit": "Puedes guardar hasta {{max}} diseños con nombre.",
     "filePermissionDenied": "Permiso denegado para este archivo.",
     "backupIndexRefreshDiscarded": "Se restauró una copia de seguridad, así que se descartó la actualización del índice de sesiones iniciada antes.",
     "projectIdentityUnreadable": "No se pudo leer la identidad del directorio del proyecto.",

@@ -9,6 +9,7 @@
 //! Transitions never hold a session or a lock themselves: the caller passes `&OutputFlow` and
 //! decides when to take the surrounding lock.
 
+use crate::domain_errors::PtyError;
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -97,11 +98,12 @@ pub(super) fn validate_handoff_target(
 }
 
 fn expired() -> AppError {
-    AppError::msg("终端窗口交接已过期")
+    AppError::from(PtyError::HandoffExpired)
 }
 
+/// A timed-out handoff is reported with the same code as an expired one (077 section 4.1).
 fn timed_out() -> AppError {
-    AppError::msg("终端窗口交接超时，请重试")
+    expired()
 }
 
 impl HandoffState {
@@ -168,7 +170,7 @@ impl HandoffState {
     ) -> Result<PtyHandoff, AppError> {
         if let Some((_, _, sequence)) = self.identity() {
             if flow.is_paused_at(sequence) {
-                return Err(AppError::msg("该终端正在进行窗口交接"));
+                return Err(AppError::from(PtyError::HandoffInProgress));
             }
             self.lapse(flow);
         }
@@ -201,7 +203,7 @@ impl HandoffState {
         }
         if !flow.is_paused_at(sequence) {
             self.lapse(flow);
-            return Err(AppError::msg("终端输出已恢复，请重新发起窗口交接"));
+            return Err(AppError::from(PtyError::HandoffExpired));
         }
         *self = match std::mem::take(self) {
             Self::Paused(paused) => Self::Staged(Staged {
@@ -257,8 +259,8 @@ impl HandoffState {
             return Err(timed_out());
         }
         match self {
-            Self::Paused(_) => Err(AppError::msg("终端画面尚未准备好")),
-            Self::Bound(_) => Err(AppError::msg("目标窗口已经准备接管此终端")),
+            Self::Paused(_) => Err(AppError::from(PtyError::HandoffInProgress)),
+            Self::Bound(_) => Err(AppError::from(PtyError::HandoffInProgress)),
             Self::Staged(staged) => Ok(CompletePlan {
                 event: PtyEvent::Snapshot {
                     session_id: session_id.to_string(),
@@ -304,11 +306,11 @@ impl HandoffState {
             }
             Self::Paused(paused) => {
                 *self = Self::Paused(paused);
-                Err(AppError::msg("终端画面尚未准备好"))
+                Err(AppError::from(PtyError::HandoffInProgress))
             }
             Self::Bound(bound) => {
                 *self = Self::Bound(bound);
-                Err(AppError::msg("目标窗口已经准备接管此终端"))
+                Err(AppError::from(PtyError::HandoffInProgress))
             }
             Self::Idle => Err(expired()),
         }
@@ -322,7 +324,7 @@ impl HandoffState {
     ) -> Result<(), AppError> {
         let sequence = match self {
             Self::Bound(bound) if bound.token == token && bound.target == target => bound.sequence,
-            _ => return Err(AppError::msg("目标窗口交接状态已失效")),
+            _ => return Err(AppError::from(PtyError::HandoffExpired)),
         };
         if !flow.is_paused_at(sequence) {
             self.lapse(flow);
@@ -352,7 +354,7 @@ impl HandoffState {
             return Ok(());
         };
         if state_token != token || state_source != source {
-            return Err(AppError::msg("终端窗口交接令牌无效"));
+            return Err(AppError::from(PtyError::HandoffExpired));
         }
         self.lapse(flow);
         Ok(())
@@ -502,7 +504,8 @@ mod tests {
             let error = state.begin(&flow, SRC, TGT).unwrap_err();
 
             assert!(
-                describe(&error).contains("该终端正在进行窗口交接"),
+                describe(&error)
+                    .contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试"),
                 "{stage}"
             );
             assert!(state.references_window(SRC), "{stage}");
@@ -530,7 +533,7 @@ mod tests {
         let error = state
             .stage(&flow, SRC, &first.token, first.sequence, snap("x"))
             .unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接已过期"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
         state
             .stage(&flow, SRC, &second.token, second.sequence, snap("x"))
             .unwrap();
@@ -552,7 +555,7 @@ mod tests {
             let error = state
                 .stage(&flow, source, token, sequence, snap("x"))
                 .unwrap_err();
-            assert!(describe(&error).contains("终端窗口交接已过期"));
+            assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
         }
         // The state is still Paused: the correct call succeeds.
         state
@@ -564,7 +567,7 @@ mod tests {
         let error = idle
             .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
             .unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接已过期"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
     }
 
     #[test]
@@ -577,7 +580,7 @@ mod tests {
             .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
             .unwrap_err();
 
-        assert!(describe(&error).contains("终端输出已恢复，请重新发起窗口交接"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
 
@@ -627,13 +630,13 @@ mod tests {
         let sink = Arc::new(FakeSink::new());
         let mut state = HandoffState::default();
         let error = complete_all(&mut state, &flow, TGT, "any", &sink).unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接已过期"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
 
         // S2: wrong token.
         let flow = OutputFlow::new();
         let (mut state, _handoff) = begun(&flow);
         let error = complete_all(&mut state, &flow, TGT, "wrong", &sink).unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接已过期"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
 
         // S3: the target equals the source; checked before the expiry.
         let flow = OutputFlow::new();
@@ -652,7 +655,7 @@ mod tests {
         let (mut state, handoff) = begun(&flow);
         lapse(&flow);
         let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接超时，请重试"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
 
@@ -660,7 +663,9 @@ mod tests {
         let flow = OutputFlow::new();
         let (mut state, handoff) = begun(&flow);
         let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
-        assert!(describe(&error).contains("终端画面尚未准备好"));
+        assert!(
+            describe(&error).contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试")
+        );
         state
             .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
             .expect("the state is still Paused");
@@ -695,7 +700,9 @@ mod tests {
 
         // S8: Bound: a second complete is rejected and sends nothing.
         let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
-        assert!(describe(&error).contains("目标窗口已经准备接管此终端"));
+        assert!(
+            describe(&error).contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试")
+        );
         assert_eq!(state.bound_source(), Some(SRC));
         assert_eq!(sink.events().len(), 1);
     }
@@ -709,13 +716,13 @@ mod tests {
 
         let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
 
-        assert!(describe(&error).contains("终端窗口交接超时，请重试"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
         assert!(sink.events().is_empty());
         // Cleaned: a second call reports the handoff as gone (it used to time out again).
         let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
-        assert!(describe(&error).contains("终端窗口交接已过期"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
     }
 
     #[test]
@@ -739,7 +746,7 @@ mod tests {
         ] {
             let paused_before = flow_paused(flow);
             let error = state.check_finalize(flow, TGT, token).unwrap_err();
-            assert!(describe(&error).contains("目标窗口交接状态已失效"));
+            assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
             assert_eq!(flow_paused(flow), paused_before, "the flow is left alone");
         }
 
@@ -747,7 +754,7 @@ mod tests {
         let (mut state, handoff) = bound(&flow, &sink);
         for (target, token) in [(TGT, "wrong"), (SRC, handoff.token.as_str())] {
             let error = state.check_finalize(&flow, target, token).unwrap_err();
-            assert!(describe(&error).contains("目标窗口交接状态已失效"));
+            assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
             assert_eq!(state.bound_source(), Some(SRC));
         }
         state.check_finalize(&flow, TGT, &handoff.token).unwrap();
@@ -766,7 +773,7 @@ mod tests {
             .check_finalize(&flow, TGT, &handoff.token)
             .unwrap_err();
 
-        assert!(describe(&error).contains("终端窗口交接超时，请重试"));
+        assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
         assert!(state.commit_finalize().is_none());
@@ -810,7 +817,11 @@ mod tests {
                         assert!(!flow_paused(&flow), "{label}");
                     } else {
                         let error = result.unwrap_err();
-                        assert!(describe(&error).contains("终端窗口交接令牌无效"), "{label}");
+                        assert!(
+                            describe(&error)
+                                .contains("pty.handoff_expired 终端窗口交接已过期，请重试"),
+                            "{label}"
+                        );
                         // No expiry pre-processing: the state and the flow are unchanged.
                         assert!(!state.is_idle(), "{label}");
                         assert!(flow_paused(&flow), "{label}");
@@ -1082,14 +1093,14 @@ mod tests {
         s.cancel(f, OTHER, &h.token)
     }
 
-    const EXPIRED: &str = "终端窗口交接已过期";
-    const TIMED_OUT: &str = "终端窗口交接超时，请重试";
-    const RESUMED: &str = "终端输出已恢复，请重新发起窗口交接";
-    const IN_PROGRESS: &str = "该终端正在进行窗口交接";
-    const NOT_READY: &str = "终端画面尚未准备好";
-    const ALREADY_BOUND: &str = "目标窗口已经准备接管此终端";
-    const FINALIZE_INVALID: &str = "目标窗口交接状态已失效";
-    const BAD_TOKEN: &str = "终端窗口交接令牌无效";
+    const EXPIRED: &str = "pty.handoff_expired 终端窗口交接已过期";
+    const TIMED_OUT: &str = "pty.handoff_expired 终端窗口交接已过期，请重试";
+    const RESUMED: &str = "pty.handoff_expired 终端窗口交接已过期，请重试";
+    const IN_PROGRESS: &str = "pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试";
+    const NOT_READY: &str = "pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试";
+    const ALREADY_BOUND: &str = "pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试";
+    const FINALIZE_INVALID: &str = "pty.handoff_expired 终端窗口交接已过期，请重试";
+    const BAD_TOKEN: &str = "pty.handoff_expired 终端窗口交接已过期，请重试";
 
     macro_rules! case {
         ($id:literal, $start:expr, $lapse:expr, $event:expr, $expect:expr, $kind:expr, $paused:expr) => {

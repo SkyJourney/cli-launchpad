@@ -2464,7 +2464,7 @@ fn error_codes_are_never_raw_strings() {
 
 /// Codes registered before their producer lands. Each entry names the unit that adds the producer;
 /// the test fails once a producer exists, so the entry is removed in that unit.
-const PRODUCER_PENDING: &[(&str, &str)] = &[("FileTooLarge", "077b（FileError::TooLarge）")];
+const PRODUCER_PENDING: &[(&str, &str)] = &[];
 
 #[test]
 fn every_error_code_has_a_producer_outside_the_registry() {

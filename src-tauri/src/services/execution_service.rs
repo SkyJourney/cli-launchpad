@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::collections::HashMap;
 use std::future::Future;
 use std::process::Stdio;
@@ -189,10 +190,13 @@ impl ExecutionTaskManager {
             .lock()
             .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
         if active.contains_tool(tool_key) {
-            return Err(AppError::msg(format!(
-                "{} 已有安装或更新任务正在执行，请等待其结束或先终止任务",
-                tool_key.as_str()
-            )));
+            return Err(AppError::coded(
+                ErrorCode::ExecBusy,
+                format!(
+                    "{} 已有安装或更新任务正在执行，请等待其结束或先终止任务",
+                    tool_key.as_str()
+                ),
+            ));
         }
         let id = uuid::Uuid::new_v4().to_string();
         active.reserved.insert(tool_key, id.clone());

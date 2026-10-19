@@ -103,7 +103,10 @@ describe("PTY workspace snapshot read-side degradation", () => {
 
   it("shows the reset notice instead of crashing when the backend reports a corrupt layout", async () => {
     const backend = createBackend({
-      status: { status: "needsReset", reason: "corrupt snapshot" },
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "corrupt snapshot" },
+      },
       revision: 2,
       schemaVersion: null,
       updatedAtMs: null,

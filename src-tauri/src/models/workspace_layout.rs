@@ -435,12 +435,29 @@ pub struct WorkspaceLayoutStateRead {
     pub slot_states: Vec<WorkspaceSlotState>,
 }
 
+/// Why a stored layout cannot be read as-is. From 077c the front end localizes by `code`; until
+/// then it shows `detail`, the backend's technical text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LayoutResetCode {
+    UnsupportedVersion,
+    VersionMismatch,
+    InvalidPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutResetReason {
+    pub code: LayoutResetCode,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "status", content = "reason", rename_all = "camelCase")]
 pub enum WorkspaceLayoutStateStatus {
     Missing,
     Ready,
-    NeedsReset(String),
+    NeedsReset(LayoutResetReason),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

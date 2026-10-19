@@ -1,4 +1,5 @@
 use crate::error_codes::ErrorCode;
+use crate::models::workspace_layout::{LayoutResetCode, LayoutResetReason};
 use std::{
     collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
@@ -68,7 +69,10 @@ pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, Ap
             row.revision,
             row.schema_version,
             row.updated_at_ms,
-            format!("不支持工作区布局版本 {}", row.schema_version),
+            LayoutResetReason {
+                code: LayoutResetCode::UnsupportedVersion,
+                detail: format!("不支持工作区布局版本 {}", row.schema_version),
+            },
         )));
     }
     if source_layout_version(&row.payload_json) != Some(row.schema_version) {
@@ -76,7 +80,10 @@ pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, Ap
             row.revision,
             row.schema_version,
             row.updated_at_ms,
-            "布局 JSON 版本与数据库版本不一致".to_string(),
+            LayoutResetReason {
+                code: LayoutResetCode::VersionMismatch,
+                detail: "布局 JSON 版本与数据库版本不一致".to_string(),
+            },
         )));
     }
     let layout = match WorkspaceLayoutDocument::from_json_degrading_invalid_files(&row.payload_json)
@@ -96,7 +103,10 @@ pub fn read_current_stage(connection: &Connection) -> Result<LayoutReadStage, Ap
                 row.revision,
                 row.schema_version,
                 row.updated_at_ms,
-                error.to_string(),
+                LayoutResetReason {
+                    code: LayoutResetCode::InvalidPayload,
+                    detail: error.to_string(),
+                },
             )));
         }
     };
@@ -523,7 +533,7 @@ fn needs_reset(
     revision: i64,
     schema_version: i64,
     updated_at_ms: i64,
-    reason: String,
+    reason: LayoutResetReason,
 ) -> WorkspaceLayoutStateRead {
     WorkspaceLayoutStateRead {
         status: WorkspaceLayoutStateStatus::NeedsReset(reason),
@@ -911,13 +921,16 @@ fn map_preset_write_error(error: rusqlite::Error) -> AppError {
         rusqlite::Error::InvalidParameterName(message)
             if message == "workspace layout preset limit reached" =>
         {
-            AppError::msg(format!(
-                "命名布局最多支持 {MAX_WORKSPACE_LAYOUT_PRESETS} 个"
-            ))
+            AppError::coded_with_params(
+                ErrorCode::LayoutPresetLimit,
+                format!("命名布局最多支持 {MAX_WORKSPACE_LAYOUT_PRESETS} 个"),
+                serde_json::json!({ "max": MAX_WORKSPACE_LAYOUT_PRESETS }),
+            )
         }
-        _ if error.to_string().contains("UNIQUE constraint failed") => {
-            AppError::msg("布局名称已存在，请使用其他名称")
-        }
+        _ if error.to_string().contains("UNIQUE constraint failed") => AppError::coded(
+            ErrorCode::LayoutNameExists,
+            "布局名称已存在，请使用其他名称",
+        ),
         _ => AppError::from(error),
     }
 }
@@ -2540,5 +2553,65 @@ mod tests {
             serde_json::to_value(&error).unwrap()["code"],
             "layout.case_duplicate"
         );
+    }
+
+    #[test]
+    fn needs_reset_reasons_are_structured_codes() {
+        let supported = WORKSPACE_LAYOUT_SCHEMA_VERSION as i64;
+        let structurally_invalid = format!("{{\"schemaVersion\":{supported}}}");
+        let cases = [
+            (99_i64, "{\"schemaVersion\":99}", "unsupportedVersion"),
+            (supported, "{\"schemaVersion\":1}", "versionMismatch"),
+            (supported, structurally_invalid.as_str(), "invalidPayload"),
+        ];
+        for (schema_version, payload, expected_code) in cases {
+            let connection = database();
+            connection
+                .execute(
+                    "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, 3, ?2, 10)",
+                    rusqlite::params![schema_version, payload],
+                )
+                .unwrap();
+            let read = read_current(&connection, &HashSet::new()).unwrap();
+            let value = serde_json::to_value(&read.status).unwrap();
+            assert_eq!(value["status"], "needsReset", "{payload}");
+            assert_eq!(value["reason"]["code"], expected_code, "{payload}");
+            assert!(
+                value["reason"]["detail"]
+                    .as_str()
+                    .is_some_and(|d| !d.is_empty()),
+                "{payload}"
+            );
+            // Reverse: the reason is an object, not the old free-text string.
+            assert!(value["reason"].is_object(), "{payload}");
+        }
+    }
+
+    #[test]
+    fn duplicate_preset_names_report_layout_name_exists() {
+        let mut connection = database();
+        create_preset(&mut connection, "A", &empty_layout()).unwrap();
+        let error = create_preset(&mut connection, "A", &empty_layout()).unwrap_err();
+        assert_eq!(error.code(), "layout.name_exists");
+
+        // Reverse: a different name still succeeds.
+        create_preset(&mut connection, "B", &empty_layout()).unwrap();
+    }
+
+    #[test]
+    fn preset_limit_reports_layout_preset_limit_with_max() {
+        let mut connection = database();
+        for index in 0..MAX_WORKSPACE_LAYOUT_PRESETS {
+            create_preset(
+                &mut connection,
+                &format!("preset{index:03}"),
+                &empty_layout(),
+            )
+            .unwrap_or_else(|_| panic!("preset {index} must be created"));
+        }
+        let error = create_preset(&mut connection, "one-too-many", &empty_layout()).unwrap_err();
+        let value = serde_json::to_value(&error).unwrap();
+        assert_eq!(value["code"], "layout.preset_limit");
+        assert_eq!(value["params"]["max"], MAX_WORKSPACE_LAYOUT_PRESETS);
     }
 }

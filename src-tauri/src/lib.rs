@@ -4,6 +4,7 @@ mod commands;
 #[cfg(test)]
 mod contracts;
 mod db;
+mod domain_errors;
 mod error;
 mod error_codes;
 mod events;

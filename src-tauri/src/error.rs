@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::domain_errors::{FileError, LifecycleError, PtyError};
 use crate::error_codes::ErrorCode;
 
 /// Structured error returned across the Tauri IPC boundary. `message` remains
@@ -59,10 +60,23 @@ impl From<rusqlite::Error> for AppError {
 }
 
 impl From<anyhow::Error> for AppError {
-    /// A chain that already carries an `AppError` keeps its code; anything else is internal.
+    /// A chain that carries an `AppError` or a domain error keeps that code; anything else is
+    /// internal. The chain is opaque: an io error inside it is not mapped by its kind.
     fn from(error: anyhow::Error) -> Self {
-        match error.downcast::<AppError>() {
-            Ok(app) => app,
+        let error = match error.downcast::<AppError>() {
+            Ok(app) => return app,
+            Err(other) => other,
+        };
+        let error = match error.downcast::<FileError>() {
+            Ok(file) => return AppError::from(file),
+            Err(other) => other,
+        };
+        let error = match error.downcast::<PtyError>() {
+            Ok(pty) => return AppError::from(pty),
+            Err(other) => other,
+        };
+        match error.downcast::<LifecycleError>() {
+            Ok(lifecycle) => AppError::from(lifecycle),
             Err(other) => AppError::internal(other.to_string()),
         }
     }
@@ -139,6 +153,25 @@ mod tests {
         let chained = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound))
             .context("读取失败");
         assert_eq!(AppError::from(chained).code(), "app.internal");
+    }
+
+    #[test]
+    fn anyhow_errors_downcast_to_domain_codes() {
+        use crate::domain_errors::{FileError, PtyError};
+
+        let too_large =
+            anyhow::Error::new(FileError::TooLarge { max_bytes: 10 }).context("保存失败");
+        let value = serde_json::to_value(AppError::from(too_large)).unwrap();
+        assert_eq!(value["code"], "file.too_large");
+        assert_eq!(value["params"]["maxBytes"], 10);
+
+        let expired = anyhow::Error::new(PtyError::HandoffExpired);
+        assert_eq!(AppError::from(expired).code(), "pty.handoff_expired");
+
+        // Reverse: an io error inside an anyhow chain is not mapped by its kind.
+        let chained = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound))
+            .context("读取失败");
+        assert_ne!(AppError::from(chained).code(), "file.not_found");
     }
 
     #[test]

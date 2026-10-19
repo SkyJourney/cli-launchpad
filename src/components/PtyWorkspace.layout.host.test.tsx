@@ -81,7 +81,10 @@ function futureSchemaLayout(): WorkspaceLayoutDocument {
 describe("hydration failure modes", () => {
   it("shows needsReset and resets on confirmation", async () => {
     const backend = createBackend({
-      status: { status: "needsReset", reason: "bad" },
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "bad" },
+      },
       revision: 6,
     });
     backend.handlers.set("reset_workspace_layout", () => 7);

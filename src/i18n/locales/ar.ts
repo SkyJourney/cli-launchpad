@@ -8,6 +8,14 @@ export const ar = {
   errors: {
     fileNotFound: "تعذر العثور على الملف.",
     fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
+    ptySessionNotFound: "لم يتم العثور على جلسة الطرفية أو أنها انتهت.",
+    ptyHandoffInProgress:
+      "يجري نقل هذه الطرفية إلى نافذة أخرى. حاول مرة أخرى بعد قليل.",
+    fileNotUtf8: "لا يمكن حفظ إلا ملفات النص بترميز UTF-8.",
+    fileNotRegular: "لا يمكن فتح أو حفظ إلا الملفات العادية.",
+    layoutNameExists: "يوجد تخطيط بهذا الاسم بالفعل. اختر اسمًا آخر.",
+    layoutPresetLimit:
+      "يمكنك الاحتفاظ بما يصل إلى {{max}} من التخطيطات المسماة.",
     filePermissionDenied: "ليست لديك صلاحية الوصول إلى هذا الملف.",
     backupIndexRefreshDiscarded:
       "تمت استعادة نسخة احتياطية، لذا تم تجاهل تحديث فهرس الجلسات الذي بدأ قبلها.",

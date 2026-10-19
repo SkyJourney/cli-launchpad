@@ -1,3 +1,5 @@
+use crate::domain_errors::PtyError;
+use crate::error_codes::ErrorCode;
 use std::sync::Arc;
 
 use tauri::ipc::Channel;
@@ -41,7 +43,7 @@ impl PtySessionManager {
         let guard = session
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
         let route = &guard.route;
         Ok(PtySessionWindowStatusReport {
             status: session_window_status(Some(&route.window_label), window_label, false),
@@ -102,7 +104,10 @@ impl PtySessionManager {
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
         if !is_main_label(window_label) {
-            return Err(AppError::msg("只有主窗口可以重新接管终端"));
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "只有主窗口可以重新接管终端",
+            ));
         }
         validate_handoff_snapshot(&snapshot)?;
         validate_size(size)?;
@@ -132,14 +137,14 @@ impl PtySessionManager {
             let mut guard = session
                 .route_and_handoff
                 .lock()
-                .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+                .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
             let route = &mut guard.route;
             if !route.owner_lost
                 || !is_main_label(&route.window_label)
                 || route.channel.is_some()
                 || route.reattaching
             {
-                return Err(AppError::msg("终端当前不处于可重新接管状态"));
+                return Err(AppError::from(PtyError::OwnerMismatch));
             }
             session.apply_size(size)?;
             session.flow.acknowledge(sequence)?;
@@ -171,7 +176,7 @@ impl PtySessionManager {
                 let mut guard = session
                     .route_and_handoff
                     .lock()
-                    .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+                    .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
                 let route = &mut guard.route;
                 if route.buffered_events.len() == delivered {
                     route.buffered_events.clear();

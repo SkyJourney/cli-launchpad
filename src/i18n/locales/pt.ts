@@ -8,6 +8,14 @@ export const pt = {
   errors: {
     fileNotFound: "O arquivo não foi encontrado.",
     fileTooLarge: "O arquivo excede o tamanho permitido.",
+    ptySessionNotFound:
+      "A sessão do terminal não foi encontrada ou já foi encerrada.",
+    ptyHandoffInProgress:
+      "Este terminal está sendo transferido para outra janela. Tente novamente em instantes.",
+    fileNotUtf8: "Só é possível salvar arquivos de texto UTF-8.",
+    fileNotRegular: "Só é possível abrir ou salvar arquivos comuns.",
+    layoutNameExists: "Já existe um layout com este nome. Escolha outro nome.",
+    layoutPresetLimit: "Você pode manter até {{max}} layouts nomeados.",
     filePermissionDenied: "Permissão negada para este arquivo.",
     backupIndexRefreshDiscarded:
       "Um backup foi restaurado, então a atualização do índice de sessões iniciada antes foi descartada.",

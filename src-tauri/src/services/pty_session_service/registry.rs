@@ -1,3 +1,4 @@
+use crate::domain_errors::PtyError;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -22,7 +23,7 @@ impl SessionRegistry {
     pub(super) fn insert(&self, session: Arc<ManagedSession>) -> Result<(), AppError> {
         self.inner
             .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 会话表")))?
             .insert(session.session_id.clone(), session);
         Ok(())
     }
@@ -30,17 +31,17 @@ impl SessionRegistry {
     pub(super) fn get(&self, session_id: &str) -> Result<Arc<ManagedSession>, AppError> {
         self.inner
             .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 会话表")))?
             .get(session_id)
             .cloned()
-            .ok_or_else(|| AppError::msg("PTY 会话不存在或已结束"))
+            .ok_or_else(|| AppError::from(PtyError::SessionNotFound))
     }
 
     pub(super) fn find(&self, session_id: &str) -> Result<Option<Arc<ManagedSession>>, AppError> {
         Ok(self
             .inner
             .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 会话表")))?
             .get(session_id)
             .cloned())
     }
@@ -68,7 +69,7 @@ impl SessionRegistry {
         Ok(self
             .inner
             .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 会话表")))?
             .values()
             .cloned()
             .collect())

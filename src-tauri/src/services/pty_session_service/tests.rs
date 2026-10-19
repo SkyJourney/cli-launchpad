@@ -334,8 +334,14 @@ fn size() -> PtySizeUpdate {
     }
 }
 
+/// The wire code and message together, so a needle can pin the branch by its code.
 fn error_text(error: &AppError) -> String {
-    error.to_string()
+    let value = serde_json::to_value(error).unwrap();
+    format!(
+        "{} {}",
+        value["code"].as_str().unwrap_or(""),
+        value["message"].as_str().unwrap_or("")
+    )
 }
 
 type Records = Arc<Mutex<Vec<serde_json::Value>>>;
@@ -534,7 +540,7 @@ fn repeated_reattach_is_rejected_without_replacing_the_live_channel() {
         .unwrap_err();
 
     assert!(
-        error_text(&error).contains("不处于可重新接管状态"),
+        error_text(&error).contains("pty.owner_mismatch 该终端当前由另一个窗口控制"),
         "{}",
         error_text(&error)
     );
@@ -583,7 +589,7 @@ fn reattach_requires_main_window_and_owner_lost_state() {
         .reattach(&s2, "main", new_2, snapshot(), 0, size())
         .unwrap_err();
     assert!(
-        error_text(&error).contains("不处于可重新接管状态"),
+        error_text(&error).contains("pty.owner_mismatch 该终端当前由另一个窗口控制"),
         "{}",
         error_text(&error)
     );
@@ -941,7 +947,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", "wrong-token", h.sequence, snapshot()),
-        "交接已过期",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -952,7 +958,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", &h.token, h.sequence + 1, snapshot()),
-        "交接已过期",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -974,7 +980,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let h = manager.begin_handoff(&s, "main", T1).unwrap();
     assert_rejected(
         manager.complete_handoff(&s, T1, &h.token, ch()),
-        "画面尚未准备好",
+        "pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -1003,7 +1009,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
     assert_rejected(
         manager.complete_handoff(&s, T1, &h.token, ch()),
-        "已经准备接管",
+        "pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -1017,7 +1023,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
         .unwrap();
     assert_rejected(
         manager.finalize_handoff(&s, T1, &h.token, size()),
-        "交接状态已失效",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -1032,7 +1038,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     manager.complete_handoff(&s, T1, &h.token, ch()).unwrap();
     assert_rejected(
         manager.finalize_handoff(&s, T2, &h.token, size()),
-        "交接状态已失效",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -1054,7 +1060,10 @@ fn handoff_state_machine_rejects_illegal_transitions() {
         .unwrap();
     session.flow.state.lock().unwrap().pause_deadline =
         Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
-    assert_rejected(manager.complete_handoff(&s, T1, &h.token, ch()), "交接超时");
+    assert_rejected(
+        manager.complete_handoff(&s, T1, &h.token, ch()),
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
+    );
     assert_eq!(manager.test_route(&s), before);
 
     // 子用例 11：暂停过期后重新发起交接会废弃旧令牌。
@@ -1068,7 +1077,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     assert_ne!(h2.token, h1.token);
     assert_rejected(
         manager.stage_handoff_snapshot(&s, "main", &h1.token, h1.sequence, snapshot()),
-        "交接已过期",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(manager.test_route(&s), before);
 
@@ -1077,7 +1086,10 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     let (s, _session) = main_owned_session(&manager);
     let before = manager.test_route(&s);
     let h = manager.begin_handoff(&s, "main", T1).unwrap();
-    assert_rejected(manager.cancel_handoff(&s, "main", "bad-token"), "令牌无效");
+    assert_rejected(
+        manager.cancel_handoff(&s, "main", "bad-token"),
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
+    );
     manager
         .stage_handoff_snapshot(&s, "main", &h.token, h.sequence, snapshot())
         .unwrap();
@@ -1097,7 +1109,7 @@ fn handoff_state_machine_rejects_illegal_transitions() {
     assert_eq!(manager.reclaim_window(T1), vec![s.clone()]);
     assert_rejected(
         manager.finalize_handoff(&s, "main", &h.token, size()),
-        "交接状态已失效",
+        "pty.handoff_expired 终端窗口交接已过期，请重试",
     );
     assert_eq!(
         manager.test_route(&s),
@@ -1413,7 +1425,7 @@ fn expired_handoff_is_cleared_and_output_resumes_without_a_new_begin() {
 
     let result = manager.complete_handoff(&s, T1, &h.token, target);
 
-    assert_rejected(result, "终端窗口交接超时，请重试");
+    assert_rejected(result, "pty.handoff_expired 终端窗口交接已过期，请重试");
     assert!(!manager.has_pending_handoff(&s));
     assert!(!is_paused(&session));
     assert!(events.lock().unwrap().is_empty());
@@ -1433,7 +1445,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
 
     let result = manager.finalize_handoff(&s, T1, &h.token, size());
 
-    assert_rejected(result, "终端控制权已经转移");
+    assert_rejected(result, "pty.owner_mismatch 该终端当前由另一个窗口控制");
     // The bound target must not have been consumed: the handoff is still there ...
     assert!(manager.has_pending_handoff(&s));
     // ... and so is its channel: once the route belongs to the source again, the very same
@@ -1455,7 +1467,7 @@ fn finalize_route_mismatch_keeps_the_bound_state() {
     session2.route_guard().window_label = T9.to_string();
     assert_rejected(
         manager.finalize_handoff(&s2, T1, &h2.token, size()),
-        "终端控制权已经转移",
+        "pty.owner_mismatch 该终端当前由另一个窗口控制",
     );
     assert!(manager.has_pending_handoff(&s2));
     assert!(!manager.reclaim_window(T1).contains(&s2));
@@ -1904,7 +1916,10 @@ fn a_second_reattach_during_replay_is_rejected_immediately() {
     }
 
     let second_result = second_result.expect("the second reattach must not wait for the replay");
-    assert_rejected(second_result, "终端当前不处于可重新接管状态");
+    assert_rejected(
+        second_result,
+        "pty.owner_mismatch 该终端当前由另一个窗口控制",
+    );
     assert!(second_records.lock().unwrap().is_empty());
     assert!(!has_channel_meanwhile);
     done_rx
@@ -2603,4 +2618,16 @@ fn begin_pty_handoff_command_requires_a_target_label() {
     );
     // 反向：旧的两参数写法不得再出现。
     assert!(!body.contains("begin_handoff(&session_id, window.label())"));
+}
+
+#[test]
+fn writing_to_an_unknown_session_reports_pty_session_not_found() {
+    let manager = PtySessionManager::default();
+    let error = manager
+        .write("00000000-0000-4000-8000-000000000000", "main", b"x")
+        .unwrap_err();
+    let value = serde_json::to_value(&error).unwrap();
+    assert_eq!(value["code"], "pty.session_not_found");
+    // Reverse: an unknown session is not reported as an internal failure.
+    assert_ne!(value["code"], "app.internal");
 }

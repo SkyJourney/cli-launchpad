@@ -85,12 +85,9 @@ describe("error code contract", () => {
       ...aliasKeys,
     ].sort();
     expect(Object.keys(APP_ERROR_TRANSLATION_KEYS).sort()).toEqual(expected);
-    for (const dead of [
-      "file.conflict",
-      "pty.owner_mismatch",
-      "pty.handoff_expired",
-      "exec.busy",
-    ]) {
+    // Codes that no backend path produces. The owner, handoff and exec-busy codes now have
+    // producers (077b), so they are no longer listed here.
+    for (const dead of ["file.conflict"]) {
       expect(APP_ERROR_TRANSLATION_KEYS).not.toHaveProperty(dead);
     }
   });

@@ -1,3 +1,4 @@
+use crate::domain_errors::{ActivityBreakdown, LifecycleError};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -515,32 +516,22 @@ impl AppLifecycle {
                 state.phase = Phase::Exiting;
                 Ok(self.permit(PermitKind::ExitPending))
             }
-            (Phase::Restoring, Operation::PtyStart) => Err(AppError::coded(
-                ErrorCode::BackupRestoreInProgress,
-                "备份恢复正在进行，暂时不能启动终端会话",
-            )),
-            (Phase::Restoring, Operation::ExecStart) => Err(AppError::coded(
-                ErrorCode::BackupRestoreInProgress,
-                "备份恢复正在进行，暂时不能启动安装或更新任务",
-            )),
-            (Phase::Importing, Operation::PtyStart | Operation::ExecStart) => Err(AppError::coded(
-                ErrorCode::ConfigImportInProgress,
-                "配置导入正在进行，暂时不能启动终端会话或任务",
-            )),
-            (Phase::Restoring | Phase::Importing, Operation::DataReplace(_)) => {
-                Err(AppError::coded(
-                    ErrorCode::AppDataReplaceInProgress,
-                    "另一个数据替换操作正在进行",
-                ))
+            (Phase::Restoring, Operation::PtyStart | Operation::ExecStart) => {
+                Err(LifecycleError::RestoreInProgress.into())
             }
-            (Phase::Restoring | Phase::Importing, Operation::Exit) => Err(AppError::coded(
-                ErrorCode::AppExitDeferred,
-                "数据替换正在进行，暂缓退出",
-            )),
+            (Phase::Importing, Operation::PtyStart | Operation::ExecStart) => {
+                Err(LifecycleError::ConfigImportInProgress.into())
+            }
+            (Phase::Restoring | Phase::Importing, Operation::DataReplace(_)) => {
+                Err(LifecycleError::DataReplaceInProgress.into())
+            }
+            (Phase::Restoring | Phase::Importing, Operation::Exit) => {
+                Err(LifecycleError::ExitDeferred.into())
+            }
             (
                 Phase::Exiting,
                 Operation::PtyStart | Operation::ExecStart | Operation::DataReplace(_),
-            ) => Err(AppError::coded(ErrorCode::AppExiting, "应用正在退出")),
+            ) => Err(LifecycleError::Exiting.into()),
             (Phase::Exiting, Operation::Exit) => Ok(self.permit(PermitKind::ExitRepeated)),
         }
     }
@@ -556,40 +547,40 @@ impl AppLifecycle {
             DataReplaceKind::RestoreBackup => "恢复备份",
             DataReplaceKind::ImportConfig => "导入配置",
         };
-        let params = |count: usize| {
-            serde_json::json!({
-                "count": count,
-                "ptyCount": activity.pty,
-                "execCount": activity.exec,
-                "inflightStarts": inflight,
-            })
+        let breakdown = ActivityBreakdown {
+            pty_count: activity.pty,
+            exec_count: activity.exec,
+            inflight_starts: inflight,
         };
+        // The messages name the refused action; the code and parameters come from the domain error.
         if inflight > 0 {
-            return Err(AppError::coded_with_params(
-                ErrorCode::PtySessionStarting,
-                format!("有 {inflight} 个终端会话或执行任务正在启动，请稍后重试{action}"),
-                params(inflight),
-            ));
+            return Err(LifecycleError::PtySessionStarting {
+                count: inflight,
+                activity: breakdown,
+            }
+            .with_message(format!(
+                "有 {inflight} 个终端会话或执行任务正在启动，请稍后重试{action}"
+            )));
         }
         if activity.pty > 0 {
-            return Err(AppError::coded_with_params(
-                ErrorCode::PtySessionsActive,
-                format!(
-                    "请先关闭所有运行中的终端会话（当前 {} 个）再{action}",
-                    activity.pty
-                ),
-                params(activity.pty),
-            ));
+            return Err(LifecycleError::PtySessionsActive {
+                count: activity.pty,
+                activity: breakdown,
+            }
+            .with_message(format!(
+                "请先关闭所有运行中的终端会话（当前 {} 个）再{action}",
+                activity.pty
+            )));
         }
         if activity.exec > 0 {
-            return Err(AppError::coded_with_params(
-                ErrorCode::AppDataReplaceBlocked,
-                format!(
-                    "有 {} 个安装或更新任务正在执行，请等待其结束后再{action}",
-                    activity.exec
-                ),
-                params(activity.exec),
-            ));
+            return Err(LifecycleError::DataReplaceBlocked {
+                count: activity.exec,
+                activity: breakdown,
+            }
+            .with_message(format!(
+                "有 {} 个安装或更新任务正在执行，请等待其结束后再{action}",
+                activity.exec
+            )));
         }
         Ok(())
     }
@@ -1194,6 +1185,8 @@ mod tests {
         let value = serde_json::to_value(&error).unwrap();
         assert_eq!(value["code"], "pty.sessions_active");
         assert_eq!(value["params"]["count"], 2);
+        assert_eq!(value["params"]["ptyCount"], 2);
+        assert_eq!(value["params"]["inflightStarts"], 0);
         assert!(error.to_string().contains("2 个"));
         assert_eq!(lifecycle.phase(), Phase::Running);
 
@@ -1205,6 +1198,7 @@ mod tests {
         assert_eq!(value["params"]["count"], 3);
         assert_eq!(value["params"]["ptyCount"], 0);
         assert_eq!(value["params"]["execCount"], 3);
+        assert_eq!(value["params"]["inflightStarts"], 0);
         assert_eq!(lifecycle.phase(), Phase::Running);
 
         // reverse: nothing active, nothing starting -> admitted
@@ -1360,6 +1354,8 @@ mod tests {
         let value = serde_json::to_value(&error).unwrap();
         assert_eq!(value["code"], "pty.sessions_active");
         assert_eq!(value["params"]["count"], 1);
+        assert_eq!(value["params"]["ptyCount"], 1);
+        assert_eq!(value["params"]["inflightStarts"], 0);
 
         manager.remove_test_session(&session.session_id);
         let restoring = lifecycle.admit(restore).unwrap();

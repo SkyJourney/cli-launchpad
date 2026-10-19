@@ -1,3 +1,4 @@
+use crate::domain_errors::PtyError;
 use std::{collections::VecDeque, sync::Arc};
 
 use super::ports::PtyEventSink;
@@ -44,7 +45,7 @@ pub(super) fn pty_event_sequence(event: &PtyEvent) -> Option<u64> {
 
 pub(super) fn ensure_route_owner(route: &EventRoute, window_label: &str) -> Result<(), AppError> {
     if route.window_label != window_label {
-        return Err(AppError::msg("该终端当前由另一个窗口控制"));
+        return Err(AppError::from(PtyError::OwnerMismatch));
     }
     Ok(())
 }

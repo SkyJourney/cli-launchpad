@@ -69,7 +69,10 @@ describe("layout persistence", () => {
 
   it("does not save before the workspace is ready and starts saving after resetWorkspace", async () => {
     const backend = createBackend({
-      status: { status: "needsReset", reason: "bad" },
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "bad" },
+      },
     });
     backend.handlers.set("reset_workspace_layout", () => 4);
     host = await mountWorkspace({ backend });

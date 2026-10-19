@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::project_directory::ProjectDirectory;
+use crate::domain_errors::FileError;
 use crate::platform::case_sensitivity::{is_case_probe_residue_name, PathSemantics};
 use crate::platform::file_identity::of_entry;
 
@@ -462,9 +463,9 @@ pub(crate) fn open_file_in(
     let path_metadata = location
         .parent
         .symlink_metadata(&location.name)
-        .context("项目文件不存在或无法访问")?;
+        .map_err(map_project_file_open_error)?;
     if !path_metadata.is_file() {
-        bail!("只能打开普通文件");
+        return Err(FileError::NotRegularFile.into());
     }
 
     let mut options = cap_std::fs::OpenOptions::new();
@@ -477,10 +478,10 @@ pub(crate) fn open_file_in(
     let file = location
         .parent
         .open_with(&location.name, &options)
-        .context("项目文件不存在或无法访问")?;
+        .map_err(map_project_file_open_error)?;
     let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
-        bail!("只能打开普通文件");
+        return Err(FileError::NotRegularFile.into());
     }
     let extension = Path::new(relative_path)
         .extension()
@@ -585,10 +586,13 @@ pub(crate) fn save_text_file_in(
     expected_revision: &str,
 ) -> Result<ProjectTextFileSaveResult> {
     if content.len() as u64 > MAX_TEXT_FILE_BYTES {
-        bail!("文件超过 2 MiB 文本编辑限制");
+        return Err(FileError::TooLarge {
+            max_bytes: MAX_TEXT_FILE_BYTES,
+        }
+        .into());
     }
     if !is_plain_text(content.as_bytes()) {
-        bail!("只能保存 UTF-8 文本文件");
+        return Err(FileError::NotUtf8.into());
     }
     ProjectDirectory::path(relative_path)?;
     // Option A (user decision, 2026-10-11): a single pre-read rejects non-text content only when the
@@ -599,20 +603,20 @@ pub(crate) fn save_text_file_in(
     let metadata = location
         .parent
         .symlink_metadata(&location.name)
-        .context("项目文件不存在或无法访问")?;
+        .map_err(map_project_file_open_error)?;
     if metadata.file_type().is_symlink() {
         bail!("项目文件是符号链接，已拒绝保存");
     }
     if !metadata.is_file() {
-        bail!("只能保存普通文本文件");
+        return Err(FileError::NotRegularFile.into());
     }
     let file = location
         .parent
         .open(&location.name)
-        .context("项目文件不存在或无法访问")?;
+        .map_err(map_project_file_open_error)?;
     let current = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
     if content_revision(&current) == expected_revision && !is_plain_text(&current) {
-        bail!("只能保存 UTF-8 文本文件");
+        return Err(FileError::NotUtf8.into());
     }
     let outcome =
         replace_file_if_revision(root, relative_path, content.as_bytes(), expected_revision)
@@ -633,11 +637,24 @@ pub(crate) fn save_text_file_in(
     })
 }
 
+/// A project file that cannot be opened because it is missing is `file.not_found`; any other
+/// io failure keeps the historical context.
+fn map_project_file_open_error(error: std::io::Error) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        FileError::NotFound.into()
+    } else {
+        anyhow::Error::new(error).context("项目文件不存在或无法访问")
+    }
+}
+
 fn read_bounded(file: impl Read, maximum_bytes: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
     file.take(maximum_bytes + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > maximum_bytes {
-        bail!("文件读取大小超过允许上限");
+        return Err(FileError::TooLarge {
+            max_bytes: maximum_bytes,
+        }
+        .into());
     }
     Ok(bytes)
 }
@@ -679,6 +696,7 @@ fn replace_file_if_revision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AppError;
     use std::fs;
     use tempfile::tempdir;
 
@@ -1518,5 +1536,60 @@ mod tests {
         assert!(!names.contains(&".clp-case-probe-abcdef0123456789"));
         // The listing itself never probes: the semantics are filled in by the command.
         assert_eq!(listing.path_semantics, PathSemantics::UNKNOWN);
+    }
+
+    #[test]
+    fn opening_a_missing_file_reports_file_not_found() {
+        let directory = tempdir().unwrap();
+        let error = open_file(directory.path(), "missing.txt").unwrap_err();
+        assert_eq!(AppError::from(error).code(), "file.not_found");
+
+        // Reverse: a path that exists but is a directory is not "not found" (see below).
+        std::fs::create_dir(directory.path().join("sub")).unwrap();
+        let directory_error = open_file(directory.path(), "sub").unwrap_err();
+        assert_ne!(AppError::from(directory_error).code(), "file.not_found");
+    }
+
+    #[test]
+    fn saving_over_the_text_limit_reports_file_too_large_with_max_bytes() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("a.txt"), b"old").unwrap();
+        let content = "x".repeat((MAX_TEXT_FILE_BYTES + 1) as usize);
+        let error = save_text_file(directory.path(), "a.txt", &content, "rev").unwrap_err();
+        let value = serde_json::to_value(AppError::from(error)).unwrap();
+        assert_eq!(value["code"], "file.too_large");
+        assert_eq!(value["params"]["maxBytes"], MAX_TEXT_FILE_BYTES);
+
+        // Reverse: exactly the limit is not refused for its size.
+        let at_limit = "x".repeat(MAX_TEXT_FILE_BYTES as usize);
+        let outcome = save_text_file(directory.path(), "a.txt", &at_limit, "rev");
+        if let Err(error) = outcome {
+            assert_ne!(AppError::from(error).code(), "file.too_large");
+        }
+    }
+
+    #[test]
+    fn saving_non_utf8_content_reports_file_not_utf8() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("a.txt"), b"plain").unwrap();
+        let error =
+            save_text_file(directory.path(), "a.txt", "bad\u{0}content", "rev").unwrap_err();
+        assert_eq!(AppError::from(error).code(), "file.not_utf8");
+
+        // Reverse: ordinary UTF-8 text is not refused for its encoding.
+        let outcome = save_text_file(directory.path(), "a.txt", "fine", "rev");
+        if let Err(error) = outcome {
+            assert_ne!(AppError::from(error).code(), "file.not_utf8");
+        }
+    }
+
+    #[test]
+    fn opening_a_directory_reports_file_not_regular() {
+        let directory = tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("sub")).unwrap();
+        let error = open_file(directory.path(), "sub").unwrap_err();
+        let value = serde_json::to_value(AppError::from(error)).unwrap();
+        assert_eq!(value["code"], "file.not_regular");
+        assert_ne!(value["code"], "file.not_found");
     }
 }

@@ -163,7 +163,10 @@ describe("workspacePersistence", () => {
     const f = makeFixture();
     f.ports.getWorkspaceLayout.mockResolvedValue({
       ...missingRead,
-      status: { status: "needsReset", reason: "bad" } as never,
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "bad" },
+      } as never,
       revision: 3,
     });
     await f.persistence.hydrate();
@@ -416,7 +419,10 @@ describe("workspacePersistence", () => {
     const f = makeFixture();
     f.ports.getWorkspaceLayout.mockResolvedValue({
       ...missingRead,
-      status: { status: "needsReset", reason: "bad" } as never,
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "bad" },
+      } as never,
     });
     await f.persistence.hydrate();
     const d = deferred<number>();
@@ -435,7 +441,10 @@ describe("workspacePersistence", () => {
     const failing = makeFixture();
     failing.ports.getWorkspaceLayout.mockResolvedValue({
       ...missingRead,
-      status: { status: "needsReset", reason: "bad" } as never,
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "bad" },
+      } as never,
     });
     await failing.persistence.hydrate();
     failing.ports.resetWorkspaceLayout.mockRejectedValueOnce(new Error("nope"));

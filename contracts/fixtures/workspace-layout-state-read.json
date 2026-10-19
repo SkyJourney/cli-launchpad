@@ -87,7 +87,10 @@
         "schemaVersion": 99,
         "slotStates": [],
         "status": {
-          "reason": "bad",
+          "reason": {
+            "code": "invalidPayload",
+            "detail": "bad"
+          },
           "status": "needsReset"
         },
         "updatedAtMs": 1700000000000

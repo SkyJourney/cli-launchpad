@@ -5,6 +5,7 @@
 //!          database access, filesystem access, waiting for a child process
 //! Allowed: MasterPty::resize under the terminal lock (it is the resource that lock protects)
 
+use crate::domain_errors::PtyError;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64},
     mpsc::SyncSender,
@@ -172,7 +173,7 @@ impl ManagedSession {
         let guard = self
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
         let route = &guard.route;
         Ok(route.window_label == window_label
             || route
@@ -186,7 +187,7 @@ impl ManagedSession {
         let guard = self
             .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
         ensure_route_owner(&guard.route, window_label)
     }
 
@@ -196,7 +197,7 @@ impl ManagedSession {
         let mut terminal = self
             .terminal
             .lock()
-            .map_err(|_| AppError::msg("PTY 终端锁中毒"))?;
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 终端")))?;
         if terminal.last_size == (size.cols, size.rows) {
             return Ok(false);
         }

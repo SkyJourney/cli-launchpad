@@ -4,6 +4,7 @@
 //! 系统时间或 `Uuid::new_v4()`，否则 fixture 会逐次变化。
 
 use crate::error_codes::ErrorCode;
+use crate::models::workspace_layout::{LayoutResetCode, LayoutResetReason};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -631,7 +632,10 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         name,
         "needsReset",
         WorkspaceLayoutStateRead {
-            status: WorkspaceLayoutStateStatus::NeedsReset("bad".to_string()),
+            status: WorkspaceLayoutStateStatus::NeedsReset(LayoutResetReason {
+                code: LayoutResetCode::InvalidPayload,
+                detail: "bad".to_string(),
+            }),
             revision: Some(4),
             schema_version: Some(99),
             updated_at_ms: Some(TIMESTAMP_MS),

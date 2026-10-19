@@ -2,6 +2,12 @@ export const zh = {
   errors: {
     fileNotFound: "找不到该文件。",
     fileTooLarge: "文件超过允许的大小。",
+    ptySessionNotFound: "终端会话不存在或已结束。",
+    ptyHandoffInProgress: "终端正在交接到其他窗口，请稍后重试。",
+    fileNotUtf8: "只能保存 UTF-8 文本文件。",
+    fileNotRegular: "只能打开或保存普通文件。",
+    layoutNameExists: "已存在同名布局，请使用其他名称。",
+    layoutPresetLimit: "最多只能保存 {{max}} 个命名布局。",
     filePermissionDenied: "没有访问该文件的权限。",
     backupIndexRefreshDiscarded: "已恢复备份，恢复前开始的会话索引刷新已丢弃。",
     projectIdentityUnreadable: "无法读取项目目录身份。",

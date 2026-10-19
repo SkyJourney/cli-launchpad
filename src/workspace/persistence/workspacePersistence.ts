@@ -320,7 +320,8 @@ export function createWorkspacePersistence(
       const revision = read.revision ?? 0;
 
       if (read.status.status === "needsReset") {
-        setHydrationError(read.status.reason);
+        // Shows the backend's technical detail as before; localized rendering by code is 077c.
+        setHydrationError(read.status.reason.detail);
         patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
         return;
       }

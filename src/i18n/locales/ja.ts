@@ -8,6 +8,15 @@ export const ja = {
   errors: {
     fileNotFound: "ファイルが見つかりません。",
     fileTooLarge: "ファイルサイズが上限を超えています。",
+    ptySessionNotFound:
+      "ターミナルセッションが見つからないか、すでに終了しています。",
+    ptyHandoffInProgress:
+      "このターミナルは別のウィンドウに引き継ぎ中です。しばらくしてから再度お試しください。",
+    fileNotUtf8: "保存できるのは UTF-8 のテキストファイルだけです。",
+    fileNotRegular: "開けるのと保存できるのは通常のファイルだけです。",
+    layoutNameExists:
+      "同じ名前のレイアウトが既にあります。別の名前を選んでください。",
+    layoutPresetLimit: "名前付きレイアウトは {{max}} 個まで保存できます。",
     filePermissionDenied: "このファイルへのアクセス権がありません。",
     backupIndexRefreshDiscarded:
       "バックアップを復元したため、復元前に開始したセッションインデックスの更新は破棄されました。",
