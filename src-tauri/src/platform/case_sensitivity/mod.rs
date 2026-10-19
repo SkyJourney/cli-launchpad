@@ -261,6 +261,12 @@ fn is_probe_candidate(root: &Dir, name: &OsStr, metadata: &cap_std::fs::Metadata
             return false;
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        if macos::is_dataless(root, name) {
+            return false;
+        }
+    }
     link_count(root, name, metadata) == Some(1)
 }
 

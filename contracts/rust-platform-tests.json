@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 746,
-    "Linux": 752,
-    "macOS": 747
+    "Windows": 748,
+    "Linux": 754,
+    "macOS": 750
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -463,7 +463,9 @@
       "services::workspace_layout_service::tests::a_stale_save_leaves_no_protective_backup_and_a_failed_backup_aborts_the_save",
       "services::project_path_semantics::tests::a_cached_answer_is_returned_without_probing",
       "services::project_path_semantics::tests::a_late_unknown_does_not_replace_a_known_answer",
-      "platform::file_identity::tests::index_field_holds_the_full_native_value"
+      "platform::file_identity::tests::index_field_holds_the_full_native_value",
+      "services::workspace_layout_service::tests::a_stale_save_with_case_variants_reports_stale_not_case_duplicate",
+      "services::project_path_semantics::tests::probe_semantics_answers_unknown_when_the_probe_exceeds_its_budget"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -558,7 +560,8 @@
     "macOS": [
       "services::install_service::tests::macos_installs_use_fixed_official_scripts",
       "services::file_service::tests::macos_rejects_creating_non_utf8_file_names",
-      "platform::case_sensitivity::macos::tests::adapter_decoding_matches_the_confirmed_matrix"
+      "platform::case_sensitivity::macos::tests::adapter_decoding_matches_the_confirmed_matrix",
+      "platform::case_sensitivity::macos::tests::dataless_flag_is_recognised"
     ]
   }
 }

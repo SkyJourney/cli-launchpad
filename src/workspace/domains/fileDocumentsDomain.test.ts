@@ -9,7 +9,10 @@ import {
   saveProjectTextFile,
   type WorkspaceFileDocument,
 } from "../../lib/tauri";
-import { addWorkspaceFileToPane } from "../../lib/ptyWorkspaceLayout";
+import {
+  addWorkspaceFileToPane,
+  type WorkspaceNode,
+} from "../../lib/ptyWorkspaceLayout";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import {
   createInitialHostSnapshot,
@@ -579,5 +582,193 @@ describe("fileDocumentsDomain", () => {
     // 反向：空对象仍会提交一次（buffers 是新对象），这是预期行为。
     domain.mergeBuffers({}, "noop");
     expect(store.commitCount).toBe(before + 2);
+  });
+});
+
+describe("fileDocumentsDomain case variants", () => {
+  const INSENSITIVE = {
+    case: "insensitive",
+    normalizationInsensitive: "no",
+  } as const;
+  const lower: WorkspaceFileDocument = {
+    ...DOC,
+    id: "d1",
+    relativePath: "a.txt",
+  };
+  const upper: WorkspaceFileDocument = {
+    ...DOC,
+    id: "d2",
+    relativePath: "A.txt",
+  };
+
+  /** Both documents shown in one pane, as after a hydrate that kept exact paths only. */
+  function seeded(
+    options: {
+      shown?: string[];
+      buffers?: Record<string, WorkspaceFileBuffer>;
+    } = {},
+  ) {
+    let tree: WorkspaceNode = createWorkspacePane("p1");
+    for (const id of options.shown ?? ["d1", "d2"]) {
+      tree = addWorkspaceFileToPane(tree, "p1", id);
+    }
+    const store = new WorkspaceHostStore(createInitialHostSnapshot("p1"));
+    store.commit(
+      (live) => ({
+        ...live,
+        tree,
+        documents: [lower, upper],
+        buffers: options.buffers ?? {
+          d1: buffer("a", "a"),
+          d2: buffer("A", "A"),
+        },
+      }),
+      "test:seed",
+    );
+    return store;
+  }
+
+  function domainOf(
+    store: WorkspaceHostStore,
+    overrides: Partial<FileDocumentsDomainServices> = {},
+  ) {
+    const compareFileIdentity = vi.fn().mockResolvedValue("same");
+    const releaseDocuments = vi.fn();
+    const services = makeServices({
+      getPathSemantics: () => INSENSITIVE,
+      compareFileIdentity,
+      releaseDocuments,
+      ...overrides,
+    });
+    return {
+      domain: createFileDocumentsDomain(store, services),
+      compareFileIdentity,
+      releaseDocuments,
+    };
+  }
+
+  const shownIds = (store: WorkspaceHostStore) =>
+    listWorkspacePanes(store.getSnapshot().tree).flatMap((pane) =>
+      pane.contents.flatMap((content) =>
+        content.kind === "file" ? [content.documentId] : [],
+      ),
+    );
+
+  it("merges a confirmed group in one commit and releases the variant", async () => {
+    const store = seeded();
+    const { domain, compareFileIdentity, releaseDocuments } = domainOf(store);
+    const before = store.commitCount;
+
+    const merged = await domain.mergeCaseVariants(1, "C:/project", 0);
+
+    expect(merged).toBe(1);
+    expect(store.commitCount).toBe(before + 1);
+    expect(store.getSnapshot().documents.map((entry) => entry.id)).toEqual([
+      "d1",
+    ]);
+    expect(Object.keys(store.getSnapshot().buffers)).toEqual(["d1"]);
+    expect(shownIds(store)).toEqual(["d1"]);
+    expect(compareFileIdentity).toHaveBeenCalledWith(
+      1,
+      "C:/project",
+      "a.txt",
+      "A.txt",
+    );
+    expect(releaseDocuments).toHaveBeenCalledWith(["d2"]);
+  });
+
+  it("keeps the variant when the backend says it is another file", async () => {
+    const store = seeded();
+    const { domain } = domainOf(store, {
+      compareFileIdentity: vi.fn().mockResolvedValue("different"),
+    });
+    const before = store.commitCount;
+
+    expect(await domain.mergeCaseVariants(1, "C:/project", 0)).toBe(0);
+    expect(store.commitCount).toBe(before);
+    expect(store.getSnapshot().documents).toHaveLength(2);
+  });
+
+  it("discards the merge when a hydration starts while the identity is checked", async () => {
+    const store = seeded();
+    const gate = newGate<"same">();
+    let epoch = 0;
+    const { domain } = domainOf(store, {
+      getHydrationEpoch: () => epoch,
+      compareFileIdentity: vi.fn().mockReturnValue(gate.promise),
+    });
+    const before = store.commitCount;
+
+    const pending = domain.mergeCaseVariants(1, "C:/project", 0);
+    epoch = 1;
+    gate.resolve("same");
+
+    expect(await pending).toBe(0);
+    expect(store.commitCount).toBe(before);
+    expect(store.getSnapshot().documents).toHaveLength(2);
+  });
+
+  it("leaves a group alone when a member is not shown in a pane or is in a handoff", async () => {
+    // d2 belongs to another window: it is in the document list but in no pane.
+    const outside = seeded({ shown: ["d1"] });
+    expect(
+      await domainOf(outside).domain.mergeCaseVariants(1, "C:/project", 0),
+    ).toBe(0);
+    expect(outside.getSnapshot().documents).toHaveLength(2);
+
+    const handoff = seeded();
+    const { domain } = domainOf(handoff, {
+      isHandoffActive: (id) => id === "d2",
+    });
+    expect(await domain.mergeCaseVariants(1, "C:/project", 0)).toBe(0);
+    expect(handoff.getSnapshot().documents).toHaveLength(2);
+  });
+
+  it("keeps a variant with unsaved edits and merges once it is saved", async () => {
+    const edited = seeded({
+      buffers: { d1: buffer("a", "a"), d2: buffer("changed", "A") },
+    });
+    const first = domainOf(edited);
+    expect(await first.domain.mergeCaseVariants(1, "C:/project", 0)).toBe(0);
+    expect(edited.getSnapshot().buffers.d2?.content).toBe("changed");
+    // The backend was asked: the unsaved edits are what kept the group.
+    expect(first.compareFileIdentity).toHaveBeenCalled();
+
+    const clean = seeded();
+    expect(
+      await domainOf(clean).domain.mergeCaseVariants(1, "C:/project", 0),
+    ).toBe(1);
+  });
+
+  it("does not merge anything for a project that is not known to be insensitive", async () => {
+    const store = seeded();
+    const { domain, compareFileIdentity } = domainOf(store, {
+      getPathSemantics: () => ({
+        case: "unknown",
+        normalizationInsensitive: "unknown",
+      }),
+    });
+    expect(await domain.mergeCaseVariants(1, "C:/project", 0)).toBe(0);
+    expect(compareFileIdentity).not.toHaveBeenCalled();
+  });
+
+  it("degrade drops the later variant without asking the backend, except one with unsaved edits", () => {
+    const store = seeded();
+    const { domain, compareFileIdentity } = domainOf(store);
+    expect(domain.degradeCaseVariants(["d1", "d2"])).toBe(1);
+    expect(store.getSnapshot().documents.map((entry) => entry.id)).toEqual([
+      "d1",
+    ]);
+    expect(compareFileIdentity).not.toHaveBeenCalled();
+
+    const edited = seeded({
+      buffers: { d1: buffer("a", "a"), d2: buffer("changed", "A") },
+    });
+    expect(domainOf(edited).domain.degradeCaseVariants(["d1", "d2"])).toBe(0);
+    expect(edited.getSnapshot().documents).toHaveLength(2);
+
+    // Reverse: documents that are not named are left alone.
+    const unrelated = seeded();
+    expect(domainOf(unrelated).domain.degradeCaseVariants(["other"])).toBe(0);
   });
 });

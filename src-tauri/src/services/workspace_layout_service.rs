@@ -182,9 +182,18 @@ pub fn save_current(
     }
     let payload_json = serialize_layout(layout, false)?;
 
+    // A save that is already stale is answered as stale: repairing a layout the repository would
+    // refuse anyway only costs the front end a pointless retry.
+    let stored = workspace_layout_repo::get_current(connection)?;
+    let is_stale = stored.as_ref().is_some_and(|row| revision <= row.revision);
+
     // Folding is decided by the cached semantics only. The front end merges case variants after
     // hydrate; a layout that still holds them is refused so it can repair and retry once.
-    let duplicates = case_duplicate_groups(layout, context);
+    let duplicates = if is_stale {
+        Vec::new()
+    } else {
+        case_duplicate_groups(layout, context)
+    };
     if !duplicates.is_empty() {
         let mut document_ids = duplicates.concat();
         document_ids.sort();
@@ -197,7 +206,7 @@ pub fn save_current(
 
     // Do not let routine autosaves replace data that needs explicit recovery.
     let mut observed_revision = 0;
-    if let Some(current) = workspace_layout_repo::get_current(connection)? {
+    if let Some(current) = stored {
         observed_revision = current.revision;
         if !is_supported_layout_version(current.schema_version) {
             return Err(AppError::msg(
@@ -2501,5 +2510,34 @@ mod tests {
                 .saved
         );
         assert_eq!(backups.get(), 1);
+    }
+
+    #[test]
+    fn a_stale_save_with_case_variants_reports_stale_not_case_duplicate() {
+        let mut connection = database();
+        let semantics_of = |_: i64, _: &str| Some(insensitive());
+        let context = SaveContext {
+            semantics_of: &semantics_of,
+            backup_before_case_merge: &|_| Ok(()),
+        };
+        let clean = files_layout(&[("doc-a", "a.txt")]);
+        assert!(
+            save_current(&mut connection, 5, &clean, &context)
+                .unwrap()
+                .saved
+        );
+
+        // The same revision again, now with case variants: stale, not a duplicate error.
+        let variants = files_layout(&[("doc-a", "a.txt"), ("doc-b", "A.txt")]);
+        let stale = save_current(&mut connection, 5, &variants, &context).unwrap();
+        assert!(!stale.saved);
+        assert_eq!(stale.revision, 5);
+
+        // Reverse: with a newer revision the duplicate is refused as before.
+        let error = save_current(&mut connection, 6, &variants, &context).unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "layout.case_duplicate"
+        );
     }
 }

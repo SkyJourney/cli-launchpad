@@ -174,23 +174,33 @@ pub async fn probe_semantics(
     directory_path: String,
     root: Arc<ProjectDirectory>,
 ) -> PathSemantics {
+    probe_semantics_with(
+        cache,
+        directory_id,
+        directory_path,
+        root,
+        Arc::new(NativeCaseSensitivityProbe),
+        budgets::CASE_PROBE,
+    )
+    .await
+}
+
+async fn probe_semantics_with(
+    cache: Arc<CaseSensitivityCache>,
+    directory_id: i64,
+    directory_path: String,
+    root: Arc<ProjectDirectory>,
+    probe: Arc<dyn CaseSensitivityProbe>,
+    budget: std::time::Duration,
+) -> PathSemantics {
     // A cached answer is memory only: it never waits for the blocking pool, so a busy pool
     // cannot turn a known answer into `Unknown`.
     if let Some(cached) = cache.peek(directory_id, &directory_path) {
         return cached;
     }
-    let outcome = blocking(
-        "project_path_semantics.probe",
-        budgets::CASE_PROBE,
-        move || {
-            Ok(cache.semantics_for(
-                directory_id,
-                &directory_path,
-                &root,
-                &NativeCaseSensitivityProbe,
-            ))
-        },
-    )
+    let outcome = blocking("project_path_semantics.probe", budget, move || {
+        Ok(cache.semantics_for(directory_id, &directory_path, &root, probe.as_ref()))
+    })
     .await;
     match outcome {
         Ok(semantics) => semantics,
@@ -390,5 +400,49 @@ mod tests {
         let late = FixedCaseSensitivityProbe::new(PathSemantics::UNKNOWN);
         cache.store(CaseSensitivityCache::key(1, "/p"), late.semantics);
         assert_eq!(cache.peek(1, "/p"), Some(insensitive()));
+    }
+
+    /// A probe that takes longer than any budget a test would wait for.
+    struct SlowProbe(std::time::Duration);
+
+    impl crate::platform::case_sensitivity::CaseSensitivityProbe for SlowProbe {
+        fn probe(&self, _root: &cap_std::fs::Dir) -> PathSemantics {
+            std::thread::sleep(self.0);
+            insensitive()
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_semantics_answers_unknown_when_the_probe_exceeds_its_budget() {
+        let cache = Arc::new(CaseSensitivityCache::with_clock_and_fold(
+            FakeClock::new(),
+            true,
+        ));
+        let (_root, directory) = project();
+        let directory = Arc::new(directory);
+
+        // The probe is slower than the budget: the caller gets Unknown, not an error.
+        let slow = super::probe_semantics_with(
+            Arc::clone(&cache),
+            1,
+            "/slow".to_string(),
+            Arc::clone(&directory),
+            Arc::new(SlowProbe(std::time::Duration::from_millis(400))),
+            std::time::Duration::from_millis(30),
+        )
+        .await;
+        assert_eq!(slow, PathSemantics::UNKNOWN);
+
+        // Reverse: with enough budget the same probe's answer comes back.
+        let fast = super::probe_semantics_with(
+            Arc::clone(&cache),
+            2,
+            "/fast".to_string(),
+            directory,
+            Arc::new(SlowProbe(std::time::Duration::from_millis(1))),
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(fast, insensitive());
     }
 }

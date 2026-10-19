@@ -21,6 +21,36 @@ struct VolumeCapabilitiesReply {
     capabilities: libc::vol_capabilities_attr_t,
 }
 
+/// `SF_DATALESS` of `sys/stat.h`: the file's data lives in the cloud (iCloud Drive and other
+/// File Provider volumes) and opening it may download it.
+const SF_DATALESS: u32 = 0x4000_0000;
+
+pub(super) fn flags_mark_dataless(flags: u32) -> bool {
+    flags & SF_DATALESS != 0
+}
+
+/// Whether the entry is dataless. A failed lookup counts as dataless: the entry is then not
+/// used for probing.
+pub(super) fn is_dataless(root: &Dir, name: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(name) = std::ffi::CString::new(name.as_bytes()) else {
+        return true;
+    };
+    // SAFETY: `stat` is plain old data; an all-zero value is valid.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: the descriptor stays open for the call, `name` is NUL-terminated and `stat` is
+    // writable.
+    let status = unsafe {
+        libc::fstatat(
+            root.as_raw_fd(),
+            name.as_ptr(),
+            &mut stat,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    status != 0 || flags_mark_dataless(stat.st_flags)
+}
+
 /// What the system said about the file system of the project root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawFacts {
@@ -219,6 +249,18 @@ mod tests {
         // Other types and macFUSE/FSKit mounts.
         assert_eq!(decode(&facts("msdos", Some(0), None)), None);
         assert_eq!(decode(&facts("macfuse", Some(1), None)), None);
+    }
+
+    #[test]
+    fn dataless_flag_is_recognised() {
+        use super::flags_mark_dataless;
+        assert!(flags_mark_dataless(0x4000_0000));
+        assert!(flags_mark_dataless(0x4000_0000 | 0x20));
+        // Reverse: other flags (hidden, immutable, compressed) do not make a file dataless.
+        assert!(!flags_mark_dataless(0));
+        assert!(!flags_mark_dataless(
+            0x0000_8000 | 0x0000_0002 | 0x0020_0000
+        ));
     }
 
     #[test]
