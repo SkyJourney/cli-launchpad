@@ -1,3 +1,4 @@
+pub mod case_sensitivity;
 pub mod detect;
 pub mod executable_resolver;
 pub mod execution_process;
@@ -7,6 +8,7 @@ pub mod file_location;
 pub mod launch_environment;
 pub mod opener;
 pub mod path_identity;
+pub mod path_key;
 pub mod path_rules;
 pub mod process;
 pub mod window_geometry;

@@ -1,14 +1,17 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 719,
-    "Linux": 726,
-    "macOS": 724
+    "Windows": 725,
+    "Linux": 735,
+    "macOS": 730
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
-    "platform::file_cas::tests::cross_process_cas_worker"
+    "platform::file_cas::tests::cross_process_cas_worker",
+    "platform::case_sensitivity::windows::tests::native_probe_on_a_special_volume",
+    "platform::case_sensitivity::macos::tests::native_probe_on_a_special_volume",
+    "platform::case_sensitivity::linux::tests::native_probe_on_a_special_volume"
   ],
   "required": {
     "all": [
@@ -438,7 +441,12 @@
       "services::window_relay::tests::a_forged_source_in_the_envelope_cannot_override_the_stamp",
       "contracts::window_message_contract_is_well_formed",
       "contracts::child_windows_cannot_emit_events_and_can_use_the_relay",
-      "contracts::event_contract_lists_the_relay_event_and_not_the_retired_ones"
+      "contracts::event_contract_lists_the_relay_event_and_not_the_retired_ones",
+      "platform::path_key::tests::path_key_behaves_per_flag",
+      "platform::case_sensitivity::tests::path_semantics_serializes_as_camel_case_strings",
+      "platform::case_sensitivity::tests::probe_chain_short_circuits_in_order",
+      "platform::case_sensitivity::tests::temp_probe_leaves_no_file_on_any_path",
+      "platform::case_sensitivity::tests::stale_probe_residue_is_removed_by_the_next_probe"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
@@ -474,7 +482,8 @@
       "platform::file_location::tests::locate_rejects_a_junction_intermediate_component",
       "services::file_service::tests::open_file_rejects_a_junction_intermediate_directory",
       "services::workspace_layout_service::tests::current_layout_with_platform_invalid_file_name_degrades_the_item",
-      "platform::execution_process::windows::tests::dropping_the_job_kills_attached_processes"
+      "platform::execution_process::windows::tests::dropping_the_job_kills_attached_processes",
+      "platform::case_sensitivity::windows::tests::adapter_decoding_matches_the_confirmed_matrix"
     ],
     "unix": [
       "commands::cli_status::tests::preserves_version_with_unix_path_semantics",
@@ -519,11 +528,16 @@
       "services::file_service::tests::listing_scan_budget_covers_entries_skipped_for_unreadable_names",
       "services::file_service::tests::listing_skips_non_utf8_names_and_reports_the_count",
       "services::install_service::tests::linux_installs_use_fixed_official_scripts",
-      "platform::file_cas::tests::cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement"
+      "platform::file_cas::tests::cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement",
+      "platform::case_sensitivity::linux::tests::adapter_decoding_matches_the_confirmed_matrix",
+      "platform::case_sensitivity::linux::tests::mountinfo_options_are_read_per_device",
+      "platform::case_sensitivity::tests::existing_entry_flip_uses_file_identity",
+      "platform::case_sensitivity::linux::tests::the_casefold_ioctl_works_on_the_temporary_directory"
     ],
     "macOS": [
       "services::install_service::tests::macos_installs_use_fixed_official_scripts",
-      "services::file_service::tests::macos_rejects_creating_non_utf8_file_names"
+      "services::file_service::tests::macos_rejects_creating_non_utf8_file_names",
+      "platform::case_sensitivity::macos::tests::adapter_decoding_matches_the_confirmed_matrix"
     ]
   }
 }
