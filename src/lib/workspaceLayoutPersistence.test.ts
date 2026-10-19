@@ -1053,3 +1053,234 @@ describe("layout save backoff", () => {
     expect(onError).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("restoreCurrentWorkspaceFilesAfterPreset with path semantics", () => {
+  const document = (id: string, relativePath: string) => ({
+    id,
+    directoryId: 42,
+    directoryPath: "/work/sample",
+    relativePath,
+  });
+  const insensitive = () =>
+    ({ case: "insensitive", normalizationInsensitive: "no" }) as const;
+  const unknown = () =>
+    ({ case: "unknown", normalizationInsensitive: "unknown" }) as const;
+
+  function treeWith(documentId: string) {
+    return addWorkspaceFileToPane(createDocument().tree, "pane-1", documentId);
+  }
+
+  it("folds case variants of a current document into the restored one when the directory is case-insensitive", () => {
+    const restoredDocument = document("restored", "a.txt");
+    const currentDocument = document("current", "A.txt");
+
+    const restored = restoreCurrentWorkspaceFilesAfterPreset({
+      tree: treeWith("restored"),
+      focusedPaneId: "pane-1",
+      restoredDocuments: [restoredDocument],
+      currentDocuments: [currentDocument],
+      detachedContents: [],
+      currentlyDetachedContents: [],
+      detachingContents: [],
+      semanticsOf: insensitive,
+    });
+
+    // Only the restored document stays, and nothing refers to the dropped one.
+    expect(restored.documents).toEqual([restoredDocument]);
+    const contents = listWorkspacePanes(restored.tree).flatMap(
+      (pane) => pane.contents,
+    );
+    expect(contents).toContainEqual({ kind: "file", documentId: "restored" });
+    expect(contents).not.toContainEqual({
+      kind: "file",
+      documentId: "current",
+    });
+  });
+
+  it("keeps a current document of its own when another window owns it or it has unsaved edits", () => {
+    const base = {
+      focusedPaneId: "pane-1",
+      restoredDocuments: [document("restored", "a.txt")],
+      currentDocuments: [document("current", "A.txt")],
+      detachedContents: [],
+      detachingContents: [],
+      semanticsOf: insensitive,
+    };
+
+    // Owned by another window (detached): never aliased, it stays a document and stays detached.
+    const detached = restoreCurrentWorkspaceFilesAfterPreset({
+      ...base,
+      tree: treeWith("restored"),
+      currentlyDetachedContents: [{ kind: "file", documentId: "current" }],
+    });
+    expect(detached.documents.map((entry) => entry.id)).toEqual([
+      "restored",
+      "current",
+    ]);
+    expect(detached.detachedContents).toEqual([
+      { kind: "file", documentId: "current" },
+    ]);
+
+    // Unsaved edits: the caller names the document as protected.
+    const edited = restoreCurrentWorkspaceFilesAfterPreset({
+      ...base,
+      tree: treeWith("restored"),
+      currentlyDetachedContents: [],
+      protectedDocumentIds: new Set(["current"]),
+    });
+    expect(edited.documents.map((entry) => entry.id)).toEqual([
+      "restored",
+      "current",
+    ]);
+  });
+
+  it("keeps both documents when the directory is unknown", () => {
+    const restored = restoreCurrentWorkspaceFilesAfterPreset({
+      tree: treeWith("restored"),
+      focusedPaneId: "pane-1",
+      restoredDocuments: [document("restored", "a.txt")],
+      currentDocuments: [document("current", "A.txt")],
+      detachedContents: [],
+      currentlyDetachedContents: [],
+      detachingContents: [],
+      semanticsOf: unknown,
+    });
+
+    expect(restored.documents.map((entry) => entry.id)).toEqual([
+      "restored",
+      "current",
+    ]);
+  });
+
+  it("keeps the existing behaviour when semanticsOf is omitted", () => {
+    const restored = restoreCurrentWorkspaceFilesAfterPreset({
+      tree: treeWith("restored"),
+      focusedPaneId: "pane-1",
+      restoredDocuments: [document("restored", "a.txt")],
+      currentDocuments: [document("current", "A.txt")],
+      detachedContents: [],
+      currentlyDetachedContents: [],
+      detachingContents: [],
+    });
+
+    expect(restored.documents.map((entry) => entry.id)).toEqual([
+      "restored",
+      "current",
+    ]);
+  });
+});
+
+describe("WorkspaceLayoutSaveQueue with layout.case_duplicate", () => {
+  const rejection = {
+    code: "layout.case_duplicate",
+    message: "variants",
+    params: { documentIds: ["a", "b"] },
+  };
+
+  it("merges and retries once, then degrades without a third save", async () => {
+    const save = vi.fn().mockRejectedValue(rejection);
+    const onError = vi.fn();
+    const repaired = createDocument();
+    const repair = vi.fn(async (_error: unknown, mode: "merge" | "degrade") =>
+      mode === "merge"
+        ? { changed: true, document: repaired }
+        : { changed: true, document: null },
+    );
+    const queue = new WorkspaceLayoutSaveQueue(1, save, onError, undefined, {
+      repairCaseDuplicate: repair,
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(repair.mock.calls.map(([, mode]) => mode)).toEqual([
+      "merge",
+      "degrade",
+    ]);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("does not degrade when the retry is accepted", async () => {
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(rejection)
+      .mockResolvedValueOnce({ saved: true, revision: 3 });
+    const repair = vi.fn(async () => ({
+      changed: true,
+      document: createDocument(),
+    }));
+    const queue = new WorkspaceLayoutSaveQueue(1, save, vi.fn(), undefined, {
+      repairCaseDuplicate: repair,
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(repair).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades at once when nothing could be merged, and reports when nothing changed", async () => {
+    const save = vi.fn().mockRejectedValue(rejection);
+    const onError = vi.fn();
+    const noChange = vi.fn(async () => ({ changed: false, document: null }));
+    const queue = new WorkspaceLayoutSaveQueue(1, save, onError, undefined, {
+      repairCaseDuplicate: noChange,
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    // One save, merge and degrade both asked, and the error is not swallowed.
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(noChange).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the error as before when no repair is configured", async () => {
+    const save = vi.fn().mockRejectedValue(rejection);
+    const onError = vi.fn();
+    const queue = new WorkspaceLayoutSaveQueue(1, save, onError);
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(rejection);
+  });
+});
+
+describe("WorkspaceLayoutSaveQueue repair ordering", () => {
+  it("sends the repaired layout, not a snapshot queued before the repair", async () => {
+    const rejection = {
+      code: "layout.case_duplicate",
+      message: "variants",
+      params: { documentIds: ["a", "b"] },
+    };
+    const repaired = { ...createDocument(), focusedPaneId: "repaired" };
+    const stale = { ...createDocument(), focusedPaneId: "stale" };
+    let queue!: WorkspaceLayoutSaveQueue;
+    const save = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        // A newer change arrives while the first save is in flight (a real save is asynchronous).
+        await Promise.resolve();
+        queue.enqueue(stale);
+        throw rejection;
+      })
+      .mockResolvedValue({ saved: true, revision: 5 });
+    queue = new WorkspaceLayoutSaveQueue(1, save, vi.fn(), undefined, {
+      repairCaseDuplicate: async (_error, mode) =>
+        mode === "merge"
+          ? { changed: true, document: repaired }
+          : { changed: false, document: null },
+    });
+
+    queue.enqueue(createDocument());
+    await queue.flush();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][1].focusedPaneId).toBe("repaired");
+  });
+});

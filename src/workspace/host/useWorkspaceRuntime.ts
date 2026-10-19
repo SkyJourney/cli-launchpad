@@ -33,6 +33,9 @@ import {
 import type { IsolatedRegistrationFailure } from "../../lib/retryPolicy";
 import type { WorkspacePaneContentRef } from "../../lib/tauri";
 import { useAppStore } from "../../store/appStore";
+import { ProjectPathSemanticsRegistry } from "../../lib/projectPathSemantics";
+import { formatAppError } from "../../lib/appErrors";
+import { checkProjectFilesSameIdentity } from "../../lib/tauri";
 import { createFileContentDomain } from "../domains/fileContentDomain";
 import { createFileDocumentsDomain } from "../domains/fileDocumentsDomain";
 import { createPtyContentDomain } from "../domains/ptyContentDomain";
@@ -134,9 +137,19 @@ export function useWorkspaceRuntime({
   const [orchestrator] = useState(() =>
     createContentWindowOrchestrator(latestContentWindowDeps(depsRef)),
   );
+  // 项目的路径语义（PD-10）：每个宿主一份，hydrate 开始与备份恢复时清空。
+  const [pathSemantics] = useState(() => new ProjectPathSemanticsRegistry());
+  const releaseFileDocumentsRef = useRef<
+    ((documentIds: readonly string[]) => void) | null
+  >(null);
   // 文件领域：文件文档与缓冲的加载、编辑、保存、关闭经由领域对象完成（惰性初始化，闭包按调用时读取 ref）。
   const [fileDomain] = useState(() =>
     createFileDocumentsDomain(store, {
+      getPathSemantics: (directoryId) => pathSemantics.get(directoryId),
+      loadPathSemantics: (directoryId, directoryPath) =>
+        pathSemantics.load(directoryId, directoryPath),
+      compareFileIdentity: checkProjectFilesSameIdentity,
+      releaseDocuments: (ids) => releaseFileDocumentsRef.current?.(ids),
       isRestoreInProgress: () => persistence.restoreLatch.active,
       getHydrationEpoch: () => persistence.hydrationEpoch(),
       isHandoffActive: (documentId) =>
@@ -173,6 +186,7 @@ export function useWorkspaceRuntime({
       })();
     }
   }, []);
+  releaseFileDocumentsRef.current = releaseFileDocuments;
 
   // 布局持久化：hydrate 与保存只经显式入口（挂载、重试、恢复、拖拽结束、卸载）触发；依赖经 persistenceDepsRef 读取最新值（R-FE-1）。
   const directoriesRef = useRef(directories);
@@ -235,6 +249,63 @@ export function useWorkspaceRuntime({
     runtimeSteps: buildRuntimeSteps,
     invalidateDocuments: (ids) => fileDomain.invalidateLoads(ids),
     releaseDocuments: (ids) => releaseFileDocuments(ids),
+    getPathSemantics: (directoryId) => pathSemantics.get(directoryId),
+    onHydrateStart: () => pathSemantics.clear(),
+    afterHydrated: (epoch) => {
+      // hydrate 只做精确去重；flag 到达之后才折叠合并大小写重复文档（显式入口，不进 effect）。
+      const directories = new Map<number, string>();
+      for (const document of store.getLive().documents) {
+        if (!directories.has(document.directoryId)) {
+          directories.set(document.directoryId, document.directoryPath);
+        }
+      }
+      if (directories.size === 0) return;
+      void (async () => {
+        const counts = await Promise.all(
+          [...directories].map(async ([directoryId, directoryPath]) => {
+            await pathSemantics.load(directoryId, directoryPath);
+            return fileDomain
+              .mergeCaseVariants(directoryId, directoryPath, epoch)
+              .catch(() => 0);
+          }),
+        );
+        const merged = counts.reduce((sum, count) => sum + count, 0);
+        if (merged > 0) {
+          toast.info(
+            tRef.current("workspaceFiles.caseVariantsMerged", {
+              count: merged,
+            }),
+          );
+        }
+      })();
+    },
+    repairCaseDuplicates: async (documentIds, mode, error) => {
+      if (mode === "degrade") {
+        const dropped = fileDomain.degradeCaseVariants(documentIds);
+        if (dropped > 0) {
+          toast.warning(formatAppError(error, tRef.current));
+        }
+        return dropped > 0;
+      }
+      const epoch = persistence.hydrationEpoch();
+      const directories = new Map<number, string>();
+      for (const document of store.getLive().documents) {
+        if (
+          documentIds.includes(document.id) &&
+          !directories.has(document.directoryId)
+        ) {
+          directories.set(document.directoryId, document.directoryPath);
+        }
+      }
+      let merged = 0;
+      for (const [directoryId, directoryPath] of directories) {
+        await pathSemantics.load(directoryId, directoryPath);
+        merged += await fileDomain
+          .mergeCaseVariants(directoryId, directoryPath, epoch)
+          .catch(() => 0);
+      }
+      return merged > 0;
+    },
   };
   useWorkspacePersistence(persistence, orchestrator);
 

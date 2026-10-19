@@ -33,6 +33,16 @@ export interface WorkspaceFileBuffer {
   >["reason"];
 }
 
+/** A text buffer with edits that are not on disk yet (or being written right now). */
+export function hasUnsavedWorkspaceFileEdits(
+  buffer: WorkspaceFileBuffer | undefined,
+): boolean {
+  return (
+    buffer?.kind === "text" &&
+    (buffer.content !== buffer.savedContent || buffer.saving)
+  );
+}
+
 export function createWorkspaceFileBuffer(
   file: ProjectFileOpenResult,
   epoch = 0,

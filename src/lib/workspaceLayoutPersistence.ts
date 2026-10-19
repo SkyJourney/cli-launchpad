@@ -1,3 +1,9 @@
+import { getAppErrorCode } from "./appErrors";
+import {
+  documentIdentityKey,
+  UNKNOWN_PATH_SEMANTICS,
+  type PathSemantics,
+} from "./pathKey";
 import {
   listWorkspacePanes,
   placeContentExclusively,
@@ -240,32 +246,69 @@ export function restoreCurrentWorkspaceFilesAfterPreset(input: {
   detachedContents: WorkspacePaneContentRef[];
   currentlyDetachedContents: WorkspacePaneContentRef[];
   detachingContents: WorkspacePaneContentRef[];
+  /** Path semantics per project; omitted means `unknown` (exact paths only). */
+  semanticsOf?: (directoryId: number) => PathSemantics;
+  /**
+   * Current documents that must keep their own identity even when a restored document
+   * differs from them only by case: unsaved edits, or owned by another window.
+   */
+  protectedDocumentIds?: ReadonlySet<string>;
 }): {
   tree: WorkspaceNode;
   documents: WorkspaceFileDocument[];
   detachedContents: WorkspacePaneContentRef[];
 } {
   let tree = input.tree;
+  const semanticsOf = input.semanticsOf ?? (() => UNKNOWN_PATH_SEMANTICS);
+  const literalKey = (document: WorkspaceFileDocument) =>
+    documentIdentityKey(
+      document.directoryId,
+      document.relativePath,
+      UNKNOWN_PATH_SEMANTICS,
+    );
+  const foldedKey = (document: WorkspaceFileDocument) =>
+    documentIdentityKey(
+      document.directoryId,
+      document.relativePath,
+      semanticsOf(document.directoryId),
+    );
   const documents = [...input.restoredDocuments];
-  const restoredPaths = new Set(
-    documents.map(
-      (document) => `${document.directoryId}:${document.relativePath}`,
-    ),
+  const restoredPaths = new Set(documents.map(literalKey));
+  const restoredByFoldedKey = new Map(
+    documents.map((document) => [foldedKey(document), document]),
   );
   const currentDocumentByIdentity = new Map(
-    input.currentDocuments.map((document) => [
-      `${document.directoryId}:${document.relativePath}`,
-      document,
-    ]),
+    input.currentDocuments.map((document) => [literalKey(document), document]),
   );
   const currentlyDetached = input.currentlyDetachedContents;
   const firstPaneId = listWorkspacePanes(tree)[0].id;
+  const owns = (
+    contents: readonly WorkspacePaneContentRef[],
+    document: WorkspaceFileDocument,
+  ) =>
+    contents.some((candidate) =>
+      sameWorkspaceContent(candidate, {
+        kind: "file",
+        documentId: document.id,
+      }),
+    );
 
   for (const document of input.currentDocuments) {
-    const identity = `${document.directoryId}:${document.relativePath}`;
-    const alreadyRestored = restoredPaths.has(identity);
+    const identity = literalKey(document);
+    // A current document that only differs from a restored one by case folding gives way to
+    // it, unless it has edits or belongs to another window.
+    const keepsItsOwn =
+      input.protectedDocumentIds?.has(document.id) === true ||
+      owns(currentlyDetached, document) ||
+      owns(input.detachingContents, document);
+    const restoredByFolding =
+      !restoredPaths.has(identity) && !keepsItsOwn
+        ? restoredByFoldedKey.get(foldedKey(document))
+        : undefined;
+    const alreadyRestored =
+      restoredPaths.has(identity) || restoredByFolding !== undefined;
     const canonicalDocument =
-      currentDocumentByIdentity.get(identity) ?? document;
+      restoredByFolding ?? currentDocumentByIdentity.get(identity) ?? document;
     if (!alreadyRestored) documents.push({ ...canonicalDocument });
     restoredPaths.add(identity);
     const content: WorkspacePaneContentRef = {
@@ -508,6 +551,15 @@ export function validateWorkspaceLayoutDocument(
 export interface WorkspaceLayoutSaveQueueOptions {
   /** 异常拒绝之后、重新发送之前的等待；测试注入立即返回的实现。 */
   delay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * 后端因“仅大小写不同的重复文档”拒绝保存（layout.case_duplicate）时的修复入口：
+   * `merge` 合并变体并返回新的待保存布局（队列只重试一次）；`degrade` 丢弃后出现的变体，
+   * 不再发送——降级后的状态在下一次正常保存时落库。
+   */
+  repairCaseDuplicate?: (
+    error: unknown,
+    mode: "merge" | "degrade",
+  ) => Promise<{ changed: boolean; document: WorkspaceLayoutDocument | null }>;
 }
 
 /** 第 1 次异常拒绝后等 250 ms，第 2 次等 500 ms（第 3 次直接停止，不等待）。 */
@@ -521,6 +573,8 @@ export class WorkspaceLayoutSaveQueue {
   private pending: WorkspaceLayoutDocument | null = null;
   private draining: Promise<void> | null = null;
   private abnormalRejections = 0;
+  private caseDuplicateRejections = 0;
+  private readonly repairCaseDuplicate: WorkspaceLayoutSaveQueueOptions["repairCaseDuplicate"];
   private readonly abort = new AbortController();
   private readonly delay: (
     delayMs: number,
@@ -539,6 +593,7 @@ export class WorkspaceLayoutSaveQueue {
   ) {
     this.revision = Math.max(0, initialRevision);
     this.delay = options.delay ?? abortableDelay;
+    this.repairCaseDuplicate = options.repairCaseDuplicate;
   }
 
   /** 中止正在进行的退避等待；之后的退避立即返回，异常拒绝仍受 3 次上限约束。 */
@@ -584,6 +639,7 @@ export class WorkspaceLayoutSaveQueue {
         this.revision = Math.max(this.revision, result.revision);
         if (result.saved) {
           this.abnormalRejections = 0;
+          this.caseDuplicateRejections = 0;
           try {
             this.onSaved();
           } catch {
@@ -622,9 +678,37 @@ export class WorkspaceLayoutSaveQueue {
           }
         }
       } catch (error) {
+        if (await this.handleCaseDuplicate(error)) continue;
         this.report(error);
       }
     }
+  }
+
+  /**
+   * layout.case_duplicate: the first rejection merges the variants and retries once; a second
+   * rejection (or nothing to merge) drops the later variants and stops. At most two saves are
+   * sent, no timer is involved, and the degraded state is stored by the next regular save.
+   * Returns whether the error was handled (otherwise it is reported as any other error).
+   */
+  private async handleCaseDuplicate(error: unknown): Promise<boolean> {
+    const repair = this.repairCaseDuplicate;
+    if (!repair || getAppErrorCode(error) !== "layout.case_duplicate") {
+      // Any other outcome ends a case-duplicate sequence.
+      this.caseDuplicateRejections = 0;
+      return false;
+    }
+    this.caseDuplicateRejections += 1;
+    if (this.caseDuplicateRejections === 1) {
+      const merged = await repair(error, "merge").catch(() => null);
+      if (merged?.changed && merged.document) {
+        // Built from the live state after the merge: newer than anything queued before it.
+        this.pending = merged.document;
+        return true;
+      }
+    }
+    this.caseDuplicateRejections = 0;
+    const degraded = await repair(error, "degrade").catch(() => null);
+    return degraded?.changed === true;
   }
 
   private report(error: unknown): void {

@@ -1,8 +1,14 @@
 import type {
   Directory,
+  WorkspaceFileDocument,
   WorkspaceLayoutDocument,
   WorkspacePaneContentRef,
 } from "../../lib/tauri";
+import {
+  documentIdentityKey,
+  UNKNOWN_PATH_SEMANTICS,
+  type PathSemantics,
+} from "../../lib/pathKey";
 import {
   listWorkspacePanes,
   listWorkspacePaneContents,
@@ -106,21 +112,27 @@ export function restorePresetPlan(args: {
   currentDocuments: HostSnapshot["documents"];
   detachedNow: WorkspacePaneContentRef[];
   detachingNow: WorkspacePaneContentRef[];
+  /** Path semantics per project; omitted means `unknown` (exact paths only). */
+  semanticsOf?: (directoryId: number) => PathSemantics;
+  /** Current documents that keep their own identity (unsaved edits, another window's). */
+  protectedDocumentIds?: ReadonlySet<string>;
 }) {
+  const semanticsOf = args.semanticsOf ?? (() => UNKNOWN_PATH_SEMANTICS);
+  const identityOf = (document: WorkspaceFileDocument) =>
+    documentIdentityKey(
+      document.directoryId,
+      document.relativePath,
+      semanticsOf(document.directoryId),
+    );
   const { restored } = args;
   const restoredSlots = restored.slots;
   const restoredDocuments = [...(restored.documents ?? [])];
   const currentDocumentByIdentity = new Map(
-    args.currentDocuments.map((document) => [
-      `${document.directoryId}:${document.relativePath}`,
-      document,
-    ]),
+    args.currentDocuments.map((document) => [identityOf(document), document]),
   );
   const documentIdMap = new Map<string, string>();
   const normalizedDocuments = restoredDocuments.map((document) => {
-    const currentDocument = currentDocumentByIdentity.get(
-      `${document.directoryId}:${document.relativePath}`,
-    );
+    const currentDocument = currentDocumentByIdentity.get(identityOf(document));
     if (!currentDocument) return document;
     documentIdMap.set(document.id, currentDocument.id);
     return currentDocument;
@@ -135,6 +147,8 @@ export function restorePresetPlan(args: {
     detachedContents: restored.detachedContents,
     currentlyDetachedContents: args.detachedNow,
     detachingContents: args.detachingNow,
+    semanticsOf,
+    protectedDocumentIds: args.protectedDocumentIds,
   });
   restoredTree = restoredFiles.tree;
   return {

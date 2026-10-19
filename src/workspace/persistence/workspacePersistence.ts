@@ -43,6 +43,9 @@ import {
 } from "../../lib/ptyWorkspaceLayout";
 
 import { formatAppError } from "../../lib/appErrors";
+import { UNKNOWN_PATH_SEMANTICS, type PathSemantics } from "../../lib/pathKey";
+import { fileDocumentIdsOf } from "../../lib/caseVariantMerge";
+import { hasUnsavedWorkspaceFileEdits } from "../../lib/workspaceFileBuffer";
 import { droppedFileDocumentIds } from "../../lib/workspaceFileDocumentRelease";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import type {
@@ -91,6 +94,21 @@ export interface WorkspacePersistenceDeps {
   invalidateDocuments: (documentIds: Iterable<string>) => void;
   /** Releases file documents that are no longer part of the layout (host adapter release). */
   releaseDocuments: (documentIds: readonly string[]) => void;
+  /** The probed path semantics per project (PD-10); omitted means `unknown`. */
+  getPathSemantics?: (directoryId: number) => PathSemantics;
+  /** A hydration begins: forget what was known about the old layout's projects. */
+  onHydrateStart?: () => void;
+  /** The hydrated layout is published; `epoch` is the hydration it belongs to. */
+  afterHydrated?: (epoch: number) => void;
+  /**
+   * The backend refused the layout because of case duplicates (`documentIds`). `merge` merges
+   * the variants, `degrade` drops the later ones; resolves to whether the host state changed.
+   */
+  repairCaseDuplicates?: (
+    documentIds: readonly string[],
+    mode: "merge" | "degrade",
+    error: unknown,
+  ) => Promise<boolean>;
   ports?: Partial<WorkspacePersistencePorts>;
 }
 
@@ -158,6 +176,13 @@ export function latestPersistenceDeps(
     runtimeSteps: (reason, next) => current().runtimeSteps(reason, next),
     invalidateDocuments: (ids) => current().invalidateDocuments(ids),
     releaseDocuments: (ids) => current().releaseDocuments(ids),
+    getPathSemantics: (directoryId) =>
+      current().getPathSemantics?.(directoryId) ?? UNKNOWN_PATH_SEMANTICS,
+    onHydrateStart: () => current().onHydrateStart?.(),
+    afterHydrated: (epoch) => current().afterHydrated?.(epoch),
+    repairCaseDuplicates: (documentIds, mode, error) =>
+      current().repairCaseDuplicates?.(documentIds, mode, error) ??
+      Promise.resolve(false),
     get ports() {
       return ref.current?.ports;
     },
@@ -197,41 +222,83 @@ export function createWorkspacePersistence(
   const patchHost = (patch: Partial<HostSnapshot>, reason: string) =>
     store.commit((live) => ({ ...live, ...patch }), reason);
 
+  // While the host repairs case duplicates the repair itself must not trigger a save: the queue
+  // either retries its own repaired layout or (after a degrade) waits for the next regular save.
+  let persistSuppressed = 0;
+
   const createSaveQueue = (revision: number) =>
     new WorkspaceLayoutSaveQueue(
       revision,
       ports.saveWorkspaceLayout,
       (reason) => setLayoutSaveError(formatAppError(reason, deps.translate)),
       () => setLayoutSaveError(null),
+      {
+        repairCaseDuplicate: async (error, mode) => {
+          const params =
+            typeof error === "object" && error !== null && "params" in error
+              ? (error as { params?: { documentIds?: unknown } }).params
+              : undefined;
+          const documentIds = Array.isArray(params?.documentIds)
+            ? params.documentIds.filter(
+                (id): id is string => typeof id === "string",
+              )
+            : [];
+          persistSuppressed += 1;
+          try {
+            const changed = await (deps.repairCaseDuplicates?.(
+              documentIds,
+              mode,
+              error,
+            ) ?? Promise.resolve(false));
+            // Let the microtask the repair's own commit queued run while still suppressed.
+            await Promise.resolve();
+            if (!changed) return { changed: false, document: null };
+            if (mode === "degrade") return { changed: true, document: null };
+            try {
+              return { changed: true, document: buildLayoutDocument() };
+            } catch {
+              return { changed: false, document: null };
+            }
+          } finally {
+            persistSuppressed -= 1;
+          }
+        },
+      },
     );
+
+  /** The layout document of the live host state; throws when the state is not a valid layout. */
+  const buildLayoutDocument = (
+    treeOverride?: WorkspaceNode,
+  ): WorkspaceLayoutDocument => {
+    const snapshotTree = treeOverride ?? store.getLive().tree;
+    const persistedSlots: WorkspaceLayoutSlot[] = store
+      .getLive()
+      .slots.map((slot) =>
+        toWorkspaceLayoutSlot(slot, deps.getDirectories() ?? []),
+      );
+    return createWorkspaceLayoutDocument({
+      tree: snapshotTree,
+      focusedPaneId: store.getLive().focusedPaneId,
+      slots: persistedSlots,
+      documents: store.getLive().documents,
+      detachedContents: listPersistedDetachedContents(
+        deps.getCoordinator().listWindowOwned(),
+        snapshotTree,
+      ),
+    });
+  };
 
   const schedulePersist = (treeOverride?: WorkspaceNode) => {
     if (store.getLive().hydrationStatus !== "ready") return;
     if (restoreLatch.active) return;
+    if (persistSuppressed > 0) return;
     const queue = saveQueueRef.current;
     if (!queue) return;
 
-    const snapshotTree = treeOverride ?? store.getLive().tree;
     // 快照构造不得把异常抛进 effect：根边界只能兜底成重载提示（丢失未保存缓冲），
     // 所以这里降级为一次可自愈的保存错误，下一次状态变化会重新保存。
     try {
-      const persistedSlots: WorkspaceLayoutSlot[] = store
-        .getLive()
-        .slots.map((slot) =>
-          toWorkspaceLayoutSlot(slot, deps.getDirectories() ?? []),
-        );
-      queue.enqueue(
-        createWorkspaceLayoutDocument({
-          tree: snapshotTree,
-          focusedPaneId: store.getLive().focusedPaneId,
-          slots: persistedSlots,
-          documents: store.getLive().documents,
-          detachedContents: listPersistedDetachedContents(
-            deps.getCoordinator().listWindowOwned(),
-            snapshotTree,
-          ),
-        }),
-      );
+      queue.enqueue(buildLayoutDocument(treeOverride));
     } catch (reason) {
       setLayoutSaveError(formatAppError(reason, deps.translate));
       console.error("[workspace.layout_snapshot_invalid]", reason);
@@ -240,6 +307,8 @@ export function createWorkspacePersistence(
 
   const hydrate = async () => {
     const requestId = ++hydrationRequestRef.current;
+    // Path semantics belong to the layout being replaced.
+    deps.onHydrateStart?.();
     patchHost({ hydrationStatus: "loading" }, "hydrate:loading");
     setHydrationError(null);
     setLayoutResetError(null);
@@ -287,6 +356,13 @@ export function createWorkspacePersistence(
       saveQueueRef.current = createSaveQueue(revision);
       setLayoutSaveError(null);
       patchHost({ ...restoredPatch, hydrationStatus: "ready" }, "hydrated");
+      // An explicit step after the layout is published, never an effect dependency (R-FE-1).
+      try {
+        deps.afterHydrated?.(requestId);
+      } catch (reason) {
+        // The layout is already published; a failed follow-up must not undo that.
+        console.error("[workspace.after_hydrated_failed]", reason);
+      }
     } catch (reason) {
       if (requestId !== hydrationRequestRef.current) return;
       if (reason instanceof UnsupportedWorkspaceLayoutVersionError) {
@@ -376,6 +452,16 @@ export function createWorkspacePersistence(
       currentDocuments,
       detachedNow: deps.getCoordinator().listInPhases("detached"),
       detachingNow: deps.getCoordinator().listInPhases("detaching"),
+      semanticsOf: (directoryId) =>
+        deps.getPathSemantics?.(directoryId) ?? UNKNOWN_PATH_SEMANTICS,
+      protectedDocumentIds: new Set([
+        ...currentDocuments
+          .filter((document) =>
+            hasUnsavedWorkspaceFileEdits(store.getLive().buffers[document.id]),
+          )
+          .map((document) => document.id),
+        ...fileDocumentIdsOf(protectedContents),
+      ]),
     });
 
     // 必须在上面的状态一致性检查之后登记，否则检查失败时 coordinator 已被污染。

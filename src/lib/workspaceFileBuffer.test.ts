@@ -6,12 +6,14 @@ import {
   createWorkspaceFileBuffer,
   editWorkspaceFileBuffer,
   failWorkspaceFileSave,
+  hasUnsavedWorkspaceFileEdits,
   isWorkspaceFileBufferNewer,
   markWorkspaceFileSaveConflict,
   markWorkspaceFileIdentityChanged,
   resolveWorkspaceFileSaveCommitDisposition,
   workspaceFileDocumentIdentityMatches,
   WorkspaceFileOperationFlights,
+  type WorkspaceFileBuffer,
 } from "./workspaceFileBuffer";
 
 const textBuffer = (content = "original", revision = "revision") =>
@@ -262,5 +264,31 @@ describe("workspace file open results", () => {
     expect(buffer.kind).toBe("unsupported");
     expect(buffer.content).toBe(buffer.savedContent);
     expect(buffer.unsupportedReason).toBe("binary");
+  });
+});
+
+describe("hasUnsavedWorkspaceFileEdits", () => {
+  const text = (content: string, savedContent: string, saving = false) =>
+    ({
+      kind: "text",
+      epoch: 0,
+      version: 0,
+      content,
+      savedContent,
+      revision: "r1",
+      saving,
+    }) as WorkspaceFileBuffer;
+
+  it("is true for edited or still-saving text and false otherwise", () => {
+    expect(hasUnsavedWorkspaceFileEdits(text("a", "b"))).toBe(true);
+    expect(hasUnsavedWorkspaceFileEdits(text("a", "a", true))).toBe(true);
+    expect(hasUnsavedWorkspaceFileEdits(text("a", "a"))).toBe(false);
+    expect(hasUnsavedWorkspaceFileEdits(undefined)).toBe(false);
+    expect(
+      hasUnsavedWorkspaceFileEdits({
+        ...text("a", "b"),
+        kind: "image",
+      } as WorkspaceFileBuffer),
+    ).toBe(false);
   });
 });
