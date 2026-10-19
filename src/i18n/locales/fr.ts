@@ -8,6 +8,11 @@ export const fr = {
   errors: {
     fileNotFound: "Fichier introuvable.",
     fileTooLarge: "Le fichier dépasse la taille autorisée.",
+    filePermissionDenied: "Accès au fichier refusé.",
+    backupIndexRefreshDiscarded:
+      "Une sauvegarde a été restaurée ; l'actualisation de l'index des sessions commencée avant a été abandonnée.",
+    projectIdentityUnreadable:
+      "Impossible de lire l'identité du dossier du projet.",
     fileConflict:
       "Le fichier sur le disque a changé. Rechargez-le avant de l’enregistrer.",
     fileIdentityChanged:

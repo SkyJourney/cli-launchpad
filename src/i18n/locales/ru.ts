@@ -8,6 +8,11 @@ export const ru = {
   errors: {
     fileNotFound: "Файл не найден.",
     fileTooLarge: "Размер файла превышает допустимый.",
+    filePermissionDenied: "Нет доступа к этому файлу.",
+    backupIndexRefreshDiscarded:
+      "Резервная копия восстановлена, поэтому обновление индекса сессий, начатое раньше, отброшено.",
+    projectIdentityUnreadable:
+      "Не удалось прочитать идентификатор каталога проекта.",
     fileConflict:
       "Файл на диске изменился. Перезагрузите его перед сохранением.",
     fileIdentityChanged:

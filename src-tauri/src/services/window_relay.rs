@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error_codes::{WINDOW_MESSAGE_TOO_LARGE, WINDOW_NOT_ALLOWED};
+use crate::error_codes::ErrorCode;
 use crate::events::WINDOW_MESSAGE;
 use crate::models::window_kind::{CallerWindow, WindowKind, WindowLabel};
 use crate::services::window_inbox::{DeliverOutcome, InboxSource, WindowInboxRegistry};
@@ -90,12 +90,12 @@ fn relay_within(
     max_envelope_bytes: usize,
 ) -> Result<SendWindowMessageResult, AppError> {
     let rule = rule_for(message_type)
-        .ok_or_else(|| AppError::coded(WINDOW_NOT_ALLOWED, "未登记的窗口消息类型"))?;
+        .ok_or_else(|| AppError::coded(ErrorCode::WindowNotAllowed, "未登记的窗口消息类型"))?;
     caller.require(&rule.from)?;
     let target = WindowLabel::parse(target)?;
     if !rule.to.contains(&target.kind()) {
         return Err(AppError::coded(
-            WINDOW_NOT_ALLOWED,
+            ErrorCode::WindowNotAllowed,
             "目标窗口类别不允许接收该消息",
         ));
     }
@@ -104,7 +104,10 @@ fn relay_within(
             && object.get("apiVersion").and_then(Value::as_u64) == Some(rule.payload_version)
     });
     if !envelope_matches {
-        return Err(AppError::coded(WINDOW_NOT_ALLOWED, "消息信封不合法"));
+        return Err(AppError::coded(
+            ErrorCode::WindowNotAllowed,
+            "消息信封不合法",
+        ));
     }
     // Checked after the cheap rejections above; an envelope that cannot be measured is refused.
     let size = serde_json::to_vec(&envelope).map_or(usize::MAX, |bytes| bytes.len());
@@ -114,7 +117,7 @@ fn relay_within(
             target.as_str()
         );
         return Err(AppError::coded(
-            WINDOW_MESSAGE_TOO_LARGE,
+            ErrorCode::WindowMessageTooLarge,
             "窗口消息超过大小上限",
         ));
     }

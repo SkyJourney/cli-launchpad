@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::{
     io::Write,
     sync::mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -14,18 +15,18 @@ pub(super) const MAX_PTY_INPUT_BYTES: usize = 64 * 1024;
 pub(super) fn enqueue_pty_input(sender: &SyncSender<Vec<u8>>, data: &[u8]) -> Result<(), AppError> {
     if data.len() > MAX_PTY_INPUT_BYTES {
         return Err(AppError::coded(
-            crate::error_codes::PTY_INPUT_BACKPRESSURE,
+            ErrorCode::PtyInputBackpressure,
             "终端输入片段超过安全上限，请分段粘贴",
         ));
     }
     match sender.try_send(data.to_vec()) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => Err(AppError::coded(
-            crate::error_codes::PTY_INPUT_BACKPRESSURE,
+            ErrorCode::PtyInputBackpressure,
             "终端输入队列已满，请稍后重试",
         )),
         Err(TrySendError::Disconnected(_)) => Err(AppError::coded(
-            crate::error_codes::PTY_INPUT_UNAVAILABLE,
+            ErrorCode::PtyInputUnavailable,
             "终端输入通道已关闭，请重新连接会话",
         )),
     }

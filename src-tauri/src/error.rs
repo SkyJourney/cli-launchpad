@@ -1,6 +1,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::error_codes::ErrorCode;
+
 /// Structured error returned across the Tauri IPC boundary. `message` remains
 /// available as a compatibility fallback while clients migrate to `code`.
 #[derive(Debug, Serialize)]
@@ -12,32 +14,35 @@ pub struct AppError {
 }
 
 impl AppError {
+    /// Legacy constructor for sites not yet converted (077c removes it).
     pub fn msg(message: impl Into<String>) -> Self {
+        Self::coded(ErrorCode::AppError, message)
+    }
+
+    /// An unexpected failure: the front end shows generic text and the detail stays in logs.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::coded(ErrorCode::AppInternal, message)
+    }
+
+    pub fn coded(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            code: crate::error_codes::APP_ERROR.to_string(),
+            code: code.as_str().to_string(),
             params: None,
         }
     }
 
-    pub fn coded(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn coded_with_params(code: ErrorCode, message: impl Into<String>, params: Value) -> Self {
         Self {
             message: message.into(),
-            code: code.into(),
-            params: None,
-        }
-    }
-
-    pub fn coded_with_params(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        params: Value,
-    ) -> Self {
-        Self {
-            message: message.into(),
-            code: code.into(),
+            code: code.as_str().to_string(),
             params: Some(params),
         }
+    }
+
+    /// The wire form of the code, for tests and logs.
+    pub fn code(&self) -> &str {
+        &self.code
     }
 }
 
@@ -49,19 +54,31 @@ impl std::fmt::Display for AppError {
 
 impl From<rusqlite::Error> for AppError {
     fn from(error: rusqlite::Error) -> Self {
-        AppError::msg(error.to_string())
+        AppError::internal(error.to_string())
     }
 }
 
 impl From<anyhow::Error> for AppError {
+    /// A chain that already carries an `AppError` keeps its code; anything else is internal.
     fn from(error: anyhow::Error) -> Self {
-        AppError::msg(error.to_string())
+        match error.downcast::<AppError>() {
+            Ok(app) => app,
+            Err(other) => AppError::internal(other.to_string()),
+        }
     }
 }
 
 impl From<std::io::Error> for AppError {
     fn from(error: std::io::Error) -> Self {
-        AppError::msg(error.to_string())
+        let message = error.to_string();
+        match error.kind() {
+            std::io::ErrorKind::NotFound => AppError::coded(ErrorCode::FileNotFound, message),
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::coded(ErrorCode::FilePermissionDenied, message)
+            }
+            std::io::ErrorKind::TimedOut => AppError::coded(ErrorCode::BlockingTimeout, message),
+            _ => AppError::internal(message),
+        }
     }
 }
 
@@ -72,12 +89,77 @@ mod tests {
     #[test]
     fn coded_errors_serialize_machine_readable_codes() {
         let value = serde_json::to_value(AppError::coded(
-            "project_identity_changed",
+            ErrorCode::ProjectIdentityChanged,
             "项目目录身份已变化",
         ))
         .unwrap();
-        assert_eq!(value["code"], "project_identity_changed");
+        assert_eq!(value["code"], "project.identity_changed");
         assert_eq!(value["message"], "项目目录身份已变化");
+    }
+
+    #[test]
+    fn coded_errors_serialize_the_enum_code_string() {
+        let identity = serde_json::to_value(AppError::coded(
+            ErrorCode::ProjectIdentityChanged,
+            "项目目录身份已变化",
+        ))
+        .unwrap();
+        assert_eq!(identity["code"], "project.identity_changed");
+        assert_eq!(identity["message"], "项目目录身份已变化");
+
+        let large = serde_json::to_value(AppError::coded_with_params(
+            ErrorCode::FileTooLarge,
+            "文件超限",
+            serde_json::json!({ "maxBytes": 1024 }),
+        ))
+        .unwrap();
+        assert_eq!(large["code"], "file.too_large");
+        assert_eq!(large["params"]["maxBytes"], 1024);
+        // Reverse: the pre-enum underscore spelling never reaches the wire.
+        assert_ne!(identity["code"], "project_identity_changed");
+    }
+
+    #[test]
+    fn internal_errors_serialize_as_app_internal() {
+        let value = serde_json::to_value(AppError::internal("错误")).unwrap();
+        assert_eq!(value["code"], "app.internal");
+        assert_eq!(value["message"], "错误");
+        assert!(value.get("params").is_none());
+        // Reverse: the generic code is not the legacy app.error fallback.
+        assert_ne!(value["code"], "app.error");
+    }
+
+    #[test]
+    fn anyhow_errors_without_a_code_become_app_internal() {
+        let plain = AppError::from(anyhow::anyhow!("普通错误"));
+        assert_eq!(plain.code(), "app.internal");
+        assert!(plain.to_string().contains("普通错误"));
+
+        // Reverse: an io kind inside an anyhow chain is not mapped by kind (the chain is opaque).
+        let chained = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound))
+            .context("读取失败");
+        assert_eq!(AppError::from(chained).code(), "app.internal");
+    }
+
+    #[test]
+    fn io_errors_map_by_kind() {
+        use std::io::{Error, ErrorKind};
+        let cases = [
+            (ErrorKind::NotFound, "file.not_found"),
+            (ErrorKind::PermissionDenied, "file.permission_denied"),
+            (ErrorKind::TimedOut, "blocking.timeout"),
+            (ErrorKind::InvalidData, "app.internal"),
+        ];
+        for (kind, expected) in cases {
+            let error = Error::from(kind);
+            let message = error.to_string();
+            let app = AppError::from(error);
+            assert_eq!(app.code(), expected, "{kind:?}");
+            assert_eq!(app.to_string(), message, "{kind:?}");
+        }
+        // Reverse: a missing file is never reported as the generic internal error.
+        let missing = AppError::from(Error::from(ErrorKind::NotFound));
+        assert_ne!(missing.code(), "app.internal");
     }
 
     #[test]
@@ -91,7 +173,7 @@ mod tests {
     #[test]
     fn coded_errors_can_serialize_localization_parameters() {
         let value = serde_json::to_value(AppError::coded_with_params(
-            "file.too_large",
+            ErrorCode::FileTooLarge,
             "文件超过限制",
             serde_json::json!({ "maxBytes": 1024 }),
         ))

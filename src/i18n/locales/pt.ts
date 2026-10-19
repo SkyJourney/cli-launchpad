@@ -8,6 +8,11 @@ export const pt = {
   errors: {
     fileNotFound: "O arquivo não foi encontrado.",
     fileTooLarge: "O arquivo excede o tamanho permitido.",
+    filePermissionDenied: "Permissão negada para este arquivo.",
+    backupIndexRefreshDiscarded:
+      "Um backup foi restaurado, então a atualização do índice de sessões iniciada antes foi descartada.",
+    projectIdentityUnreadable:
+      "Não foi possível ler a identidade do diretório do projeto.",
     fileConflict:
       "O arquivo no disco foi alterado. Recarregue-o antes de salvar.",
     fileIdentityChanged:

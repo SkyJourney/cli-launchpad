@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::{
     collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
@@ -198,7 +199,7 @@ pub fn save_current(
         let mut document_ids = duplicates.concat();
         document_ids.sort();
         return Err(AppError::coded_with_params(
-            crate::error_codes::LAYOUT_CASE_DUPLICATE,
+            ErrorCode::LayoutCaseDuplicate,
             "布局中存在仅大小写不同的重复文件",
             serde_json::json!({ "documentIds": document_ids }),
         ));

@@ -2,6 +2,9 @@
   "errors": {
     "fileNotFound": "No se encontró el archivo.",
     "fileTooLarge": "El archivo supera el tamaño permitido.",
+    "filePermissionDenied": "Permiso denegado para este archivo.",
+    "backupIndexRefreshDiscarded": "Se restauró una copia de seguridad, así que se descartó la actualización del índice de sesiones iniciada antes.",
+    "projectIdentityUnreadable": "No se pudo leer la identidad del directorio del proyecto.",
     "fileConflict": "El archivo del disco cambió. Vuelve a cargarlo antes de guardar.",
     "fileIdentityChanged": "La identidad de la carpeta del proyecto cambió. Vuelve a cargar el documento o guárdalo en otra ubicación.",
     "ptyOwnerMismatch": "Esta sesión de terminal ya no pertenece a esta ventana.",

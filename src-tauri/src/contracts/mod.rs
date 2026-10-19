@@ -2318,7 +2318,7 @@ fn error_code_contract_matches_rust_registry() {
     codes.sort();
     let mut registry: Vec<String> = crate::error_codes::ALL
         .iter()
-        .map(|code| code.to_string())
+        .map(|code| code.as_str().to_string())
         .collect();
     registry.sort();
     assert_eq!(
@@ -2397,27 +2397,108 @@ fn app_errors_use_registered_code_constants() {
     }
 }
 
+/// `pty.handoff_expired` → `PtyHandoffExpired`: the variant name the registry generates.
+fn variant_name_of(code: &str) -> String {
+    code.split(['.', '_'])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// Whether a non-test source outside the registry names `ErrorCode::<variant>` as a whole word.
+fn has_producer_outside_registry(variant: &str, sources: &[(String, String)]) -> bool {
+    let needle = format!("ErrorCode::{variant}");
+    sources
+        .iter()
+        .filter(|(path, _)| path != "error_codes.rs")
+        .any(|(_, text)| {
+            text.match_indices(&needle).any(|(index, _)| {
+                !text[index + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        })
+}
+
+/// Whether a production line builds an error without a code: `AppError::msg(`, or a literal code.
+fn raw_error_construction(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for needle in [
+        "AppError::msg(",
+        "AppError::coded(",
+        "AppError::coded_with_params(",
+    ] {
+        for (index, _) in text.match_indices(needle) {
+            let after = text[index + needle.len()..].trim_start();
+            if needle == "AppError::msg(" || after.starts_with('"') {
+                found.push(needle.to_string());
+            }
+        }
+    }
+    found
+}
+
 #[test]
-fn every_registered_code_constant_is_used_outside_the_registry() {
-    let registry = production_text(include_str!("../error_codes.rs"));
-    let names: Vec<String> = registry
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("pub const "))
-        .filter_map(|rest| rest.split(':').next())
-        .map(|name| name.trim().to_string())
-        .collect();
-    assert_eq!(names.len(), crate::error_codes::ALL.len());
+#[ignore = "待修复 077c：AppError::msg 在 077c 收口时删除"]
+fn error_codes_are_never_raw_strings() {
     let sources = production_rust_sources();
-    for name in names {
-        let used = sources
-            .iter()
-            .filter(|(path, _)| path != "error_codes.rs")
-            .any(|(_, text)| text.contains(&name));
+    for (path, text) in &sources {
         assert!(
-            used,
-            "{name} is registered but never used outside error_codes.rs"
+            raw_error_construction(text).is_empty(),
+            "{path} builds an error without a registered code"
         );
     }
+    // Reverse self-check: the scanner reports the two forms it is meant to catch.
+    assert_eq!(raw_error_construction("AppError::msg(\"m\")").len(), 1);
+    assert_eq!(
+        raw_error_construction("AppError::coded(\"pty_x\", \"m\")").len(),
+        1
+    );
+}
+
+/// Codes registered before their producer lands. Each entry names the unit that adds the producer;
+/// the test fails once a producer exists, so the entry is removed in that unit.
+const PRODUCER_PENDING: &[(&str, &str)] = &[("FileTooLarge", "077b（FileError::TooLarge）")];
+
+#[test]
+fn every_error_code_has_a_producer_outside_the_registry() {
+    let sources = production_rust_sources();
+    let variants: Vec<String> = crate::error_codes::ALL
+        .iter()
+        .map(|code| variant_name_of(code.as_str()))
+        .collect();
+    // A stale exemption (misspelled or removed variant) must not pass silently.
+    for (name, _) in PRODUCER_PENDING {
+        assert!(
+            variants.iter().any(|variant| variant == name),
+            "PRODUCER_PENDING names {name}, which is not a registered variant"
+        );
+    }
+    for code in crate::error_codes::ALL {
+        let variant = variant_name_of(code.as_str());
+        let pending = PRODUCER_PENDING.iter().any(|(name, _)| *name == variant);
+        let produced = has_producer_outside_registry(&variant, &sources);
+        if pending {
+            assert!(
+                !produced,
+                "{variant} now has a producer: remove it from PRODUCER_PENDING"
+            );
+        } else {
+            assert!(
+                produced,
+                "{} ({variant}) is registered but nothing outside error_codes.rs produces it",
+                code.as_str()
+            );
+        }
+    }
+    // Reverse self-check: a variant nothing produces is reported as unproduced.
+    assert!(!has_producer_outside_registry("NoSuchVariant", &sources));
 }
 
 #[test]

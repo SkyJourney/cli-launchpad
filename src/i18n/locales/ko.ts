@@ -8,6 +8,11 @@ export const ko = {
   errors: {
     fileNotFound: "파일을 찾을 수 없습니다.",
     fileTooLarge: "파일 크기가 허용된 한도를 초과했습니다.",
+    filePermissionDenied: "이 파일에 접근할 권한이 없습니다.",
+    backupIndexRefreshDiscarded:
+      "백업이 복원되어, 복원 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
+    projectIdentityUnreadable:
+      "프로젝트 디렉터리의 신원 정보를 읽을 수 없습니다.",
     fileConflict:
       "디스크의 파일이 변경되었습니다. 저장하기 전에 다시 불러오세요.",
     fileIdentityChanged:

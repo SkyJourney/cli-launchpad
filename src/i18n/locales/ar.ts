@@ -8,6 +8,10 @@ export const ar = {
   errors: {
     fileNotFound: "تعذر العثور على الملف.",
     fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
+    filePermissionDenied: "ليست لديك صلاحية الوصول إلى هذا الملف.",
+    backupIndexRefreshDiscarded:
+      "تمت استعادة نسخة احتياطية، لذا تم تجاهل تحديث فهرس الجلسات الذي بدأ قبلها.",
+    projectIdentityUnreadable: "تعذّرت قراءة هوية مجلد المشروع.",
     fileConflict: "تغير الملف على القرص. أعد تحميله قبل الحفظ.",
     fileIdentityChanged:
       "تغيرت هوية مجلد المشروع. أعد تحميل المستند أو احفظه في موقع آخر.",

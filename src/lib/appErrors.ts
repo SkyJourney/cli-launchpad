@@ -33,6 +33,11 @@ const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "layout.save_rejected": "errors.layoutSaveRejected",
   "layout.schema_incompatible": "errors.layoutSchemaIncompatible",
   "file.too_large": "errors.fileTooLarge",
+  "app.internal": "errors.generic",
+  "backup.index_refresh_discarded": "errors.backupIndexRefreshDiscarded",
+  "file.not_found": "errors.fileNotFound",
+  "file.permission_denied": "errors.filePermissionDenied",
+  "project.identity_unreadable": "errors.projectIdentityUnreadable",
 };
 
 const ALIASES: Readonly<Record<string, string>> = errorCodes.aliases;

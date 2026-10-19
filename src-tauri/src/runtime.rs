@@ -15,7 +15,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 use serde_json::json;
 
-use crate::error_codes::{BLOCKING_TIMEOUT, DB_POISONED, INTERNAL_TASK_FAILED};
+use crate::error_codes::ErrorCode;
 use crate::AppError;
 
 /// Business and cache databases are distinct managed-state types so commands cannot accidentally
@@ -28,7 +28,7 @@ pub struct Db(Arc<Mutex<Connection>>);
 #[derive(Clone)]
 pub struct CacheDb(Arc<Mutex<Connection>>);
 
-// m6-033 moves these into the error code registry.
+// Failures from these helpers carry codes from `error_codes::ErrorCode`.
 
 async fn run_on_blocking_pool<T: Send + 'static>(
     op: &'static str,
@@ -38,7 +38,7 @@ async fn run_on_blocking_pool<T: Send + 'static>(
         .await
         .map_err(|error| {
             AppError::coded_with_params(
-                INTERNAL_TASK_FAILED,
+                ErrorCode::InternalTaskFailed,
                 format!("{op}: {error}"),
                 json!({ "op": op }),
             )
@@ -60,7 +60,11 @@ impl Db {
         f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
         let mut connection = self.0.lock().map_err(|_| {
-            AppError::coded_with_params(DB_POISONED, "数据库连接锁中毒", json!({ "op": op }))
+            AppError::coded_with_params(
+                ErrorCode::DbPoisoned,
+                "数据库连接锁中毒",
+                json!({ "op": op }),
+            )
         })?;
         f(&mut connection)
     }
@@ -86,7 +90,7 @@ impl Db {
         run_on_blocking_pool(op, move || {
             let mut connection =
                 db.0.lock()
-                    .map_err(|_| AppError::coded(DB_POISONED, "数据库连接锁中毒"))?;
+                    .map_err(|_| AppError::coded(ErrorCode::DbPoisoned, "数据库连接锁中毒"))?;
             f(&mut connection)
         })
         .await
@@ -106,7 +110,11 @@ impl CacheDb {
         f: impl FnOnce(&Connection) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
         let connection = self.0.lock().map_err(|_| {
-            AppError::coded_with_params(DB_POISONED, "缓存数据库连接锁中毒", json!({ "op": op }))
+            AppError::coded_with_params(
+                ErrorCode::DbPoisoned,
+                "缓存数据库连接锁中毒",
+                json!({ "op": op }),
+            )
         })?;
         f(&connection)
     }
@@ -128,7 +136,7 @@ impl CacheDb {
             let connection = cache
                 .0
                 .lock()
-                .map_err(|_| AppError::coded(DB_POISONED, "缓存数据库连接锁中毒"))?;
+                .map_err(|_| AppError::coded(ErrorCode::DbPoisoned, "缓存数据库连接锁中毒"))?;
             f(&connection)
         })
         .await
@@ -154,7 +162,7 @@ pub async fn blocking<T: Send + 'static>(
 fn blocking_timeout(op: &'static str, budget: Duration) -> AppError {
     let budget_ms = budget.as_millis() as u64;
     AppError::coded_with_params(
-        BLOCKING_TIMEOUT,
+        ErrorCode::BlockingTimeout,
         format!("{op} 超过 {budget_ms} ms 仍未完成"),
         json!({ "op": op, "budgetMs": budget_ms }),
     )
@@ -185,6 +193,7 @@ pub async fn blocking_unbounded<T: Send + 'static>(
 
 #[cfg(test)]
 mod tests {
+    use crate::error_codes::ErrorCode;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -247,11 +256,11 @@ mod tests {
         let db = memory_db();
         let error = db
             .call("test.failure", |_connection| -> Result<(), AppError> {
-                Err(AppError::coded("test.failure", "boom"))
+                Err(AppError::coded(ErrorCode::AppInternal, "boom"))
             })
             .await
             .unwrap_err();
-        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(code_of(&error), "app.internal");
         assert_eq!(message_of(&error), "boom");
     }
 
@@ -374,11 +383,11 @@ mod tests {
         let error = blocking(
             "test.failure",
             Duration::from_secs(5),
-            || -> Result<(), AppError> { Err(AppError::coded("test.failure", "boom")) },
+            || -> Result<(), AppError> { Err(AppError::coded(ErrorCode::AppInternal, "boom")) },
         )
         .await
         .unwrap_err();
-        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(code_of(&error), "app.internal");
         assert_eq!(message_of(&error), "boom");
     }
 
@@ -451,11 +460,11 @@ mod tests {
         assert_eq!(value, 7);
 
         let error = super::bounded("test.op", Duration::from_millis(500), async {
-            Err::<(), AppError>(AppError::coded("test.failure", "boom"))
+            Err::<(), AppError>(AppError::coded(ErrorCode::AppInternal, "boom"))
         })
         .await
         .unwrap_err();
-        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(code_of(&error), "app.internal");
         assert_eq!(message_of(&error), "boom");
     }
 
@@ -503,10 +512,10 @@ mod tests {
 
         let error = db
             .with_sync("test.fail", |_| -> Result<(), AppError> {
-                Err(AppError::coded("test.failure", "boom"))
+                Err(AppError::coded(ErrorCode::AppInternal, "boom"))
             })
             .unwrap_err();
-        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(code_of(&error), "app.internal");
     }
 
     #[test]
@@ -537,9 +546,9 @@ mod tests {
 
         let error = cache
             .with_sync("test.fail", |_| -> Result<(), AppError> {
-                Err(AppError::coded("test.failure", "boom"))
+                Err(AppError::coded(ErrorCode::AppInternal, "boom"))
             })
             .unwrap_err();
-        assert_eq!(code_of(&error), "test.failure");
+        assert_eq!(code_of(&error), "app.internal");
     }
 }

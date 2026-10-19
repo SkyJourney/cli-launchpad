@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::{
     collections::VecDeque,
     io::Read,
@@ -180,7 +181,7 @@ impl PtySessionManager {
         // spawn below still resolves its working directory by path (a narrow, inherent window).
         if ProjectPathKey::of(&payload.directory) != project.key {
             return Err(AppError::coded(
-                crate::error_codes::PROJECT_IDENTITY_CHANGED,
+                ErrorCode::ProjectIdentityChanged,
                 "项目目录在启动准备期间发生变化，请重试",
             ));
         }

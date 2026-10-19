@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -28,11 +29,15 @@ impl ProjectRef {
     /// windows (an open directory handle blocks rename/delete on Windows and pins the inode).
     pub fn verify_unchanged(&self) -> Result<(), AppError> {
         let root = ProjectDirectory::open(Path::new(&self.path)).map_err(AppError::from)?;
-        let now = ProjectRootIdentity::of(root.dir())
-            .map_err(|error| AppError::msg(format!("无法读取项目目录身份：{error}")))?;
+        let now = ProjectRootIdentity::of(root.dir()).map_err(|error| {
+            AppError::coded(
+                ErrorCode::ProjectIdentityUnreadable,
+                format!("无法读取项目目录身份：{error}"),
+            )
+        })?;
         if now != self.root {
             return Err(AppError::coded(
-                crate::error_codes::PROJECT_IDENTITY_CHANGED,
+                ErrorCode::ProjectIdentityChanged,
                 "项目目录在启动准备期间发生变化，请重试",
             ));
         }
@@ -57,7 +62,7 @@ impl ProjectDirectory {
     /// Database stage: reads the directory row only. No filesystem access.
     pub fn lookup(connection: &Connection, directory_id: i64) -> Result<Directory, AppError> {
         directory_repo::get(connection, directory_id)?
-            .ok_or_else(|| AppError::coded(crate::error_codes::PROJECT_NOT_FOUND, "项目目录不存在"))
+            .ok_or_else(|| AppError::coded(ErrorCode::ProjectNotFound, "项目目录不存在"))
     }
 
     /// Filesystem stage: compares the caller's path snapshot with the stored
@@ -65,7 +70,7 @@ impl ProjectDirectory {
     pub fn open_snapshot(directory_path: &str, expected_path: &str) -> Result<Self, AppError> {
         if ProjectPathKey::of(expected_path) != ProjectPathKey::of(directory_path) {
             return Err(AppError::coded(
-                crate::error_codes::PROJECT_IDENTITY_CHANGED,
+                ErrorCode::ProjectIdentityChanged,
                 "项目目录身份已变化，请重新选择项目后再访问文件",
             ));
         }
@@ -99,8 +104,12 @@ impl ProjectDirectory {
                     None => ProjectDirectory::open(Path::new(&directory.path))
                         .map_err(AppError::from)?,
                 };
-                let identity = ProjectRootIdentity::of(root.dir())
-                    .map_err(|error| AppError::msg(format!("无法读取项目目录身份：{error}")))?;
+                let identity = ProjectRootIdentity::of(root.dir()).map_err(|error| {
+                    AppError::coded(
+                        ErrorCode::ProjectIdentityUnreadable,
+                        format!("无法读取项目目录身份：{error}"),
+                    )
+                })?;
                 let project = ProjectRef {
                     id: directory.id,
                     key: ProjectPathKey::of(&directory.path),

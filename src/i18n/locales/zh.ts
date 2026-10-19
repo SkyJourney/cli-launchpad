@@ -2,6 +2,9 @@ export const zh = {
   errors: {
     fileNotFound: "找不到该文件。",
     fileTooLarge: "文件超过允许的大小。",
+    filePermissionDenied: "没有访问该文件的权限。",
+    backupIndexRefreshDiscarded: "已恢复备份，恢复前开始的会话索引刷新已丢弃。",
+    projectIdentityUnreadable: "无法读取项目目录身份。",
     fileConflict: "磁盘上的文件已更改，请重新载入后再保存。",
     fileIdentityChanged: "项目目录身份已变化，请重新载入文件或另存到其他位置。",
     ptyOwnerMismatch: "此终端会话已不属于当前窗口。",

@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::{flow::OutputFlow, ports::PtyEventSink};
 use crate::{
-    error_codes::WINDOW_NOT_ALLOWED,
+    error_codes::ErrorCode,
     models::{
         pty_session::{PtyEvent, PtyHandoff, PtyTerminalSnapshot},
         window_kind::{window_kind_of, WindowLabel},
@@ -90,7 +90,7 @@ pub(super) fn validate_handoff_target(
         Ok(())
     } else {
         Err(AppError::coded(
-            WINDOW_NOT_ALLOWED,
+            ErrorCode::WindowNotAllowed,
             "终端交接的目标窗口类别不允许",
         ))
     }
@@ -240,7 +240,7 @@ impl HandoffState {
         }
         if state_source == target {
             return Err(AppError::coded(
-                crate::error_codes::PTY_HANDOFF_TARGET_IS_SOURCE,
+                ErrorCode::PtyHandoffTargetIsSource,
                 "目标窗口与源窗口相同，无法交接终端",
             ));
         }
@@ -248,7 +248,7 @@ impl HandoffState {
         // that a target equal to the source keeps its own error code).
         if self.reserved_target() != Some(target) {
             return Err(AppError::coded(
-                WINDOW_NOT_ALLOWED,
+                ErrorCode::WindowNotAllowed,
                 "该窗口不是此次终端交接登记的目标窗口",
             ));
         }

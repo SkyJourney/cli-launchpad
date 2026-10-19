@@ -8,6 +8,11 @@ export const de = {
   errors: {
     fileNotFound: "Die Datei wurde nicht gefunden.",
     fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
+    filePermissionDenied: "Zugriff auf die Datei verweigert.",
+    backupIndexRefreshDiscarded:
+      "Ein Backup wurde wiederhergestellt; eine vorher gestartete Aktualisierung des Sitzungsindex wurde verworfen.",
+    projectIdentityUnreadable:
+      "Die Identität des Projektverzeichnisses konnte nicht gelesen werden.",
     fileConflict:
       "Die Datei auf dem Datenträger wurde geändert. Lade sie vor dem Speichern neu.",
     fileIdentityChanged:

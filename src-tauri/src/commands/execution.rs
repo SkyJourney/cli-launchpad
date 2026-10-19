@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use tauri::{AppHandle, State};
 
 use crate::db::execution_task_repo;
@@ -25,12 +26,8 @@ pub async fn start_execution_task(
         tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
             .await
             .map_err(|error| AppError::msg(error.to_string()))??;
-    install_service::verify_expected_fingerprint(&plan, &expected_fingerprint).map_err(|_| {
-        AppError::coded(
-            crate::error_codes::EXEC_PLAN_CHANGED,
-            "安装计划已变化，请重新确认",
-        )
-    })?;
+    install_service::verify_expected_fingerprint(&plan, &expected_fingerprint)
+        .map_err(|_| AppError::coded(ErrorCode::ExecPlanChanged, "安装计划已变化，请重新确认"))?;
     // Held across the start so the admission covers the whole registration.
     let _start_permit = lifecycle.admit(Operation::ExecStart)?;
     manager.start(db.inner(), &app, plan).await

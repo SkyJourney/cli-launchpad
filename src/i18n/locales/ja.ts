@@ -8,6 +8,11 @@ export const ja = {
   errors: {
     fileNotFound: "ファイルが見つかりません。",
     fileTooLarge: "ファイルサイズが上限を超えています。",
+    filePermissionDenied: "このファイルへのアクセス権がありません。",
+    backupIndexRefreshDiscarded:
+      "バックアップを復元したため、復元前に開始したセッションインデックスの更新は破棄されました。",
+    projectIdentityUnreadable:
+      "プロジェクトフォルダーの識別情報を読み取れませんでした。",
     fileConflict:
       "ディスク上のファイルが変更されています。保存する前に再読み込みしてください。",
     fileIdentityChanged:

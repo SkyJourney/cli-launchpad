@@ -145,12 +145,11 @@ impl AppExitGate {
 
 fn exit_confirm_error(error: ExitConfirmError) -> AppError {
     match error {
-        ExitConfirmError::NoPendingRequest => AppError::coded(
-            crate::error_codes::EXIT_NO_PENDING_REQUEST,
-            "没有待决的退出请求",
-        ),
+        ExitConfirmError::NoPendingRequest => {
+            AppError::coded(ErrorCode::ExitNoPendingRequest, "没有待决的退出请求")
+        }
         ExitConfirmError::RequestMismatch => AppError::coded(
-            crate::error_codes::EXIT_REQUEST_MISMATCH,
+            ErrorCode::ExitRequestMismatch,
             "退出请求与当前待决请求不一致",
         ),
     }
@@ -309,11 +308,7 @@ pub fn effective_close_behavior(stored: CloseBehavior, tray: &TrayAvailability) 
     }
 }
 
-use crate::error_codes::{
-    APP_DATA_REPLACE_BLOCKED, APP_DATA_REPLACE_IN_PROGRESS, APP_EXITING, APP_EXIT_DEFERRED,
-    BACKUP_RESTORE_IN_PROGRESS, CONFIG_IMPORT_IN_PROGRESS, PTY_SESSIONS_ACTIVE,
-    PTY_SESSION_STARTING,
-};
+use crate::error_codes::ErrorCode;
 use crate::AppError;
 
 // m6-033 moves these into the error code registry. The three legacy codes
@@ -521,28 +516,31 @@ impl AppLifecycle {
                 Ok(self.permit(PermitKind::ExitPending))
             }
             (Phase::Restoring, Operation::PtyStart) => Err(AppError::coded(
-                BACKUP_RESTORE_IN_PROGRESS,
+                ErrorCode::BackupRestoreInProgress,
                 "备份恢复正在进行，暂时不能启动终端会话",
             )),
             (Phase::Restoring, Operation::ExecStart) => Err(AppError::coded(
-                BACKUP_RESTORE_IN_PROGRESS,
+                ErrorCode::BackupRestoreInProgress,
                 "备份恢复正在进行，暂时不能启动安装或更新任务",
             )),
             (Phase::Importing, Operation::PtyStart | Operation::ExecStart) => Err(AppError::coded(
-                CONFIG_IMPORT_IN_PROGRESS,
+                ErrorCode::ConfigImportInProgress,
                 "配置导入正在进行，暂时不能启动终端会话或任务",
             )),
-            (Phase::Restoring | Phase::Importing, Operation::DataReplace(_)) => Err(
-                AppError::coded(APP_DATA_REPLACE_IN_PROGRESS, "另一个数据替换操作正在进行"),
-            ),
+            (Phase::Restoring | Phase::Importing, Operation::DataReplace(_)) => {
+                Err(AppError::coded(
+                    ErrorCode::AppDataReplaceInProgress,
+                    "另一个数据替换操作正在进行",
+                ))
+            }
             (Phase::Restoring | Phase::Importing, Operation::Exit) => Err(AppError::coded(
-                APP_EXIT_DEFERRED,
+                ErrorCode::AppExitDeferred,
                 "数据替换正在进行，暂缓退出",
             )),
             (
                 Phase::Exiting,
                 Operation::PtyStart | Operation::ExecStart | Operation::DataReplace(_),
-            ) => Err(AppError::coded(APP_EXITING, "应用正在退出")),
+            ) => Err(AppError::coded(ErrorCode::AppExiting, "应用正在退出")),
             (Phase::Exiting, Operation::Exit) => Ok(self.permit(PermitKind::ExitRepeated)),
         }
     }
@@ -568,14 +566,14 @@ impl AppLifecycle {
         };
         if inflight > 0 {
             return Err(AppError::coded_with_params(
-                PTY_SESSION_STARTING,
+                ErrorCode::PtySessionStarting,
                 format!("有 {inflight} 个终端会话或执行任务正在启动，请稍后重试{action}"),
                 params(inflight),
             ));
         }
         if activity.pty > 0 {
             return Err(AppError::coded_with_params(
-                PTY_SESSIONS_ACTIVE,
+                ErrorCode::PtySessionsActive,
                 format!(
                     "请先关闭所有运行中的终端会话（当前 {} 个）再{action}",
                     activity.pty
@@ -585,7 +583,7 @@ impl AppLifecycle {
         }
         if activity.exec > 0 {
             return Err(AppError::coded_with_params(
-                APP_DATA_REPLACE_BLOCKED,
+                ErrorCode::AppDataReplaceBlocked,
                 format!(
                     "有 {} 个安装或更新任务正在执行，请等待其结束后再{action}",
                     activity.exec

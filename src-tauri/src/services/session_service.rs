@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
@@ -98,9 +99,10 @@ impl IndexWriteOutcome {
     pub fn into_result(self) -> Result<SessionSearchIndexRefresh, AppError> {
         match self {
             IndexWriteOutcome::Written(refresh) => Ok(refresh),
-            IndexWriteOutcome::Discarded => {
-                Err(AppError::msg("备份已恢复，已丢弃恢复前开始的会话索引刷新"))
-            }
+            IndexWriteOutcome::Discarded => Err(AppError::coded(
+                ErrorCode::BackupIndexRefreshDiscarded,
+                "备份已恢复，已丢弃恢复前开始的会话索引刷新",
+            )),
         }
     }
 }
@@ -994,6 +996,7 @@ mod tests {
         assert_eq!(written.incomplete_tools, vec![ToolKey::Codex]);
 
         let error = IndexWriteOutcome::Discarded.into_result().unwrap_err();
+        assert_eq!(error.code(), "backup.index_refresh_discarded");
         let message = serde_json::to_value(&error).unwrap()["message"]
             .as_str()
             .unwrap()

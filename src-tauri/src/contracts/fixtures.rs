@@ -3,6 +3,7 @@
 //! Rust 侧生成 `contracts/fixtures/*.json`，前端测试只从该目录导入。样本不得使用随机值、
 //! 系统时间或 `Uuid::new_v4()`，否则 fixture 会逐次变化。
 
+use crate::error_codes::ErrorCode;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -904,13 +905,17 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         &mut cases,
         name,
         "withoutParams",
-        AppError::coded(crate::error_codes::PROJECT_NOT_FOUND, "file not found"),
+        AppError::coded(ErrorCode::ProjectNotFound, "file not found"),
     );
     sample_serialize_only(
         &mut cases,
         name,
         "withParams",
-        AppError::coded_with_params("file.too_large", "file too large", json!({"count": 1})),
+        AppError::coded_with_params(
+            ErrorCode::FileTooLarge,
+            "file too large",
+            json!({"count": 1}),
+        ),
     );
     all.push(DtoSamples {
         fixture_file: Some("app-error.json"),

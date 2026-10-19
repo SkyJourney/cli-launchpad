@@ -2,6 +2,11 @@ export const en = {
   errors: {
     fileNotFound: "The file could not be found.",
     fileTooLarge: "The file exceeds the allowed size.",
+    filePermissionDenied: "Permission denied for this file.",
+    backupIndexRefreshDiscarded:
+      "A backup was restored, so a session index refresh that started before it was discarded.",
+    projectIdentityUnreadable:
+      "The project directory identity could not be read.",
     fileConflict: "The file changed on disk. Reload it before saving.",
     fileIdentityChanged:
       "The project folder identity changed. Reload or save the document elsewhere.",
