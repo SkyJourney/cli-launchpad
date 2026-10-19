@@ -160,6 +160,7 @@ pub async fn reorder_directories(
 
 #[cfg(test)]
 mod tests {
+    use crate::models::pty_session::PtySessionState;
     use std::sync::{Arc, Mutex};
 
     use super::{contains_exactly, remove_directory_reconciled};
@@ -312,7 +313,7 @@ mod tests {
             .unwrap();
         }
         let manager = PtySessionManager::default();
-        manager.queue_failed_finish_for_test("stale", "exited", 5, Some(0));
+        manager.queue_failed_finish_for_test("stale", PtySessionState::Exited, 5, Some(0));
         let flush_manager = manager.clone();
         let flush_db = db.clone();
         let running_manager = manager.clone();

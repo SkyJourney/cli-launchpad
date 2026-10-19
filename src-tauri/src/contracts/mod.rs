@@ -4713,3 +4713,80 @@ fn dead_cache_prefixes_are_gone() {
     )])
     .is_empty());
 }
+
+#[test]
+fn layout_migration_lives_only_in_the_codec() {
+    const CODEC: &str = "models/workspace_layout_codec.rs";
+    const FUNCTIONS: [&str; 5] = [
+        "migrate_legacy_content_refs",
+        "migrate_detached_slot_ids",
+        "migrate_legacy_content_node",
+        "source_layout_version",
+        "is_supported_layout_version",
+    ];
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for name in FUNCTIONS {
+            let definition = format!("fn {name}(");
+            let mut in_codec = 0;
+            for (path, text) in sources {
+                let count = text.matches(&definition).count();
+                if path == CODEC {
+                    in_codec += count;
+                } else if count > 0 {
+                    found.push(format!("{path} defines {name}"));
+                }
+            }
+            if in_codec != 1 {
+                found.push(format!("{CODEC} defines {name} {in_codec} times"));
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    let found = violations(&sources);
+    assert!(
+        found.is_empty(),
+        "布局迁移与版本函数不在 codec 中：{found:?}"
+    );
+    // 反向自检：codec 之外的定义必须被报告。
+    let sample = vec![(
+        "services/x.rs".to_string(),
+        "fn migrate_detached_slot_ids(value: &mut serde_json::Value) {}".to_string(),
+    )];
+    assert!(violations(&sample)
+        .iter()
+        .any(|finding| finding.contains("services/x.rs")));
+}
+
+#[test]
+fn pty_state_strings_exist_only_in_the_model_and_migrations() {
+    const LITERALS: [&str; 4] = ["\"running\"", "\"exited\"", "\"terminated\"", "\"failed\""];
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (path, text) in sources {
+            let scanned = path.starts_with("services/pty_session_service")
+                || path == "services/workspace_layout_service.rs"
+                || path == "db/pty_session_repo.rs";
+            // tests.rs 是 `#[cfg(test)] mod tests;` 声明的测试文件，不属于生产代码。
+            if !scanned || path == "services/pty_session_service/tests.rs" {
+                continue;
+            }
+            for literal in LITERALS {
+                if text.contains(literal) {
+                    found.push(format!("{path} contains {literal}"));
+                }
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    let found = violations(&sources);
+    assert!(found.is_empty(), "PTY 状态字符串仍在生产代码中：{found:?}");
+    // 反向自检：违规样例必须被报告。
+    let sample = vec![(
+        "services/pty_session_service/session.rs".to_string(),
+        "state: \"running\".to_string(),".to_string(),
+    )];
+    assert_eq!(violations(&sample).len(), 1);
+}

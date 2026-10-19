@@ -206,6 +206,7 @@ async fn plan_apply_with(
 
 #[cfg(test)]
 mod tests {
+    use crate::models::pty_session::PtySessionState;
     use std::collections::HashSet;
 
     use super::{open_session_ids, plan_apply_with, read_layout_with};
@@ -289,7 +290,7 @@ mod tests {
             directory.id
         };
         let manager = PtySessionManager::default();
-        manager.queue_failed_finish_for_test("ended-row", "exited", 7, Some(0));
+        manager.queue_failed_finish_for_test("ended-row", PtySessionState::Exited, 7, Some(0));
         let open = manager.insert_test_session_in_directory("main", directory_id, None);
 
         let ids = open_session_ids(&manager, &db).await.unwrap();
@@ -299,7 +300,7 @@ mod tests {
         let row = pty_session_repo::get_by_id(&connection, "ended-row")
             .unwrap()
             .unwrap();
-        assert_eq!(row.state, "exited");
+        assert_eq!(row.state, PtySessionState::Exited);
         assert_eq!(row.ended_at_ms, Some(7));
     }
 

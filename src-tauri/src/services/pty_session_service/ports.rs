@@ -1,3 +1,4 @@
+use crate::models::pty_session::PtySessionState;
 use tauri::ipc::Channel;
 
 use crate::{
@@ -31,7 +32,7 @@ pub(crate) trait PtySessionStore: Send + Sync {
     fn finish(
         &self,
         session_id: &str,
-        state: &str,
+        state: PtySessionState,
         ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError>;
@@ -73,7 +74,7 @@ impl PtySessionStore for DbPtySessionStore {
     fn finish(
         &self,
         session_id: &str,
-        state: &str,
+        state: PtySessionState,
         ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError> {

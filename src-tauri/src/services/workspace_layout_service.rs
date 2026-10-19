@@ -19,6 +19,7 @@ use crate::models::workspace_layout::{
     WorkspacePaneContentRef, WorkspaceSlotState, WorkspaceSlotStateKind,
     MAX_WORKSPACE_LAYOUT_PRESETS, WORKSPACE_LAYOUT_SCHEMA_VERSION,
 };
+use crate::models::workspace_layout_codec::{is_supported_layout_version, source_layout_version};
 use crate::platform::case_sensitivity::{CaseSensitivity, PathSemantics};
 use crate::platform::path_identity::ProjectPathKey;
 use crate::platform::path_key::PathKey;
@@ -578,17 +579,6 @@ fn parse_preset_layout(
     Ok(layout)
 }
 
-fn is_supported_layout_version(version: i64) -> bool {
-    (1..=i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION)).contains(&version)
-}
-
-fn source_layout_version(payload_json: &str) -> Option<i64> {
-    serde_json::from_str::<serde_json::Value>(payload_json)
-        .ok()?
-        .get("schemaVersion")?
-        .as_i64()
-}
-
 /// Directory and session rows a set of slots refers to, loaded in one
 /// database stage so slot states can be resolved afterwards without the
 /// connection (the path identity comparison is lexical and needs no filesystem).
@@ -951,6 +941,7 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use crate::db::{connection, directory_repo, pty_session_repo};
+    use crate::models::pty_session::PtySessionState;
     use crate::models::tool::ToolKey;
     use crate::models::workspace_layout::{
         legacy_payload_json, WorkspaceLayoutSaveRejection, WorkspaceSlotTitle,
@@ -1757,7 +1748,14 @@ mod tests {
             1,
         )
         .unwrap();
-        pty_session_repo::finish(&connection, &session_id, "exited", 2, Some(0)).unwrap();
+        pty_session_repo::finish(
+            &connection,
+            &session_id,
+            PtySessionState::Exited,
+            2,
+            Some(0),
+        )
+        .unwrap();
 
         let mut preset_layout =
             layout_with_slot(directory.id, &directory.path, "work", Some(session_id));

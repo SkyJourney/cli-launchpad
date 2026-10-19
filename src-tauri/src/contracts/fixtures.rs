@@ -4,6 +4,7 @@
 //! 系统时间或 `Uuid::new_v4()`，否则 fixture 会逐次变化。
 
 use crate::error_codes::ErrorCode;
+use crate::models::pty_session::PtySessionState;
 use crate::models::workspace_layout::{LayoutResetCode, LayoutResetReason};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
@@ -475,7 +476,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         "exitedWithCode",
         PtyEvent::Exited {
             session_id: SESSION_ID.to_string(),
-            state: "exited".to_string(),
+            state: PtySessionState::Exited,
             exit_code: Some(0),
         },
     );
@@ -485,7 +486,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         "exitedWithoutCode",
         PtyEvent::Exited {
             session_id: SESSION_ID.to_string(),
-            state: "terminated".to_string(),
+            state: PtySessionState::Terminated,
             exit_code: None,
         },
     );
@@ -516,7 +517,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             directory_id: 42,
             tool_key: ToolKey::Claude,
             working_directory: PROJECT_PATH.to_string(),
-            state: "running".to_string(),
+            state: PtySessionState::Running,
             started_at_ms: TIMESTAMP_MS,
             ended_at_ms: None,
             exit_code: None,
@@ -531,7 +532,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             directory_id: 42,
             tool_key: ToolKey::Claude,
             working_directory: PROJECT_PATH.to_string(),
-            state: "exited".to_string(),
+            state: PtySessionState::Exited,
             started_at_ms: TIMESTAMP_MS,
             ended_at_ms: Some(TIMESTAMP_MS + 1_000),
             exit_code: Some(0),

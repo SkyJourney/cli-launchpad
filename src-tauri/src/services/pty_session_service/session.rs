@@ -6,6 +6,7 @@
 //! Allowed: MasterPty::resize under the terminal lock (it is the resource that lock protects)
 
 use crate::domain_errors::PtyError;
+use crate::models::pty_session::PtySessionState;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64},
     mpsc::SyncSender,
@@ -249,7 +250,7 @@ impl ManagedSession {
             directory_id: self.directory_id,
             tool_key: self.tool_key,
             working_directory: self.working_directory.clone(),
-            state: "running".to_string(),
+            state: PtySessionState::Running,
             started_at_ms: self.started_at_ms,
             ended_at_ms: None,
             exit_code: None,

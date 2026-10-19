@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::pty_session::PtySessionState;
 use std::sync::mpsc::{self, Receiver};
 
 use anyhow::anyhow;
@@ -436,7 +437,7 @@ impl PtySessionStore for FakeStore {
     fn finish(
         &self,
         session_id: &str,
-        state: &str,
+        state: PtySessionState,
         _ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError> {
@@ -733,7 +734,13 @@ impl RecordingObserver {
 
 #[cfg(test)]
 impl super::persistence::PersistenceObserver for RecordingObserver {
-    fn finish_failed(&self, session_id: &str, _state: &str, attempts: u32, _error: &AppError) {
+    fn finish_failed(
+        &self,
+        session_id: &str,
+        _state: PtySessionState,
+        attempts: u32,
+        _error: &AppError,
+    ) {
         self.events.lock().unwrap().push((
             "finish_failed".to_string(),
             session_id.to_string(),
@@ -741,7 +748,7 @@ impl super::persistence::PersistenceObserver for RecordingObserver {
         ));
     }
 
-    fn finish_gave_up(&self, session_id: &str, _state: &str, attempts: u32) {
+    fn finish_gave_up(&self, session_id: &str, _state: PtySessionState, attempts: u32) {
         self.events.lock().unwrap().push((
             "finish_gave_up".to_string(),
             session_id.to_string(),

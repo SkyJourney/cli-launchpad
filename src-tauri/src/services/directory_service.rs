@@ -78,6 +78,7 @@ fn path_for_storage(path: &Path) -> String {
 mod removal_tests {
     use super::*;
     use crate::db::{connection, directory_repo, pty_session_repo};
+    use crate::models::pty_session::PtySessionState;
     use crate::models::tool::ToolKey;
     use tempfile::tempdir;
 
@@ -201,7 +202,7 @@ mod removal_tests {
         let untouched = pty_session_repo::get_by_id(&connection, "sb")
             .unwrap()
             .unwrap();
-        assert_eq!(untouched.state, "running");
+        assert_eq!(untouched.state, PtySessionState::Running);
         assert_eq!(untouched.ended_at_ms, None);
         assert!(directory_repo::get(&connection, b.id).unwrap().is_some());
     }

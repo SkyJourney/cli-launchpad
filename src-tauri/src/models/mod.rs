@@ -14,3 +14,4 @@ pub mod window_kind;
 pub mod workspace_layout;
 #[cfg(test)]
 mod workspace_layout_case_merge;
+pub mod workspace_layout_codec;

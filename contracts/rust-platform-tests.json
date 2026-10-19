@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 783,
-    "Linux": 789,
-    "macOS": 785
+    "Windows": 792,
+    "Linux": 798,
+    "macOS": 794
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -502,7 +502,16 @@
       "contracts::cache_conn_is_only_constructed_inside_runtime_and_tests",
       "contracts::cache_keys_are_never_raw_strings",
       "contracts::dead_cache_prefixes_are_gone",
-      "db::cache_connection::tests::failed_legacy_row_cleanup_keeps_the_cache_file_and_retries_on_next_start"
+      "db::cache_connection::tests::failed_legacy_row_cleanup_keeps_the_cache_file_and_retries_on_next_start",
+      "models::workspace_layout_codec::tests::source_layout_version_reads_only_the_numeric_schema_version",
+      "models::workspace_layout_codec::tests::migrate_to_current_leaves_current_payloads_untouched",
+      "models::workspace_layout_codec::tests::supported_versions_are_one_through_the_current_version",
+      "contracts::layout_migration_lives_only_in_the_codec",
+      "models::pty_session::tests::pty_session_state_serializes_as_lowercase_strings",
+      "models::pty_session::tests::pty_exit_event_keeps_its_wire_shape",
+      "db::pty_session_repo::tests::state_enum_matches_the_sql_check_constraint",
+      "db::pty_session_repo::tests::finish_persists_the_enum_state_and_only_from_running",
+      "contracts::pty_state_strings_exist_only_in_the_model_and_migrations"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

@@ -1,5 +1,6 @@
 use crate::domain_errors::PtyError;
 use crate::error_codes::ErrorCode;
+use crate::models::pty_session::PtySessionState;
 use std::{
     collections::VecDeque,
     io::Read,
@@ -367,7 +368,7 @@ impl PtySessionManager {
             directory_id,
             tool_key,
             working_directory: payload.directory,
-            state: "running".to_string(),
+            state: PtySessionState::Running,
             started_at_ms: now,
             ended_at_ms: None,
             exit_code: None,
@@ -388,7 +389,9 @@ impl PtySessionManager {
         let _ = session.tree_terminate();
         session.force_terminate();
         self.registry.remove(&session.session_id);
-        if let Err(error) = store.finish(&session.session_id, "failed", now_ms(), None) {
+        if let Err(error) =
+            store.finish(&session.session_id, PtySessionState::Failed, now_ms(), None)
+        {
             log::error!("failed to persist PTY start failure: {error}");
         }
         log::error!("failed to start PTY reader or monitor: {reason}");
@@ -844,7 +847,7 @@ fn spawn_child_monitor(
                         .termination_requested
                         .load(std::sync::atomic::Ordering::Acquire);
                     (
-                        if requested { "terminated" } else { "exited" },
+                        if requested { PtySessionState::Terminated } else { PtySessionState::Exited },
                         Some(exit_code),
                     )
                 }
@@ -853,7 +856,7 @@ fn spawn_child_monitor(
                         session_id: session.session_id.clone(),
                         message: format!("等待 PTY 退出失败：{error}"),
                     });
-                    ("failed", None)
+                    (PtySessionState::Failed, None)
                 }
             };
 
@@ -882,7 +885,7 @@ fn spawn_child_monitor(
             }
             if let Err(error) = session.send_event(PtyEvent::Exited {
                 session_id: session.session_id.clone(),
-                state: state.to_string(),
+                state,
                 exit_code,
             }) {
                 log::warn!(

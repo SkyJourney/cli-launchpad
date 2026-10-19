@@ -7,6 +7,7 @@ use super::test_support::{
     run_with_timeout, spawn_test_child, wait_until, FakeSink, FakeStore,
 };
 use super::*;
+use crate::models::pty_session::PtySessionState;
 use crate::models::pty_session::{PtySessionWindowStatus, PtySessionWindowStatusReport};
 use std::io::Write;
 
@@ -692,7 +693,7 @@ fn owner_channel_failure_buffers_until_reattach_and_bounds_memory() {
     session_1
         .send_event(PtyEvent::Exited {
             session_id: s1.clone(),
-            state: "exited".to_string(),
+            state: PtySessionState::Exited,
             exit_code: Some(0),
         })
         .unwrap();

@@ -128,14 +128,7 @@ impl WorkspaceLayoutDocument {
             .get("schemaVersion")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| WorkspaceLayoutError::InvalidJson("缺少 schemaVersion".into()))?;
-        if source_version == 4 {
-            value["schemaVersion"] = serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION);
-        } else if source_version == 1 || source_version == 2 {
-            migrate_legacy_content_refs(&mut value, source_version);
-            migrate_detached_slot_ids(&mut value);
-        } else if source_version == 3 {
-            migrate_detached_slot_ids(&mut value);
-        }
+        super::workspace_layout_codec::migrate_to_current(&mut value, source_version);
         let document: Self = serde_json::from_value(value)
             .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
         Ok(document)
@@ -653,103 +646,6 @@ fn validate_node<'a>(
         }
     }
     Ok(())
-}
-
-fn migrate_legacy_content_refs(layout: &mut serde_json::Value, source_version: u64) {
-    if let Some(object) = layout.as_object_mut() {
-        object.insert(
-            "schemaVersion".to_string(),
-            serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
-        );
-        if let Some(tree) = object.get_mut("tree") {
-            migrate_legacy_content_node(tree, source_version);
-        }
-    }
-}
-
-fn migrate_detached_slot_ids(layout: &mut serde_json::Value) {
-    let Some(object) = layout.as_object_mut() else {
-        return;
-    };
-    let legacy = object.remove("detachedSlotIds");
-    let detached_contents = match legacy {
-        Some(serde_json::Value::Array(slot_ids)) => slot_ids
-            .into_iter()
-            .map(|value| match value.as_str() {
-                Some(slot_id) => serde_json::json!({ "kind": "pty", "slotId": slot_id }),
-                None => value,
-            })
-            .collect(),
-        Some(value) => value,
-        None => serde_json::Value::Array(Vec::new()),
-    };
-    object.insert(
-        "schemaVersion".to_string(),
-        serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
-    );
-    object.insert("detachedContents".to_string(), detached_contents);
-}
-
-fn migrate_legacy_content_node(node: &mut serde_json::Value, source_version: u64) {
-    let Some(object) = node.as_object_mut() else {
-        return;
-    };
-    match object.get("kind").and_then(serde_json::Value::as_str) {
-        Some("pane") => {
-            let session_ids = object
-                .remove("sessionIds")
-                .and_then(|value| value.as_array().cloned())
-                .unwrap_or_default();
-            let document_ids = object
-                .remove("documentIds")
-                .and_then(|value| value.as_array().cloned())
-                .unwrap_or_default();
-            let active_session_id = object.remove("activeSessionId");
-            let legacy_active_content = object.remove("activeContent");
-            let mut contents = Vec::with_capacity(session_ids.len() + document_ids.len());
-            contents.extend(session_ids.iter().filter_map(|value| {
-                value
-                    .as_str()
-                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
-            }));
-            contents.extend(document_ids.iter().filter_map(|value| {
-                value.as_str().map(
-                    |document_id| serde_json::json!({ "kind": "file", "documentId": document_id }),
-                )
-            }));
-            let active_content = if source_version >= 2 {
-                legacy_active_content.filter(|value| !value.is_null())
-            } else {
-                None
-            }
-            .or_else(|| {
-                active_session_id
-                    .as_ref()
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|active| {
-                        session_ids
-                            .iter()
-                            .any(|session_id| session_id.as_str() == Some(*active))
-                    })
-                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
-            })
-            .or_else(|| contents.first().cloned());
-            object.insert("contents".to_string(), serde_json::Value::Array(contents));
-            object.insert(
-                "activeContent".to_string(),
-                active_content.unwrap_or(serde_json::Value::Null),
-            );
-        }
-        Some("split") => {
-            if let Some(first) = object.get_mut("first") {
-                migrate_legacy_content_node(first, source_version);
-            }
-            if let Some(second) = object.get_mut("second") {
-                migrate_legacy_content_node(second, source_version);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError> {

@@ -8,6 +8,7 @@
 //!
 //! The queue lock is a leaf lock: it is never held while the inner store (the database) or the
 //! observer is called.
+use crate::models::pty_session::PtySessionState;
 use std::{collections::VecDeque, sync::Arc, sync::Mutex};
 
 use super::{ports::PtySessionStore, registry::SessionRegistry, session::ManagedSession};
@@ -19,20 +20,32 @@ pub(super) const MAX_FINISH_ATTEMPTS: u32 = 5;
 /// Told about persistence failures. The default implementation only logs; no window event is
 /// emitted (whether the user must be told is an open product question).
 pub(crate) trait PersistenceObserver: Send + Sync {
-    fn finish_failed(&self, session_id: &str, state: &str, attempts: u32, error: &AppError);
-    fn finish_gave_up(&self, session_id: &str, state: &str, attempts: u32);
+    fn finish_failed(
+        &self,
+        session_id: &str,
+        state: PtySessionState,
+        attempts: u32,
+        error: &AppError,
+    );
+    fn finish_gave_up(&self, session_id: &str, state: PtySessionState, attempts: u32);
 }
 
 pub(crate) struct LogObserver;
 
 impl PersistenceObserver for LogObserver {
-    fn finish_failed(&self, session_id: &str, state: &str, attempts: u32, error: &AppError) {
+    fn finish_failed(
+        &self,
+        session_id: &str,
+        state: PtySessionState,
+        attempts: u32,
+        error: &AppError,
+    ) {
         log::error!(
             "PTY session finish persistence failed session_id={session_id} state={state} attempts={attempts} error={error}"
         );
     }
 
-    fn finish_gave_up(&self, session_id: &str, state: &str, attempts: u32) {
+    fn finish_gave_up(&self, session_id: &str, state: PtySessionState, attempts: u32) {
         log::error!(
             "PTY session finish persistence abandoned session_id={session_id} state={state} attempts={attempts}"
         );
@@ -41,7 +54,7 @@ impl PersistenceObserver for LogObserver {
 
 struct PendingFinish {
     session_id: String,
-    state: String,
+    state: PtySessionState,
     ended_at_ms: i64,
     exit_code: Option<i64>,
     attempts: u32,
@@ -127,7 +140,7 @@ impl RetryingStore {
         for mut entry in batch {
             match self.inner.finish(
                 &entry.session_id,
-                &entry.state,
+                entry.state,
                 entry.ended_at_ms,
                 entry.exit_code,
             ) {
@@ -137,21 +150,21 @@ impl RetryingStore {
                     if entry.attempts >= MAX_FINISH_ATTEMPTS {
                         self.observer.finish_gave_up(
                             &entry.session_id,
-                            &entry.state,
+                            entry.state,
                             entry.attempts,
                         );
                         report.dropped += 1;
                     } else {
                         self.observer.finish_failed(
                             &entry.session_id,
-                            &entry.state,
+                            entry.state,
                             entry.attempts,
                             &error,
                         );
                         if let Some(evicted) = self.queue.push(entry) {
                             self.observer.finish_gave_up(
                                 &evicted.session_id,
-                                &evicted.state,
+                                evicted.state,
                                 evicted.attempts,
                             );
                             report.dropped += 1;
@@ -200,7 +213,7 @@ impl PtySessionStore for RetryingStore {
     fn finish(
         &self,
         session_id: &str,
-        state: &str,
+        state: PtySessionState,
         ended_at_ms: i64,
         exit_code: Option<i64>,
     ) -> Result<(), AppError> {
@@ -213,7 +226,7 @@ impl PtySessionStore for RetryingStore {
                 self.observer.finish_failed(session_id, state, 1, &error);
                 let entry = PendingFinish {
                     session_id: session_id.to_string(),
-                    state: state.to_string(),
+                    state,
                     ended_at_ms,
                     exit_code,
                     attempts: 1,
@@ -221,7 +234,7 @@ impl PtySessionStore for RetryingStore {
                 if let Some(evicted) = self.queue.push(entry) {
                     self.observer.finish_gave_up(
                         &evicted.session_id,
-                        &evicted.state,
+                        evicted.state,
                         evicted.attempts,
                     );
                 }
@@ -260,13 +273,13 @@ impl super::PtySessionManager {
     pub(crate) fn queue_failed_finish_for_test(
         &self,
         session_id: &str,
-        state: &str,
+        state: PtySessionState,
         ended_at_ms: i64,
         exit_code: Option<i64>,
     ) {
         self.persist_queue.push(PendingFinish {
             session_id: session_id.to_string(),
-            state: state.to_string(),
+            state,
             ended_at_ms,
             exit_code,
             attempts: 1,
@@ -308,7 +321,7 @@ mod tests {
         store.fail_next_finishes(1);
         let (rs, _queue, observer) = retrying(&store);
 
-        let result = rs.finish("s1", "exited", 10, Some(0));
+        let result = rs.finish("s1", PtySessionState::Exited, 10, Some(0));
 
         assert!(result.is_err());
         assert_eq!(rs.pending_len(), 1);
@@ -332,7 +345,9 @@ mod tests {
         let (store, _rx) = FakeStore::new();
         store.fail_next_finishes(1);
         let (rs, _queue, _observer) = retrying(&store);
-        assert!(rs.finish("s1", "exited", 10, Some(0)).is_err());
+        assert!(rs
+            .finish("s1", PtySessionState::Exited, 10, Some(0))
+            .is_err());
 
         rs.insert_running("s2", 1, ToolKey::Claude, "C:/p", 20)
             .unwrap();
@@ -349,8 +364,11 @@ mod tests {
 
         // A successful finish retries what is queued behind it.
         store.fail_next_finishes(1);
-        assert!(rs.finish("s3", "exited", 30, Some(0)).is_err());
-        rs.finish("s4", "exited", 40, Some(0)).unwrap();
+        assert!(rs
+            .finish("s3", PtySessionState::Exited, 30, Some(0))
+            .is_err());
+        rs.finish("s4", PtySessionState::Exited, 40, Some(0))
+            .unwrap();
         let calls = store.calls();
         assert_eq!(
             calls[calls.len() - 3..],
@@ -369,7 +387,9 @@ mod tests {
         let (store, _rx) = FakeStore::new();
         store.fail_next_finishes(100);
         let (rs, _queue, observer) = retrying(&store);
-        assert!(rs.finish("s1", "exited", 10, Some(0)).is_err());
+        assert!(rs
+            .finish("s1", PtySessionState::Exited, 10, Some(0))
+            .is_err());
 
         for expected_pending in [1, 1, 1] {
             let report = rs.flush_pending();
@@ -406,7 +426,9 @@ mod tests {
 
         for index in 0..65 {
             let id = format!("s{index}");
-            assert!(rs.finish(&id, "exited", 10, Some(0)).is_err());
+            assert!(rs
+                .finish(&id, PtySessionState::Exited, 10, Some(0))
+                .is_err());
         }
 
         assert_eq!(rs.pending_len(), 64);
@@ -435,7 +457,9 @@ mod tests {
         let (store, _rx) = FakeStore::new();
         store.fail_next_finishes(1);
         let (rs, _queue, _observer) = retrying(&store);
-        assert!(rs.finish("s1", "exited", 10, Some(0)).is_err());
+        assert!(rs
+            .finish("s1", PtySessionState::Exited, 10, Some(0))
+            .is_err());
         let observed: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
         {
             let weak = Arc::downgrade(&rs);
@@ -474,7 +498,9 @@ mod tests {
         );
         let second = RetryingStore::new(inner, Arc::clone(&manager.persist_queue), observer);
 
-        assert!(first.finish("s1", "exited", 10, Some(0)).is_err());
+        assert!(first
+            .finish("s1", PtySessionState::Exited, 10, Some(0))
+            .is_err());
 
         assert_eq!(second.pending_len(), 1);
         assert_eq!(manager.persist_queue.len(), 1);
@@ -508,7 +534,7 @@ mod tests {
             .persist_queue
             .push(PendingFinish {
                 session_id: "s1".to_string(),
-                state: "exited".to_string(),
+                state: PtySessionState::Exited,
                 ended_at_ms: 10,
                 exit_code: Some(0),
                 attempts: 1,
@@ -527,7 +553,7 @@ mod tests {
             })
             .unwrap()
             .unwrap();
-        assert_eq!(row.state, "exited");
+        assert_eq!(row.state, PtySessionState::Exited);
         assert_eq!(row.ended_at_ms, Some(10));
         assert_eq!(row.exit_code, Some(0));
     }
