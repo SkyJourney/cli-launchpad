@@ -15,7 +15,6 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import {
   beginPtyHandoff,
   cancelPtyHandoff,
@@ -46,7 +45,12 @@ import {
   isClipboardTextUnavailable,
 } from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
-import { formatAppError } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import {
   createPtyInputWriter,
   isPtyInputBackpressure,
@@ -76,14 +80,13 @@ export type PtySessionCloseResult =
   | "cancelled"
   | "pending";
 
-function ptyInputErrorMessage(
+function ptyInputErrorState(
   reason: unknown,
   backpressureMessage: string,
-  t: TFunction,
-) {
+): AppErrorState {
   return isPtyInputBackpressure(reason)
-    ? backpressureMessage
-    : formatAppError(reason, t);
+    ? { message: backpressureMessage }
+    : toAppErrorState(reason);
 }
 
 interface PtyTerminalProps {
@@ -144,7 +147,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     const closingSessionRef = useRef<string | null>(null);
     const [session, setSession] = useState<PtySession | null>(null);
     const [starting, setStarting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<AppErrorState | null>(null);
     const [handoffInProgress, setHandoffInProgress] = useState(false);
 
     interactiveRef.current = interactive && !handoffInProgressRef.current;
@@ -236,12 +239,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
                 rows: nextSize.rows,
               });
               void resizePtySession(active.sessionId, nextSize).catch(
-                (reason) => setError(formatAppError(reason, tRef.current)),
+                (reason) => setError(toAppErrorState(reason)),
               );
             }
           }
         } catch (reason) {
-          setError(formatAppError(reason, tRef.current));
+          setError(toAppErrorState(reason));
         }
       };
       let resizeFrame = 0;
@@ -261,11 +264,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         write: writePtySession,
         onError: (reason) =>
           setError(
-            ptyInputErrorMessage(
-              reason,
-              tRef.current("pty.inputBackpressure"),
-              tRef.current,
-            ),
+            ptyInputErrorState(reason, tRef.current("pty.inputBackpressure")),
           ),
       });
       inputWriterRef.current = inputWriter;
@@ -293,7 +292,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           const selectedText = terminal.getSelection();
           if (selectedText) {
             void writeClipboardText(selectedText).catch((reason) =>
-              setError(formatAppError(reason, tRef.current)),
+              setError(toAppErrorState(reason)),
             );
           }
           return false;
@@ -308,7 +307,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               })
               .catch((reason) => {
                 if (!isClipboardTextUnavailable(reason)) {
-                  setError(formatAppError(reason, tRef.current));
+                  setError(toAppErrorState(reason));
                 }
               });
           }
@@ -460,7 +459,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           return "terminating";
         } catch (reason) {
           closingSessionRef.current = null;
-          setError(formatAppError(reason, t));
+          setError(toAppErrorState(reason));
           return "cancelled";
         }
       },
@@ -477,7 +476,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         async startSession(directoryId, toolKey, resumeSessionId) {
           const terminal = terminalRef.current;
           if (!terminal) {
-            setError(t("pty.terminalNotReady"));
+            setError({ message: t("pty.terminalNotReady") });
             return;
           }
           if (sessionRef.current?.state === "running" || startingRef.current)
@@ -522,9 +521,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           } catch (reason) {
             pendingInputRef.current = [];
             lastSentSizeRef.current = null;
-            setError(
-              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-            );
+            setError(ptyInputErrorState(reason, t("pty.inputBackpressure")));
           } finally {
             startingRef.current = false;
             setStarting(false);
@@ -575,7 +572,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               ).catch(() => undefined);
             }
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -644,7 +641,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               new Error(formatAppError(reason, t)),
             );
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -708,7 +705,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               new Error(formatAppError(reason, t)),
             );
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -729,7 +726,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             onPointerDown={() => onFocusRef.current?.()}
           />
         </div>
-        {error && <p className="error pty-error">{error}</p>}
+        {error && (
+          <p className="error pty-error">{formatAppErrorState(error, t)}</p>
+        )}
       </section>
     );
   },

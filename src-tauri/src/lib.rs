@@ -13,6 +13,7 @@ mod platform;
 mod runtime;
 mod services;
 
+use crate::error_codes::ErrorCode;
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
@@ -52,7 +53,7 @@ pub fn update_close_behavior_state(
     let mut current = state
         .0
         .lock()
-        .map_err(|_| AppError::msg("关闭行为状态锁中毒"))?;
+        .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "关闭行为状态锁中毒"))?;
     *current = close_behavior;
     Ok(())
 }

@@ -42,7 +42,7 @@ import {
   listWorkspacePanes,
 } from "../../lib/ptyWorkspaceLayout";
 
-import { formatAppError } from "../../lib/appErrors";
+import { type AppErrorState, toAppErrorState } from "../../lib/appErrors";
 import { UNKNOWN_PATH_SEMANTICS, type PathSemantics } from "../../lib/pathKey";
 import { fileDocumentIdsOf } from "../../lib/caseVariantMerge";
 import { hasUnsavedWorkspaceFileEdits } from "../../lib/workspaceFileBuffer";
@@ -209,11 +209,11 @@ export function createWorkspacePersistence(
 
   const statusStore = createPersistenceStatus();
   const setStatus = statusStore.set;
-  const setHydrationError = (value: string | null) =>
+  const setHydrationError = (value: AppErrorState | null) =>
     setStatus({ hydrationError: value });
-  const setLayoutSaveError = (value: string | null) =>
+  const setLayoutSaveError = (value: AppErrorState | null) =>
     setStatus({ layoutSaveError: value });
-  const setLayoutResetError = (value: string | null) =>
+  const setLayoutResetError = (value: AppErrorState | null) =>
     setStatus({ layoutResetError: value });
   const setLayoutResetPending = (value: boolean) =>
     setStatus({ layoutResetPending: value });
@@ -230,7 +230,7 @@ export function createWorkspacePersistence(
     new WorkspaceLayoutSaveQueue(
       revision,
       ports.saveWorkspaceLayout,
-      (reason) => setLayoutSaveError(formatAppError(reason, deps.translate)),
+      (reason) => setLayoutSaveError(toAppErrorState(reason)),
       () => setLayoutSaveError(null),
       {
         repairCaseDuplicate: async (error, mode) => {
@@ -300,7 +300,7 @@ export function createWorkspacePersistence(
     try {
       queue.enqueue(buildLayoutDocument(treeOverride));
     } catch (reason) {
-      setLayoutSaveError(formatAppError(reason, deps.translate));
+      setLayoutSaveError(toAppErrorState(reason));
       console.error("[workspace.layout_snapshot_invalid]", reason);
     }
   };
@@ -320,8 +320,15 @@ export function createWorkspacePersistence(
       const revision = read.revision ?? 0;
 
       if (read.status.status === "needsReset") {
-        // Shows the backend's technical detail as before; localized rendering by code is 077c.
-        setHydrationError(read.status.reason.detail);
+        console.warn(
+          "[layout-reset]",
+          read.status.reason.code,
+          read.status.reason.detail,
+        );
+        setHydrationError({
+          code: "layout.needs_reset",
+          message: read.status.reason.detail,
+        });
         patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
         return;
       }
@@ -367,11 +374,11 @@ export function createWorkspacePersistence(
     } catch (reason) {
       if (requestId !== hydrationRequestRef.current) return;
       if (reason instanceof UnsupportedWorkspaceLayoutVersionError) {
-        setHydrationError(reason.message);
+        setHydrationError(toAppErrorState(reason));
         patchHost({ hydrationStatus: "needsReset" }, "hydrate:needsReset");
         return;
       }
-      setHydrationError(formatAppError(reason, deps.translate));
+      setHydrationError(toAppErrorState(reason));
       patchHost({ hydrationStatus: "loadFailed" }, "hydrate:loadFailed");
     }
   };
@@ -410,7 +417,7 @@ export function createWorkspacePersistence(
       setLayoutSaveError(null);
       patchHost({ hydrationStatus: "ready" }, "resetWorkspace:ready");
     } catch (reason) {
-      setLayoutResetError(formatAppError(reason, deps.translate));
+      setLayoutResetError(toAppErrorState(reason));
       throw reason;
     } finally {
       setLayoutResetPending(false);

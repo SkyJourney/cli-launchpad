@@ -3,7 +3,6 @@
   "items": [
     "app.data_replace_blocked",
     "app.data_replace_in_progress",
-    "app.error",
     "app.exit_deferred",
     "app.exiting",
     "app.internal",
@@ -51,6 +50,7 @@
   "reservedCodes": [],
   "aliases": {
     "backup_restore_in_progress": "backup.restore_in_progress",
+    "app.error": "app.internal",
     "file.identity_changed": "project.identity_changed",
     "plan_changed": "exec.plan_changed",
     "project_identity_changed": "project.identity_changed",

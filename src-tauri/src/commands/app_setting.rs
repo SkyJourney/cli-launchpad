@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use tauri::State;
 
 use crate::db::app_setting_repo;
@@ -40,21 +41,21 @@ pub fn set_tray_menu_labels(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main])?;
     if show.trim().is_empty() || quit.trim().is_empty() || show.len() > 256 || quit.len() > 256 {
-        return Err(AppError::msg("托盘菜单文案无效"));
+        return Err(AppError::internal("托盘菜单文案无效"));
     }
 
     let labels = state
         .0
         .lock()
-        .map_err(|_| AppError::msg("托盘菜单状态锁中毒"))?;
+        .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "托盘菜单状态锁中毒"))?;
     let (show_item, quit_item) = labels
         .as_ref()
-        .ok_or_else(|| AppError::msg("托盘菜单尚未初始化"))?;
+        .ok_or_else(|| AppError::internal("托盘菜单尚未初始化"))?;
     show_item
         .set_text(show)
-        .map_err(|error| AppError::msg(format!("更新托盘显示文案失败：{error}")))?;
+        .map_err(|error| AppError::internal(format!("更新托盘显示文案失败：{error}")))?;
     quit_item
         .set_text(quit)
-        .map_err(|error| AppError::msg(format!("更新托盘退出文案失败：{error}")))?;
+        .map_err(|error| AppError::internal(format!("更新托盘退出文案失败：{error}")))?;
     Ok(())
 }

@@ -360,3 +360,29 @@ describe("unknown content persistence", () => {
     expect(host.errors).toEqual([]);
   });
 });
+
+describe("layout reset reason rendering", () => {
+  it("renders the localized layout reset text for a structured reason and not the backend detail", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const backend = createBackend({
+      status: {
+        status: "needsReset",
+        reason: { code: "invalidPayload", detail: "后端技术细节 ZZZ" },
+      },
+      revision: 6,
+    });
+
+    host = await mountWorkspace({ backend });
+
+    // The mocked translator returns keys, so the localized text is asserted by its key.
+    const notice = document.querySelector(".pty-workspace-recovery-notice");
+    expect(notice?.textContent).toContain("errors.layoutNeedsReset");
+    expect(notice?.textContent).not.toContain("ZZZ");
+    expect(warn).toHaveBeenCalledWith(
+      "[layout-reset]",
+      "invalidPayload",
+      "后端技术细节 ZZZ",
+    );
+    warn.mockRestore();
+  });
+});

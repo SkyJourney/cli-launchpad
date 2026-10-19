@@ -37,7 +37,12 @@ import {
   shouldSearchSessions,
 } from "../lib/sessionSearch";
 import { TOOLS } from "../lib/tools";
-import { formatAppError } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import {
   deleteSessionAlias,
   listProjectFiles,
@@ -73,10 +78,12 @@ export function ProjectDetailView({
 
   const directory = useDirectory(requestedDirectoryId);
   const statusByTool = indexByTool(useCliStatus().data);
-  const [openPathError, setOpenPathError] = useState<string | null>(null);
+  const [openPathError, setOpenPathError] = useState<AppErrorState | null>(
+    null,
+  );
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
-  const [aliasError, setAliasError] = useState<string | null>(null);
+  const [aliasError, setAliasError] = useState<AppErrorState | null>(null);
   const [sessionSearch, setSessionSearch] = useState("");
   const [debouncedSessionSearch, setDebouncedSessionSearch] = useState("");
   const [visibleSearchCount, setVisibleSearchCount] = useState(10);
@@ -248,7 +255,7 @@ export function ProjectDetailView({
 
   const openPathMutation = useMutation({
     mutationFn: () => openProjectDirectory(directoryId as number),
-    onError: (error) => setOpenPathError(formatAppError(error, t)),
+    onError: (error) => setOpenPathError(toAppErrorState(error)),
   });
 
   const aliasMutation = useMutation({
@@ -298,7 +305,7 @@ export function ProjectDetailView({
         exact: false,
       });
     },
-    onError: (error) => setAliasError(formatAppError(error, t)),
+    onError: (error) => setAliasError(toAppErrorState(error)),
   });
 
   if (!directory) {
@@ -356,7 +363,7 @@ export function ProjectDetailView({
   const saveAlias = (session: SessionInfo) => {
     const alias = aliasDraft.trim();
     if (!alias) {
-      setAliasError(t("projectDetail.aliasRequired"));
+      setAliasError({ message: t("projectDetail.aliasRequired") });
       return;
     }
     aliasMutation.mutate({
@@ -494,7 +501,9 @@ export function ProjectDetailView({
           <>
             {openPathError && (
               <p className="error">
-                {t("projectDetail.openPathFailed", { error: openPathError })}
+                {t("projectDetail.openPathFailed", {
+                  error: formatAppErrorState(openPathError, t),
+                })}
               </p>
             )}
 
@@ -665,7 +674,7 @@ export function ProjectDetailView({
                             </span>
                             {editing && aliasError && (
                               <span className="error session-alias-error">
-                                {aliasError}
+                                {formatAppErrorState(aliasError, t)}
                               </span>
                             )}
                           </div>

@@ -204,10 +204,10 @@ impl ManagedSession {
         let master = terminal
             .master
             .as_ref()
-            .ok_or_else(|| AppError::msg("PTY 终端已释放"))?;
+            .ok_or_else(|| AppError::internal("PTY 终端已释放"))?;
         master
             .resize(to_pty_size(size))
-            .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
+            .map_err(|error| AppError::internal(format!("调整 PTY 尺寸失败：{error}")))?;
         terminal.last_size = (size.cols, size.rows);
         Ok(true)
     }

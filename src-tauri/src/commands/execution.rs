@@ -25,7 +25,7 @@ pub async fn start_execution_task(
     let plan: InstallPlan =
         tauri::async_runtime::spawn_blocking(move || install_service::plan(tool_key, kind))
             .await
-            .map_err(|error| AppError::msg(error.to_string()))??;
+            .map_err(|error| AppError::internal(error.to_string()))??;
     install_service::verify_expected_fingerprint(&plan, &expected_fingerprint)
         .map_err(|_| AppError::coded(ErrorCode::ExecPlanChanged, "安装计划已变化，请重新确认"))?;
     // Held across the start so the admission covers the whole registration.
@@ -50,7 +50,7 @@ pub async fn get_execution_task(
     state
         .call("exec.get_detail", move |connection| {
             execution_task_repo::detail(connection, &task_id)?
-                .ok_or_else(|| AppError::msg("执行任务不存在"))
+                .ok_or_else(|| AppError::internal("执行任务不存在"))
         })
         .await
 }
@@ -71,7 +71,7 @@ pub async fn clear_execution_task(state: State<'_, Db>, task_id: String) -> Resu
             if execution_task_repo::delete_finished(connection, &task_id)? {
                 Ok(())
             } else {
-                Err(AppError::msg("执行中的任务不能清理，或任务不存在"))
+                Err(AppError::internal("执行中的任务不能清理，或任务不存在"))
             }
         })
         .await

@@ -82,7 +82,9 @@ pub async fn refresh_session_search_index(
         })
         .await?;
     if current_path != path {
-        return Err(AppError::msg("项目目录已变更，已取消写入旧的会话搜索索引"));
+        return Err(AppError::internal(
+            "项目目录已变更，已取消写入旧的会话搜索索引",
+        ));
     }
     cache
         .call("session.index_refresh", move |connection| {
@@ -150,7 +152,9 @@ async fn ensure_session_belongs(
     if session_service::session_belongs_to_directory(tool_key, directory_path, session_id).await? {
         Ok(())
     } else {
-        Err(AppError::msg("该会话不属于当前项目目录，已拒绝修改别名"))
+        Err(AppError::internal(
+            "该会话不属于当前项目目录，已拒绝修改别名",
+        ))
     }
 }
 

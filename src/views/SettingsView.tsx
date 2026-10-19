@@ -35,7 +35,12 @@ import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { refreshInstallPlanConfirmation } from "../lib/installPlanConfirmation";
 import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
-import { formatAppError } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import { getWindowChromePolicy } from "../lib/windowChrome";
 import { useDirectories } from "../hooks/queries";
 import {
@@ -158,7 +163,7 @@ export function SettingsView() {
     ReadonlySet<ToolKey>
   >(new Set());
   const [actionErrors, setActionErrors] = useState<
-    Partial<Record<ToolKey, string>>
+    Partial<Record<ToolKey, AppErrorState>>
   >({});
   const popoverAnchorRefs = useRef(createToolAnchorRefs()).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
@@ -167,9 +172,8 @@ export function SettingsView() {
   const [restoreChecking, setRestoreChecking] = useState(false);
   const [restoreBlockers, setRestoreBlockers] =
     useState<WorkspaceDataRestoreBlockers | null>(null);
-  const [restoreCheckError, setRestoreCheckError] = useState<string | null>(
-    null,
-  );
+  const [restoreCheckError, setRestoreCheckError] =
+    useState<AppErrorState | null>(null);
 
   const backups = useQuery({
     queryKey: qk.backups(),
@@ -206,7 +210,7 @@ export function SettingsView() {
       restoreBackupMutation.mutate(pendingRestore.id);
     } catch (reason) {
       cancelBackupRestore();
-      setRestoreCheckError(formatAppError(reason, t));
+      setRestoreCheckError(toAppErrorState(reason));
     } finally {
       setRestoreChecking(false);
     }
@@ -369,7 +373,7 @@ export function SettingsView() {
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [toolKey]: formatAppError(error, t),
+        [toolKey]: toAppErrorState(error),
       }));
     } finally {
       planningToolKeysRef.current.delete(toolKey);
@@ -428,7 +432,7 @@ export function SettingsView() {
       }
       setActionErrors((current) => ({
         ...current,
-        [action.toolKey]: formatAppError(error, t),
+        [action.toolKey]: toAppErrorState(error),
       }));
     } finally {
       creatingToolKeysRef.current.delete(action.toolKey);
@@ -636,7 +640,7 @@ export function SettingsView() {
                         {actionError && (
                           <p className="error">
                             {t("settings.executeFailed", {
-                              error: actionError,
+                              error: formatAppErrorState(actionError, t),
                             })}
                           </p>
                         )}
@@ -716,7 +720,7 @@ export function SettingsView() {
               {actionError && !pendingAction && (
                 <p className="error cli-action-message">
                   {t("settings.prepareFailed", {
-                    error: actionError,
+                    error: formatAppErrorState(actionError, t),
                   })}
                 </p>
               )}
@@ -1164,7 +1168,11 @@ export function SettingsView() {
                   )}
                 </ul>
               )}
-            {restoreCheckError && <p className="error">{restoreCheckError}</p>}
+            {restoreCheckError && (
+              <p className="error">
+                {formatAppErrorState(restoreCheckError, t)}
+              </p>
+            )}
             <div className="edit-actions">
               <button
                 className="ghost-button"

@@ -16,7 +16,11 @@ import { WorkspaceDataRestoreListener } from "./components/WorkspaceDataRestoreL
 import { StartupNotices } from "./components/StartupNotices";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
-import { formatAppError } from "./lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppErrorState,
+  toAppErrorState,
+} from "./lib/appErrors";
 import { parseExitRequestedPayload } from "./lib/exitRequest";
 import {
   PtyWorkspaceProvider,
@@ -152,7 +156,7 @@ function AppContent() {
   const { data: directories } = useDirectories();
   const [exitRequest, setExitRequest] = useState<AppExitRequest | null>(null);
   const [exitPending, setExitPending] = useState(false);
-  const [exitError, setExitError] = useState<string | null>(null);
+  const [exitError, setExitError] = useState<AppErrorState | null>(null);
   // 最近一次有效退出请求的 id：确认时只回传它，过期请求的异步结果据此丢弃。
   const exitRequestIdRef = useRef<string | null>(null);
   useExecutionTaskEvents();
@@ -195,7 +199,7 @@ function AppContent() {
               // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
               // 不能停在“终止中”让两个按钮都被禁用。
               setExitRequest(impacts);
-              setExitError(formatAppError(error, tRef.current));
+              setExitError(toAppErrorState(error));
             }
             return;
           }
@@ -215,7 +219,7 @@ function AppContent() {
             requestId,
             executionTaskCount,
           });
-          setExitError(formatAppError(error, tRef.current));
+          setExitError(toAppErrorState(error));
         });
     })
       .then((stop) => {
@@ -239,7 +243,7 @@ function AppContent() {
       setExitPending(false);
       // 确认的请求已被新请求取代：失败只属于旧对话框，不得显示在新对话框上。
       if (exitRequestIdRef.current !== requestId) return;
-      setExitError(formatAppError(error, tRef.current));
+      setExitError(toAppErrorState(error));
     }
   };
 
@@ -406,7 +410,9 @@ function AppContent() {
                 </ul>
               </>
             )}
-            {exitError && <p className="error">{exitError}</p>}
+            {exitError && (
+              <p className="error">{formatAppErrorState(exitError, t)}</p>
+            )}
             <div className="app-exit-actions">
               <button
                 className="ghost-button"

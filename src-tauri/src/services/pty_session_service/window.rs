@@ -163,10 +163,10 @@ impl PtySessionManager {
             cols: snapshot.cols,
             rows: snapshot.rows,
         })
-        .map_err(|error| abort(AppError::msg(format!("发送终端画面快照失败：{error}"))))?;
+        .map_err(|error| abort(AppError::internal(format!("发送终端画面快照失败：{error}"))))?;
         for event in backlog {
             sink.send(event)
-                .map_err(|error| abort(AppError::msg(format!("恢复终端输出失败：{error}"))))?;
+                .map_err(|error| abort(AppError::internal(format!("恢复终端输出失败：{error}"))))?;
         }
 
         // Phase C: events that arrived during the replay are buffered; send them in order
@@ -193,8 +193,9 @@ impl PtySessionManager {
                 tail
             };
             for event in tail {
-                sink.send(event)
-                    .map_err(|error| abort(AppError::msg(format!("恢复终端输出失败：{error}"))))?;
+                sink.send(event).map_err(|error| {
+                    abort(AppError::internal(format!("恢复终端输出失败：{error}")))
+                })?;
             }
         }
         session.flow.resume();

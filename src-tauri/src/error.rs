@@ -15,11 +15,6 @@ pub struct AppError {
 }
 
 impl AppError {
-    /// Legacy constructor for sites not yet converted (077c removes it).
-    pub fn msg(message: impl Into<String>) -> Self {
-        Self::coded(ErrorCode::AppError, message)
-    }
-
     /// An unexpected failure: the front end shows generic text and the detail stays in logs.
     pub fn internal(message: impl Into<String>) -> Self {
         Self::coded(ErrorCode::AppInternal, message)
@@ -139,7 +134,7 @@ mod tests {
         assert_eq!(value["code"], "app.internal");
         assert_eq!(value["message"], "错误");
         assert!(value.get("params").is_none());
-        // Reverse: the generic code is not the legacy app.error fallback.
+        // Reverse: the generic code is not the legacy app.error alias.
         assert_ne!(value["code"], "app.error");
     }
 
@@ -197,8 +192,8 @@ mod tests {
 
     #[test]
     fn ordinary_errors_keep_a_structured_message_fallback() {
-        let value = serde_json::to_value(AppError::msg("错误")).unwrap();
-        assert_eq!(value["code"], "app.error");
+        let value = serde_json::to_value(AppError::internal("错误")).unwrap();
+        assert_eq!(value["code"], "app.internal");
         assert_eq!(value["message"], "错误");
         assert!(value.get("params").is_none());
     }

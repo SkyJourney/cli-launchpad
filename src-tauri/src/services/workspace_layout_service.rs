@@ -189,7 +189,7 @@ pub fn save_current(
     context: &SaveContext,
 ) -> Result<WorkspaceLayoutSaveResult, AppError> {
     if revision <= 0 {
-        return Err(AppError::msg("工作区 revision 必须大于 0"));
+        return Err(AppError::internal("工作区 revision 必须大于 0"));
     }
     let payload_json = serialize_layout(layout, false)?;
 
@@ -220,16 +220,18 @@ pub fn save_current(
     if let Some(current) = stored {
         observed_revision = current.revision;
         if !is_supported_layout_version(current.schema_version) {
-            return Err(AppError::msg(
+            return Err(AppError::internal(
                 "当前布局版本不受支持；请先显式重置工作区后再保存",
             ));
         }
         let stored =
             WorkspaceLayoutDocument::from_json_degrading_invalid_files(&current.payload_json)
                 .map(|(layout, _)| layout)
-                .map_err(|error| AppError::msg(format!("当前布局需要显式重置：{error}")))?;
+                .map_err(|error| AppError::internal(format!("当前布局需要显式重置：{error}")))?;
         if source_layout_version(&current.payload_json) != Some(current.schema_version) {
-            return Err(AppError::msg("当前布局版本信息不一致；请先显式重置工作区"));
+            return Err(AppError::internal(
+                "当前布局版本信息不一致；请先显式重置工作区",
+            ));
         }
         // The stored layout still holds case duplicates that this one has merged: keep a copy
         // of the database before the first merged layout is written. A stale save is refused
@@ -279,7 +281,9 @@ pub fn reset_current(connection: &mut Connection) -> Result<i64, AppError> {
             && WorkspaceLayoutDocument::from_json_degrading_invalid_files(&current.payload_json)
                 .is_ok()
         {
-            return Err(AppError::msg("当前布局可以正常读取，无需执行恢复性重置"));
+            return Err(AppError::internal(
+                "当前布局可以正常读取，无需执行恢复性重置",
+            ));
         }
     }
     let layout = empty_layout();
@@ -318,7 +322,7 @@ pub fn create_preset(
     .map_err(map_preset_write_error)?;
     workspace_layout_repo::get_preset(connection, &id)?
         .map(|row| row.summary)
-        .ok_or_else(|| AppError::msg("布局保存后无法读取"))
+        .ok_or_else(|| AppError::internal("布局保存后无法读取"))
 }
 
 pub fn update_preset(
@@ -362,7 +366,7 @@ pub fn plan_apply_preset_stage(
 ) -> Result<PendingApplyPlan, AppError> {
     active_layout.validate().map_err(layout_error)?;
     let row = workspace_layout_repo::get_preset(connection, id)?
-        .ok_or_else(|| AppError::msg("命名布局不存在"))?;
+        .ok_or_else(|| AppError::internal("命名布局不存在"))?;
     let preset_layout = parse_preset_layout(row.summary.schema_version, &row.payload_json)?;
     let facts = SlotFacts::load(
         connection,
@@ -462,7 +466,7 @@ impl PendingApplyPlan {
                 })
                 .unwrap_or_else(|| layout.focused_pane_id.clone());
             if !append_to_pane(&mut layout.tree, &target_pane_id, &slot.instance_id) {
-                return Err(AppError::msg("命名布局的目标窗格不存在"));
+                return Err(AppError::internal("命名布局的目标窗格不存在"));
             }
             additions.push(slot);
         }
@@ -559,16 +563,16 @@ fn parse_preset_layout(
     payload_json: &str,
 ) -> Result<WorkspaceLayoutDocument, AppError> {
     if !is_supported_layout_version(stored_schema_version) {
-        return Err(AppError::msg(format!(
+        return Err(AppError::internal(format!(
             "该命名布局使用不支持的版本 {stored_schema_version}"
         )));
     }
     let layout = WorkspaceLayoutDocument::from_json(payload_json).map_err(layout_error)?;
     if source_layout_version(payload_json) != Some(stored_schema_version) {
-        return Err(AppError::msg("命名布局 JSON 版本与数据库版本不一致"));
+        return Err(AppError::internal("命名布局 JSON 版本与数据库版本不一致"));
     }
     if i64::from(layout.schema_version) != i64::from(WORKSPACE_LAYOUT_SCHEMA_VERSION) {
-        return Err(AppError::msg("命名布局未能迁移到当前版本"));
+        return Err(AppError::internal("命名布局未能迁移到当前版本"));
     }
     layout.validate_as_preset().map_err(layout_error)?;
     Ok(layout)
@@ -913,7 +917,7 @@ fn preserve_detached_file_contents(
 }
 
 fn layout_error(error: WorkspaceLayoutError) -> AppError {
-    AppError::msg(error.to_string())
+    AppError::internal(error.to_string())
 }
 
 fn map_preset_write_error(error: rusqlite::Error) -> AppError {
@@ -2506,7 +2510,7 @@ mod tests {
 
         // A backup that fails stops the save: the stored layout is unchanged.
         let failing_backup =
-            |_: &Connection| -> Result<(), AppError> { Err(AppError::msg("backup failed")) };
+            |_: &Connection| -> Result<(), AppError> { Err(AppError::internal("backup failed")) };
         let failing = SaveContext {
             semantics_of: &semantics_of,
             backup_before_case_merge: &failing_backup,

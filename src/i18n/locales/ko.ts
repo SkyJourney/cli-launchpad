@@ -8,16 +8,17 @@ export const ko = {
   errors: {
     fileNotFound: "파일을 찾을 수 없습니다.",
     fileTooLarge: "파일 크기가 허용된 한도를 초과했습니다.",
-    ptySessionNotFound: "터미널 세션을 찾을 수 없거나 이미 종료되었습니다.",
+    ptySessionNotFound: "터미널 세션이 없거나 이미 종료되었습니다.",
     ptyHandoffInProgress:
-      "이 터미널을 다른 창으로 넘기는 중입니다. 잠시 후 다시 시도하세요.",
-    fileNotUtf8: "UTF-8 텍스트 파일만 저장할 수 있습니다.",
+      "이 터미널을 다른 창으로 이동하는 중입니다. 잠시 후 다시 시도하세요.",
+    fileNotUtf8: "UTF-8 텍스트 파일만 편집하고 저장할 수 있습니다.",
     fileNotRegular: "일반 파일만 열거나 저장할 수 있습니다.",
     layoutNameExists:
-      "같은 이름의 레이아웃이 이미 있습니다. 다른 이름을 선택하세요.",
+      "같은 이름의 레이아웃이 이미 있습니다. 다른 이름을 사용하세요.",
     layoutPresetLimit:
-      "이름이 있는 레이아웃은 최대 {{max}}개까지 저장할 수 있습니다.",
-    filePermissionDenied: "이 파일에 접근할 권한이 없습니다.",
+      "이름이 지정된 레이아웃은 최대 {{max}}개까지 지원됩니다.",
+    filePermissionDenied:
+      "권한이 거부되었습니다. 파일 또는 폴더 권한을 확인하세요.",
     backupIndexRefreshDiscarded:
       "백업이 복원되어, 복원 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
     projectIdentityUnreadable:

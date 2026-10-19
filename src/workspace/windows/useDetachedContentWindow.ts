@@ -12,6 +12,7 @@ import {
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
 import { fileContentKey, ptyContentKey } from "../../lib/workspaceContentKey";
+import type { AppErrorState } from "../../lib/appErrors";
 
 export type DetachedContentKind = "pty" | "file";
 
@@ -20,8 +21,8 @@ export interface DetachedContentWindowKit {
   returning: boolean;
   isReturning: () => boolean;
   setReturning: (value: boolean) => void;
-  error: string | null;
-  setError: (value: string | null) => void;
+  error: AppErrorState | null;
+  setError: (value: AppErrorState | null) => void;
   returnTimer: {
     arm: (ms: number, onTimeout: () => void) => void;
     clear: () => void;
@@ -41,7 +42,7 @@ export function useDetachedContentWindow(
   const windowLabel = useMemo(() => getCurrentWindow().label, []);
   const [returning, setReturningState] = useState(false);
   const returningRef = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppErrorState | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const setReturning = useCallback((value: boolean) => {

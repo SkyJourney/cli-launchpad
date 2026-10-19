@@ -133,7 +133,7 @@ pub async fn grant_content_window_file(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main])?;
     if relative_path.is_empty() {
-        return Err(AppError::msg("文件授权必须指向一个项目内文件"));
+        return Err(AppError::internal("文件授权必须指向一个项目内文件"));
     }
     open_project(&state, directory_id, directory_path.clone()).await?;
     grants
@@ -198,7 +198,7 @@ pub fn revoke_content_window_file(
 ) -> Result<bool, AppError> {
     caller.require(&[WindowKind::Main])?;
     if window_kind_of(&target_label) != Some(WindowKind::WorkspaceContent) {
-        return Err(AppError::msg("撤销目标不是已登记的内容窗口"));
+        return Err(AppError::internal("撤销目标不是已登记的内容窗口"));
     }
     grants.revoke(&target_label).map_err(AppError::from)
 }

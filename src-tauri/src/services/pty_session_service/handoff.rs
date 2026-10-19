@@ -70,7 +70,7 @@ pub(super) fn deliver_snapshot(
     sink: &dyn PtyEventSink,
 ) -> Result<(), AppError> {
     sink.send(plan.event.clone())
-        .map_err(|error| AppError::msg(format!("新窗口终端尚未就绪：{error}")))
+        .map_err(|error| AppError::internal(format!("新窗口终端尚未就绪：{error}")))
 }
 
 /// Validates the target window registered by `begin_handoff`: the label must be a known window
@@ -1065,7 +1065,7 @@ mod tests {
     ) -> Result<(), AppError> {
         match s.commit_finalize() {
             Some(_) => Ok(()),
-            None => Err(AppError::msg("none")),
+            None => Err(AppError::internal("none")),
         }
     }
     fn e_cancel_ok(

@@ -84,14 +84,16 @@ impl Reservation {
     }
 
     pub(crate) fn confirm(mut self, cancel: oneshot::Sender<()>) -> Result<(), AppError> {
-        let mut active = self
-            .manager
-            .active
-            .lock()
-            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+        let mut active =
+            self.manager.active.lock().map_err(|_| {
+                AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒")
+            })?;
         if self.manager.is_exiting() || active.reserved.remove(&self.tool_key).is_none() {
             // Exit cleanup already cleared the reservation table.
-            return Err(AppError::msg("应用正在退出，任务未启动"));
+            return Err(AppError::coded(
+                ErrorCode::AppExiting,
+                "应用正在退出，任务未启动",
+            ));
         }
         active.insert(
             self.tool_key,
@@ -154,7 +156,7 @@ impl ExecutionTaskManager {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒"))?;
         Ok(active
             .by_tool
             .values_mut()
@@ -168,7 +170,7 @@ impl ExecutionTaskManager {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒"))?;
         let remaining = active.by_tool.len() + active.reserved.len();
         active.by_tool.clear();
         active.reserved.clear();
@@ -188,7 +190,7 @@ impl ExecutionTaskManager {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒"))?;
         if active.contains_tool(tool_key) {
             return Err(AppError::coded(
                 ErrorCode::ExecBusy,
@@ -256,13 +258,12 @@ impl ExecutionTaskManager {
     pub async fn cancel(&self, app: &AppHandle, id: &str) -> Result<ExecutionTask, AppError> {
         let _transition = self.transition.lock().await;
         let cancel = {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            let mut active = self.active.lock().map_err(|_| {
+                AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒")
+            })?;
             let running = active
                 .get_mut_by_id(id)
-                .ok_or_else(|| AppError::msg("该任务当前未在执行，无法终止"))?;
+                .ok_or_else(|| AppError::internal("该任务当前未在执行，无法终止"))?;
             running.cancel.take()
         };
         match cancel {
@@ -283,13 +284,12 @@ impl ExecutionTaskManager {
     ) -> Result<ExecutionTask, AppError> {
         let _transition = self.transition.lock().await;
         let can_run = {
-            let active = self
-                .active
-                .lock()
-                .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            let active = self.active.lock().map_err(|_| {
+                AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒")
+            })?;
             let running = active
                 .get_by_id(id)
-                .ok_or_else(|| AppError::msg("执行任务状态已丢失"))?;
+                .ok_or_else(|| AppError::internal("执行任务状态已丢失"))?;
             running.cancel.is_some()
         };
         if !can_run {
@@ -348,10 +348,9 @@ impl ExecutionTaskManager {
         persist: impl Future<Output = Result<T, AppError>>,
     ) -> Result<T, AppError> {
         {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|_| AppError::msg("执行任务状态锁中毒"))?;
+            let mut active = self.active.lock().map_err(|_| {
+                AppError::coded(ErrorCode::InternalLockPoisoned, "执行任务状态锁中毒")
+            })?;
             active.remove_by_id(id);
         }
         persist.await
@@ -921,7 +920,8 @@ async fn append_log(
 async fn get_task(app: &AppHandle, id: &str) -> Result<ExecutionTask, AppError> {
     let id = id.to_string();
     db_call(app, "exec.get", move |connection| {
-        execution_task_repo::get(connection, &id)?.ok_or_else(|| AppError::msg("执行任务不存在"))
+        execution_task_repo::get(connection, &id)?
+            .ok_or_else(|| AppError::internal("执行任务不存在"))
     })
     .await
 }
@@ -1170,7 +1170,7 @@ mod tests {
 
         let result: Result<(), AppError> = manager
             .release_before("codex-task", async {
-                Err(AppError::msg("injected database write failure"))
+                Err(AppError::internal("injected database write failure"))
             })
             .await;
 

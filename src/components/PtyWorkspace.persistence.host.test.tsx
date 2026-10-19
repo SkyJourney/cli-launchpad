@@ -78,7 +78,10 @@ describe("layout persistence", () => {
     host = await mountWorkspace({ backend });
 
     expect(host.ctx().hydrationStatus).toBe("needsReset");
-    expect(host.ctx().hydrationError).toBe("bad");
+    expect(host.ctx().hydrationError).toEqual({
+      code: "layout.needs_reset",
+      message: "bad",
+    });
 
     act(() => host!.ctx().splitPane(panes()[0].id, "horizontal"));
     expect(host.backend.saved.length).toBe(0);
@@ -107,7 +110,7 @@ describe("layout persistence", () => {
     host = await mountWorkspace({ backend });
 
     expect(host.ctx().hydrationStatus).toBe("loadFailed");
-    expect(host.ctx().hydrationError).toContain("boom");
+    expect(host.ctx().hydrationError?.message).toContain("boom");
 
     await act(async () => {
       host!.ctx().retryHydration();

@@ -3,7 +3,11 @@ import { ArrowLeft, Terminal as TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PtySession, ToolKey } from "../lib/tauri";
-import { formatAppError } from "../lib/appErrors";
+import {
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { TOOLS } from "../lib/tools";
 import { PtyTerminal, type PtyTerminalHandle } from "./PtyTerminal";
@@ -129,11 +133,10 @@ export function StandalonePtyWindow({
         }
         void reconcileWindowStatus().then((handled) => {
           if (returnAttemptRef.current !== timeoutAttempt || handled) return;
-          setError(
-            translationRef.current("pty.returnFailed", {
-              error: translationRef.current("pty.returnTimedOut"),
-            }),
-          );
+          setError({
+            message: translationRef.current("pty.returnTimedOut"),
+            wrapKey: "pty.returnFailed",
+          });
           setReturning(false);
         });
       });
@@ -204,11 +207,7 @@ export function StandalonePtyWindow({
         if (!isCurrentAttempt()) return;
         returnTimer.clear();
         returnAttemptRef.current += 1;
-        setError(
-          translationRef.current("pty.returnFailed", {
-            error: formatAppError(reason, translationRef.current),
-          }),
-        );
+        setError(toAppErrorState(reason, "pty.returnFailed"));
         setReturning(false);
       }
     },
@@ -330,13 +329,12 @@ export function StandalonePtyWindow({
               return;
             }
             returnAttemptRef.current += 1;
-            setError(
-              translationRef.current("pty.returnFailed", {
-                error:
-                  event.payload.message ??
-                  translationRef.current("pty.returnUnknownError"),
-              }),
-            );
+            setError({
+              message:
+                event.payload.message ??
+                translationRef.current("pty.returnUnknownError"),
+              wrapKey: "pty.returnFailed",
+            });
             returnTimer.clear();
             setReturning(false);
             const context = returnHandoffContextRef.current;
@@ -435,7 +433,7 @@ export function StandalonePtyWindow({
             closeAfterTransferRef.current();
             return;
           }
-          setError(formatAppError(reason, translationRef.current));
+          setError(toAppErrorState(reason));
           await emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
             instanceId,
             sessionId,
@@ -494,7 +492,11 @@ export function StandalonePtyWindow({
           interactive
           onSessionChange={handleSessionChange}
         />
-        {error && <p className="error standalone-pty-error">{error}</p>}
+        {error && (
+          <p className="error standalone-pty-error">
+            {formatAppErrorState(error, t)}
+          </p>
+        )}
       </div>
     </WorkspaceContentWindowShell>
   );

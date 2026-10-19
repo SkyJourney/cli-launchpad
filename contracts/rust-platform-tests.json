@@ -6,7 +6,6 @@
     "macOS": 767
   },
   "allowedIgnored": [
-    "contracts::error_codes_are_never_raw_strings",
     "platform::execution_process::tree_worker::process_tree_worker",
     "platform::file_cas::tests::cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement",
     "platform::file_cas::tests::cross_process_cas_worker",
@@ -216,6 +215,7 @@
       "contracts::error_code_contract_matches_rust_registry",
       "contracts::app_errors_use_registered_code_constants",
       "contracts::every_error_code_has_a_producer_outside_the_registry",
+      "contracts::error_codes_are_never_raw_strings",
       "contracts::reserved_and_frontend_codes_have_no_rust_producer",
       "error::tests::coded_errors_serialize_the_enum_code_string",
       "error::tests::anyhow_errors_without_a_code_become_app_internal",

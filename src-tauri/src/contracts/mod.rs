@@ -2445,7 +2445,6 @@ fn raw_error_construction(text: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "待修复 077c：AppError::msg 在 077c 收口时删除"]
 fn error_codes_are_never_raw_strings() {
     let sources = production_rust_sources();
     for (path, text) in &sources {

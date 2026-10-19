@@ -15,10 +15,12 @@ import es from "../i18n/locales/es.json";
 import {
   APP_ERROR_TRANSLATION_KEYS,
   formatAppError,
+  formatAppErrorState,
   getAppErrorCode,
   getAppErrorMessage,
   isProjectIdentityChangedError,
   normalizeAppErrorCode,
+  toAppErrorState,
 } from "./appErrors";
 
 describe("serialized application errors", () => {
@@ -148,4 +150,65 @@ describe("error code contract", () => {
       }
     },
   );
+});
+
+describe("AppErrorState", () => {
+  const translator = vi.fn((key: string, options?: Record<string, unknown>) => {
+    if (key === "errors.generic") return "The operation failed.";
+    if (key === "errors.fileTooLarge")
+      return "The file exceeds the allowed size.";
+    if (key === "pty.returnFailed")
+      return `Return failed: ${String(options?.error)}`;
+    return key;
+  });
+  const t = translator as never;
+
+  it("keeps code, params and message", () => {
+    const state = toAppErrorState({
+      code: "file.too_large",
+      message: "文件超限",
+      params: { maxBytes: 1 },
+    });
+    expect(state).toEqual({
+      code: "file.too_large",
+      params: { maxBytes: 1 },
+      message: "文件超限",
+    });
+    expect(state).not.toHaveProperty("wrapKey");
+  });
+
+  it("falls back to the message for an unknown code", () => {
+    const state = toAppErrorState({ code: "x.y", message: "原始" });
+    expect(formatAppErrorState(state, t)).toBe("原始");
+  });
+
+  it("renders app.internal as the generic text and not the backend message", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const state = toAppErrorState({
+      code: "app.internal",
+      message: "后端内部细节",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const text = formatAppErrorState(state, t);
+    expect(text).toBe("The operation failed.");
+    expect(text).not.toContain("后端内部细节");
+    warn.mockRestore();
+  });
+
+  it("does not log a known code", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    toAppErrorState({ code: "file.too_large", message: "m" });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("wraps the formatted error with wrapKey", () => {
+    const state = toAppErrorState(
+      { code: "file.too_large", message: "m" },
+      "pty.returnFailed",
+    );
+    expect(formatAppErrorState(state, t)).toBe(
+      "Return failed: The file exceeds the allowed size.",
+    );
+  });
 });

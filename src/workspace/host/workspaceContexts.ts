@@ -1,3 +1,4 @@
+import type { AppErrorState } from "../../lib/appErrors";
 import { createContext, useContext, type MutableRefObject } from "react";
 import type { PtyTerminalHandle } from "../../components/PtyTerminal";
 import type { PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
@@ -31,9 +32,9 @@ export interface PtyWorkspaceContextValue {
   workspaceTreeRevision: number;
   focusedPaneId: string;
   hydrationStatus: PtyWorkspaceHydrationStatus;
-  hydrationError: string | null;
-  layoutSaveError: string | null;
-  layoutResetError: string | null;
+  hydrationError: AppErrorState | null;
+  layoutSaveError: AppErrorState | null;
+  layoutResetError: AppErrorState | null;
   layoutResetPending: boolean;
   portalTargets: Record<string, HTMLDivElement>;
   terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;

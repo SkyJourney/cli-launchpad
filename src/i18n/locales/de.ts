@@ -9,16 +9,19 @@ export const de = {
     fileNotFound: "Die Datei wurde nicht gefunden.",
     fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
     ptySessionNotFound:
-      "Die Terminal-Sitzung wurde nicht gefunden oder ist bereits beendet.",
+      "Die Terminalsitzung existiert nicht oder wurde beendet.",
     ptyHandoffInProgress:
-      "Dieses Terminal wird gerade an ein anderes Fenster übergeben. Versuchen Sie es gleich erneut.",
-    fileNotUtf8: "Nur UTF-8-Textdateien können gespeichert werden.",
+      "Dieses Terminal wird gerade in ein anderes Fenster verschoben. Versuchen Sie es gleich erneut.",
+    fileNotUtf8:
+      "Nur UTF-8-Textdateien können bearbeitet und gespeichert werden.",
     fileNotRegular:
       "Nur reguläre Dateien können geöffnet oder gespeichert werden.",
     layoutNameExists:
-      "Ein Layout mit diesem Namen existiert bereits. Wähle einen anderen Namen.",
-    layoutPresetLimit: "Du kannst bis zu {{max}} benannte Layouts speichern.",
-    filePermissionDenied: "Zugriff auf die Datei verweigert.",
+      "Ein Layout mit diesem Namen existiert bereits. Verwenden Sie einen anderen Namen.",
+    layoutPresetLimit:
+      "Es werden höchstens {{max}} benannte Layouts unterstützt.",
+    filePermissionDenied:
+      "Zugriff verweigert. Prüfen Sie die Berechtigungen der Datei oder des Ordners.",
     backupIndexRefreshDiscarded:
       "Ein Backup wurde wiederhergestellt; eine vorher gestartete Aktualisierung des Sitzungsindex wurde verworfen.",
     projectIdentityUnreadable:

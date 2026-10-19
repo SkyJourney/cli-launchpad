@@ -6,7 +6,6 @@
 pub enum ErrorCode {
     AppDataReplaceBlocked,
     AppDataReplaceInProgress,
-    AppError,
     AppExitDeferred,
     AppExiting,
     AppInternal,
@@ -52,7 +51,6 @@ impl ErrorCode {
         match self {
             Self::AppDataReplaceBlocked => "app.data_replace_blocked",
             Self::AppDataReplaceInProgress => "app.data_replace_in_progress",
-            Self::AppError => "app.error",
             Self::AppExitDeferred => "app.exit_deferred",
             Self::AppExiting => "app.exiting",
             Self::AppInternal => "app.internal",
@@ -100,7 +98,6 @@ impl ErrorCode {
 pub const ALL: &[ErrorCode] = &[
     ErrorCode::AppDataReplaceBlocked,
     ErrorCode::AppDataReplaceInProgress,
-    ErrorCode::AppError,
     ErrorCode::AppExitDeferred,
     ErrorCode::AppExiting,
     ErrorCode::AppInternal,

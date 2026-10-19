@@ -427,7 +427,7 @@ impl PtySessionStore for FakeStore {
         if remaining > 0 {
             self.insert_failures_remaining
                 .store(remaining - 1, Ordering::SeqCst);
-            return Err(AppError::msg("injected insert failure"));
+            return Err(AppError::internal("injected insert failure"));
         }
         self.inserted.lock().unwrap().push(session_id.to_string());
         Ok(())
@@ -458,10 +458,10 @@ impl PtySessionStore for FakeStore {
         if remaining > 0 {
             self.finish_failures_remaining
                 .store(remaining - 1, Ordering::SeqCst);
-            return Err(AppError::msg("injected persistence failure"));
+            return Err(AppError::internal("injected persistence failure"));
         }
         if self.fail_finish.load(Ordering::SeqCst) {
-            return Err(AppError::msg("injected persistence failure"));
+            return Err(AppError::internal("injected persistence failure"));
         }
         Ok(())
     }

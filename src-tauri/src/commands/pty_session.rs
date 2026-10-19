@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use tauri::{ipc::Channel, Manager, State};
 
 use crate::{
@@ -51,7 +52,7 @@ pub async fn create_pty_session(
         })
         .await?;
         if !belongs {
-            return Err(AppError::msg("该会话不属于当前项目目录，已拒绝恢复"));
+            return Err(AppError::internal("该会话不属于当前项目目录，已拒绝恢复"));
         }
     }
     let payload = bounded("pty.resolve_payload", budgets::PTY_LAUNCH_PREPARE, async {
@@ -84,7 +85,12 @@ pub async fn create_pty_session(
         )
     })
     .await
-    .map_err(|error| AppError::msg(format!("PTY 启动任务失败: {error}")))?
+    .map_err(|error| {
+        AppError::coded(
+            ErrorCode::InternalTaskFailed,
+            format!("PTY 启动任务失败: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
@@ -287,7 +293,12 @@ pub async fn confirm_app_exit(
         })
     })
     .await
-    .map_err(|error| AppError::msg(format!("结束 PTY 会话任务异常：{error}")))??;
+    .map_err(|error| {
+        AppError::coded(
+            ErrorCode::InternalTaskFailed,
+            format!("结束 PTY 会话任务异常：{error}"),
+        )
+    })??;
     // confirm_exit_with has already authorized the exit; 031 requires the "exiting" phase to stay
     // in place until app.exit, so the permit is kept.
     exit_permit.keep_exiting();

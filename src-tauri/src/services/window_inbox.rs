@@ -11,6 +11,7 @@
 //! while the registry lock is held (R-RS-1): a `flushing` flag keeps messages that arrive during
 //! a flush behind the flushed ones.
 
+use crate::error_codes::ErrorCode;
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
@@ -121,7 +122,7 @@ impl WindowInboxRegistry {
     fn lock(&self) -> Result<MutexGuard<'_, HashMap<String, WindowInbox>>, AppError> {
         self.inboxes
             .lock()
-            .map_err(|_| AppError::msg("窗口收件箱状态锁中毒"))
+            .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "窗口收件箱状态锁中毒"))
     }
 
     /// Installs `channel` as the window's inbox channel and flushes the buffered messages to it
@@ -170,7 +171,7 @@ impl WindowInboxRegistry {
                             inbox.flushing = false;
                         }
                     }
-                    return Err(AppError::msg(format!("窗口收件箱通道不可用：{error}")));
+                    return Err(AppError::internal(format!("窗口收件箱通道不可用：{error}")));
                 }
                 flushed += 1;
             }

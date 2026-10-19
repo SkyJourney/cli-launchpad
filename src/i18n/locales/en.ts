@@ -2,16 +2,16 @@ export const en = {
   errors: {
     fileNotFound: "The file could not be found.",
     fileTooLarge: "The file exceeds the allowed size.",
-    ptySessionNotFound:
-      "The terminal session was not found or has already ended.",
+    ptySessionNotFound: "The terminal session does not exist or has ended.",
     ptyHandoffInProgress:
-      "This terminal is being handed off to another window. Try again shortly.",
-    fileNotUtf8: "Only UTF-8 text files can be saved.",
+      "This terminal is being moved to another window. Try again shortly.",
+    fileNotUtf8: "Only UTF-8 text files can be edited and saved.",
     fileNotRegular: "Only regular files can be opened or saved.",
     layoutNameExists:
-      "A layout with this name already exists. Choose another name.",
-    layoutPresetLimit: "You can keep up to {{max}} named layouts.",
-    filePermissionDenied: "Permission denied for this file.",
+      "A layout with this name already exists. Use a different name.",
+    layoutPresetLimit: "At most {{max}} named layouts are supported.",
+    filePermissionDenied:
+      "Permission denied. Check the file or folder permissions.",
     backupIndexRefreshDiscarded:
       "A backup was restored, so a session index refresh that started before it was discarded.",
     projectIdentityUnreadable:

@@ -176,7 +176,7 @@ mod tests {
         fn terminate_all(&self, _budget: Duration) -> Result<usize, AppError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.fail {
-                return Err(AppError::msg("boom"));
+                return Err(AppError::internal("boom"));
             }
             Ok(self.remaining.swap(0, Ordering::SeqCst))
         }

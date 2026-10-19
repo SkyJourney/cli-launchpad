@@ -6,7 +6,6 @@ type AppErrorParams = Record<string, string | number | boolean>;
 const TRANSLATION_KEYS_BY_CODE: Readonly<Record<string, string>> = {
   "app.data_replace_blocked": "errors.dataReplaceBlocked",
   "app.data_replace_in_progress": "errors.dataReplaceInProgress",
-  "app.error": "errors.appError",
   "app.exit_deferred": "errors.appExitDeferred",
   "app.exiting": "errors.appExiting",
   "backup.restore_in_progress": "errors.backupRestoreInProgress",
@@ -110,6 +109,61 @@ export function formatAppError(error: unknown, t: TFunction): string {
   return String(
     t(key as never, { ...params, defaultValue: fallback } as never),
   );
+}
+
+/**
+ * An error kept in component state. It holds the structured code and parameters, never a formatted
+ * string, so the same state renders again when the language changes.
+ */
+export interface AppErrorState {
+  code?: string;
+  params?: AppErrorParams;
+  /** The backend's text or the runtime's message; the fallback for an unknown code. */
+  message: string;
+  /** Wraps the formatted error with this translation key, passed as `error`. */
+  wrapKey?: string;
+}
+
+export function toAppErrorState(
+  error: unknown,
+  wrapKey?: string,
+): AppErrorState {
+  const code = getAppErrorCode(error);
+  const state: AppErrorState = {
+    message: getAppErrorMessage(error),
+  };
+  if (code !== undefined) state.code = code;
+  const params = getAppErrorParams(error);
+  if (Object.keys(params).length > 0) state.params = params;
+  if (wrapKey !== undefined) state.wrapKey = wrapKey;
+  if (code === "app.internal") {
+    // Diagnostics only: the detail is never shown to the user.
+    console.warn("[app-error]", code, state.message);
+  }
+  return state;
+}
+
+export function formatAppErrorState(
+  state: AppErrorState,
+  t: TFunction,
+): string {
+  // A known code renders its translation only; the backend text is the fallback for unknown codes.
+  const known =
+    state.code !== undefined &&
+    ownEntry(APP_ERROR_TRANSLATION_KEYS, state.code) !== undefined;
+  const inner =
+    state.code === "app.internal"
+      ? String(t("errors.generic" as never))
+      : formatAppError(
+          {
+            code: state.code,
+            params: state.params,
+            message: known ? "" : state.message,
+          },
+          t,
+        );
+  if (state.wrapKey === undefined) return inner;
+  return String(t(state.wrapKey as never, { error: inner } as never));
 }
 
 function getAppErrorParams(error: unknown): AppErrorParams {

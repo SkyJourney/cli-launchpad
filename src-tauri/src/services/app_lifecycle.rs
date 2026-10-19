@@ -494,11 +494,10 @@ impl AppLifecycle {
     }
 
     pub fn admit(&self, op: Operation) -> Result<Permit, AppError> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .map_err(|_| AppError::msg("应用生命周期锁中毒"))?;
+        let mut state =
+            self.inner.state.lock().map_err(|_| {
+                AppError::coded(ErrorCode::InternalLockPoisoned, "应用生命周期锁中毒")
+            })?;
         match (state.phase, op) {
             (Phase::Running, Operation::PtyStart | Operation::ExecStart) => {
                 state.inflight_starts = state.inflight_starts.saturating_add(1);
@@ -1466,7 +1465,7 @@ mod tests {
         let request = gate.begin_request();
 
         let failed = confirm_exit_with(&gate, &request.id, || {
-            Err::<(), AppError>(AppError::msg("pty busy"))
+            Err::<(), AppError>(AppError::internal("pty busy"))
         });
         assert_eq!(failed.unwrap_err().to_string(), "pty busy");
         assert!(!gate.consume_authorization());
@@ -1736,7 +1735,7 @@ mod tests {
         let request = gate.begin_request();
 
         let result = confirm_exit_with(&gate, &request.id, || {
-            Err::<(), AppError>(AppError::msg("terminate failed"))
+            Err::<(), AppError>(AppError::internal("terminate failed"))
         });
 
         assert!(result.is_err());

@@ -17,6 +17,8 @@ import {
 } from "../lib/workspaceFileBuffer";
 import {
   formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
   isProjectIdentityChangedError,
 } from "../lib/appErrors";
 import {
@@ -123,22 +125,21 @@ export function StandaloneWorkspaceFileWindow({
         await bufferPublisherRef.current?.flush();
       } catch (reason) {
         setReturning(false);
-        setError(formatAppError(reason, tRef.current));
+        setError(toAppErrorState(reason));
         return;
       }
       const buffer = currentBufferRef.current;
       if (!buffer || buffer.saving) {
         setReturning(false);
-        setError(tRef.current("workspaceFiles.loadingFile"));
+        setError({ message: tRef.current("workspaceFiles.loadingFile") });
         return;
       }
       returnTimer.arm(WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS, () => {
         setReturning(false);
-        setError(
-          tRef.current("pty.returnFailed", {
-            error: tRef.current("pty.returnTimedOut"),
-          }),
-        );
+        setError({
+          message: tRef.current("pty.returnTimedOut"),
+          wrapKey: "pty.returnFailed",
+        });
       });
       await emitWorkspaceContentWindowEvent(
         "main",
@@ -154,7 +155,7 @@ export function StandaloneWorkspaceFileWindow({
       ).catch((reason) => {
         returnTimer.clear();
         setReturning(false);
-        setError(formatAppError(reason, tRef.current));
+        setError(toAppErrorState(reason));
       });
     },
     [documentId, fileDocument, token],
@@ -190,7 +191,7 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               markWorkspaceFileSaveConflict(current, submitted),
             );
-            setError(tRef.current("workspaceFiles.saveConflict"));
+            setError({ message: tRef.current("workspaceFiles.saveConflict") });
             return;
           }
           updateFileBuffer((current) =>
@@ -207,13 +208,15 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            setError(tRef.current("workspaceFiles.projectIdentityChanged"));
+            setError({
+              message: tRef.current("workspaceFiles.projectIdentityChanged"),
+            });
             return;
           }
           updateFileBuffer((current) =>
             failWorkspaceFileSave(current, submitted),
           );
-          setError(formatAppError(reason, tRef.current));
+          setError(toAppErrorState(reason));
         }
       }),
     [documentId, fileDocument, updateFileBuffer],
@@ -246,10 +249,12 @@ export function StandaloneWorkspaceFileWindow({
             updateFileBuffer((current) =>
               current ? markWorkspaceFileIdentityChanged(current) : current,
             );
-            setError(tRef.current("workspaceFiles.projectIdentityChanged"));
+            setError({
+              message: tRef.current("workspaceFiles.projectIdentityChanged"),
+            });
             return;
           }
-          setError(formatAppError(reason, tRef.current));
+          setError(toAppErrorState(reason));
         }
       }),
     [documentId, fileDocument, updateFileBuffer],
@@ -308,7 +313,7 @@ export function StandaloneWorkspaceFileWindow({
                     buffer: message.fileBuffer,
                   });
                 } catch (reason) {
-                  setError(formatAppError(reason, tRef.current));
+                  setError(toAppErrorState(reason));
                   await emitWorkspaceContentWindowEvent(
                     "main",
                     "workspace-file-window-attach-failed",
@@ -386,10 +391,12 @@ export function StandaloneWorkspaceFileWindow({
                 returnTimer.clear();
                 setReturning(false);
                 setError(
-                  event.payload.message ??
-                    tRef.current("pty.returnFailed", {
-                      error: tRef.current("pty.workspaceRestoring"),
-                    }),
+                  event.payload.message != null
+                    ? { message: event.payload.message }
+                    : {
+                        message: tRef.current("pty.workspaceRestoring"),
+                        wrapKey: "pty.returnFailed",
+                      },
                 );
               },
             ),
@@ -419,7 +426,7 @@ export function StandaloneWorkspaceFileWindow({
     void setup().catch((reason) => {
       if (disposed) return;
       const message = formatAppError(reason, tRef.current);
-      setError(message);
+      setError(toAppErrorState(reason));
       void emitWorkspaceContentWindowEvent(
         "main",
         "workspace-file-window-attach-failed",
@@ -515,7 +522,7 @@ export function StandaloneWorkspaceFileWindow({
         )}
         {error && (
           <div className="error standalone-pty-error">
-            {error}
+            {formatAppErrorState(error, t)}
             {fileBuffer?.conflict && (
               <button type="button" onClick={() => void reloadFile()}>
                 {t("workspaceFiles.reload")}

@@ -97,7 +97,7 @@ impl ProjectDirectory {
                 // The stored path is untrusted input: never resolve a relative path against the
                 // process working directory (the old validate_path refused it).
                 if !Path::new(&directory.path).is_absolute() {
-                    return Err(AppError::msg("项目目录必须使用绝对路径"));
+                    return Err(AppError::internal("项目目录必须使用绝对路径"));
                 }
                 let root = match expected.as_deref() {
                     Some(expected) => ProjectDirectory::open_snapshot(&directory.path, expected)?,

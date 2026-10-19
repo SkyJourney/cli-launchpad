@@ -1,3 +1,4 @@
+use crate::error_codes::ErrorCode;
 use tauri::State;
 
 use crate::db::directory_repo;
@@ -148,7 +149,9 @@ pub async fn reorder_directories(
                 .collect::<Vec<_>>();
 
             if !contains_exactly(&expected_ids, &ordered_ids) {
-                return Err(AppError::msg("项目排序只能调整同一置顶分组内的全部项目"));
+                return Err(AppError::internal(
+                    "项目排序只能调整同一置顶分组内的全部项目",
+                ));
             }
 
             directory_repo::reorder(conn, &ordered_ids)?;
@@ -350,8 +353,9 @@ mod tests {
 pub async fn open_project_directory(state: State<'_, Db>, id: i64) -> Result<(), AppError> {
     let directory = state
         .call("directory.get", move |conn| {
-            directory_repo::get(conn, id)?
-                .ok_or_else(|| AppError::msg(format!("项目目录 {id} 不存在")))
+            directory_repo::get(conn, id)?.ok_or_else(|| {
+                AppError::coded(ErrorCode::ProjectNotFound, format!("项目目录 {id} 不存在"))
+            })
         })
         .await?;
     blocking("directory.open", budgets::PROJECT_DIRECTORY, move || {

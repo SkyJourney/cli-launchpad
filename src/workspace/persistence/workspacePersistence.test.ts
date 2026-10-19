@@ -171,7 +171,10 @@ describe("workspacePersistence", () => {
     });
     await f.persistence.hydrate();
     expect(f.store.getSnapshot().hydrationStatus).toBe("needsReset");
-    expect(f.persistence.getStatus().hydrationError).toBe("bad");
+    expect(f.persistence.getStatus().hydrationError).toEqual({
+      code: "layout.needs_reset",
+      message: "bad",
+    });
     f.persistence.schedulePersist();
     expect(saves(f)).toBe(0);
     expect(f.runtimeSteps).not.toHaveBeenCalled();
@@ -182,7 +185,7 @@ describe("workspacePersistence", () => {
     f.ports.getWorkspaceLayout.mockRejectedValue(new Error("boom"));
     await f.persistence.hydrate();
     expect(f.store.getSnapshot().hydrationStatus).toBe("loadFailed");
-    expect(f.persistence.getStatus().hydrationError).toContain("boom");
+    expect(f.persistence.getStatus().hydrationError?.message).toContain("boom");
     expect(saves(f)).toBe(0);
   });
 
@@ -233,7 +236,9 @@ describe("workspacePersistence", () => {
 
     f.persistence.schedulePersist();
     await f.persistence.flush();
-    expect(f.persistence.getStatus().layoutSaveError).toContain("disk full");
+    expect(f.persistence.getStatus().layoutSaveError?.message).toContain(
+      "disk full",
+    );
 
     f.persistence.schedulePersist();
     await f.persistence.flush();
@@ -245,7 +250,9 @@ describe("workspacePersistence", () => {
     f.ports.saveWorkspaceLayout.mockRejectedValueOnce(new Error("again"));
     f.persistence.schedulePersist();
     await f.persistence.flush();
-    expect(f.persistence.getStatus().layoutSaveError).toContain("again");
+    expect(f.persistence.getStatus().layoutSaveError?.message).toContain(
+      "again",
+    );
     expect(listener.mock.calls.length).toBe(before);
   });
 
@@ -449,7 +456,9 @@ describe("workspacePersistence", () => {
     await failing.persistence.hydrate();
     failing.ports.resetWorkspaceLayout.mockRejectedValueOnce(new Error("nope"));
     await expect(failing.persistence.resetWorkspace()).rejects.toThrow("nope");
-    expect(failing.persistence.getStatus().layoutResetError).toContain("nope");
+    expect(failing.persistence.getStatus().layoutResetError?.message).toContain(
+      "nope",
+    );
 
     const ready = makeFixture();
     await ready.persistence.hydrate();

@@ -8,18 +8,19 @@ export const fr = {
   errors: {
     fileNotFound: "Fichier introuvable.",
     fileTooLarge: "Le fichier dépasse la taille autorisée.",
-    ptySessionNotFound:
-      "La session de terminal est introuvable ou s'est terminée.",
+    ptySessionNotFound: "La session de terminal n'existe pas ou est terminée.",
     ptyHandoffInProgress:
-      "Ce terminal est en cours de transfert vers une autre fenêtre. Réessayez dans un instant.",
-    fileNotUtf8: "Seuls les fichiers texte UTF-8 peuvent être enregistrés.",
+      "Ce terminal est en cours de déplacement vers une autre fenêtre. Réessayez dans un instant.",
+    fileNotUtf8:
+      "Seuls les fichiers texte UTF-8 peuvent être modifiés et enregistrés.",
     fileNotRegular:
       "Seuls les fichiers ordinaires peuvent être ouverts ou enregistrés.",
     layoutNameExists:
-      "Une disposition porte déjà ce nom. Choisissez un autre nom.",
+      "Une disposition portant ce nom existe déjà. Utilisez un autre nom.",
     layoutPresetLimit:
-      "Vous pouvez conserver jusqu'à {{max}} dispositions nommées.",
-    filePermissionDenied: "Accès au fichier refusé.",
+      "{{max}} dispositions nommées au maximum sont prises en charge.",
+    filePermissionDenied:
+      "Autorisation refusée. Vérifiez les autorisations du fichier ou du dossier.",
     backupIndexRefreshDiscarded:
       "Une sauvegarde a été restaurée ; l'actualisation de l'index des sessions commencée avant a été abandonnée.",
     projectIdentityUnreadable:

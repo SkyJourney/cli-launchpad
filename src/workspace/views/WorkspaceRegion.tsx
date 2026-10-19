@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useDirectories } from "../../hooks/queries";
 import { listWorkspacePanes } from "../../lib/ptyWorkspaceLayout";
-import { formatAppError } from "../../lib/appErrors";
+import { formatAppError, formatAppErrorState } from "../../lib/appErrors";
 import { useAppStore } from "../../store/appStore";
 import {
   usePtyWorkspace,
@@ -95,7 +95,11 @@ export function WorkspaceRegion() {
         aria-label={t("pty.panelLabel")}
       >
         <div className="pty-workspace-recovery-notice" role="alert">
-          <p>{t("pty.layoutLoadFailed", { error: hydrationError })}</p>
+          <p>
+            {t("pty.layoutLoadFailed", {
+              error: formatAppErrorState(hydrationError ?? { message: "" }, t),
+            })}
+          </p>
           <button
             type="button"
             className="pty-layout-action"
@@ -114,9 +118,17 @@ export function WorkspaceRegion() {
     <section className="pty-workspace-region" aria-label={t("pty.panelLabel")}>
       {hydrationStatus === "needsReset" && (
         <div className="pty-workspace-recovery-notice" role="status">
-          <p>{t("pty.layoutNeedsReset", { reason: hydrationError })}</p>
+          <p>
+            {t("pty.layoutNeedsReset", {
+              reason: formatAppErrorState(hydrationError ?? { message: "" }, t),
+            })}
+          </p>
           {layoutResetError && (
-            <p>{t("pty.layoutResetFailed", { error: layoutResetError })}</p>
+            <p>
+              {t("pty.layoutResetFailed", {
+                error: formatAppErrorState(layoutResetError, t),
+              })}
+            </p>
           )}
           <button
             type="button"
@@ -137,7 +149,9 @@ export function WorkspaceRegion() {
       )}
       {hydrationStatus === "ready" && layoutSaveError && (
         <div className="pty-workspace-recovery-notice" role="status">
-          {t("pty.layoutSaveFailed", { error: layoutSaveError })}
+          {t("pty.layoutSaveFailed", {
+            error: formatAppErrorState(layoutSaveError, t),
+          })}
         </div>
       )}
       <div className="pty-workspace-tree">

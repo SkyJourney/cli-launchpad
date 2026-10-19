@@ -93,7 +93,7 @@ fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppEr
         pixel_height: 0,
     })?;
     if snapshot.data.len() > MAX_HANDOFF_SNAPSHOT_BYTES {
-        return Err(AppError::msg("终端画面过大，暂时无法移动到独立窗口"));
+        return Err(AppError::internal("终端画面过大，暂时无法移动到独立窗口"));
     }
     Ok(())
 }
@@ -334,7 +334,9 @@ impl PtySessionManager {
 
         if let Err(error) = spawn_output_reader(Arc::clone(&session), reader) {
             self.fail_session_start(store, &session, error.to_string());
-            return Err(AppError::msg(format!("创建 PTY 输出线程失败：{error}")));
+            return Err(AppError::internal(format!(
+                "创建 PTY 输出线程失败：{error}"
+            )));
         }
         if let Err(error) = spawn_child_monitor(
             Arc::clone(&session),
@@ -343,7 +345,9 @@ impl PtySessionManager {
             self.registry_handle(),
         ) {
             self.fail_session_start(store, &session, error.to_string());
-            return Err(AppError::msg(format!("创建 PTY 监控线程失败：{error}")));
+            return Err(AppError::internal(format!(
+                "创建 PTY 监控线程失败：{error}"
+            )));
         }
 
         log::info!(
@@ -478,7 +482,7 @@ impl PtySessionManager {
         let termination = session.tree_terminate().map_err(|error| match error {
             TreeTerminateError::Poisoned => AppError::from(PtyError::LockPoisoned("PTY 进程树")),
             TreeTerminateError::Failed(message) => {
-                AppError::msg(format!("终止 PTY 进程树失败：{message}"))
+                AppError::internal(format!("终止 PTY 进程树失败：{message}"))
             }
         });
         session.flow.close();
@@ -713,12 +717,12 @@ impl PtySessionManager {
                         .store(false, std::sync::atomic::Ordering::Release);
                 }
             }
-            return Err(AppError::msg(
+            return Err(AppError::internal(
                 "部分 PTY 会话未能在限定时间内退出，应用继续保持运行",
             ));
         }
         if !termination_errors.is_empty() {
-            return Err(AppError::msg(format!(
+            return Err(AppError::internal(format!(
                 "PTY 进程树清理报告错误：{}",
                 termination_errors.join("；")
             )));
@@ -925,10 +929,10 @@ fn configure_cli_environment(
 
 fn validate_size(size: PtySizeUpdate) -> Result<(), AppError> {
     if size.cols == 0 || size.rows == 0 {
-        return Err(AppError::msg("PTY 尺寸必须至少为 1 列和 1 行"));
+        return Err(AppError::internal("PTY 尺寸必须至少为 1 列和 1 行"));
     }
     if size.cols > 500 || size.rows > 300 {
-        return Err(AppError::msg(format!(
+        return Err(AppError::internal(format!(
             "PTY 尺寸超出安全范围（当前 {} 列 × {} 行，上限 500 列 × 300 行）",
             size.cols, size.rows
         )));
