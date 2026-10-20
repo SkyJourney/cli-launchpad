@@ -115,7 +115,7 @@
 | 46  | `src/lib/workspaceFileClose.test.ts`                        | 文件关闭状态               | 纯函数              | node       | 1    | 只测 happy path                                  |
 | 47  | `src/lib/workspaceFileExitFlush.test.ts`                    | flush 请求                 | 单元                | node       | 3    | 良好                                             |
 | 48  | `src/lib/workspaceFileWindow.test.ts`                       | 文件窗身份                 | 纯函数              | node       | 4    | 良好                                             |
-| 49  | `src/lib/workspaceFileWindowSetup.test.ts`                  | 子窗 setup 卸载            | 单元                | node       | 1    | 良好                                             |
+| 49  | `src/lib/detachedWindowSetup.test.ts`                       | 子窗 setup 卸载            | 单元                | node       | 1    | 良好                                             |
 | 50  | `src/lib/workspaceLayoutPersistence.test.ts`                | 迁移/校验/保存队列         | 单元                | node       | 18   | 良好；缺 returning 与“拒绝不推进”场景            |
 | 51  | `src/lib/workspaceRestorePolicy.test.ts`                    | 恢复阻断 OR                | 纯函数              | node       | 1    | 低价值（只测三个数的 OR），宿主层缺失            |
 | 52  | `src/lib/workspaceTabLayout.test.ts`                        | 标签分区                   | 纯函数              | node       | 4    | 良好（组件测量未测）                             |

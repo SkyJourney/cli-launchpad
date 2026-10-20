@@ -73,4 +73,25 @@ describe("StandalonePtyWindow listener setup", () => {
     windowHandle = undefined;
     expect(tauriMock.state.eventListeners).toHaveLength(0);
   });
+
+  it("removes every PTY window listener once the window became ready and is disposed", async () => {
+    const inboxBefore = tauriMock.inboxHandlerCount(
+      DEFAULT_PTY_WINDOW_LABEL,
+      "window-message",
+    );
+    windowHandle = await mountPtyWindow();
+    await flush(10);
+    // 反向断言前提：窗口确实进入了就绪路径，并且三个内容监听确实登记在收件箱上。
+    expect(emittedEnvelopes("pty-detached-ready")).toHaveLength(1);
+    expect(
+      tauriMock.inboxHandlerCount(DEFAULT_PTY_WINDOW_LABEL, "window-message"),
+    ).toBeGreaterThanOrEqual(inboxBefore + 3);
+
+    windowHandle.dispose();
+    windowHandle = undefined;
+    await flush();
+    expect(
+      tauriMock.inboxHandlerCount(DEFAULT_PTY_WINDOW_LABEL, "window-message"),
+    ).toBe(inboxBefore);
+  });
 });

@@ -37,7 +37,7 @@ import {
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
-import { completeWorkspaceFileWindowSetup } from "../lib/workspaceFileWindowSetup";
+import { completeDetachedWindowSetup } from "../lib/detachedWindowSetup";
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { fileContentRef } from "../lib/workspaceContentKey";
 import { newTransferId } from "../lib/workspaceContentLifecycle";
@@ -259,7 +259,7 @@ export function StandaloneWorkspaceFileWindow({
     const stops: (() => void)[] = [];
     const setup = async () => {
       const currentWindow = getCurrentWindow();
-      await completeWorkspaceFileWindowSetup({
+      await completeDetachedWindowSetup({
         registerListeners: () =>
           registerAllOrCleanup([
             onContentHandoff("file", "init", async (event) => {
@@ -378,7 +378,7 @@ export function StandaloneWorkspaceFileWindow({
           ]),
         isDisposed: () => disposed,
         keepListeners: (registered) => stops.push(...registered),
-        sendReady: () =>
+        afterListeners: () =>
           sendContentHandoff("main", "file", "ready", {
             documentId,
             token,
