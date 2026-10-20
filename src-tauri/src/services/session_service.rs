@@ -369,8 +369,10 @@ pub async fn session_belongs_to_directory(
 mod tests {
     use super::*;
     use crate::models::session::{SessionInfo, SessionSearchIndexDocument};
+    #[cfg(windows)]
+    use crate::services::cli_adapters::support::paths_match;
     use crate::services::cli_adapters::support::{
-        is_canonical_uuid, page_local, paths_match, safe_session_id, truncate_chars,
+        is_canonical_uuid, page_local, safe_session_id, truncate_chars,
     };
 
     #[tokio::test]
