@@ -23,7 +23,11 @@ import {
 import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import { disposeWorkspaceContent } from "../../lib/workspaceContentClose";
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
-import { ptyContentKey } from "../../lib/workspaceContentKey";
+import {
+  fileContentRef,
+  ptyContentKey,
+  ptyContentRef,
+} from "../../lib/workspaceContentKey";
 import { LISTENER_REGISTRATION_RETRY_DELAYS_MS } from "../../lib/workspaceContentListenerSetup";
 import { droppedFileDocumentIds } from "../../lib/workspaceFileDocumentRelease";
 import {
@@ -154,7 +158,7 @@ export function useWorkspaceRuntime({
       getHydrationEpoch: () => persistence.hydrationEpoch(),
       isHandoffActive: (documentId) =>
         isHandoffActive(
-          contentCoordinatorRef.current.get({ kind: "file", documentId }),
+          contentCoordinatorRef.current.get(fileContentRef(documentId)),
         ),
       getTranslate: () => tRef.current,
       notify: {
@@ -175,7 +179,7 @@ export function useWorkspaceRuntime({
       void (async () => {
         try {
           await dispose({
-            content: { kind: "file", documentId },
+            content: fileContentRef(documentId),
             owner: { kind: "window", windowLabel: "main" },
             generation: 0,
             reason: "ownerEnded",
@@ -382,7 +386,7 @@ export function useWorkspaceRuntime({
 
   const removeSlot = useCallback(
     (instanceId: string, options: { disposeOwnerEnded?: boolean } = {}) => {
-      const content = { kind: "pty", slotId: instanceId } as const;
+      const content = ptyContentRef(instanceId);
       if (options.disposeOwnerEnded !== false) {
         void disposeWorkspaceContent({
           coordinator: contentCoordinatorRef.current,
@@ -453,7 +457,7 @@ export function useWorkspaceRuntime({
     terminalOf: (instanceId) => terminalRefs.current.get(instanceId),
     titleOfPty: (instanceId) =>
       presentWorkspaceContent(
-        { kind: "pty", slotId: instanceId },
+        ptyContentRef(instanceId),
         getWorkspacePresentationContext(),
       ).title,
     openDirectory: (directoryId) =>

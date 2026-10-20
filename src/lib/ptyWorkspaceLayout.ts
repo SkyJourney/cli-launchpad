@@ -1,7 +1,11 @@
 export type SplitDirection = "horizontal" | "vertical";
 
 import type { WorkspacePaneContentRef } from "./tauri";
-import { workspaceContentKey } from "./workspaceContentKey";
+import {
+  fileContentRef,
+  ptyContentRef,
+  workspaceContentKey,
+} from "./workspaceContentKey";
 
 export interface WorkspacePane {
   kind: "pane";
@@ -180,14 +184,14 @@ export function listVisibleWorkspaceSessionIds(node: WorkspaceNode): string[] {
 
 export function containsWorkspaceSession(
   node: WorkspaceNode,
-  sessionId: string,
+  slotId: string,
 ): boolean {
   return node.kind === "pane"
     ? node.contents.some(
-        (content) => content.kind === "pty" && content.slotId === sessionId,
+        (content) => content.kind === "pty" && content.slotId === slotId,
       )
-    : containsWorkspaceSession(node.first, sessionId) ||
-        containsWorkspaceSession(node.second, sessionId);
+    : containsWorkspaceSession(node.first, slotId) ||
+        containsWorkspaceSession(node.second, slotId);
 }
 
 export function splitWorkspacePane(
@@ -232,34 +236,34 @@ export function splitWorkspacePane(
 export function addSessionToWorkspacePane(
   node: WorkspaceNode,
   paneId: string,
-  sessionId: string,
+  slotId: string,
 ): WorkspaceNode {
-  if (containsWorkspaceSession(node, sessionId)) {
-    throw new Error(`PTY session is already assigned to a pane: ${sessionId}`);
+  if (containsWorkspaceSession(node, slotId)) {
+    throw new Error(`PTY session is already assigned to a pane: ${slotId}`);
   }
   return updateWorkspacePane(node, paneId, (pane) => ({
     ...pane,
-    contents: [...pane.contents, { kind: "pty", slotId: sessionId }],
-    activeContent: { kind: "pty", slotId: sessionId },
+    contents: [...pane.contents, ptyContentRef(slotId)],
+    activeContent: ptyContentRef(slotId),
   }));
 }
 
 export function activateWorkspaceSession(
   node: WorkspaceNode,
   paneId: string,
-  sessionId: string,
+  slotId: string,
 ): WorkspaceNode {
   return updateWorkspacePane(node, paneId, (pane) => {
     if (
       !pane.contents.some(
-        (content) => content.kind === "pty" && content.slotId === sessionId,
+        (content) => content.kind === "pty" && content.slotId === slotId,
       )
     ) {
-      throw new Error(`PTY session does not belong to pane: ${sessionId}`);
+      throw new Error(`PTY session does not belong to pane: ${slotId}`);
     }
     return {
       ...pane,
-      activeContent: { kind: "pty", slotId: sessionId },
+      activeContent: ptyContentRef(slotId),
     };
   });
 }
@@ -268,12 +272,12 @@ export function moveWorkspaceSession(
   node: WorkspaceNode,
   sourcePaneId: string,
   destinationPaneId: string,
-  sessionId: string,
+  slotId: string,
 ): WorkspaceNode {
   const source = findWorkspacePane(node, sourcePaneId);
   if (
     !source?.contents.some(
-      (content) => content.kind === "pty" && content.slotId === sessionId,
+      (content) => content.kind === "pty" && content.slotId === slotId,
     )
   ) {
     throw new Error("PTY session does not belong to pane: " + sourcePaneId);
@@ -282,25 +286,22 @@ export function moveWorkspaceSession(
     throw new Error("Workspace pane not found: " + destinationPaneId);
   }
   if (sourcePaneId === destinationPaneId) {
-    return activateWorkspaceSession(node, sourcePaneId, sessionId);
+    return activateWorkspaceSession(node, sourcePaneId, slotId);
   }
 
-  const withoutSession = removeWorkspaceContentFromPane(node, sourcePaneId, {
-    kind: "pty",
-    slotId: sessionId,
-  });
-
-  return addSessionToWorkspacePane(
-    withoutSession,
-    destinationPaneId,
-    sessionId,
+  const withoutSession = removeWorkspaceContentFromPane(
+    node,
+    sourcePaneId,
+    ptyContentRef(slotId),
   );
+
+  return addSessionToWorkspacePane(withoutSession, destinationPaneId, slotId);
 }
 
 export function splitAndMoveWorkspaceSession(
   node: WorkspaceNode,
   paneId: string,
-  sessionId: string,
+  slotId: string,
   direction: SplitDirection,
   splitId: string,
   newPaneId: string,
@@ -308,14 +309,14 @@ export function splitAndMoveWorkspaceSession(
   const pane = findWorkspacePane(node, paneId);
   if (
     !pane?.contents.some(
-      (content) => content.kind === "pty" && content.slotId === sessionId,
+      (content) => content.kind === "pty" && content.slotId === slotId,
     )
   ) {
     throw new Error("PTY session does not belong to pane: " + paneId);
   }
 
   const split = splitWorkspacePane(node, paneId, direction, splitId, newPaneId);
-  return moveWorkspaceSession(split, paneId, newPaneId, sessionId);
+  return moveWorkspaceSession(split, paneId, newPaneId, slotId);
 }
 
 export function setWorkspaceSplitRatio(
@@ -335,9 +336,9 @@ export function setWorkspaceSplitRatio(
 
 export function removeWorkspaceSession(
   node: WorkspaceNode,
-  sessionId: string,
+  slotId: string,
 ): WorkspaceNode {
-  return removeSessionBranch(node, sessionId);
+  return removeSessionBranch(node, slotId);
 }
 
 export function addWorkspaceFileToPane(
@@ -345,7 +346,7 @@ export function addWorkspaceFileToPane(
   paneId: string,
   documentId: string,
 ): WorkspaceNode {
-  return addWorkspaceContentToPane(node, paneId, { kind: "file", documentId });
+  return addWorkspaceContentToPane(node, paneId, fileContentRef(documentId));
 }
 
 export function activateWorkspaceFile(
@@ -362,7 +363,7 @@ export function activateWorkspaceFile(
     ) {
       throw new Error(`File document does not belong to pane: ${documentId}`);
     }
-    return { ...pane, activeContent: { kind: "file", documentId } };
+    return { ...pane, activeContent: fileContentRef(documentId) };
   });
 }
 
@@ -394,10 +395,11 @@ export function removeWorkspaceFileFromPane(
   paneId: string,
   documentId: string,
 ): WorkspaceNode {
-  return removeWorkspaceContentFromPane(node, paneId, {
-    kind: "file",
-    documentId,
-  });
+  return removeWorkspaceContentFromPane(
+    node,
+    paneId,
+    fileContentRef(documentId),
+  );
 }
 
 export function moveWorkspaceFileToPane(
@@ -417,10 +419,11 @@ export function moveWorkspaceFileToPane(
   ) {
     return node;
   }
-  return placeContentExclusively(node, destinationPaneId, {
-    kind: "file",
-    documentId,
-  });
+  return placeContentExclusively(
+    node,
+    destinationPaneId,
+    fileContentRef(documentId),
+  );
 }
 
 export function splitAndMoveWorkspaceFile(
@@ -701,10 +704,10 @@ function updateWorkspacePane(
 
 function removeSessionBranch(
   node: WorkspaceNode,
-  sessionId: string,
+  slotId: string,
 ): WorkspaceNode {
   if (node.kind === "pane") {
-    const target = { kind: "pty", slotId: sessionId } as const;
+    const target = ptyContentRef(slotId);
     const index = node.contents.findIndex((content) =>
       sameWorkspaceContent(content, target),
     );
@@ -718,8 +721,8 @@ function removeSessionBranch(
     return { ...node, contents, activeContent };
   }
 
-  const first = removeSessionBranch(node.first, sessionId);
-  const second = removeSessionBranch(node.second, sessionId);
+  const first = removeSessionBranch(node.first, slotId);
+  const second = removeSessionBranch(node.second, slotId);
   if (first === node.first && second === node.second) return node;
   return { ...node, first, second };
 }

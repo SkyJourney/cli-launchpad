@@ -36,7 +36,7 @@ import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStag
 import { ownerWindowOf } from "../../lib/workspaceOwnershipProjection";
 import { formatAppError } from "../../lib/appErrors";
 
-import { ptyContentKey } from "../../lib/workspaceContentKey";
+import { ptyContentKey, ptyContentRef } from "../../lib/workspaceContentKey";
 
 import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
 
@@ -71,7 +71,7 @@ export function createPtyProtocolHandlers(
     const ownership = deps
       .getCoordinator()
       .completeHandoff(
-        { kind: "pty", slotId: payload.instanceId },
+        ptyContentRef(payload.instanceId),
         "detachReady",
         pending.token,
       );
@@ -97,7 +97,7 @@ export function createPtyProtocolHandlers(
       expectedWindowLabel: pending.windowLabel,
       toDetached: (record) => record.window,
     });
-    const content = { kind: "pty", slotId: payload.instanceId } as const;
+    const content = ptyContentRef(payload.instanceId);
     const nextTree = reduceWorkspaceTree(deps.store.getLive().tree, {
       type: "detach",
       ref: content,
@@ -121,7 +121,7 @@ export function createPtyProtocolHandlers(
     deps
       .getCoordinator()
       .failHandoff(
-        { kind: "pty", slotId: payload.instanceId },
+        ptyContentRef(payload.instanceId),
         "detachFailed",
         pending.token,
       );
@@ -212,7 +212,7 @@ export function createPtyProtocolHandlers(
         .getLive()
         .slots.find((candidate) => candidate.sessionId === sessionId);
       if (!slot) return;
-      const content = { kind: "pty", slotId: slot.instanceId } as const;
+      const content = ptyContentRef(slot.instanceId);
       const currentTree = deps.store.getLive().tree;
       const existingPane = listWorkspacePanes(currentTree).find((pane) =>
         hasWorkspaceContent(pane, content),
@@ -258,10 +258,7 @@ export function createPtyProtocolHandlers(
           message,
         })
         .catch(() => undefined);
-    const returningContent = {
-      kind: "pty",
-      slotId: payload.instanceId,
-    } as const;
+    const returningContent = ptyContentRef(payload.instanceId);
     const key = ptyContentKey(payload.instanceId);
     // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
     if (deps.getCoordinator().isReturnCompleted(payload.token)) {
@@ -541,7 +538,7 @@ export function createPtyProtocolHandlers(
               deps
                 .getCoordinator()
                 .failHandoff(
-                  { kind: "pty", slotId: event.payload.instanceId },
+                  ptyContentRef(event.payload.instanceId),
                   "detachCancelled",
                   pending.token,
                 );
@@ -557,10 +554,7 @@ export function createPtyProtocolHandlers(
               deps.removeSlot(event.payload.instanceId);
               return;
             }
-            const content = {
-              kind: "pty",
-              slotId: event.payload.instanceId,
-            } as const;
+            const content = ptyContentRef(event.payload.instanceId);
             const owner = deps.getCoordinator().get(content);
             const slot = deps.store
               .getLive()

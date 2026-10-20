@@ -23,6 +23,7 @@ import type {
   WorkspaceSlotTitle,
 } from "../lib/tauri";
 import type { PtyTerminalHandle } from "./PtyTerminal";
+import { ptyContentRef } from "../lib/workspaceContentKey";
 
 const PtyTerminal = lazy(() =>
   import("./PtyTerminal").then((module) => ({
@@ -65,7 +66,8 @@ export function WorkspacePtySessionRegistry({
   onFocusPane: (paneId: string) => void;
 }) {
   const activeContent = findWorkspacePane(tree, focusedPaneId)?.activeContent;
-  const activeSessionId = activeContent?.kind === "pty" ? activeContent.slotId : null;
+  const activeSessionId =
+    activeContent?.kind === "pty" ? activeContent.slotId : null;
   const panes = listWorkspacePanes(tree);
   const visibleSessionIds = new Set(listVisibleWorkspaceSessionIds(tree));
 
@@ -73,7 +75,7 @@ export function WorkspacePtySessionRegistry({
     <div className="pty-session-registry" hidden aria-hidden="true">
       {slots.map((slot) => {
         const pane = panes.find((candidate) =>
-          hasWorkspaceContent(candidate, { kind: "pty", slotId: slot.instanceId }),
+          hasWorkspaceContent(candidate, ptyContentRef(slot.instanceId)),
         );
         return (
           <PtySessionPortal

@@ -43,7 +43,12 @@ import {
 import { formatAppError } from "../../lib/appErrors";
 
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
-import { fileContentKey, ptyContentKey } from "../../lib/workspaceContentKey";
+import {
+  fileContentKey,
+  fileContentRef,
+  ptyContentKey,
+  ptyContentRef,
+} from "../../lib/workspaceContentKey";
 
 import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
 
@@ -234,10 +239,7 @@ export function createContentWindowOrchestrator(
   };
 
   const isManagedDetachedDrag = (instanceId: string, windowLabel: string) => {
-    const ownership = deps.getCoordinator().get({
-      kind: "pty",
-      slotId: instanceId,
-    });
+    const ownership = deps.getCoordinator().get(ptyContentRef(instanceId));
     return (
       ownership?.phase === "detached" &&
       ownership.owner.kind === "window" &&
@@ -248,10 +250,7 @@ export function createContentWindowOrchestrator(
     documentId: string,
     windowLabel: string,
   ) => {
-    const ownership = deps.getCoordinator().get({
-      kind: "file",
-      documentId,
-    });
+    const ownership = deps.getCoordinator().get(fileContentRef(documentId));
     return (
       ownership?.phase === "detached" &&
       ownership.owner.kind === "window" &&
@@ -264,7 +263,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "pty", slotId: pending.instanceId },
+          ptyContentRef(pending.instanceId),
           "detachCancelled",
           pending.token,
         );
@@ -275,7 +274,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "file", documentId: pending.documentId },
+          fileContentRef(pending.documentId),
           "detachCancelled",
           pending.token,
         );
@@ -299,7 +298,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "pty", slotId: pending.instanceId },
+          ptyContentRef(pending.instanceId),
           "detachCancelled",
           pending.token,
         );
@@ -317,7 +316,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "file", documentId: pending.documentId },
+          fileContentRef(pending.documentId),
           "detachCancelled",
           pending.token,
         );
@@ -354,7 +353,7 @@ export function createContentWindowOrchestrator(
   };
 
   const detachFile = async (documentId: string) => {
-    const content = { kind: "file", documentId } as const;
+    const content = fileContentRef(documentId);
     if (isWindowOwned(deps.getCoordinator().get(content))) {
       return;
     }
@@ -401,8 +400,7 @@ export function createContentWindowOrchestrator(
       childUrl.search = "";
       childUrl.hash = "";
       writeWindowLaunchParams(childUrl.searchParams, {
-        kind: "file",
-        documentId,
+        ...fileContentRef(documentId),
         handoffToken: token,
         sourcePaneId: sourcePane.id,
       });
@@ -519,7 +517,7 @@ export function createContentWindowOrchestrator(
       const ownership = deps
         .getCoordinator()
         .completeHandoff(
-          { kind: "pty", slotId: pending.instanceId },
+          ptyContentRef(pending.instanceId),
           "detachReady",
           pending.token,
         );
@@ -544,10 +542,7 @@ export function createContentWindowOrchestrator(
       );
       if (!promoted) return;
       state.handles.pty.set(ptyContentKey(pending.instanceId), pending.window);
-      const content = {
-        kind: "pty",
-        slotId: pending.instanceId,
-      } as const;
+      const content = ptyContentRef(pending.instanceId);
       const nextTree = reduceWorkspaceTree(deps.store.getLive().tree, {
         type: "detach",
         ref: content,
@@ -570,7 +565,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "pty", slotId: pending.instanceId },
+          ptyContentRef(pending.instanceId),
           "detachFailed",
           pending.token,
         );
@@ -591,7 +586,7 @@ export function createContentWindowOrchestrator(
     deps
       .getCoordinator()
       .failHandoff(
-        { kind: "pty", slotId: pending.instanceId },
+        ptyContentRef(pending.instanceId),
         "detachFailed",
         pending.token,
       );
@@ -606,12 +601,7 @@ export function createContentWindowOrchestrator(
     if (
       !slot ||
       !sessionId ||
-      isWindowOwned(
-        deps.getCoordinator().get({
-          kind: "pty",
-          slotId: instanceId,
-        }),
-      )
+      isWindowOwned(deps.getCoordinator().get(ptyContentRef(instanceId)))
     ) {
       throw new Error(deps.translate("pty.detachedMoveUnavailable"));
     }
@@ -623,11 +613,11 @@ export function createContentWindowOrchestrator(
     if (!terminal) throw new Error(deps.translate("pty.terminalNotReady"));
     const windowLabel = createWindowLabel("terminal");
     const sourcePane = listWorkspacePanes(deps.store.getLive().tree).find(
-      (pane) => hasWorkspaceContent(pane, { kind: "pty", slotId: instanceId }),
+      (pane) => hasWorkspaceContent(pane, ptyContentRef(instanceId)),
     );
     if (!sourcePane)
       throw new Error(deps.translate("pty.detachedMoveUnavailable"));
-    const content = { kind: "pty", slotId: instanceId } as const;
+    const content = ptyContentRef(instanceId);
     const source = {
       kind: "pane",
       windowLabel: "main",
@@ -740,7 +730,7 @@ export function createContentWindowOrchestrator(
       deps
         .getCoordinator()
         .failHandoff(
-          { kind: "pty", slotId: instanceId },
+          ptyContentRef(instanceId),
           "detachFailed",
           prepared.transferId,
         );

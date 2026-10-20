@@ -39,6 +39,7 @@ import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapt
 import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { completeWorkspaceFileWindowSetup } from "../lib/workspaceFileWindowSetup";
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
+import { fileContentRef } from "../lib/workspaceContentKey";
 
 export function StandaloneWorkspaceFileWindow({
   documentId,
@@ -273,7 +274,7 @@ export function StandaloneWorkspaceFileWindow({
               }
               const driverContext: WorkspaceContentHandoffHookContext<"file"> =
                 {
-                  content: { kind: "file", documentId },
+                  content: fileContentRef(documentId),
                   source: {
                     kind: "pane",
                     windowLabel: "main",
@@ -456,7 +457,7 @@ export function StandaloneWorkspaceFileWindow({
       <div className="standalone-pty-content">
         {fileDocument && fileBuffer ? (
           <WorkspaceContentView
-            content={{ kind: "file", documentId }}
+            content={fileContentRef(documentId)}
             fileDocument={fileDocument}
             fileBuffer={fileBuffer}
             readOnly={returning}

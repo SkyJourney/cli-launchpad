@@ -5,7 +5,11 @@ import {
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../../lib/ptyWorkspaceLayout";
-import { fileContentKey } from "../../lib/workspaceContentKey";
+import {
+  fileContentKey,
+  fileContentRef,
+  ptyContentRef,
+} from "../../lib/workspaceContentKey";
 import type {
   PtySession,
   ToolKey,
@@ -100,7 +104,7 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
 
           executor.execute({
             type: "place",
-            ref: { kind: "file", documentId: document.id },
+            ref: fileContentRef(document.id),
           });
         },
       ),
@@ -111,7 +115,7 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     (paneId: string, documentId: string) => {
       executor.execute({
         type: "activate",
-        ref: { kind: "file", documentId },
+        ref: fileContentRef(documentId),
         paneId,
       });
     },
@@ -164,7 +168,7 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       try {
         executor.execute({
           type: "activate",
-          ref: { kind: "pty", slotId: instanceId },
+          ref: ptyContentRef(instanceId),
           paneId,
         });
       } catch {
@@ -199,17 +203,13 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
 
   const splitAndMoveSession = useCallback(
     (paneId: string, instanceId: string, direction: SplitDirection) =>
-      splitAndMoveContent(
-        paneId,
-        { kind: "pty", slotId: instanceId },
-        direction,
-      ),
+      splitAndMoveContent(paneId, ptyContentRef(instanceId), direction),
     [splitAndMoveContent],
   );
 
   const splitAndMoveFile = useCallback(
     (paneId: string, documentId: string, direction: SplitDirection) =>
-      splitAndMoveContent(paneId, { kind: "file", documentId }, direction),
+      splitAndMoveContent(paneId, fileContentRef(documentId), direction),
     [splitAndMoveContent],
   );
 
@@ -231,19 +231,13 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
 
   const moveSession = useCallback(
     (sourcePaneId: string, destinationPaneId: string, instanceId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, {
-        kind: "pty",
-        slotId: instanceId,
-      }),
+      moveContent(sourcePaneId, destinationPaneId, ptyContentRef(instanceId)),
     [moveContent],
   );
 
   const moveFile = useCallback(
     (sourcePaneId: string, destinationPaneId: string, documentId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, {
-        kind: "file",
-        documentId,
-      }),
+      moveContent(sourcePaneId, destinationPaneId, fileContentRef(documentId)),
     [moveContent],
   );
 

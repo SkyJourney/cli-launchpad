@@ -30,6 +30,7 @@ import {
   WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
+import { ptyContentRef } from "../lib/workspaceContentKey";
 
 interface StandalonePtyWindowProps {
   sessionId: string;
@@ -145,7 +146,7 @@ export function StandalonePtyWindow({
           throw new Error(translationRef.current("pty.terminalNotReady"));
         const currentWindow = getCurrentWindow();
         driverContext = {
-          content: { kind: "pty", slotId: instanceId },
+          content: ptyContentRef(instanceId),
           source: { kind: "window", windowLabel: currentWindow.label },
           target: {
             kind: "pane",
@@ -372,7 +373,7 @@ export function StandalonePtyWindow({
         const currentWindow = getCurrentWindow();
         let attachedState: PtySession["state"] | null = null;
         const driverContext: WorkspaceContentHandoffHookContext<"pty"> = {
-          content: { kind: "pty", slotId: instanceId },
+          content: ptyContentRef(instanceId),
           source: { kind: "pane", windowLabel: "main", paneId: sourcePaneId },
           target: { kind: "window", windowLabel: currentWindow.label },
           transferId: handoffToken,

@@ -13,8 +13,10 @@ import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import { canChangeWorkspaceContentPane } from "../../lib/workspaceContentLifecycle";
 import type { HostSnapshot, WorkspaceHostStore } from "./workspaceHostStore";
-
-type ManagedContentRef = Exclude<WorkspacePaneContentRef, { kind: "unknown" }>;
+import {
+  type ManagedContentRef,
+  ptyContentRef,
+} from "../../lib/workspaceContentKey";
 
 export type HostCommand =
   | { type: "focus"; paneId: string }
@@ -218,7 +220,7 @@ export function createWorkspaceCommandExecutor(
       }
       case "launch": {
         if (deps.isRestoreInProgress()) return ignored("restore-in-progress");
-        const ref = { kind: "pty", slotId: command.slot.instanceId } as const;
+        const ref = ptyContentRef(command.slot.instanceId);
         const pane =
           findWorkspacePane(live.tree, live.focusedPaneId) ??
           listWorkspacePanes(live.tree)[0];

@@ -25,7 +25,7 @@ import {
 } from "./tauri";
 import { abortableDelay } from "./abortableDelay";
 import { exponentialDelay } from "./retryPolicy";
-import { workspaceContentKey } from "./workspaceContentKey";
+import { fileContentRef, workspaceContentKey } from "./workspaceContentKey";
 
 export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
 export { listPersistedDetachedContents } from "./workspaceOwnershipProjection";
@@ -287,10 +287,7 @@ export function restoreCurrentWorkspaceFilesAfterPreset(input: {
     document: WorkspaceFileDocument,
   ) =>
     contents.some((candidate) =>
-      sameWorkspaceContent(candidate, {
-        kind: "file",
-        documentId: document.id,
-      }),
+      sameWorkspaceContent(candidate, fileContentRef(document.id)),
     );
 
   for (const document of input.currentDocuments) {
@@ -311,10 +308,9 @@ export function restoreCurrentWorkspaceFilesAfterPreset(input: {
       restoredByFolding ?? currentDocumentByIdentity.get(identity) ?? document;
     if (!alreadyRestored) documents.push({ ...canonicalDocument });
     restoredPaths.add(identity);
-    const content: WorkspacePaneContentRef = {
-      kind: "file",
-      documentId: canonicalDocument.id,
-    };
+    const content: WorkspacePaneContentRef = fileContentRef(
+      canonicalDocument.id,
+    );
     if (
       currentlyDetached.some((candidate) =>
         sameWorkspaceContent(candidate, content),

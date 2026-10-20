@@ -1,5 +1,6 @@
 import toolKeys from "../../../contracts/tool-keys.json";
 import type { ToolKey } from "../../lib/tauri";
+import { fileContentRef } from "../../lib/workspaceContentKey";
 
 export interface PtyLaunchParams {
   kind: "pty";
@@ -93,8 +94,7 @@ export function readFileLaunchParams(
   const handoffToken = search.get(names.handoffToken);
   if (!documentId || !handoffToken) return null;
   return {
-    kind: "file",
-    documentId,
+    ...fileContentRef(documentId),
     handoffToken,
     sourcePaneId: search.get(names.sourcePaneId) ?? UNKNOWN_PANE,
   };

@@ -30,7 +30,7 @@ import {
 } from "../../lib/workspaceFileBuffer";
 import { formatAppError } from "../../lib/appErrors";
 
-import { fileContentKey } from "../../lib/workspaceContentKey";
+import { fileContentKey, fileContentRef } from "../../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../../lib/workspaceFileExitFlush";
 
 import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
@@ -147,10 +147,7 @@ export function createFileProtocolHandlers(
               );
               return;
             }
-            const content = {
-              kind: "file",
-              documentId: pending.documentId,
-            } as const;
+            const content = fileContentRef(pending.documentId);
             const driverContext: WorkspaceContentHandoffHookContext<"file"> = {
               content,
               source: {
@@ -257,10 +254,7 @@ export function createFileProtocolHandlers(
             if (!advancePendingWindowStage(pending, "attachedAck")) {
               return;
             }
-            const content = {
-              kind: "file",
-              documentId: pending.documentId,
-            } as const;
+            const content = fileContentRef(pending.documentId);
             const ownership = deps
               .getCoordinator()
               .completeHandoff(content, "detachReady", pending.token);
@@ -325,7 +319,7 @@ export function createFileProtocolHandlers(
             deps
               .getCoordinator()
               .failHandoff(
-                { kind: "file", documentId: pending.documentId },
+                fileContentRef(pending.documentId),
                 "detachFailed",
                 pending.token,
               );
@@ -347,10 +341,7 @@ export function createFileProtocolHandlers(
         name: "file:state-changed",
         register: () =>
           onContentHandoff("file", "state-changed", (event) => {
-            const content = {
-              kind: "file",
-              documentId: event.payload.documentId,
-            } as const;
+            const content = fileContentRef(event.payload.documentId);
             const owner = deps.getCoordinator().get(content);
             if (
               !event.payload.fileBuffer ||
@@ -411,10 +402,7 @@ export function createFileProtocolHandlers(
             if (deps.getCoordinator().isReturnCompleted(event.payload.token)) {
               return;
             }
-            const content = {
-              kind: "file",
-              documentId: event.payload.documentId,
-            } as const;
+            const content = fileContentRef(event.payload.documentId);
             const key = fileContentKey(content.documentId);
             let managedWindow = state.handles.file.get(key);
             if (!managedWindow) {
@@ -650,7 +638,7 @@ export function createFileProtocolHandlers(
               const ownership = deps
                 .getCoordinator()
                 .completeHandoff(
-                  { kind: "file", documentId: document.id },
+                  fileContentRef(document.id),
                   "returnReady",
                   event.payload.token,
                 );
@@ -658,7 +646,7 @@ export function createFileProtocolHandlers(
                 deps
                   .getCoordinator()
                   .failHandoff(
-                    { kind: "file", documentId: document.id },
+                    fileContentRef(document.id),
                     "returnFailed",
                     event.payload.token,
                   );
@@ -701,7 +689,7 @@ export function createFileProtocolHandlers(
               deps
                 .getCoordinator()
                 .failHandoff(
-                  { kind: "file", documentId: event.payload.documentId },
+                  fileContentRef(event.payload.documentId),
                   "returnFailed",
                   event.payload.token,
                 );

@@ -27,6 +27,9 @@ import { formatAppError } from "../../lib/appErrors";
 import {
   contentRefFromKey,
   fileContentKey,
+  fileContentRef,
+  type ManagedContentRef,
+  ptyContentRef,
   workspaceContentKey,
 } from "../../lib/workspaceContentKey";
 import {
@@ -247,9 +250,7 @@ export function WorkspacePaneView({
   const focused = pane.id === focusedPaneId;
   const contentRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{
-    target:
-      | { kind: "pty"; instanceId: string }
-      | { kind: "file"; documentId: string };
+    target: ManagedContentRef;
     x: number;
     y: number;
   } | null>(null);
@@ -380,8 +381,8 @@ export function WorkspacePaneView({
           setContextMenu({
             target:
               content.kind === "pty"
-                ? { kind: "pty", instanceId: content.slotId }
-                : { kind: "file", documentId: content.documentId },
+                ? ptyContentRef(content.slotId)
+                : fileContentRef(content.documentId),
             x: event.clientX,
             y: event.clientY,
           });
@@ -563,8 +564,8 @@ export function WorkspacePaneView({
                 setContextMenu({
                   target:
                     entry.content.kind === "pty"
-                      ? { kind: "pty", instanceId: entry.content.slotId }
-                      : { kind: "file", documentId: entry.content.documentId },
+                      ? ptyContentRef(entry.content.slotId)
+                      : fileContentRef(entry.content.documentId),
                   x,
                   y,
                 });
@@ -641,18 +642,17 @@ export function WorkspacePaneView({
       </div>
       {contextMenu &&
         (() => {
-          const target = contextMenu.target;
-          const isPty = target.kind === "pty";
-          const targetId = isPty ? target.instanceId : target.documentId;
+          const targetContent = contextMenu.target;
+          const isPty = targetContent.kind === "pty";
+          const targetId = isPty
+            ? targetContent.slotId
+            : targetContent.documentId;
           const targetSlot = isPty
             ? slots.find((slot) => slot.instanceId === targetId)
             : undefined;
           const targetFile = isPty
             ? undefined
             : fileDocuments.find((file) => file.id === targetId);
-          const targetContent: WorkspacePaneContentRef = isPty
-            ? { kind: "pty", slotId: targetId }
-            : { kind: "file", documentId: targetId };
           if (!targetSlot && !targetFile) return null;
           const paneContentRefs = paneContentEntries.map(
             (entry) => entry.content,
@@ -665,7 +665,7 @@ export function WorkspacePaneView({
             targetContent,
             presentationContext,
           ).title;
-          const adapter = tryGetWorkspaceContentAdapter(target.kind);
+          const adapter = tryGetWorkspaceContentAdapter(targetContent.kind);
           if (!adapter) return null;
           const labels = {
             menu: t(adapter.labels.menu),
