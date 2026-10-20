@@ -14,7 +14,7 @@ import { abortableDelay } from "../../lib/abortableDelay";
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
 import { onInboxEvent } from "../../lib/windowInbox";
-import { listenWorkspaceContentWindowEvent } from "../../lib/workspaceContentWindowProtocol";
+import { onContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   findWorkspacePane,
   listWorkspacePanes,
@@ -252,7 +252,7 @@ export function createPtyProtocolHandlers(
   const handlePtyReturnRequest = async (payload: PtyReturnRequestEvent) => {
     const fail = (message: string) =>
       void ports
-        .emit(payload.windowLabel, "pty-return-failed", {
+        .emit(payload.windowLabel, "pty", "return-failed", {
           instanceId: payload.instanceId,
           token: payload.token,
           message,
@@ -474,7 +474,7 @@ export function createPtyProtocolHandlers(
       } catch (reason) {
         console.warn("Failed to destroy returned PTY window", reason);
         await ports
-          .emit(payload.windowLabel, "pty-return-complete", {
+          .emit(payload.windowLabel, "pty", "return-complete", {
             instanceId: payload.instanceId,
             token: payload.token,
           })
@@ -495,16 +495,16 @@ export function createPtyProtocolHandlers(
   return {
     registrations: () => [
       {
-        name: "pty-detached-ready",
+        name: "pty:ready",
         register: () =>
-          listenWorkspaceContentWindowEvent("pty-detached-ready", (event) =>
+          onContentHandoff("pty", "ready", (event) =>
             handleDetachedReady(event.payload),
           ),
       },
       {
-        name: "pty-detached-failed",
+        name: "pty:failed",
         register: () =>
-          listenWorkspaceContentWindowEvent("pty-detached-failed", (event) =>
+          onContentHandoff("pty", "failed", (event) =>
             handleDetachedFailed(event.payload),
           ),
       },
@@ -519,16 +519,16 @@ export function createPtyProtocolHandlers(
           ),
       },
       {
-        name: "pty-return-requested",
+        name: "pty:return-requested",
         register: () =>
-          listenWorkspaceContentWindowEvent("pty-return-requested", (event) => {
+          onContentHandoff("pty", "return-requested", (event) => {
             void handlePtyReturnRequest(event.payload);
           }),
       },
       {
-        name: "pty-detached-exited",
+        name: "pty:exited",
         register: () =>
-          listenWorkspaceContentWindowEvent("pty-detached-exited", (event) => {
+          onContentHandoff("pty", "exited", (event) => {
             const pending = state.pending.pty.get(
               ptyContentKey(event.payload.instanceId),
             );

@@ -27,8 +27,8 @@ import {
 } from "./WorkspaceContentView";
 import { WorkspaceContentWindowShell } from "./WorkspaceContentWindowShell";
 import {
-  emitWorkspaceContentWindowEvent,
-  listenWorkspaceContentWindowEvent,
+  sendContentHandoff,
+  onContentHandoff,
 } from "../lib/workspaceContentWindowProtocol";
 import { createWorkspaceFileBufferPublisher } from "../lib/workspaceFileBufferPublisher";
 import {
@@ -77,11 +77,7 @@ export function StandaloneWorkspaceFileWindow({
 
   if (bufferPublisherRef.current === null) {
     bufferPublisherRef.current = createWorkspaceFileBufferPublisher((payload) =>
-      emitWorkspaceContentWindowEvent(
-        "main",
-        "workspace-file-window-buffer-changed",
-        payload,
-      ),
+      sendContentHandoff("main", "file", "state-changed", payload),
     );
   }
 
@@ -141,18 +137,14 @@ export function StandaloneWorkspaceFileWindow({
           wrapKey: "pty.returnFailed",
         });
       });
-      await emitWorkspaceContentWindowEvent(
-        "main",
-        "workspace-file-window-return-requested",
-        {
-          documentId,
-          token,
-          windowLabel: getCurrentWindow().label,
-          targetPaneId,
-          fileDocument,
-          fileBuffer: buffer,
-        },
-      ).catch((reason) => {
+      await sendContentHandoff("main", "file", "return-requested", {
+        documentId,
+        token,
+        windowLabel: getCurrentWindow().label,
+        targetPaneId,
+        fileDocument,
+        fileBuffer: buffer,
+      }).catch((reason) => {
         returnTimer.clear();
         setReturning(false);
         setError(toAppErrorState(reason));
@@ -268,175 +260,140 @@ export function StandaloneWorkspaceFileWindow({
       await completeWorkspaceFileWindowSetup({
         registerListeners: () =>
           registerAllOrCleanup([
-            listenWorkspaceContentWindowEvent(
-              "workspace-file-window-init",
-              async (event) => {
-                const message = event.payload;
-                if (
-                  message.documentId !== documentId ||
-                  message.token !== token ||
-                  message.windowLabel !== currentWindow.label ||
-                  !message.fileDocument ||
-                  !message.fileBuffer
-                ) {
-                  return;
-                }
-                const driverContext: WorkspaceContentHandoffHookContext<"file"> =
-                  {
-                    content: { kind: "file", documentId },
-                    source: {
-                      kind: "pane",
-                      windowLabel: "main",
-                      paneId: sourcePaneId,
-                    },
-                    target: {
-                      kind: "window",
-                      windowLabel: currentWindow.label,
-                    },
-                    transferId: token,
-                    capabilities: {
-                      prepare: async () => ({
-                        document: message.fileDocument,
-                        buffer: message.fileBuffer,
-                      }),
-                      attach: async (payload) => {
-                        fileDocumentRef.current = payload.document;
-                        setFileDocument(payload.document);
-                        updateFileBuffer(() => payload.buffer);
-                      },
-                      rollback: async () => undefined,
-                    },
-                  };
-                try {
-                  await attachWorkspaceContentHandoff(driverContext, {
-                    document: message.fileDocument,
-                    buffer: message.fileBuffer,
-                  });
-                } catch (reason) {
-                  setError(toAppErrorState(reason));
-                  await emitWorkspaceContentWindowEvent(
-                    "main",
-                    "workspace-file-window-attach-failed",
-                    {
-                      documentId,
-                      token,
-                      windowLabel: currentWindow.label,
-                      message: formatAppError(reason, tRef.current),
-                    },
-                  );
-                  return;
-                }
-                void emitWorkspaceContentWindowEvent(
-                  "main",
-                  "workspace-file-window-attached",
-                  {
-                    documentId,
-                    token,
+            onContentHandoff("file", "init", async (event) => {
+              const message = event.payload;
+              if (
+                message.documentId !== documentId ||
+                message.token !== token ||
+                message.windowLabel !== currentWindow.label ||
+                !message.fileDocument ||
+                !message.fileBuffer
+              ) {
+                return;
+              }
+              const driverContext: WorkspaceContentHandoffHookContext<"file"> =
+                {
+                  content: { kind: "file", documentId },
+                  source: {
+                    kind: "pane",
+                    windowLabel: "main",
+                    paneId: sourcePaneId,
+                  },
+                  target: {
+                    kind: "window",
                     windowLabel: currentWindow.label,
                   },
-                );
-              },
-            ),
-            listenWorkspaceContentWindowEvent(
-              "workspace-file-window-return-complete",
-              (event) => {
-                if (
-                  event.payload.documentId !== documentId ||
-                  event.payload.token !== token
-                ) {
-                  return;
-                }
-                returnTimer.clear();
-                void destroyWindow("Failed to destroy returned file window");
-              },
-            ),
-            listenWorkspaceContentWindowEvent(
-              "workspace-file-window-flush-requested",
-              (event) => {
-                const request = event.payload;
-                const document = fileDocumentRef.current;
-                const buffer = currentBufferRef.current;
-                if (
-                  request.documentId !== documentId ||
-                  request.token !== token ||
-                  request.windowLabel !== currentWindow.label ||
-                  !document ||
-                  !buffer
-                ) {
-                  return;
-                }
-                void emitWorkspaceContentWindowEvent(
-                  "main",
-                  "workspace-file-window-flush-complete",
-                  {
-                    documentId,
-                    token,
-                    windowLabel: currentWindow.label,
-                    requestId: request.requestId,
-                    fileDocument: document,
-                    fileBuffer: buffer,
+                  transferId: token,
+                  capabilities: {
+                    prepare: async () => ({
+                      document: message.fileDocument,
+                      buffer: message.fileBuffer,
+                    }),
+                    attach: async (payload) => {
+                      fileDocumentRef.current = payload.document;
+                      setFileDocument(payload.document);
+                      updateFileBuffer(() => payload.buffer);
+                    },
+                    rollback: async () => undefined,
                   },
-                );
-              },
-            ),
-            listenWorkspaceContentWindowEvent(
-              "workspace-file-window-return-failed",
-              (event) => {
-                if (
-                  event.payload.documentId !== documentId ||
-                  event.payload.token !== token
-                ) {
-                  return;
-                }
-                returnTimer.clear();
-                setReturning(false);
-                setError(
-                  event.payload.message != null
-                    ? { message: event.payload.message }
-                    : {
-                        message: tRef.current("pty.workspaceRestoring"),
-                        wrapKey: "pty.returnFailed",
-                      },
-                );
-              },
-            ),
-            listenWorkspaceContentWindowEvent(
-              "workspace-file-window-return-drop-requested",
-              (event) => {
-                if (event.payload.documentId === documentId) {
-                  void requestReturnRef.current(event.payload.targetPaneId);
-                }
-              },
-            ),
+                };
+              try {
+                await attachWorkspaceContentHandoff(driverContext, {
+                  document: message.fileDocument,
+                  buffer: message.fileBuffer,
+                });
+              } catch (reason) {
+                setError(toAppErrorState(reason));
+                await sendContentHandoff("main", "file", "failed", {
+                  documentId,
+                  token,
+                  windowLabel: currentWindow.label,
+                  message: formatAppError(reason, tRef.current),
+                });
+                return;
+              }
+              void sendContentHandoff("main", "file", "attached", {
+                documentId,
+                token,
+                windowLabel: currentWindow.label,
+              });
+            }),
+            onContentHandoff("file", "return-complete", (event) => {
+              if (
+                event.payload.documentId !== documentId ||
+                event.payload.token !== token
+              ) {
+                return;
+              }
+              returnTimer.clear();
+              void destroyWindow("Failed to destroy returned file window");
+            }),
+            onContentHandoff("file", "flush-requested", (event) => {
+              const request = event.payload;
+              const document = fileDocumentRef.current;
+              const buffer = currentBufferRef.current;
+              if (
+                request.documentId !== documentId ||
+                request.token !== token ||
+                request.windowLabel !== currentWindow.label ||
+                !document ||
+                !buffer
+              ) {
+                return;
+              }
+              void sendContentHandoff("main", "file", "flush-complete", {
+                documentId,
+                token,
+                windowLabel: currentWindow.label,
+                requestId: request.requestId,
+                fileDocument: document,
+                fileBuffer: buffer,
+              });
+            }),
+            onContentHandoff("file", "return-failed", (event) => {
+              if (
+                event.payload.documentId !== documentId ||
+                event.payload.token !== token
+              ) {
+                return;
+              }
+              returnTimer.clear();
+              setReturning(false);
+              setError(
+                event.payload.message != null
+                  ? { message: event.payload.message }
+                  : {
+                      message: tRef.current("pty.workspaceRestoring"),
+                      wrapKey: "pty.returnFailed",
+                    },
+              );
+            }),
+            onContentHandoff("file", "return-drop-requested", (event) => {
+              if (event.payload.documentId === documentId) {
+                void requestReturnRef.current(event.payload.targetPaneId);
+              }
+            }),
           ]),
         isDisposed: () => disposed,
         keepListeners: (registered) => stops.push(...registered),
         sendReady: () =>
-          emitWorkspaceContentWindowEvent(
-            "main",
-            "workspace-file-window-ready",
-            {
-              documentId,
-              token,
-              windowLabel: currentWindow.label,
-            },
-          ),
+          sendContentHandoff("main", "file", "ready", {
+            documentId,
+            token,
+            windowLabel: currentWindow.label,
+          }),
       });
     };
     void setup().catch((reason) => {
       if (disposed) return;
       const message = formatAppError(reason, tRef.current);
       setError(toAppErrorState(reason));
-      void emitWorkspaceContentWindowEvent(
-        "main",
-        "workspace-file-window-attach-failed",
-        {
-          documentId,
-          token,
-          windowLabel: getCurrentWindow().label,
-          message,
-        },
-      ).catch((emitError) =>
+      void sendContentHandoff("main", "file", "failed", {
+        documentId,
+        token,
+        windowLabel: getCurrentWindow().label,
+        message,
+      }).catch((emitError) =>
         console.warn("Unable to report file window setup failure", emitError),
       );
     });
@@ -456,16 +413,12 @@ export function StandaloneWorkspaceFileWindow({
       isReady={Boolean(fileDocument && fileBuffer)}
       onCloseBeforeReady={() => {
         const currentWindow = getCurrentWindow();
-        void emitWorkspaceContentWindowEvent(
-          "main",
-          "workspace-file-window-attach-failed",
-          {
-            documentId,
-            token,
-            windowLabel: currentWindow.label,
-            reason: "closed-before-ready",
-          },
-        )
+        void sendContentHandoff("main", "file", "failed", {
+          documentId,
+          token,
+          windowLabel: currentWindow.label,
+          reason: "closed-before-ready",
+        })
           .catch((reason) =>
             console.warn(
               "Unable to report pre-ready file window close",

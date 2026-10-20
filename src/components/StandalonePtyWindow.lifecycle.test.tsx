@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { tauriMock } from "../test/tauriMock";
+import { fromGenericMessage } from "../test/host/handoffVocabulary";
 import {
   DEFAULT_PTY_WINDOW_LABEL,
   createBackend,
@@ -52,14 +53,18 @@ function backendWithStatus(state: WindowState) {
   return backend;
 }
 
+/** Handoff messages relayed to main, read back under their legacy names (M-H2 in m6-091). */
 function sentToMain(type: string): unknown[] {
-  return tauriMock.state.emittedEvents
-    .filter(
-      (event) =>
-        event.target === "main" &&
-        (event.payload as { type?: string }).type === type,
-    )
-    .map((event) => (event.payload as { payload: unknown }).payload);
+  return tauriMock.state.relayedMessages.flatMap((message) => {
+    const envelope = message.payload as { type?: unknown; payload?: unknown };
+    const decoded =
+      typeof envelope.type === "string"
+        ? fromGenericMessage(envelope.type, envelope.payload)
+        : null;
+    return decoded && message.target === "main" && decoded.legacyType === type
+      ? [decoded.payload]
+      : [];
+  });
 }
 
 function destroyCount(): number {

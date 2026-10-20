@@ -9,122 +9,173 @@ import {
   type DetachedWindowKind,
 } from "./windowKinds";
 
-export interface WorkspaceContentWindowEventPayloads {
-  "pty-detached-ready": {
-    instanceId: string;
-    sessionId: string;
-    windowLabel: string;
+/**
+ * Payloads of the content handoff protocol, grouped by content kind and phase. The phase names
+ * are the suffixes of the generic message types `content-handoff-<phase>` (m6-091).
+ */
+export interface ContentHandoffPayloads {
+  pty: {
+    ready: { instanceId: string; sessionId: string; windowLabel: string };
+    failed: {
+      instanceId: string;
+      sessionId: string;
+      windowLabel: string;
+      message?: string;
+    };
+    exited: { instanceId: string; sessionId: string; windowLabel: string };
+    "return-requested": {
+      instanceId: string;
+      sessionId: string;
+      windowLabel: string;
+      token: string;
+      targetPaneId?: string;
+    };
+    "return-complete": { instanceId: string; token: string };
+    "return-failed": { instanceId: string; token: string; message?: string };
+    "return-drop-requested": { instanceId: string; targetPaneId?: string };
   };
-  "pty-detached-failed": {
-    instanceId: string;
-    sessionId: string;
-    windowLabel: string;
-    message?: string;
-  };
-  "pty-return-requested": {
-    instanceId: string;
-    sessionId: string;
-    windowLabel: string;
-    token: string;
-    targetPaneId?: string;
-  };
-  "pty-detached-exited": {
-    instanceId: string;
-    sessionId: string;
-    windowLabel: string;
-  };
-  "pty-return-complete": {
-    instanceId: string;
-    token: string;
-  };
-  "pty-return-failed": {
-    instanceId: string;
-    token: string;
-    message?: string;
-  };
-  "pty-return-drop-requested": {
-    instanceId: string;
-    targetPaneId?: string;
-  };
-  "workspace-file-window-ready": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-  };
-  "workspace-file-window-attached": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-  };
-  "workspace-file-window-attach-failed": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    message?: string;
-    reason?: "closed-before-ready";
-  };
-  "workspace-file-window-buffer-changed": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    fileDocument?: WorkspaceFileDocument;
-    fileBuffer?: WorkspaceFileBuffer;
-  };
-  "workspace-file-window-flush-requested": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    requestId: string;
-  };
-  "workspace-file-window-flush-complete": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    requestId: string;
-    fileDocument: WorkspaceFileDocument;
-    fileBuffer: WorkspaceFileBuffer;
-  };
-  "workspace-file-window-return-requested": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    targetPaneId?: string;
-    fileDocument?: WorkspaceFileDocument;
-    fileBuffer?: WorkspaceFileBuffer;
-  };
-  "workspace-file-window-return-complete": {
-    documentId: string;
-    token: string;
-  };
-  "workspace-file-window-return-failed": {
-    documentId: string;
-    token: string;
-    message?: string;
-  };
-  "workspace-file-window-return-drop-requested": {
-    documentId: string;
-    targetPaneId?: string;
-  };
-  "workspace-file-window-init": {
-    documentId: string;
-    token: string;
-    windowLabel: string;
-    fileDocument: WorkspaceFileDocument;
-    fileBuffer: WorkspaceFileBuffer;
+  file: {
+    ready: { documentId: string; token: string; windowLabel: string };
+    attached: { documentId: string; token: string; windowLabel: string };
+    failed: {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      message?: string;
+      reason?: "closed-before-ready";
+    };
+    "state-changed": {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      fileDocument?: WorkspaceFileDocument;
+      fileBuffer?: WorkspaceFileBuffer;
+    };
+    "flush-requested": {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      requestId: string;
+    };
+    "flush-complete": {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      requestId: string;
+      fileDocument: WorkspaceFileDocument;
+      fileBuffer: WorkspaceFileBuffer;
+    };
+    "return-requested": {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      targetPaneId?: string;
+      fileDocument?: WorkspaceFileDocument;
+      fileBuffer?: WorkspaceFileBuffer;
+    };
+    "return-complete": { documentId: string; token: string };
+    "return-failed": { documentId: string; token: string; message?: string };
+    "return-drop-requested": { documentId: string; targetPaneId?: string };
+    init: {
+      documentId: string;
+      token: string;
+      windowLabel: string;
+      fileDocument: WorkspaceFileDocument;
+      fileBuffer: WorkspaceFileBuffer;
+    };
   };
 }
 
-export type WorkspaceContentWindowEventName =
-  keyof WorkspaceContentWindowEventPayloads;
+export type ContentHandoffKind = keyof ContentHandoffPayloads;
+export type ContentHandoffPhase<
+  K extends ContentHandoffKind = ContentHandoffKind,
+> = keyof ContentHandoffPayloads[K] & string;
 
-/**
- * 协议消息经 Rust 中继（m6-062）：发送用 `sendWindowMessage`，接收用 `onWindowMessage`，
- * 发送方由 Rust 盖戳。`handler` 的参数多出只读的 `source`。
- */
-type EventHandler<Type extends WorkspaceContentWindowEventName> = (event: {
-  payload: WorkspaceContentWindowEventPayloads[Type];
-  source: WindowInboxSource;
-}) => void | Promise<void>;
+export const CONTENT_HANDOFF_PHASES = {
+  pty: [
+    "exited",
+    "failed",
+    "ready",
+    "return-complete",
+    "return-drop-requested",
+    "return-failed",
+    "return-requested",
+  ],
+  file: [
+    "attached",
+    "failed",
+    "flush-complete",
+    "flush-requested",
+    "init",
+    "ready",
+    "return-complete",
+    "return-drop-requested",
+    "return-failed",
+    "return-requested",
+    "state-changed",
+  ],
+} as const satisfies {
+  [K in ContentHandoffKind]: readonly ContentHandoffPhase<K>[];
+};
+
+const CONTENT_HANDOFF_IDENTITY = {
+  pty: { idField: "instanceId" },
+  file: { idField: "documentId" },
+} as const satisfies Record<ContentHandoffKind, { idField: string }>;
+
+export const CONTENT_HANDOFF_MESSAGE_PREFIX = "content-handoff-";
+
+export function contentHandoffMessageType(phase: string): string {
+  return `${CONTENT_HANDOFF_MESSAGE_PREFIX}${phase}`;
+}
+
+export const CONTENT_HANDOFF_MESSAGE_TYPES: readonly string[] = [
+  ...new Set([...CONTENT_HANDOFF_PHASES.pty, ...CONTENT_HANDOFF_PHASES.file]),
+]
+  .sort()
+  .map(contentHandoffMessageType);
+
+/** The inner `payload` of a generic envelope: the content identity and the transfer token are lifted out. */
+export interface ContentHandoffWirePayload {
+  content: { kind: ContentHandoffKind; id: string };
+  transferId: string | null;
+  payload: Record<string, unknown>;
+}
+
+export function encodeContentHandoff(
+  kind: ContentHandoffKind,
+  payload: Record<string, unknown>,
+): ContentHandoffWirePayload {
+  const { idField } = CONTENT_HANDOFF_IDENTITY[kind];
+  const { [idField]: id, token, ...rest } = payload;
+  if (typeof id !== "string" || id === "") {
+    throw new Error(`Content handoff payload has no ${idField}`);
+  }
+  return {
+    content: { kind, id },
+    transferId: typeof token === "string" ? token : null,
+    payload: rest,
+  };
+}
+
+export function decodeContentHandoff(
+  kind: ContentHandoffKind,
+  wire: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(wire) || !isRecord(wire.content) || !isRecord(wire.payload))
+    return null;
+  const { idField } = CONTENT_HANDOFF_IDENTITY[kind];
+  const { content, transferId, payload } = wire;
+  if (content.kind !== kind) return null;
+  if (typeof content.id !== "string" || content.id === "") return null;
+  if (transferId !== null && typeof transferId !== "string") return null;
+  if (idField in payload || "token" in payload) return null;
+  return {
+    ...payload,
+    [idField]: content.id,
+    ...(transferId === null ? {} : { token: transferId }),
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -181,21 +232,23 @@ function isFileBuffer(value: unknown): value is WorkspaceFileBuffer {
   );
 }
 
-function isValidEventPayload(
-  type: WorkspaceContentWindowEventName,
+/** Per-kind payload validation: `kind:phase` selects the rules that used to be keyed by message type. */
+function isValidHandoffPayload(
+  kind: ContentHandoffKind,
+  phase: string,
   value: unknown,
 ): boolean {
   if (!isRecord(value)) return false;
-  switch (type) {
-    case "pty-detached-ready":
-    case "pty-detached-exited":
+  switch (`${kind}:${phase}`) {
+    case "pty:ready":
+    case "pty:exited":
       return hasStringFields(value, ["instanceId", "sessionId", "windowLabel"]);
-    case "pty-detached-failed":
+    case "pty:failed":
       return (
         hasStringFields(value, ["instanceId", "sessionId", "windowLabel"]) &&
         hasOptionalStringFields(value, ["message"])
       );
-    case "pty-return-requested":
+    case "pty:return-requested":
       return (
         hasStringFields(value, [
           "instanceId",
@@ -204,42 +257,42 @@ function isValidEventPayload(
           "token",
         ]) && hasOptionalStringFields(value, ["targetPaneId"])
       );
-    case "pty-return-complete":
+    case "pty:return-complete":
       return hasStringFields(value, ["instanceId", "token"]);
-    case "pty-return-failed":
+    case "pty:return-failed":
       return (
         hasStringFields(value, ["instanceId", "token"]) &&
         hasOptionalStringFields(value, ["message"])
       );
-    case "pty-return-drop-requested":
+    case "pty:return-drop-requested":
       return (
         hasStringFields(value, ["instanceId"]) &&
         hasOptionalStringFields(value, ["targetPaneId"])
       );
-    case "workspace-file-window-ready":
-    case "workspace-file-window-attached":
+    case "file:ready":
+    case "file:attached":
       return hasStringFields(value, ["documentId", "token", "windowLabel"]);
-    case "workspace-file-window-attach-failed":
+    case "file:failed":
       return (
         hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
         hasOptionalStringFields(value, ["message", "reason"]) &&
         (value.reason === undefined || value.reason === "closed-before-ready")
       );
-    case "workspace-file-window-buffer-changed":
+    case "file:state-changed":
       return (
         hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
         (value.fileDocument === undefined ||
           isFileDocument(value.fileDocument)) &&
         (value.fileBuffer === undefined || isFileBuffer(value.fileBuffer))
       );
-    case "workspace-file-window-flush-requested":
+    case "file:flush-requested":
       return hasStringFields(value, [
         "documentId",
         "token",
         "windowLabel",
         "requestId",
       ]);
-    case "workspace-file-window-flush-complete":
+    case "file:flush-complete":
       return (
         hasStringFields(value, [
           "documentId",
@@ -250,7 +303,7 @@ function isValidEventPayload(
         isFileDocument(value.fileDocument) &&
         isFileBuffer(value.fileBuffer)
       );
-    case "workspace-file-window-return-requested":
+    case "file:return-requested":
       return (
         hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
         hasOptionalStringFields(value, ["targetPaneId"]) &&
@@ -258,76 +311,52 @@ function isValidEventPayload(
           isFileDocument(value.fileDocument)) &&
         (value.fileBuffer === undefined || isFileBuffer(value.fileBuffer))
       );
-    case "workspace-file-window-return-complete":
+    case "file:return-complete":
       return hasStringFields(value, ["documentId", "token"]);
-    case "workspace-file-window-return-failed":
+    case "file:return-failed":
       return (
         hasStringFields(value, ["documentId", "token"]) &&
         hasOptionalStringFields(value, ["message"])
       );
-    case "workspace-file-window-return-drop-requested":
+    case "file:return-drop-requested":
       return (
         hasStringFields(value, ["documentId"]) &&
         hasOptionalStringFields(value, ["targetPaneId"])
       );
-    case "workspace-file-window-init":
+    case "file:init":
       return (
         hasStringFields(value, ["documentId", "token", "windowLabel"]) &&
         isFileDocument(value.fileDocument) &&
         isFileBuffer(value.fileBuffer)
       );
+    default:
+      return false;
   }
 }
 
-export function isWorkspaceContentWindowEventName(
-  value: unknown,
-): value is WorkspaceContentWindowEventName {
-  return (
-    typeof value === "string" &&
-    Object.prototype.hasOwnProperty.call(
-      workspaceContentWindowEventPayloadKeys,
-      value,
-    )
-  );
-}
-
-const workspaceContentWindowEventPayloadKeys: Record<
-  WorkspaceContentWindowEventName,
-  true
-> = {
-  "pty-detached-ready": true,
-  "pty-detached-failed": true,
-  "pty-return-requested": true,
-  "pty-detached-exited": true,
-  "pty-return-complete": true,
-  "pty-return-failed": true,
-  "pty-return-drop-requested": true,
-  "workspace-file-window-ready": true,
-  "workspace-file-window-attached": true,
-  "workspace-file-window-attach-failed": true,
-  "workspace-file-window-buffer-changed": true,
-  "workspace-file-window-flush-requested": true,
-  "workspace-file-window-flush-complete": true,
-  "workspace-file-window-return-requested": true,
-  "workspace-file-window-return-complete": true,
-  "workspace-file-window-return-failed": true,
-  "workspace-file-window-return-drop-requested": true,
-  "workspace-file-window-init": true,
-};
-
-/** The message types of the protocol (the contract test compares them with window-messages.json). */
-export const WORKSPACE_CONTENT_WINDOW_MESSAGE_TYPES = Object.keys(
-  workspaceContentWindowEventPayloadKeys,
-) as WorkspaceContentWindowEventName[];
-
-export function listenWorkspaceContentWindowEvent<
-  Type extends WorkspaceContentWindowEventName,
->(type: Type, handler: EventHandler<Type>): Promise<Unlisten> {
+/**
+ * Subscribes to one content handoff phase of one kind. A message of the same phase but another
+ * kind is ignored silently: that is normal, not an error.
+ */
+export function onContentHandoff<
+  K extends ContentHandoffKind,
+  P extends ContentHandoffPhase<K>,
+>(
+  kind: K,
+  phase: P,
+  handler: (event: {
+    payload: ContentHandoffPayloads[K][P];
+    source: WindowInboxSource;
+  }) => void | Promise<void>,
+): Promise<Unlisten> {
+  const type = contentHandoffMessageType(phase);
   return onWindowMessage<unknown>(type, (event) => {
-    if (!isValidEventPayload(type, event.payload)) return;
+    const decoded = decodeContentHandoff(kind, event.payload);
+    if (decoded === null) return;
+    if (!isValidHandoffPayload(kind, phase, decoded)) return;
     // A window may only speak for itself: when a child window claims a label, it must be its own
     // (stamped) label. Messages from the main window address the receiver and are not checked.
-    const claimed = (event.payload as { windowLabel?: unknown }).windowLabel;
+    const claimed = decoded.windowLabel;
     if (
       event.source.kind !== "main" &&
       typeof claimed === "string" &&
@@ -337,20 +366,28 @@ export function listenWorkspaceContentWindowEvent<
       return;
     }
     return handler({
-      payload: event.payload as WorkspaceContentWindowEventPayloads[Type],
+      payload: decoded as ContentHandoffPayloads[K][P],
       source: event.source,
     });
   });
 }
 
-export function emitWorkspaceContentWindowEvent<
-  Type extends WorkspaceContentWindowEventName,
+/** Sends one content handoff phase to a window. An unavailable target only logs a warning. */
+export function sendContentHandoff<
+  K extends ContentHandoffKind,
+  P extends ContentHandoffPhase<K>,
 >(
   target: string,
-  type: Type,
-  payload: WorkspaceContentWindowEventPayloads[Type],
+  kind: K,
+  phase: P,
+  payload: ContentHandoffPayloads[K][P],
 ): Promise<void> {
-  return sendWindowMessage(target, type, payload).then((delivered) => {
+  const type = contentHandoffMessageType(phase);
+  return sendWindowMessage(
+    target,
+    type,
+    encodeContentHandoff(kind, payload as unknown as Record<string, unknown>),
+  ).then((delivered) => {
     if (!delivered) console.warn("window_message.target_unavailable", type);
   });
 }

@@ -26,6 +26,7 @@ import {
   deferred,
   flush,
   mountPtyWindow,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { parseWorkspaceContentDrag } from "../lib/workspaceContentDrag";
 
@@ -80,9 +81,7 @@ function dragSource() {
 }
 
 function emittedOfType(type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) => (event.payload as { type?: string }).type === type,
-  );
+  return relayedHandoffs().filter((message) => message.legacyType === type);
 }
 
 describe("pty window", () => {

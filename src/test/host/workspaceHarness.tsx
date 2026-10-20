@@ -65,6 +65,11 @@ import {
 } from "../../workspace/host/workspaceContexts";
 import { useAppStore } from "../../store/appStore";
 import { tauriMock } from "../tauriMock";
+import {
+  fromGenericMessage,
+  toGenericMessage,
+  type LegacyHandoffName,
+} from "./handoffVocabulary";
 import { installDomPolyfills } from "./domPolyfills";
 import type { FakeTerminalHandle } from "./hostMocks";
 
@@ -579,7 +584,7 @@ function stampedKind(label: string): "main" | "terminal" | "workspaceContent" {
  */
 export async function emitToWindow(
   label: string,
-  type: string,
+  type: LegacyHandoffName,
   payload: unknown,
   options?: { source?: string },
 ) {
@@ -590,18 +595,19 @@ export async function emitToWindow(
       : undefined;
   const sourceLabel =
     options?.source ?? (label === "main" ? (claimed ?? "main") : "main");
+  const message = toGenericMessage(type, payload);
   await act(async () => {
     tauriMock.deliverInbox(
       label,
       RUST_EVENTS.windowMessage,
-      { apiVersion: 1, type, payload },
+      { apiVersion: 1, type: message.type, payload: message.payload },
       { label: sourceLabel, kind: stampedKind(sourceLabel) },
     );
   });
 }
 
 export function emitToMain(
-  type: string,
+  type: LegacyHandoffName,
   payload: unknown,
   options?: { source?: string },
 ) {
@@ -611,6 +617,23 @@ export function emitToMain(
 export async function emitBackendEvent(name: string, payload: unknown) {
   await act(async () => {
     tauriMock.deliverInbox("main", name, payload);
+  });
+}
+
+/** Handoff messages the relay accepted, read back under their legacy names (M-H2 in m6-091). */
+export function relayedHandoffs() {
+  return tauriMock.state.relayedMessages.flatMap((message) => {
+    const envelope = message.payload as {
+      type?: unknown;
+      payload?: unknown;
+    } | null;
+    const decoded =
+      typeof envelope?.type === "string"
+        ? fromGenericMessage(envelope.type, envelope.payload)
+        : null;
+    return decoded
+      ? [{ from: message.from, target: message.target, ...decoded }]
+      : [];
   });
 }
 
@@ -685,16 +708,14 @@ export async function detachFileToWindow(
     windowLabel,
   });
   await flush();
-  const init = tauriMock.state.emittedEvents.find(
-    (event) =>
-      event.target === windowLabel &&
-      (event.payload as { type?: string }).type ===
-        "workspace-file-window-init",
+  const init = relayedHandoffs().find(
+    (message) =>
+      message.target === windowLabel &&
+      message.legacyType === "workspace-file-window-init",
   );
   if (!init) throw new Error("detachFileToWindow: the init event was not sent");
-  const initBuffer = (
-    init.payload as { payload: { fileBuffer: WorkspaceFileBuffer } }
-  ).payload.fileBuffer;
+  const initBuffer = (init.payload as { fileBuffer: WorkspaceFileBuffer })
+    .fileBuffer;
   await emitToMain("workspace-file-window-attached", {
     documentId,
     token,

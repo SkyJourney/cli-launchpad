@@ -21,6 +21,7 @@ import {
   DEFAULT_PTY_WINDOW_LABEL,
   flush,
   mountPtyWindow,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 let windowHandle: Awaited<ReturnType<typeof mountPtyWindow>> | undefined;
@@ -39,9 +40,7 @@ afterEach(async () => {
 });
 
 function emittedEnvelopes(type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) => (event.payload as { type?: string }).type === type,
-  );
+  return relayedHandoffs().filter((message) => message.legacyType === type);
 }
 
 /** 本文件用例内安装的 console.error 静音 spy；只在 afterEach 中恢复它，不影响 tauriMock 的 vi.fn。 */
@@ -59,8 +58,7 @@ describe("StandalonePtyWindow listener setup", () => {
       (event) => event.target === "main",
     );
     expect(failed).toHaveLength(1);
-    const inner = (failed[0].payload as { payload: { message?: string } })
-      .payload;
+    const inner = failed[0].payload as { message?: string };
     expect(inner.message).toContain("denied");
     expect(
       tauriMock.state.windowActions.some(

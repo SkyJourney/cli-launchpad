@@ -3,7 +3,7 @@ import { Columns2, Rows2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { emitWorkspaceContentWindowEvent } from "../../lib/workspaceContentWindowProtocol";
+import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
   canSplitWorkspacePane,
@@ -486,9 +486,10 @@ export function WorkspacePaneView({
             contentPayload.sourceWindowLabel,
           )
         ) {
-          void emitWorkspaceContentWindowEvent(
+          void sendContentHandoff(
             contentPayload.sourceWindowLabel,
-            "pty-return-drop-requested",
+            "pty",
+            "return-drop-requested",
             { instanceId: draggedRef.slotId, targetPaneId: pane.id },
           ).catch((reason) =>
             toast.error(
@@ -505,9 +506,10 @@ export function WorkspacePaneView({
             contentPayload.sourceWindowLabel,
           )
         ) {
-          void emitWorkspaceContentWindowEvent(
+          void sendContentHandoff(
             contentPayload.sourceWindowLabel,
-            "workspace-file-window-return-drop-requested",
+            "file",
+            "return-drop-requested",
             { documentId: draggedRef.documentId, targetPaneId: pane.id },
           ).catch((reason) => toast.error(formatAppError(reason, t)));
         }

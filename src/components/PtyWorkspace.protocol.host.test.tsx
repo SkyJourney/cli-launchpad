@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import {
+  toGenericMessage,
+  type LegacyHandoffName,
+} from "../test/host/handoffVocabulary";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +33,7 @@ import {
   openFile,
   savedLayouts,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { RUST_EVENTS } from "../lib/eventNames";
@@ -71,10 +76,8 @@ function occurrences(target: WorkspaceHost, wanted: WorkspacePaneContentRef) {
 
 /** 发往指定窗口、协议类型为 type 的事件记录。 */
 function eventsTo(windowLabel: string, type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) =>
-      event.target === windowLabel &&
-      (event.payload as { type?: string }).type === type,
+  return relayedHandoffs().filter(
+    (event) => event.target === windowLabel && event.legacyType === type,
   );
 }
 
@@ -318,10 +321,11 @@ describe("duplicate and out-of-order handoff events", () => {
         // A child window speaks for itself: Rust stamps the sender it claims.
         const claimed =
           (payload as { windowLabel?: string } | null)?.windowLabel ?? "main";
+        const message = toGenericMessage(type as LegacyHandoffName, payload);
         tauriMock.deliverInbox(
           "main",
           RUST_EVENTS.windowMessage,
-          { apiVersion: 1, type, payload },
+          { apiVersion: 1, type: message.type, payload: message.payload },
           {
             label: claimed,
             kind: claimed.startsWith("terminal-")
@@ -383,10 +387,9 @@ describe("duplicate and out-of-order handoff events", () => {
     // 反向断言：没有发出返回请求的文件仍留在它的窗口里。
     expect(occurrences(host!, { kind: "file", documentId: doc.id })).toBe(0);
     expect(
-      tauriMock.state.emittedEvents.some(
+      relayedHandoffs().some(
         (event) =>
-          event.target === ptyLabel &&
-          (event.payload as { type?: string }).type === "pty-return-failed",
+          event.target === ptyLabel && event.legacyType === "pty-return-failed",
       ),
     ).toBe(false);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
@@ -417,10 +420,9 @@ describe("duplicate and out-of-order handoff events", () => {
       eventsTo(fileLabel, "workspace-file-window-return-failed"),
     ).toHaveLength(0);
     expect(
-      tauriMock.state.emittedEvents.some(
+      relayedHandoffs().some(
         (event) =>
-          event.target === ptyLabel &&
-          (event.payload as { type?: string }).type === "pty-return-failed",
+          event.target === ptyLabel && event.legacyType === "pty-return-failed",
       ),
     ).toBe(false);
     expect(host!.errors).toEqual([]);
@@ -453,10 +455,9 @@ describe("duplicate and out-of-order handoff events", () => {
       eventsTo(fileLabel, "workspace-file-window-return-failed"),
     ).toHaveLength(0);
     expect(
-      tauriMock.state.emittedEvents.some(
+      relayedHandoffs().some(
         (event) =>
-          event.target === ptyLabel &&
-          (event.payload as { type?: string }).type === "pty-return-failed",
+          event.target === ptyLabel && event.legacyType === "pty-return-failed",
       ),
     ).toBe(false);
     expect(host!.errors).toEqual([]);
@@ -508,7 +509,7 @@ describe("duplicate and out-of-order handoff events", () => {
     const content = { kind: "file", documentId: doc.id } as const;
     // 只让 init 消息的发送失败，其余消息照常中继。
     tauriMock.failNextWindowMessage(
-      "workspace-file-window-init",
+      "content-handoff-init",
       new Error("init could not be delivered"),
     );
     try {
@@ -562,10 +563,8 @@ describe("duplicate and out-of-order handoff events", () => {
       eventsTo(windowLabel, "workspace-file-window-attach-failed"),
     ).toHaveLength(0);
     expect(
-      tauriMock.state.emittedEvents.some(
-        (event) =>
-          (event.payload as { type?: string }).type ===
-          "workspace-file-window-attach-failed",
+      relayedHandoffs().some(
+        (event) => event.legacyType === "workspace-file-window-attach-failed",
       ),
     ).toBe(false);
     expect(
@@ -597,10 +596,8 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(state.settled).toBe("resolved");
     // 反向断言：没有 attach-failed，没有销毁窗口。
     expect(
-      tauriMock.state.emittedEvents.some(
-        (event) =>
-          (event.payload as { type?: string }).type ===
-          "workspace-file-window-attach-failed",
+      relayedHandoffs().some(
+        (event) => event.legacyType === "workspace-file-window-attach-failed",
       ),
     ).toBe(false);
     expect(
@@ -712,7 +709,7 @@ describe("untrusted window events", () => {
     expect(host.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
     expect(warn).toHaveBeenCalledWith(
       "workspace_content_event.source_mismatch",
-      "workspace-file-window-buffer-changed",
+      "content-handoff-state-changed",
     );
     // Reverse: the same payload from the window it claims is accepted.
     await emitToMain("workspace-file-window-buffer-changed", payload);
@@ -751,7 +748,7 @@ describe("untrusted window events", () => {
     expect(repliesTo()).toHaveLength(0);
     expect(warn).toHaveBeenCalledWith(
       "workspace_content_event.source_mismatch",
-      "pty-return-requested",
+      "content-handoff-return-requested",
     );
     // Reverse: without a forged sender the request is processed.
     await emitToMain("pty-return-requested", request);

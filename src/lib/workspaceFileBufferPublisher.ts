@@ -1,7 +1,7 @@
-import type { WorkspaceContentWindowEventPayloads } from "./workspaceContentWindowProtocol";
+import type { ContentHandoffPayloads } from "./workspaceContentWindowProtocol";
 
 export type WorkspaceFileBufferChange =
-  WorkspaceContentWindowEventPayloads["workspace-file-window-buffer-changed"];
+  ContentHandoffPayloads["file"]["state-changed"];
 
 export function createWorkspaceFileBufferPublisher(
   publish: (payload: WorkspaceFileBufferChange) => Promise<void>,

@@ -30,6 +30,7 @@ import {
   openFile,
   savedLayouts,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { PTY_OWNER_LOST_MAX_ATTEMPTS } from "../lib/ptyOwnerLostRecovery";
@@ -118,10 +119,9 @@ describe("detached window loss", () => {
     // 反向断言：回收不重新读盘，也不是一次“正常返回”。
     expect(invokes("open_project_file").length).toBe(openCallsBefore);
     expect(
-      tauriMock.state.emittedEvents.some(
-        (event) =>
-          (event.payload as { type?: string }).type ===
-          "workspace-file-window-return-complete",
+      relayedHandoffs().some(
+        (message) =>
+          message.legacyType === "workspace-file-window-return-complete",
       ),
     ).toBe(false);
     expect(host.errors).toEqual([]);

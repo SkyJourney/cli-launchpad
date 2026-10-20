@@ -36,10 +36,14 @@ pub struct MessageRule {
     pub from: Vec<WindowKind>,
     pub to: Vec<WindowKind>,
     #[serde(rename = "contentKind")]
-    #[allow(dead_code)] // Reserved for the generic handoff events (m6-062 non-goal 3).
+    #[allow(dead_code)]
+    // Read only by the contract tests; the relay routes on payload.content.kind.
     pub content_kind: String,
     #[serde(rename = "payloadVersion")]
     pub payload_version: u64,
+    /// Content kind to the child window kind it belongs to, for the generic handoff types.
+    #[serde(default, rename = "contentKinds")]
+    pub content_kinds: Option<std::collections::HashMap<String, WindowKind>>,
 }
 
 fn rules() -> &'static [MessageRule] {
@@ -63,7 +67,11 @@ pub struct SendWindowMessageResult {
     pub delivered: bool,
 }
 
-/// Validates and delivers one window message. Every rejection returns before `deliver`.
+/// Validates and delivers one window message. Every rejection returns before `deliver`. The checks
+/// run in this order: the message type is registered; the caller's window kind may send it; the
+/// target's window kind may receive it; the envelope has the registered `type` and `apiVersion`; the
+/// envelope is within the size limit; for a generic handoff type, the content kind in
+/// `payload.content.kind` is allowed for the type and matches the child window kind on the child side.
 pub fn relay(
     registry: &WindowInboxRegistry,
     caller: &CallerWindow,
@@ -120,6 +128,26 @@ fn relay_within(
             ErrorCode::WindowMessageTooLarge,
             "窗口消息超过大小上限",
         ));
+    }
+    if let Some(kinds) = &rule.content_kinds {
+        let content_kind = envelope
+            .pointer("/payload/content/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::coded(ErrorCode::WindowNotAllowed, "消息缺少内容类型"))?;
+        let child_kind = kinds.get(content_kind).ok_or_else(|| {
+            AppError::coded(ErrorCode::WindowNotAllowed, "该消息类型不支持此内容类型")
+        })?;
+        let child_side = if caller.label().kind() == WindowKind::Main {
+            target.kind()
+        } else {
+            caller.label().kind()
+        };
+        if child_side != *child_kind {
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "内容类型与子窗口类别不匹配",
+            ));
+        }
     }
     let source = InboxSource {
         label: caller.label().as_str().to_string(),
@@ -195,8 +223,12 @@ mod tests {
         let build = |filler: usize| {
             json!({
                 "apiVersion": 1,
-                "type": "pty-detached-ready",
-                "payload": { "filler": "x".repeat(filler) },
+                "type": "content-handoff-ready",
+                "payload": {
+                    "content": { "kind": "pty", "id": "content-1" },
+                    "transferId": null,
+                    "payload": { "filler": "x".repeat(filler) },
+                },
             })
         };
         let exact = serde_json::to_vec(&build(500)).unwrap().len();
@@ -206,7 +238,7 @@ mod tests {
             &registry,
             &sender,
             "main",
-            "pty-detached-ready",
+            "content-handoff-ready",
             build(501),
             exact,
         );
@@ -218,7 +250,7 @@ mod tests {
             &registry,
             &sender,
             "main",
-            "pty-detached-ready",
+            "content-handoff-ready",
             build(500),
             exact,
         )
@@ -232,8 +264,8 @@ mod tests {
             &registry,
             &sender,
             "main",
-            "pty-detached-ready",
-            envelope("pty-detached-ready"),
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
         )
         .unwrap();
         assert!(normal.delivered);
@@ -241,84 +273,122 @@ mod tests {
 
     #[test]
     fn the_window_message_table_matches_the_protocol_directions() {
+        use std::collections::HashMap;
         use WindowKind::{Main, Terminal, WorkspaceContent};
-        let expected: [(&str, &[WindowKind], &[WindowKind]); 20] = [
+        const CHILD: &[WindowKind] = &[Terminal, WorkspaceContent];
+        const BOTH: &[(&str, WindowKind)] = &[("pty", Terminal), ("file", WorkspaceContent)];
+        const FILE: &[(&str, WindowKind)] = &[("file", WorkspaceContent)];
+        const PTY: &[(&str, WindowKind)] = &[("pty", Terminal)];
+        // (type, from, to, contentKinds): the 14 rows of the m6-091 table.
+        let expected: [(
+            &str,
+            &[WindowKind],
+            &[WindowKind],
+            Option<&[(&str, WindowKind)]>,
+        ); 14] = [
+            ("app-preferences-reply", &[Main], CHILD, None),
+            ("app-preferences-requested", CHILD, &[Main], None),
             (
-                "app-preferences-reply",
-                &[Main],
-                &[Terminal, WorkspaceContent],
-            ),
-            (
-                "app-preferences-requested",
-                &[Terminal, WorkspaceContent],
-                &[Main],
-            ),
-            ("pty-detached-exited", &[Terminal], &[Main]),
-            ("pty-detached-failed", &[Terminal], &[Main]),
-            ("pty-detached-ready", &[Terminal], &[Main]),
-            ("pty-return-requested", &[Terminal], &[Main]),
-            ("pty-return-complete", &[Main], &[Terminal]),
-            ("pty-return-drop-requested", &[Main], &[Terminal]),
-            ("pty-return-failed", &[Main], &[Terminal]),
-            (
-                "workspace-file-window-attach-failed",
+                "content-handoff-attached",
                 &[WorkspaceContent],
                 &[Main],
+                Some(FILE),
             ),
+            ("content-handoff-exited", &[Terminal], &[Main], Some(PTY)),
+            ("content-handoff-failed", CHILD, &[Main], Some(BOTH)),
             (
-                "workspace-file-window-attached",
+                "content-handoff-flush-complete",
                 &[WorkspaceContent],
                 &[Main],
+                Some(FILE),
             ),
             (
-                "workspace-file-window-buffer-changed",
-                &[WorkspaceContent],
+                "content-handoff-flush-requested",
                 &[Main],
+                &[WorkspaceContent],
+                Some(FILE),
             ),
             (
-                "workspace-file-window-flush-complete",
-                &[WorkspaceContent],
+                "content-handoff-init",
                 &[Main],
+                &[WorkspaceContent],
+                Some(FILE),
             ),
-            ("workspace-file-window-ready", &[WorkspaceContent], &[Main]),
+            ("content-handoff-ready", CHILD, &[Main], Some(BOTH)),
             (
-                "workspace-file-window-return-requested",
-                &[WorkspaceContent],
+                "content-handoff-return-complete",
                 &[Main],
-            ),
-            (
-                "workspace-file-window-flush-requested",
-                &[Main],
-                &[WorkspaceContent],
-            ),
-            ("workspace-file-window-init", &[Main], &[WorkspaceContent]),
-            (
-                "workspace-file-window-return-complete",
-                &[Main],
-                &[WorkspaceContent],
+                CHILD,
+                Some(BOTH),
             ),
             (
-                "workspace-file-window-return-drop-requested",
+                "content-handoff-return-drop-requested",
                 &[Main],
-                &[WorkspaceContent],
+                CHILD,
+                Some(BOTH),
+            ),
+            ("content-handoff-return-failed", &[Main], CHILD, Some(BOTH)),
+            (
+                "content-handoff-return-requested",
+                CHILD,
+                &[Main],
+                Some(BOTH),
             ),
             (
-                "workspace-file-window-return-failed",
-                &[Main],
+                "content-handoff-state-changed",
                 &[WorkspaceContent],
+                &[Main],
+                Some(FILE),
             ),
         ];
-        for (message_type, from, to) in expected {
+        for (message_type, from, to, kinds) in expected {
             let rule = rule_for(message_type)
                 .unwrap_or_else(|| panic!("{message_type} is not in the contract"));
-            assert_eq!(
-                kinds(rule),
-                (from.to_vec(), to.to_vec()),
-                "{message_type} directions"
-            );
+            assert_eq!(rule.from, from.to_vec(), "{message_type} from");
+            assert_eq!(rule.to, to.to_vec(), "{message_type} to");
+            match kinds {
+                Some(pairs) => {
+                    let wanted: HashMap<String, WindowKind> = pairs
+                        .iter()
+                        .map(|&(kind, child)| (kind.to_string(), child))
+                        .collect();
+                    assert_eq!(
+                        rule.content_kinds.as_ref(),
+                        Some(&wanted),
+                        "{message_type} contentKinds"
+                    );
+                }
+                None => assert!(
+                    rule.content_kinds.is_none(),
+                    "{message_type} must not declare contentKinds"
+                ),
+            }
         }
-        assert_eq!(rules().len(), 20);
+        assert_eq!(rules().len(), 14);
         assert!(rule_for("not-a-type").is_none());
+        // The 18 per-kind types of m6-062 are gone from the contract.
+        for retired in [
+            "pty-detached-ready",
+            "pty-detached-failed",
+            "pty-detached-exited",
+            "pty-return-requested",
+            "pty-return-complete",
+            "pty-return-failed",
+            "pty-return-drop-requested",
+            "workspace-file-window-ready",
+            "workspace-file-window-init",
+            "workspace-file-window-attached",
+            "workspace-file-window-attach-failed",
+            "workspace-file-window-buffer-changed",
+            "workspace-file-window-flush-requested",
+            "workspace-file-window-flush-complete",
+            "workspace-file-window-return-requested",
+            "workspace-file-window-return-complete",
+            "workspace-file-window-return-failed",
+            "workspace-file-window-return-drop-requested",
+        ] {
+            assert!(rule_for(retired).is_none(), "{retired} is retired");
+        }
     }
 
     #[test]
@@ -331,8 +401,8 @@ mod tests {
             &registry,
             &caller(TERMINAL),
             "main",
-            "pty-detached-ready",
-            envelope("pty-detached-ready"),
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
         )
         .unwrap();
 
@@ -344,7 +414,10 @@ mod tests {
         let sent = main_channel.sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].event, "window-message");
-        assert_eq!(sent[0].payload, envelope("pty-detached-ready"));
+        assert_eq!(
+            sent[0].payload,
+            content_envelope("content-handoff-ready", "pty")
+        );
         assert_eq!(
             sent[0].source,
             Some(InboxSource {
@@ -362,19 +435,18 @@ mod tests {
         let main_channel = subscribed(&registry, "main");
         let main = WindowLabel::parse("main").unwrap();
 
-        for (sender, message_type) in [
-            (TERMINAL, "workspace-file-window-ready"),
-            ("main", "pty-detached-ready"),
-            (TERMINAL, "app-preferences-reply"),
-            (CONTENT, "pty-detached-ready"),
+        // (sender, target, type, content kind): none of these is allowed from that sender.
+        for (sender, target, message_type, kind) in [
+            (TERMINAL, CONTENT, "content-handoff-init", Some("file")),
+            ("main", "main", "content-handoff-ready", Some("pty")),
+            (TERMINAL, "main", "app-preferences-reply", None),
+            (CONTENT, TERMINAL, "content-handoff-init", Some("file")),
         ] {
-            let result = relay(
-                &registry,
-                &caller(sender),
-                "main",
-                message_type,
-                envelope(message_type),
-            );
+            let envelope = match kind {
+                Some(kind) => content_envelope(message_type, kind),
+                None => envelope(message_type),
+            };
+            let result = relay(&registry, &caller(sender), target, message_type, envelope);
             assert_eq!(
                 code_of(result),
                 "window.not_allowed",
@@ -395,17 +467,18 @@ mod tests {
             subscribed(&registry, "main"),
         ];
 
-        for (sender, target, message_type) in [
-            (TERMINAL, OTHER_TERMINAL, "pty-detached-ready"),
-            ("main", CONTENT, "pty-return-complete"),
-            ("main", "main", "pty-return-complete"),
+        // (sender, target, type, content kind): the target kind is not in the type's `to` list.
+        for (sender, target, message_type, kind) in [
+            (TERMINAL, OTHER_TERMINAL, "content-handoff-ready", "pty"),
+            ("main", TERMINAL, "content-handoff-init", "file"),
+            ("main", "main", "content-handoff-return-complete", "pty"),
         ] {
             let result = relay(
                 &registry,
                 &caller(sender),
                 target,
                 message_type,
-                envelope(message_type),
+                content_envelope(message_type, kind),
             );
             assert_eq!(
                 code_of(result),
@@ -435,8 +508,8 @@ mod tests {
                 &registry,
                 &caller("main"),
                 target,
-                "pty-return-complete",
-                envelope("pty-return-complete"),
+                "content-handoff-return-complete",
+                content_envelope("content-handoff-return-complete", "pty"),
             );
             assert_eq!(code_of(result), "window.label_invalid", "{target:?}");
         }
@@ -459,24 +532,38 @@ mod tests {
         );
         assert_eq!(code_of(unknown), "window.not_allowed");
         for malformed in [json!(null), json!([1]), json!("x")] {
-            let result = relay(&registry, &sender, "main", "pty-detached-ready", malformed);
+            let result = relay(
+                &registry,
+                &sender,
+                "main",
+                "content-handoff-ready",
+                malformed,
+            );
             assert_eq!(code_of(result), "window.not_allowed");
         }
         let mismatched = relay(
             &registry,
             &sender,
             "main",
-            "pty-detached-ready",
-            envelope("pty-detached-failed"),
+            "content-handoff-ready",
+            content_envelope("content-handoff-failed", "pty"),
         );
         assert_eq!(code_of(mismatched), "window.not_allowed");
-        for version in [
-            json!({ "apiVersion": 2, "type": "pty-detached-ready", "payload": {} }),
-            json!({ "apiVersion": "1", "type": "pty-detached-ready", "payload": {} }),
-            json!({ "type": "pty-detached-ready", "payload": {} }),
-            json!({ "apiVersion": 1.5, "type": "pty-detached-ready", "payload": {} }),
-        ] {
-            let result = relay(&registry, &sender, "main", "pty-detached-ready", version);
+
+        let base = content_envelope("content-handoff-ready", "pty");
+        let mut version_two = base.clone();
+        version_two["apiVersion"] = json!(2);
+        let mut version_text = base.clone();
+        version_text["apiVersion"] = json!("1");
+        let mut version_missing = base.clone();
+        version_missing
+            .as_object_mut()
+            .unwrap()
+            .remove("apiVersion");
+        let mut version_float = base.clone();
+        version_float["apiVersion"] = json!(1.5);
+        for version in [version_two, version_text, version_missing, version_float] {
+            let result = relay(&registry, &sender, "main", "content-handoff-ready", version);
             assert_eq!(code_of(result), "window.not_allowed");
         }
         assert!(main_channel.sent.lock().unwrap().is_empty());
@@ -486,8 +573,8 @@ mod tests {
             &registry,
             &sender,
             "main",
-            "pty-detached-ready",
-            envelope("pty-detached-ready"),
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
         )
         .unwrap();
         assert_eq!(main_channel.sent.lock().unwrap().len(), 1);
@@ -502,8 +589,8 @@ mod tests {
             &registry,
             &caller("main"),
             TERMINAL,
-            "pty-return-complete",
-            envelope("pty-return-complete"),
+            "content-handoff-return-complete",
+            content_envelope("content-handoff-return-complete", "pty"),
         )
         .unwrap();
 
@@ -523,8 +610,8 @@ mod tests {
             &registry,
             &caller(TERMINAL),
             "main",
-            "pty-detached-ready",
-            envelope("pty-detached-ready"),
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
         )
         .unwrap();
 
@@ -543,10 +630,14 @@ mod tests {
         let main_channel = subscribed(&registry, "main");
         let forged = json!({
             "apiVersion": 1,
-            "type": "pty-detached-ready",
+            "type": "content-handoff-ready",
             "payload": {
-                "windowLabel": OTHER_TERMINAL,
-                "source": { "label": "main", "kind": "main" }
+                "content": { "kind": "pty", "id": "content-1" },
+                "transferId": null,
+                "payload": {
+                    "windowLabel": OTHER_TERMINAL,
+                    "source": { "label": "main", "kind": "main" }
+                }
             },
             "source": { "label": "main", "kind": "main" }
         });
@@ -555,7 +646,7 @@ mod tests {
             &registry,
             &caller(TERMINAL),
             "main",
-            "pty-detached-ready",
+            "content-handoff-ready",
             forged.clone(),
         )
         .unwrap();
@@ -575,5 +666,239 @@ mod tests {
         );
         assert_ne!(source.label, "main");
         assert_ne!(source.label, OTHER_TERMINAL);
+    }
+
+    fn content_envelope(message_type: &str, kind: &str) -> Value {
+        json!({
+            "apiVersion": 1,
+            "type": message_type,
+            "payload": {
+                "content": { "kind": kind, "id": "content-1" },
+                "transferId": null,
+                "payload": {}
+            }
+        })
+    }
+
+    #[test]
+    fn relay_binds_the_content_kind_to_the_child_window_kind() {
+        let registry = WindowInboxRegistry::default();
+        let main = subscribed(&registry, "main");
+        let terminal = subscribed(&registry, TERMINAL);
+        let content = subscribed(&registry, CONTENT);
+
+        // Accepted: the content kind matches the child window kind on the child side of the exchange.
+        relay(
+            &registry,
+            &caller(TERMINAL),
+            "main",
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
+        )
+        .unwrap();
+        relay(
+            &registry,
+            &caller(CONTENT),
+            "main",
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "file"),
+        )
+        .unwrap();
+        relay(
+            &registry,
+            &caller("main"),
+            CONTENT,
+            "content-handoff-init",
+            content_envelope("content-handoff-init", "file"),
+        )
+        .unwrap();
+        relay(
+            &registry,
+            &caller("main"),
+            TERMINAL,
+            "content-handoff-return-complete",
+            content_envelope("content-handoff-return-complete", "pty"),
+        )
+        .unwrap();
+        relay(
+            &registry,
+            &caller("main"),
+            CONTENT,
+            "content-handoff-return-drop-requested",
+            content_envelope("content-handoff-return-drop-requested", "file"),
+        )
+        .unwrap();
+        assert_eq!(main.sent.lock().unwrap().len(), 2);
+        assert_eq!(content.sent.lock().unwrap().len(), 2);
+        assert_eq!(terminal.sent.lock().unwrap().len(), 1);
+
+        // Rejected: the content kind does not match the child side, or the kind is not allowed for the phase.
+        let rejected = [
+            (TERMINAL, "main", "content-handoff-ready", "file"),
+            (CONTENT, "main", "content-handoff-ready", "pty"),
+            ("main", CONTENT, "content-handoff-return-complete", "pty"),
+            ("main", TERMINAL, "content-handoff-return-complete", "file"),
+            (TERMINAL, "main", "content-handoff-attached", "pty"),
+            (CONTENT, "main", "content-handoff-exited", "file"),
+            (TERMINAL, "main", "content-handoff-state-changed", "pty"),
+            ("main", TERMINAL, "content-handoff-init", "pty"),
+            (TERMINAL, "main", "content-handoff-ready", "markdown"),
+        ];
+        for (from, target, message_type, kind) in rejected {
+            let result = relay(
+                &registry,
+                &caller(from),
+                target,
+                message_type,
+                content_envelope(message_type, kind),
+            );
+            assert_eq!(
+                code_of(result),
+                "window.not_allowed",
+                "{from} -> {target} {message_type} {kind}"
+            );
+        }
+        // Rejections deliver nothing and buffer nothing.
+        assert_eq!(main.sent.lock().unwrap().len(), 2);
+        assert_eq!(content.sent.lock().unwrap().len(), 2);
+        assert_eq!(terminal.sent.lock().unwrap().len(), 1);
+        assert_eq!(
+            registry.buffered_len(&WindowLabel::parse("main").unwrap()),
+            0
+        );
+        assert_eq!(
+            registry.buffered_len(&WindowLabel::parse(TERMINAL).unwrap()),
+            0
+        );
+        assert_eq!(
+            registry.buffered_len(&WindowLabel::parse(CONTENT).unwrap()),
+            0
+        );
+    }
+
+    #[test]
+    fn relay_rejects_generic_messages_with_a_malformed_content_field() {
+        let registry = WindowInboxRegistry::default();
+        let main = subscribed(&registry, "main");
+        let sender = caller(TERMINAL);
+        // The inner `payload` of the envelope: no content key, a string, an empty object, and a non-string kind.
+        let variants = [
+            json!({ "transferId": null, "payload": {} }),
+            json!({ "content": "pty", "transferId": null, "payload": {} }),
+            json!({ "content": {}, "transferId": null, "payload": {} }),
+            json!({ "content": { "kind": 1 }, "transferId": null, "payload": {} }),
+        ];
+        for variant in variants {
+            let envelope = json!({
+                "apiVersion": 1,
+                "type": "content-handoff-ready",
+                "payload": variant
+            });
+            let result = relay(
+                &registry,
+                &sender,
+                "main",
+                "content-handoff-ready",
+                envelope,
+            );
+            assert_eq!(code_of(result), "window.not_allowed");
+        }
+        for payload in [json!(null), json!([])] {
+            let envelope =
+                json!({ "apiVersion": 1, "type": "content-handoff-ready", "payload": payload });
+            let result = relay(
+                &registry,
+                &sender,
+                "main",
+                "content-handoff-ready",
+                envelope,
+            );
+            assert_eq!(code_of(result), "window.not_allowed");
+        }
+        // Rejections never reach the inbox.
+        assert_eq!(main.sent.lock().unwrap().len(), 0);
+        // The rejections left no state behind: a well-formed message is still delivered.
+        let delivered = relay(
+            &registry,
+            &sender,
+            "main",
+            "content-handoff-ready",
+            content_envelope("content-handoff-ready", "pty"),
+        )
+        .unwrap();
+        assert!(delivered.delivered);
+        assert_eq!(main.sent.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn relay_rejects_the_retired_per_kind_message_types_and_still_accepts_preferences() {
+        // (type, sender, target) for each of the 18 per-kind types, with the direction it had in m6-062.
+        const RETIRED: [(&str, &str, &str); 18] = [
+            ("pty-detached-ready", TERMINAL, "main"),
+            ("pty-detached-failed", TERMINAL, "main"),
+            ("pty-detached-exited", TERMINAL, "main"),
+            ("pty-return-requested", TERMINAL, "main"),
+            ("pty-return-complete", "main", TERMINAL),
+            ("pty-return-failed", "main", TERMINAL),
+            ("pty-return-drop-requested", "main", TERMINAL),
+            ("workspace-file-window-ready", CONTENT, "main"),
+            ("workspace-file-window-attached", CONTENT, "main"),
+            ("workspace-file-window-attach-failed", CONTENT, "main"),
+            ("workspace-file-window-buffer-changed", CONTENT, "main"),
+            ("workspace-file-window-flush-complete", CONTENT, "main"),
+            ("workspace-file-window-return-requested", CONTENT, "main"),
+            ("workspace-file-window-init", "main", CONTENT),
+            ("workspace-file-window-flush-requested", "main", CONTENT),
+            ("workspace-file-window-return-complete", "main", CONTENT),
+            ("workspace-file-window-return-failed", "main", CONTENT),
+            (
+                "workspace-file-window-return-drop-requested",
+                "main",
+                CONTENT,
+            ),
+        ];
+        let registry = WindowInboxRegistry::default();
+        let main = subscribed(&registry, "main");
+        let terminal = subscribed(&registry, TERMINAL);
+        let content = subscribed(&registry, CONTENT);
+        for (message_type, sender, target) in RETIRED {
+            assert!(
+                rule_for(message_type).is_none(),
+                "{message_type} must not be registered"
+            );
+            let result = relay(
+                &registry,
+                &caller(sender),
+                target,
+                message_type,
+                envelope(message_type),
+            );
+            assert_eq!(code_of(result), "window.not_allowed", "{message_type}");
+        }
+        assert_eq!(main.sent.lock().unwrap().len(), 0);
+        assert_eq!(terminal.sent.lock().unwrap().len(), 0);
+        assert_eq!(content.sent.lock().unwrap().len(), 0);
+
+        // Preference types carry no content field and are unaffected by the content check.
+        let request = relay(
+            &registry,
+            &caller(TERMINAL),
+            "main",
+            "app-preferences-requested",
+            envelope("app-preferences-requested"),
+        )
+        .unwrap();
+        assert!(request.delivered);
+        let reply = relay(
+            &registry,
+            &caller("main"),
+            TERMINAL,
+            "app-preferences-reply",
+            envelope("app-preferences-reply"),
+        )
+        .unwrap();
+        assert!(reply.delivered);
+        assert_eq!(main.sent.lock().unwrap().len(), 1);
+        assert_eq!(terminal.sent.lock().unwrap().len(), 1);
     }
 }

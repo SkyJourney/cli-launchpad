@@ -26,6 +26,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -183,10 +184,8 @@ describe("detached content return drops", () => {
   const OTHER_WINDOW = "workspace-content-00000000-0000-4000-8000-000000000000";
 
   function returnDropEvents(type: string, target: string) {
-    return tauriMock.state.emittedEvents.filter(
-      (event) =>
-        event.target === target &&
-        (event.payload as { type?: string }).type === type,
+    return relayedHandoffs().filter(
+      (event) => event.target === target && event.legacyType === type,
     );
   }
 
@@ -224,7 +223,8 @@ describe("detached content return drops", () => {
     expect(
       returnDropEvents("pty-return-drop-requested", windowLabel)[0].payload,
     ).toMatchObject({
-      payload: { instanceId: slot.instanceId, targetPaneId: paneB.id },
+      instanceId: slot.instanceId,
+      targetPaneId: paneB.id,
     });
 
     // 反向：来自未分离窗口的同类载荷不发出回传事件。
@@ -241,9 +241,8 @@ describe("detached content return drops", () => {
     });
     await flush();
     expect(
-      tauriMock.state.emittedEvents.filter(
-        (e) =>
-          (e.payload as { type?: string }).type === "pty-return-drop-requested",
+      relayedHandoffs().filter(
+        (e) => e.legacyType === "pty-return-drop-requested",
       ),
     ).toHaveLength(1);
     expect(host.errors).toEqual([]);
@@ -283,7 +282,8 @@ describe("detached content return drops", () => {
     );
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({
-      payload: { documentId: doc.id, targetPaneId: paneB.id },
+      documentId: doc.id,
+      targetPaneId: paneB.id,
     });
 
     // 反向：未分离窗口的文件载荷不发出回传事件。
@@ -300,10 +300,8 @@ describe("detached content return drops", () => {
     });
     await flush();
     expect(
-      tauriMock.state.emittedEvents.filter(
-        (e) =>
-          (e.payload as { type?: string }).type ===
-          "workspace-file-window-return-drop-requested",
+      relayedHandoffs().filter(
+        (e) => e.legacyType === "workspace-file-window-return-drop-requested",
       ),
     ).toHaveLength(1);
     expect(host.errors).toEqual([]);

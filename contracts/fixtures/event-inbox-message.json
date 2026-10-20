@@ -17,8 +17,15 @@
         "event": "window-message",
         "payload": {
           "apiVersion": 1,
-          "payload": {},
-          "type": "pty-detached-ready"
+          "payload": {
+            "content": {
+              "id": "content-1",
+              "kind": "pty"
+            },
+            "payload": {},
+            "transferId": null
+          },
+          "type": "content-handoff-ready"
         },
         "seq": 2,
         "source": {

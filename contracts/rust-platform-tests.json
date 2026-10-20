@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 807,
-    "Linux": 813,
-    "macOS": 809
+    "Windows": 810,
+    "Linux": 816,
+    "macOS": 812
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -526,7 +526,10 @@
       "platform::bounded_read::tests::rejects_content_one_byte_over_the_limit_as_file_too_large",
       "contracts::shared_helpers_are_defined_once",
       "contracts::cli_adapters_do_not_depend_on_session_service",
-      "contracts::window_label_helpers_have_no_dead_code_allowance"
+      "contracts::window_label_helpers_have_no_dead_code_allowance",
+      "services::window_relay::tests::relay_binds_the_content_kind_to_the_child_window_kind",
+      "services::window_relay::tests::relay_rejects_generic_messages_with_a_malformed_content_field",
+      "services::window_relay::tests::relay_rejects_the_retired_per_kind_message_types_and_still_accepts_preferences"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

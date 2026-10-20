@@ -16,130 +16,130 @@
       "payloadVersion": 1
     },
     {
-      "type": "pty-detached-exited",
+      "type": "content-handoff-attached",
+      "from": ["workspaceContent"],
+      "to": ["main"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-exited",
       "from": ["terminal"],
       "to": ["main"],
-      "contentKind": "pty",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal"
+      }
     },
     {
-      "type": "pty-detached-failed",
-      "from": ["terminal"],
+      "type": "content-handoff-failed",
+      "from": ["terminal", "workspaceContent"],
       "to": ["main"],
-      "contentKind": "pty",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
     },
     {
-      "type": "pty-detached-ready",
-      "from": ["terminal"],
-      "to": ["main"],
-      "contentKind": "pty",
-      "payloadVersion": 1
-    },
-    {
-      "type": "pty-return-complete",
-      "from": ["main"],
-      "to": ["terminal"],
-      "contentKind": "pty",
-      "payloadVersion": 1
-    },
-    {
-      "type": "pty-return-drop-requested",
-      "from": ["main"],
-      "to": ["terminal"],
-      "contentKind": "pty",
-      "payloadVersion": 1
-    },
-    {
-      "type": "pty-return-failed",
-      "from": ["main"],
-      "to": ["terminal"],
-      "contentKind": "pty",
-      "payloadVersion": 1
-    },
-    {
-      "type": "pty-return-requested",
-      "from": ["terminal"],
-      "to": ["main"],
-      "contentKind": "pty",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-attach-failed",
+      "type": "content-handoff-flush-complete",
       "from": ["workspaceContent"],
       "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "file": "workspaceContent"
+      }
     },
     {
-      "type": "workspace-file-window-attached",
-      "from": ["workspaceContent"],
-      "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-buffer-changed",
-      "from": ["workspaceContent"],
-      "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-flush-complete",
-      "from": ["workspaceContent"],
-      "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-flush-requested",
+      "type": "content-handoff-flush-requested",
       "from": ["main"],
       "to": ["workspaceContent"],
-      "contentKind": "file",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "file": "workspaceContent"
+      }
     },
     {
-      "type": "workspace-file-window-init",
+      "type": "content-handoff-init",
       "from": ["main"],
       "to": ["workspaceContent"],
-      "contentKind": "file",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "file": "workspaceContent"
+      }
     },
     {
-      "type": "workspace-file-window-ready",
+      "type": "content-handoff-ready",
+      "from": ["terminal", "workspaceContent"],
+      "to": ["main"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-return-complete",
+      "from": ["main"],
+      "to": ["terminal", "workspaceContent"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-return-drop-requested",
+      "from": ["main"],
+      "to": ["terminal", "workspaceContent"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-return-failed",
+      "from": ["main"],
+      "to": ["terminal", "workspaceContent"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-return-requested",
+      "from": ["terminal", "workspaceContent"],
+      "to": ["main"],
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "pty": "terminal",
+        "file": "workspaceContent"
+      }
+    },
+    {
+      "type": "content-handoff-state-changed",
       "from": ["workspaceContent"],
       "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-return-complete",
-      "from": ["main"],
-      "to": ["workspaceContent"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-return-drop-requested",
-      "from": ["main"],
-      "to": ["workspaceContent"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-return-failed",
-      "from": ["main"],
-      "to": ["workspaceContent"],
-      "contentKind": "file",
-      "payloadVersion": 1
-    },
-    {
-      "type": "workspace-file-window-return-requested",
-      "from": ["workspaceContent"],
-      "to": ["main"],
-      "contentKind": "file",
-      "payloadVersion": 1
+      "contentKind": "content",
+      "payloadVersion": 1,
+      "contentKinds": {
+        "file": "workspaceContent"
+      }
     }
   ]
 }

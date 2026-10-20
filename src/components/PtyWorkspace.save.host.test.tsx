@@ -33,6 +33,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 let host: WorkspaceHost | undefined;
@@ -354,16 +355,15 @@ describe("in-flight saves", () => {
     });
     await flush();
 
-    const init = tauriMock.state.emittedEvents.find(
+    const init = relayedHandoffs().find(
       (event) =>
         event.target === windowLabel &&
-        (event.payload as { type?: string }).type ===
-          "workspace-file-window-init",
+        event.legacyType === "workspace-file-window-init",
     );
     expect(init).toBeDefined();
     const fileBuffer = (
-      init!.payload as { payload: { fileBuffer: Record<string, unknown> } }
-    ).payload.fileBuffer;
+      init!.payload as { fileBuffer: Record<string, unknown> }
+    ).fileBuffer;
     expect(fileBuffer).toMatchObject({
       saving: false,
       savedContent: "edited",

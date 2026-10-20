@@ -81,11 +81,11 @@ describe("protocol handlers", () => {
     const ownerLost = () => listenersNamed("pty-session-owner-lost");
 
     expect(handlers.registrations().map((r) => r.name)).toEqual([
-      "pty-detached-ready",
-      "pty-detached-failed",
+      "pty:ready",
+      "pty:failed",
       "pty-session-owner-lost",
-      "pty-return-requested",
-      "pty-detached-exited",
+      "pty:return-requested",
+      "pty:exited",
     ]);
     expect(ownerLost()).toHaveLength(0);
 
@@ -106,11 +106,11 @@ describe("protocol handlers", () => {
     const lost = () => listenersNamed("workspace-content-window-lost");
 
     expect(handlers.registrations().map((r) => r.name)).toEqual([
-      "workspace-file-window-ready",
-      "workspace-file-window-attached",
-      "workspace-file-window-attach-failed",
-      "workspace-file-window-buffer-changed",
-      "workspace-file-window-return-requested",
+      "file:ready",
+      "file:attached",
+      "file:failed",
+      "file:state-changed",
+      "file:return-requested",
     ]);
     expect(handlers.lostRegistrations().map((r) => r.name)).toEqual([
       "workspace-content-window-lost",

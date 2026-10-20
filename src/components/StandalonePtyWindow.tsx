@@ -20,8 +20,8 @@ import {
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { resolveDetachedWindowFailureAction } from "../lib/ptySessionLifecycle";
 import {
-  emitWorkspaceContentWindowEvent,
-  listenWorkspaceContentWindowEvent,
+  sendContentHandoff,
+  onContentHandoff,
 } from "../lib/workspaceContentWindowProtocol";
 import {
   attachWorkspaceContentHandoff,
@@ -180,7 +180,7 @@ export function StandalonePtyWindow({
           ).catch(() => undefined);
           return;
         }
-        await emitWorkspaceContentWindowEvent("main", "pty-return-requested", {
+        await sendContentHandoff("main", "pty", "return-requested", {
           instanceId,
           sessionId,
           windowLabel: currentWindow.label,
@@ -218,7 +218,7 @@ export function StandalonePtyWindow({
 
   const reportExited = useCallback(
     () =>
-      emitWorkspaceContentWindowEvent("main", "pty-detached-exited", {
+      sendContentHandoff("main", "pty", "exited", {
         instanceId,
         sessionId,
         windowLabel: getCurrentWindow().label,
@@ -282,7 +282,7 @@ export function StandalonePtyWindow({
           if (status.state === "ended") {
             closeAfterExitRef.current();
           } else if (status.state === "ownedByAnotherWindow") {
-            emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
+            sendContentHandoff("main", "pty", "failed", {
               instanceId,
               sessionId,
               windowLabel: currentWindow.label,
@@ -308,7 +308,7 @@ export function StandalonePtyWindow({
       const currentWindow = getCurrentWindow();
       try {
         const registeredListeners = await registerAllOrCleanup([
-          listenWorkspaceContentWindowEvent("pty-return-complete", (event) => {
+          onContentHandoff("pty", "return-complete", (event) => {
             if (
               event.payload.instanceId !== instanceId ||
               event.payload.token !== currentReturnTokenRef.current
@@ -321,7 +321,7 @@ export function StandalonePtyWindow({
             returnTimer.clear();
             void destroyWindow("Failed to destroy returned PTY window");
           }),
-          listenWorkspaceContentWindowEvent("pty-return-failed", (event) => {
+          onContentHandoff("pty", "return-failed", (event) => {
             if (
               event.payload.instanceId !== instanceId ||
               event.payload.token !== currentReturnTokenRef.current
@@ -351,14 +351,11 @@ export function StandalonePtyWindow({
             returnHandoffContextRef.current = null;
             returnHandoffPayloadRef.current = undefined;
           }),
-          listenWorkspaceContentWindowEvent(
-            "pty-return-drop-requested",
-            (event) => {
-              if (event.payload.instanceId === instanceId) {
-                void requestReturnRef.current(event.payload.targetPaneId);
-              }
-            },
-          ),
+          onContentHandoff("pty", "return-drop-requested", (event) => {
+            if (event.payload.instanceId === instanceId) {
+              void requestReturnRef.current(event.payload.targetPaneId);
+            }
+          }),
         ]);
         if (disposed) {
           registeredListeners.forEach((unlisten) => unlisten());
@@ -403,7 +400,7 @@ export function StandalonePtyWindow({
           closeAfterExitRef.current();
           return;
         }
-        await emitWorkspaceContentWindowEvent("main", "pty-detached-ready", {
+        await sendContentHandoff("main", "pty", "ready", {
           instanceId,
           sessionId,
           windowLabel: currentWindow.label,
@@ -434,7 +431,7 @@ export function StandalonePtyWindow({
             return;
           }
           setError(toAppErrorState(reason));
-          await emitWorkspaceContentWindowEvent("main", "pty-detached-failed", {
+          await sendContentHandoff("main", "pty", "failed", {
             instanceId,
             sessionId,
             windowLabel: currentWindow.label,

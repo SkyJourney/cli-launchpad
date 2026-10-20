@@ -27,6 +27,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -161,14 +162,12 @@ describe("window orchestration", () => {
       impacts = h.ctx().collectExitImpacts(0);
     });
     await flush();
-    const request = tauriMock.state.emittedEvents.find(
+    const request = relayedHandoffs().find(
       (event) =>
         event.target === windowLabel &&
-        (event.payload as { type?: string }).type ===
-          "workspace-file-window-flush-requested",
+        event.legacyType === "workspace-file-window-flush-requested",
     );
-    const requestId = (request!.payload as { payload: { requestId: string } })
-      .payload.requestId;
+    const requestId = (request!.payload as { requestId: string }).requestId;
 
     await emitToMain("workspace-file-window-flush-complete", {
       requestId,
@@ -190,10 +189,8 @@ describe("window orchestration", () => {
     ]);
     expect(h.ctx().fileBuffers[doc.id].content).toBe("edited in child");
     expect(
-      tauriMock.state.emittedEvents.filter(
-        (event) =>
-          (event.payload as { type?: string }).type ===
-          "workspace-file-window-flush-requested",
+      relayedHandoffs().filter(
+        (event) => event.legacyType === "workspace-file-window-flush-requested",
       ),
     ).toHaveLength(1);
     expect(h.errors).toEqual([]);

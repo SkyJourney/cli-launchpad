@@ -37,6 +37,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -73,10 +74,11 @@ afterEach(async () => {
   expect(invalidSnapshots).toEqual([]);
 });
 
+/** Handoff types relayed to `label`, read back under their legacy names (M-H2 in m6-091). */
 function emittedTypesTo(label: string) {
-  return tauriMock.state.emittedEvents
-    .filter((event) => event.target === label)
-    .map((event) => (event.payload as { type?: string }).type);
+  return relayedHandoffs()
+    .filter((message) => message.target === label)
+    .map((message) => message.legacyType);
 }
 
 /** 树中包含该内容的 pane 个数。 */

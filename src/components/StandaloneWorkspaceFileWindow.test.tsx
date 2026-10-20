@@ -18,6 +18,7 @@ import {
   emitToWindow,
   flush,
   mountFileWindow,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 const LABEL = DEFAULT_FILE_WINDOW_LABEL;
@@ -58,9 +59,7 @@ afterEach(async () => {
 });
 
 function emittedEnvelopes(type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) => (event.payload as { type?: string }).type === type,
-  );
+  return relayedHandoffs().filter((message) => message.legacyType === type);
 }
 
 async function mountAttached() {
@@ -130,11 +129,10 @@ describe("StandaloneWorkspaceFileWindow", () => {
 
     const complete = emittedEnvelopes("workspace-file-window-flush-complete");
     expect(complete).toHaveLength(1);
-    const payload = (
-      complete[0].payload as {
-        payload: { requestId: string; fileBuffer: { content: string } };
-      }
-    ).payload;
+    const payload = complete[0].payload as {
+      requestId: string;
+      fileBuffer: { content: string };
+    };
     expect(payload.requestId).toBe("req-1");
     expect(payload.fileBuffer.content).toBe("edited");
 
@@ -167,11 +165,10 @@ describe("StandaloneWorkspaceFileWindow", () => {
       "workspace-file-window-return-requested",
     );
     expect(requested).toHaveLength(1);
-    const payload = (
-      requested[0].payload as {
-        payload: { documentId: string; fileBuffer: { content: string } };
-      }
-    ).payload;
+    const payload = requested[0].payload as {
+      documentId: string;
+      fileBuffer: { content: string };
+    };
     expect(payload.documentId).toBe("doc-1");
     expect(payload.fileBuffer.content).toBe("closing edit");
     // 销毁要等 return-complete。
@@ -229,8 +226,7 @@ describe("StandaloneWorkspaceFileWindow listener setup", () => {
       "workspace-file-window-attach-failed",
     ).filter((event) => event.target === "main");
     expect(failed).toHaveLength(1);
-    const inner = (failed[0].payload as { payload: { message?: string } })
-      .payload;
+    const inner = failed[0].payload as { message?: string };
     expect(typeof inner.message).toBe("string");
     expect(inner.message).toContain("denied");
     expect(screen.getByText(/denied/)).toBeTruthy();

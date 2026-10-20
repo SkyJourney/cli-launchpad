@@ -25,6 +25,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 let host: WorkspaceHost | undefined;
@@ -71,10 +72,8 @@ describe("PtyWorkspace host harness", () => {
     expect(invokes("get_workspace_layout").length).toBeGreaterThanOrEqual(1);
     expect(invokes("get_workspace_layout").length).toBeLessThanOrEqual(2);
     expect(tauriMock.state.createdWindows).toHaveLength(1);
-    const inits = tauriMock.state.emittedEvents.filter(
-      (event) =>
-        (event.payload as { type?: string }).type ===
-        "workspace-file-window-init",
+    const inits = relayedHandoffs().filter(
+      (event) => event.legacyType === "workspace-file-window-init",
     );
     expect(inits).toHaveLength(1);
     expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);

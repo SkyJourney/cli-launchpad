@@ -3,28 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import { tauriMock } from "../test/tauriMock";
 import { onInboxEvent } from "./windowInbox";
 import {
-  emitWorkspaceContentWindowEvent,
   getWorkspaceContentWindowLabelPrefix,
-  listenWorkspaceContentWindowEvent,
+  onContentHandoff,
+  sendContentHandoff,
 } from "./workspaceContentWindowProtocol";
+import {
+  toGenericMessage,
+  type LegacyHandoffName,
+} from "../test/host/handoffVocabulary";
 
 const TERMINAL = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
 
-function envelope(type: string, payload: unknown) {
-  return { apiVersion: 1, type, payload };
-}
-
-/** Delivers a relayed message to the main window's inbox, stamped with `source`. */
+/** Delivers a relayed handoff message to the main window's inbox, stamped with `source`. */
 function deliverToMain(
-  type: string,
+  type: LegacyHandoffName,
   payload: unknown,
   source: { label: string; kind: "main" | "terminal" | "workspaceContent" },
   apiVersion = 1,
 ) {
+  const message = toGenericMessage(type, payload);
   tauriMock.deliverInbox(
     "main",
     "window-message",
-    { ...envelope(type, payload), apiVersion },
+    { apiVersion, type: message.type, payload: message.payload },
     source,
   );
 }
@@ -39,14 +40,8 @@ describe("workspace content window protocol", () => {
     tauriMock.setCurrentWindowLabel("main");
     const ready = vi.fn();
     const failed = vi.fn();
-    const stopReady = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      ready,
-    );
-    const stopFailed = await listenWorkspaceContentWindowEvent(
-      "pty-detached-failed",
-      failed,
-    );
+    const stopReady = await onContentHandoff("pty", "ready", ready);
+    const stopFailed = await onContentHandoff("pty", "failed", failed);
     const payload = {
       instanceId: "slot-1",
       sessionId: "session-1",
@@ -81,11 +76,7 @@ describe("workspace content window protocol", () => {
       windowLabel: "terminal-1",
     };
 
-    await emitWorkspaceContentWindowEvent(
-      TERMINAL,
-      "pty-detached-ready",
-      payload,
-    );
+    await sendContentHandoff(TERMINAL, "pty", "ready", payload);
 
     const calls = tauriMock.state.invokeCalls.filter(
       (call) => call.command === "send_window_message",
@@ -93,11 +84,15 @@ describe("workspace content window protocol", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].args).toEqual({
       target: TERMINAL,
-      messageType: "pty-detached-ready",
+      messageType: "content-handoff-ready",
       payload: {
         apiVersion: 1,
-        type: "pty-detached-ready",
-        payload,
+        type: "content-handoff-ready",
+        payload: {
+          content: { kind: "pty", id: "slot-1" },
+          transferId: null,
+          payload: { sessionId: "session-1", windowLabel: "terminal-1" },
+        },
       },
     });
     expect(getWorkspaceContentWindowLabelPrefix("pty")).toBe("terminal-");
@@ -115,10 +110,7 @@ describe("workspace content window protocol", () => {
   it("rejects file buffer events without safe epoch and version fields", async () => {
     tauriMock.setCurrentWindowLabel("main");
     const changed = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "workspace-file-window-buffer-changed",
-      changed,
-    );
+    const stop = await onContentHandoff("file", "state-changed", changed);
     const source = {
       label: "workspace-content-1",
       kind: "workspaceContent" as const,
@@ -163,18 +155,9 @@ describe("workspace content window protocol", () => {
       throw new Error("handler failed");
     });
     const laterHandler = vi.fn();
-    const stopThrown = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      thrown,
-    );
-    const stopRejected = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      rejected,
-    );
-    const stopLater = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      laterHandler,
-    );
+    const stopThrown = await onContentHandoff("pty", "ready", thrown);
+    const stopRejected = await onContentHandoff("pty", "ready", rejected);
+    const stopLater = await onContentHandoff("pty", "ready", laterHandler);
     const source = terminalSource("terminal-1");
 
     deliverToMain(
@@ -223,10 +206,7 @@ describe("workspace content window protocol", () => {
     tauriMock.setCurrentWindowLabel("main");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const handler = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      handler,
-    );
+    const stop = await onContentHandoff("pty", "ready", handler);
     const payload = {
       instanceId: "i",
       sessionId: "s",
@@ -247,10 +227,7 @@ describe("workspace content window protocol", () => {
     tauriMock.setCurrentWindowLabel("main");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const handler = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      handler,
-    );
+    const stop = await onContentHandoff("pty", "ready", handler);
     const payload = {
       instanceId: "i",
       sessionId: "s",

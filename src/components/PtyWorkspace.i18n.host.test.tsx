@@ -24,6 +24,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -165,11 +166,10 @@ describe("workspace across UI language changes", () => {
     const result = await impacts;
 
     expect(result.dirtyFiles.map((file) => file.documentId)).toEqual([doc.id]);
-    const flushRequests = tauriMock.state.emittedEvents.filter(
+    const flushRequests = relayedHandoffs().filter(
       (event) =>
         event.target === windowLabel &&
-        (event.payload as { type?: string }).type ===
-          "workspace-file-window-flush-requested",
+        event.legacyType === "workspace-file-window-flush-requested",
     );
     expect(flushRequests.length).toBeGreaterThanOrEqual(1);
     // 反向断言：语言切换没有销毁子窗口，也没有撤销它的文件授权。

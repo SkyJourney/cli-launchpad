@@ -27,6 +27,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
@@ -137,16 +138,13 @@ describe("backup restore coordination", () => {
         // 分离窗口会回复 flush 请求（与 exit 宿主测试一致）：回复当前缓冲，因此不计为脏文件。
         const blockersPromise = wsHost.ctx().getBackupRestoreBlockers();
         await flush();
-        const request = tauriMock.state.emittedEvents.find(
+        const request = relayedHandoffs().find(
           (event) =>
             event.target === windowLabel &&
-            (event.payload as { type?: string }).type ===
-              "workspace-file-window-flush-requested",
+            event.legacyType === "workspace-file-window-flush-requested",
         );
         expect(request).toBeDefined();
-        const requestId = (
-          request!.payload as { payload: { requestId: string } }
-        ).payload.requestId;
+        const requestId = (request!.payload as { requestId: string }).requestId;
         await emitToMain("workspace-file-window-flush-complete", {
           documentId: doc.id,
           token,

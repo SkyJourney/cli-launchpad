@@ -5,7 +5,7 @@ import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { createWindowLabel } from "../../lib/windowKinds";
-import { emitWorkspaceContentWindowEvent } from "../../lib/workspaceContentWindowProtocol";
+import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
   findWorkspacePane,
@@ -139,7 +139,7 @@ export interface ContentWindowPorts {
   getPtySessionWindowStatus: typeof getPtySessionWindowStatus;
   grantFile: typeof grantContentWindowFile;
   revokeFile: typeof revokeContentWindowFile;
-  emit: typeof emitWorkspaceContentWindowEvent;
+  emit: typeof sendContentHandoff;
 }
 
 export interface ContentWindowDeps {
@@ -183,7 +183,7 @@ export const defaultContentWindowPorts: ContentWindowPorts = {
   getPtySessionWindowStatus,
   grantFile: grantContentWindowFile,
   revokeFile: revokeContentWindowFile,
-  emit: emitWorkspaceContentWindowEvent,
+  emit: sendContentHandoff,
 };
 
 /** 构造的 deps 每个成员都调用 ref 里最新的 deps（R-FE-1：不读取创建时的闭包值）。 */

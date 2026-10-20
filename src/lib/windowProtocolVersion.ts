@@ -13,17 +13,25 @@ interface VersionMismatchReply {
   ): Record<string, unknown> | null;
 }
 
-function strings(
+function contentIds(
   payload: Record<string, unknown>,
-  keys: readonly string[],
-): Record<string, string> | null {
-  const out: Record<string, string> = {};
-  for (const key of keys) {
-    const value = payload[key];
-    if (typeof value !== "string" || value.trim() === "") return null;
-    out[key] = value;
-  }
-  return out;
+): { content: { kind: string; id: string }; transferId: string } | null {
+  const content = payload.content;
+  if (typeof content !== "object" || content === null || Array.isArray(content))
+    return null;
+  const { kind, id } = content as Record<string, unknown>;
+  if (
+    (kind !== "pty" && kind !== "file") ||
+    typeof id !== "string" ||
+    id.trim() === ""
+  )
+    return null;
+  if (
+    typeof payload.transferId !== "string" ||
+    payload.transferId.trim() === ""
+  )
+    return null;
+  return { content: { kind, id }, transferId: payload.transferId };
 }
 
 /**
@@ -36,48 +44,38 @@ export const VERSION_MISMATCH_REPLIES: Readonly<
 > = {
   "app-preferences-reply": null,
   "app-preferences-requested": null,
-  "pty-detached-exited": null,
-  "pty-detached-failed": null,
-  "pty-detached-ready": null,
-  "pty-return-complete": null,
-  "pty-return-drop-requested": null,
-  "pty-return-failed": null,
-  "pty-return-requested": {
-    type: "pty-return-failed",
-    build: (payload) => {
-      const ids = strings(payload, ["instanceId", "token"]);
-      return ids && { ...ids, message: VERSION_MISMATCH_MESSAGE };
-    },
-  },
-  "workspace-file-window-attach-failed": null,
-  "workspace-file-window-attached": null,
-  "workspace-file-window-buffer-changed": null,
-  "workspace-file-window-flush-complete": null,
-  "workspace-file-window-flush-requested": null,
-  "workspace-file-window-init": {
-    type: "workspace-file-window-attach-failed",
+  "content-handoff-attached": null,
+  "content-handoff-exited": null,
+  "content-handoff-failed": null,
+  "content-handoff-flush-complete": null,
+  "content-handoff-flush-requested": null,
+  "content-handoff-init": {
+    type: "content-handoff-failed",
     build: (payload, currentWindowLabel) => {
-      const ids = strings(payload, ["documentId", "token"]);
+      const ids = contentIds(payload);
       return (
         ids && {
           ...ids,
-          windowLabel: currentWindowLabel,
-          message: VERSION_MISMATCH_MESSAGE,
+          payload: {
+            windowLabel: currentWindowLabel,
+            message: VERSION_MISMATCH_MESSAGE,
+          },
         }
       );
     },
   },
-  "workspace-file-window-ready": null,
-  "workspace-file-window-return-complete": null,
-  "workspace-file-window-return-drop-requested": null,
-  "workspace-file-window-return-failed": null,
-  "workspace-file-window-return-requested": {
-    type: "workspace-file-window-return-failed",
+  "content-handoff-ready": null,
+  "content-handoff-return-complete": null,
+  "content-handoff-return-drop-requested": null,
+  "content-handoff-return-failed": null,
+  "content-handoff-return-requested": {
+    type: "content-handoff-return-failed",
     build: (payload) => {
-      const ids = strings(payload, ["documentId", "token"]);
-      return ids && { ...ids, message: VERSION_MISMATCH_MESSAGE };
+      const ids = contentIds(payload);
+      return ids && { ...ids, payload: { message: VERSION_MISMATCH_MESSAGE } };
     },
   },
+  "content-handoff-state-changed": null,
 };
 
 const handledSeq: number[] = [];

@@ -3158,7 +3158,7 @@ const WINDOW_MESSAGES_JSON: &str = include_str!("../../../contracts/window-messa
 fn window_message_contract_is_well_formed() {
     let contract: serde_json::Value = serde_json::from_str(WINDOW_MESSAGES_JSON).unwrap();
     let messages = contract["items"].as_array().unwrap();
-    assert_eq!(messages.len(), 20);
+    assert_eq!(messages.len(), 14);
     let names: Vec<&str> = messages
         .iter()
         .map(|message| message["type"].as_str().unwrap())
@@ -3168,6 +3168,27 @@ fn window_message_contract_is_well_formed() {
     assert_eq!(names, sorted, "types are sorted");
     let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
     assert_eq!(unique.len(), names.len(), "types are unique");
+
+    let generic = messages
+        .iter()
+        .filter(|message| {
+            message["type"]
+                .as_str()
+                .unwrap()
+                .starts_with("content-handoff-")
+        })
+        .count();
+    assert_eq!(generic, 12, "one generic type per handoff phase");
+    let preferences = messages
+        .iter()
+        .filter(|message| {
+            message["type"]
+                .as_str()
+                .unwrap()
+                .starts_with("app-preferences-")
+        })
+        .count();
+    assert_eq!(preferences, 2, "the two preference types stay");
 
     for message in messages {
         let name = message["type"].as_str().unwrap();
@@ -3185,10 +3206,6 @@ fn window_message_contract_is_well_formed() {
                 );
             }
         }
-        assert!(
-            ["pty", "file", "app"].contains(&message["contentKind"].as_str().unwrap()),
-            "{name}"
-        );
         assert_eq!(message["payloadVersion"], 1, "{name}");
         let only_main = |side: &str| {
             string_array(&message[side], side)
@@ -3206,14 +3223,46 @@ fn window_message_contract_is_well_formed() {
             from_kinds.iter().all(|kind| !to_kinds.contains(kind)),
             "{name}: from and to must not share a window kind"
         );
-        let expected_kind = if name.starts_with("pty-") {
-            "pty"
-        } else if name.starts_with("workspace-file-window-") {
-            "file"
+
+        if name.starts_with("content-handoff-") {
+            assert_eq!(message["contentKind"], "content", "{name}");
+            let declared = message["contentKinds"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{name} must declare contentKinds"));
+            for (kind, child) in declared {
+                assert!(
+                    ["pty", "file"].contains(&kind.as_str()),
+                    "{name}: content kind {kind}"
+                );
+                assert!(
+                    ["terminal", "workspaceContent"].contains(&child.as_str().unwrap()),
+                    "{name}: child kind for {kind}"
+                );
+            }
+            let value_set: std::collections::BTreeSet<String> = declared
+                .values()
+                .map(|value| value.as_str().unwrap().to_string())
+                .collect();
+            let from_set: std::collections::BTreeSet<String> = from_kinds.iter().cloned().collect();
+            let to_set: std::collections::BTreeSet<String> = to_kinds.iter().cloned().collect();
+            // Child to main: the receiver is main and the senders are exactly the child kinds the
+            // content kinds map to. Main to child: the sender is main and the receivers are those kinds.
+            if to_set.len() == 1 && to_set.contains("main") {
+                assert_eq!(from_set, value_set, "{name}: senders match contentKinds");
+            } else {
+                assert_eq!(from_set.len(), 1, "{name}: main is the only sender");
+                assert!(from_set.contains("main"), "{name}: main is the sender");
+                assert_eq!(to_set, value_set, "{name}: receivers match contentKinds");
+            }
+        } else if name.starts_with("app-preferences-") {
+            assert_eq!(message["contentKind"], "app", "{name}");
+            assert!(
+                message.get("contentKinds").is_none(),
+                "{name} has no contentKinds"
+            );
         } else {
-            "app"
-        };
-        assert_eq!(message["contentKind"], expected_kind, "{name}");
+            panic!("{name} is neither a handoff nor a preference type");
+        }
     }
 }
 

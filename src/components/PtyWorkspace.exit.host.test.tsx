@@ -26,6 +26,7 @@ import {
   mountWorkspace,
   openFile,
   type WorkspaceHost,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 let host: WorkspaceHost | undefined;
@@ -85,15 +86,13 @@ describe("exit impacts for detached files", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    const request = tauriMock.state.emittedEvents.find(
+    const request = relayedHandoffs().find(
       (event) =>
         event.target === windowLabel &&
-        (event.payload as { type?: string }).type ===
-          "workspace-file-window-flush-requested",
+        event.legacyType === "workspace-file-window-flush-requested",
     );
     expect(request).toBeDefined();
-    const requestId = (request!.payload as { payload: { requestId: string } })
-      .payload.requestId;
+    const requestId = (request!.payload as { requestId: string }).requestId;
     await emitToMain("workspace-file-window-flush-complete", {
       documentId: doc.id,
       token,
@@ -144,12 +143,10 @@ describe("exit impacts for detached files", () => {
 
     expect(impacts.dirtyFiles.map((file) => file.documentId)).toEqual([doc.id]);
     expect(
-      tauriMock.state.emittedEvents.some(
+      relayedHandoffs().some(
         (event) =>
           event.target === windowLabel &&
-          event.eventName === "window-message" &&
-          (event.payload as { type?: string }).type ===
-            "workspace-file-window-flush-requested",
+          event.legacyType === "workspace-file-window-flush-requested",
       ),
     ).toBe(true);
     // 反向断言：句柄表缺失不能让这个文件被静默跳过。

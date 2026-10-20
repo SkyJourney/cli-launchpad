@@ -53,9 +53,13 @@ describe("wire protocol version mismatch", () => {
   it("warns and answers a file window init with an attach failure", async () => {
     const [handler] = await receive(
       CONTENT,
-      "workspace-file-window-init",
+      "content-handoff-init",
       2,
-      { documentId: "doc-1", token: "tok-1", windowLabel: CONTENT },
+      {
+        content: { kind: "file", id: "doc-1" },
+        transferId: "tok-1",
+        payload: { windowLabel: CONTENT },
+      },
       { label: MAIN, kind: "main" },
     );
 
@@ -67,15 +71,17 @@ describe("wire protocol version mismatch", () => {
     expect(tauriMock.state.relayedMessages[0]).toEqual({
       from: CONTENT,
       target: MAIN,
-      messageType: "workspace-file-window-attach-failed",
+      messageType: "content-handoff-failed",
       payload: {
         apiVersion: 1,
-        type: "workspace-file-window-attach-failed",
+        type: "content-handoff-failed",
         payload: {
-          documentId: "doc-1",
-          token: "tok-1",
-          windowLabel: CONTENT,
-          message: "protocol.version_mismatch",
+          content: { kind: "file", id: "doc-1" },
+          transferId: "tok-1",
+          payload: {
+            windowLabel: CONTENT,
+            message: "protocol.version_mismatch",
+          },
         },
       },
     });
@@ -86,9 +92,13 @@ describe("wire protocol version mismatch", () => {
     await onInboxEvent("window-message", vi.fn());
     const [handler] = await receive(
       MAIN,
-      "pty-return-requested",
+      "content-handoff-return-requested",
       2,
-      { instanceId: "i1", sessionId: "s1", windowLabel: TERMINAL, token: "t1" },
+      {
+        content: { kind: "pty", id: "i1" },
+        transferId: "t1",
+        payload: { sessionId: "s1", windowLabel: TERMINAL },
+      },
       { label: TERMINAL, kind: "terminal" },
     );
 
@@ -99,12 +109,12 @@ describe("wire protocol version mismatch", () => {
     expect(tauriMock.state.relayedMessages[0]).toMatchObject({
       from: MAIN,
       target: TERMINAL,
-      messageType: "pty-return-failed",
+      messageType: "content-handoff-return-failed",
       payload: {
         payload: {
-          instanceId: "i1",
-          token: "t1",
-          message: "protocol.version_mismatch",
+          content: { kind: "pty", id: "i1" },
+          transferId: "t1",
+          payload: { message: "protocol.version_mismatch" },
         },
       },
     });
@@ -113,9 +123,13 @@ describe("wire protocol version mismatch", () => {
   it("answers a file window return request from an incompatible content window", async () => {
     const [handler] = await receive(
       MAIN,
-      "workspace-file-window-return-requested",
+      "content-handoff-return-requested",
       2,
-      { documentId: "doc-2", token: "tok-2", windowLabel: CONTENT },
+      {
+        content: { kind: "file", id: "doc-2" },
+        transferId: "tok-2",
+        payload: { windowLabel: CONTENT },
+      },
       { label: CONTENT, kind: "workspaceContent" },
     );
 
@@ -126,12 +140,12 @@ describe("wire protocol version mismatch", () => {
     expect(tauriMock.state.relayedMessages[0]).toMatchObject({
       from: MAIN,
       target: CONTENT,
-      messageType: "workspace-file-window-return-failed",
+      messageType: "content-handoff-return-failed",
       payload: {
         payload: {
-          documentId: "doc-2",
-          token: "tok-2",
-          message: "protocol.version_mismatch",
+          content: { kind: "file", id: "doc-2" },
+          transferId: "tok-2",
+          payload: { message: "protocol.version_mismatch" },
         },
       },
     });
@@ -140,9 +154,13 @@ describe("wire protocol version mismatch", () => {
   it("only warns for a message type without a failure counterpart", async () => {
     const [handler] = await receive(
       MAIN,
-      "pty-detached-ready",
+      "content-handoff-ready",
       2,
-      { instanceId: "i1", sessionId: "s1", windowLabel: TERMINAL },
+      {
+        content: { kind: "pty", id: "i1" },
+        transferId: null,
+        payload: { sessionId: "s1", windowLabel: TERMINAL },
+      },
       { label: TERMINAL, kind: "terminal" },
     );
 
@@ -152,15 +170,17 @@ describe("wire protocol version mismatch", () => {
   });
 
   it("still delivers a message with the supported version to its handler", async () => {
-    const payload = {
-      instanceId: "i1",
-      sessionId: "s1",
-      windowLabel: TERMINAL,
-    };
-    const [handler] = await receive(MAIN, "pty-detached-ready", 1, payload, {
-      label: TERMINAL,
-      kind: "terminal",
-    });
+    const [handler] = await receive(
+      MAIN,
+      "content-handoff-ready",
+      1,
+      {
+        content: { kind: "pty", id: "i1" },
+        transferId: null,
+        payload: { sessionId: "s1", windowLabel: TERMINAL },
+      },
+      { label: TERMINAL, kind: "terminal" },
+    );
 
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
     expect(mismatchWarnings()).toEqual([]);
@@ -170,9 +190,13 @@ describe("wire protocol version mismatch", () => {
   it("answers once when several subscribers see the same mismatched message", async () => {
     const handlers = await receive(
       MAIN,
-      "pty-return-requested",
+      "content-handoff-return-requested",
       2,
-      { instanceId: "i1", sessionId: "s1", windowLabel: TERMINAL, token: "t1" },
+      {
+        content: { kind: "pty", id: "i1" },
+        transferId: "t1",
+        payload: { sessionId: "s1", windowLabel: TERMINAL },
+      },
       { label: TERMINAL, kind: "terminal" },
       2,
     );
@@ -189,9 +213,13 @@ describe("wire protocol version mismatch", () => {
   it("warns but does not answer when the payload lacks the fields the failure needs", async () => {
     await receive(
       MAIN,
-      "pty-return-requested",
+      "content-handoff-return-requested",
       2,
-      { sessionId: "s1", windowLabel: TERMINAL },
+      {
+        content: { kind: "pty" },
+        transferId: null,
+        payload: { sessionId: "s1", windowLabel: TERMINAL },
+      },
       { label: TERMINAL, kind: "terminal" },
     );
 
@@ -235,6 +263,6 @@ describe("version mismatch reply table", () => {
         `${reply.type} 自身不能再回送`,
       ).toBeNull();
     }
-    expect(replies).toBe(3);
+    expect(replies).toBe(2);
   });
 });

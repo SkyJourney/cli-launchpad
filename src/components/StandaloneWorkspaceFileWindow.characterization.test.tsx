@@ -24,6 +24,7 @@ import {
   emitToWindow,
   flush,
   mountFileWindow,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 import { parseWorkspaceContentDrag } from "../lib/workspaceContentDrag";
 
@@ -65,9 +66,7 @@ afterEach(async () => {
 });
 
 function emittedOfType(type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) => (event.payload as { type?: string }).type === type,
-  );
+  return relayedHandoffs().filter((message) => message.legacyType === type);
 }
 
 function returnButton() {
@@ -101,9 +100,9 @@ describe("file window", () => {
     const failed = emittedOfType("workspace-file-window-attach-failed");
     expect(failed).toHaveLength(1);
     expect(failed[0].target).toBe("main");
-    expect(
-      (failed[0].payload as { payload: { reason: string } }).payload.reason,
-    ).toBe("closed-before-ready");
+    expect((failed[0].payload as { reason: string }).reason).toBe(
+      "closed-before-ready",
+    );
     expect(tauriMock.state.windowActions).toContainEqual(
       expect.objectContaining({ windowLabel: FILE_LABEL, action: "destroy" }),
     );

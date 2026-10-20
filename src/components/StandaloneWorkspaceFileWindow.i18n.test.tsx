@@ -16,6 +16,7 @@ import {
   emitToWindow,
   flush,
   mountFileWindow,
+  relayedHandoffs,
 } from "../test/host/workspaceHarness";
 
 const LABEL = DEFAULT_FILE_WINDOW_LABEL;
@@ -57,9 +58,7 @@ afterEach(async () => {
 });
 
 function emittedEnvelopes(type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) => (event.payload as { type?: string }).type === type,
-  );
+  return relayedHandoffs().filter((message) => message.legacyType === type);
 }
 
 describe("StandaloneWorkspaceFileWindow", () => {
@@ -92,9 +91,9 @@ describe("StandaloneWorkspaceFileWindow", () => {
     const changed = emittedEnvelopes("workspace-file-window-buffer-changed");
     expect(changed.length).toBeGreaterThanOrEqual(1);
     const last = changed[changed.length - 1].payload as {
-      payload: { fileBuffer: { content: string } };
+      fileBuffer: { content: string };
     };
-    expect(last.payload.fileBuffer.content).toBe("y");
+    expect(last.fileBuffer.content).toBe("y");
 
     // 反向断言：语言切换后的重复 init 没有造成错误，窗口内也没有错误提示。
     vi.useRealTimers();

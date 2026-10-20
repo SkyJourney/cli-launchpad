@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { tauriMock } from "../test/tauriMock";
-import { listenWorkspaceContentWindowEvent } from "./workspaceContentWindowProtocol";
+import { onContentHandoff } from "./workspaceContentWindowProtocol";
+import { toGenericMessage } from "../test/host/handoffVocabulary";
 
 const TERMINAL_A = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
 const TERMINAL_B = "terminal-3b9f2c1e-6d4a-4f7b-8a21-5c0e9d7a1b34";
@@ -15,20 +16,15 @@ describe("workspace content window protocol with the global Tauri mock", () => {
     };
     tauriMock.setCurrentWindowLabel(TERMINAL_A);
     const readyA = vi.fn();
-    const stopA = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      readyA,
-    );
+    const stopA = await onContentHandoff("pty", "ready", readyA);
     tauriMock.setCurrentWindowLabel(TERMINAL_B);
     const readyB = vi.fn();
-    const stopB = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      readyB,
-    );
+    const stopB = await onContentHandoff("pty", "ready", readyB);
+    const generic = toGenericMessage("pty-detached-ready", payload);
     const message = {
       apiVersion: 1,
-      type: "pty-detached-ready",
-      payload,
+      type: generic.type,
+      payload: generic.payload,
     };
     const stamped = { label: TERMINAL_A, kind: "terminal" };
     try {
@@ -56,14 +52,8 @@ describe("workspace content window protocol with the global Tauri mock", () => {
     tauriMock.setCurrentWindowLabel("main");
     const ready = vi.fn();
     const failed = vi.fn();
-    const stopReady = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      ready,
-    );
-    const stopFailed = await listenWorkspaceContentWindowEvent(
-      "pty-detached-failed",
-      failed,
-    );
+    const stopReady = await onContentHandoff("pty", "ready", ready);
+    const stopFailed = await onContentHandoff("pty", "failed", failed);
     const subscriptions = () =>
       tauriMock.state.invokeCalls.filter(
         (call) => call.command === "subscribe_window_inbox",
@@ -73,18 +63,15 @@ describe("workspace content window protocol with the global Tauri mock", () => {
 
       stopReady();
       expect(subscriptions()).toHaveLength(1);
+      const generic = toGenericMessage("pty-detached-ready", {
+        instanceId: "slot-1",
+        sessionId: "session-1",
+        windowLabel: TERMINAL_A,
+      });
       tauriMock.deliverInbox(
         "main",
         "window-message",
-        {
-          apiVersion: 1,
-          type: "pty-detached-ready",
-          payload: {
-            instanceId: "slot-1",
-            sessionId: "session-1",
-            windowLabel: TERMINAL_A,
-          },
-        },
+        { apiVersion: 1, type: generic.type, payload: generic.payload },
         { label: TERMINAL_A, kind: "terminal" },
       );
       expect(ready).not.toHaveBeenCalled();

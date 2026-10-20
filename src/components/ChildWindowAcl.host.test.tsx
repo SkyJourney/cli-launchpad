@@ -42,6 +42,7 @@ import {
   mountPtyWindow,
 } from "../test/host/workspaceHarness";
 import { resetFakeTerminals } from "../test/host/hostMocks";
+import { relayedHandoffs } from "../test/host/workspaceHarness";
 
 vi.mock(
   "react-i18next",
@@ -160,11 +161,10 @@ afterEach(async () => {
   expect(tauriMock.state.eventListeners).toHaveLength(0);
 });
 
+/** Handoff messages sent to `target`, read back under their legacy names (M-H2 in m6-091). */
 function eventsTo(target: string | null, type: string) {
-  return tauriMock.state.emittedEvents.filter(
-    (event) =>
-      event.target === target &&
-      (event.payload as { type?: string }).type === type,
+  return relayedHandoffs().filter(
+    (message) => message.target === target && message.legacyType === type,
   );
 }
 
@@ -287,7 +287,7 @@ describe("child window ACL at runtime", () => {
 
     const ready = eventsTo("main", "pty-detached-ready");
     expect(ready).toHaveLength(1);
-    expect((ready[0].payload as { payload: unknown }).payload).toEqual({
+    expect(ready[0].payload).toEqual({
       instanceId: "slot-1",
       sessionId: "session-1",
       windowLabel: TERMINAL,
@@ -300,8 +300,7 @@ describe("child window ACL at runtime", () => {
 
     const returned = eventsTo("main", "pty-return-requested");
     expect(returned).toHaveLength(1);
-    const { token } = (returned[0].payload as { payload: { token: string } })
-      .payload;
+    const { token } = returned[0].payload as { token: string };
     await emitToWindow(TERMINAL, "pty-return-complete", {
       instanceId: "slot-1",
       token,
