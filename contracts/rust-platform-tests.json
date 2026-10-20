@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 792,
-    "Linux": 798,
-    "macOS": 794
+    "Windows": 805,
+    "Linux": 811,
+    "macOS": 807
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -511,7 +511,20 @@
       "models::pty_session::tests::pty_exit_event_keeps_its_wire_shape",
       "db::pty_session_repo::tests::state_enum_matches_the_sql_check_constraint",
       "db::pty_session_repo::tests::finish_persists_the_enum_state_and_only_from_running",
-      "contracts::pty_state_strings_exist_only_in_the_model_and_migrations"
+      "contracts::pty_state_strings_exist_only_in_the_model_and_migrations",
+      "db::tx::tests::with_tx_commits_when_the_closure_succeeds",
+      "db::tx::tests::with_tx_rolls_back_when_the_closure_fails",
+      "db::tx::tests::immediate_behavior_takes_the_write_lock_up_front",
+      "db::tx::tests::with_tx_converts_rusqlite_errors_into_the_caller_error_type",
+      "contracts::transactions_only_go_through_with_tx",
+      "util::time::tests::now_ms_tracks_the_system_clock",
+      "util::time::tests::checked_now_ms_agrees_with_now_ms",
+      "platform::home::tests::home_dir_prefers_userprofile_over_home",
+      "platform::home::tests::home_dir_fails_with_a_clear_message_when_nothing_is_set",
+      "platform::home::tests::posix_home_dir_reads_home_only",
+      "platform::bounded_read::tests::reads_content_up_to_the_limit",
+      "platform::bounded_read::tests::rejects_content_one_byte_over_the_limit_as_file_too_large",
+      "contracts::shared_helpers_are_defined_once"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

@@ -1,6 +1,7 @@
 use crate::domain_errors::PtyError;
 use crate::error_codes::ErrorCode;
 use crate::models::pty_session::PtySessionState;
+use crate::util::time::now_ms;
 use std::{
     collections::VecDeque,
     io::Read,
@@ -950,13 +951,6 @@ fn to_pty_size(size: PtySizeUpdate) -> PtySize {
         pixel_width: size.pixel_width,
         pixel_height: size.pixel_height,
     }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

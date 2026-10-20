@@ -43,7 +43,7 @@ pub async fn fetch_latest_version(
             )?)
         })
         .await?;
-    let home = match crate::services::session_service::home_dir() {
+    let home = match crate::platform::home::home_dir() {
         Ok(home) => home,
         Err(error) => {
             let mut failed = crate::services::version_service::latest_from_version_result(

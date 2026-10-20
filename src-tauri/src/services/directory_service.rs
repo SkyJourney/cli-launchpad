@@ -1,4 +1,7 @@
+use crate::db::tx::with_tx;
 use crate::error_codes::ErrorCode;
+use crate::util::time::now_ms;
+use rusqlite::TransactionBehavior;
 use std::path::Path;
 
 use anyhow::{bail, Result};
@@ -7,7 +10,6 @@ use anyhow::{bail, Result};
 use crate::platform::path_identity::strip_windows_verbatim_prefix;
 use crate::{
     db::{directory_repo, pty_session_repo},
-    services::execution_service::now_ms,
     AppError,
 };
 
@@ -16,22 +18,24 @@ pub fn remove_directory(
     id: i64,
     running_in_memory: &[String],
 ) -> Result<(), AppError> {
-    let transaction = connection.unchecked_transaction()?;
-    if !running_in_memory.is_empty() {
-        return Err(AppError::coded(
-            ErrorCode::DirectoryInUse,
-            "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
-        ));
-    }
-    // Memory is the authority for liveness: rows still marked running here are stale (a
-    // finish write failed earlier). Settle them so the delete trigger does not block removal.
-    let settled = pty_session_repo::mark_directory_running_ended(&transaction, id, now_ms())?;
-    if settled > 0 {
-        log::warn!("settled {settled} stale PTY session row(s) before removing directory id={id}");
-    }
-    directory_repo::remove(&transaction, id)?;
-    transaction.commit()?;
-    Ok(())
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        if !running_in_memory.is_empty() {
+            return Err(AppError::coded(
+                ErrorCode::DirectoryInUse,
+                "该项目仍有运行中的 PTY 会话，请先关闭终端后再移除项目",
+            ));
+        }
+        // Memory is the authority for liveness: rows still marked running here are stale (a
+        // finish write failed earlier). Settle them so the delete trigger does not block removal.
+        let settled = pty_session_repo::mark_directory_running_ended(&transaction, id, now_ms())?;
+        if settled > 0 {
+            log::warn!(
+                "settled {settled} stale PTY session row(s) before removing directory id={id}"
+            );
+        }
+        directory_repo::remove(&transaction, id)?;
+        Ok(())
+    })
 }
 
 pub fn validate_path(path: &str) -> Result<()> {

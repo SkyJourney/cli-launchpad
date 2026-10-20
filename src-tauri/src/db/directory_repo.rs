@@ -1,3 +1,5 @@
+use crate::db::tx::with_tx;
+use rusqlite::TransactionBehavior;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::directory::Directory;
@@ -104,14 +106,15 @@ pub fn set_pinned(conn: &Connection, id: i64, pinned: bool) -> rusqlite::Result<
 }
 
 pub fn reorder(conn: &mut Connection, ordered_ids: &[i64]) -> rusqlite::Result<()> {
-    let transaction = conn.transaction()?;
-    for (sort_order, id) in ordered_ids.iter().enumerate() {
-        transaction.execute(
-            "update directories set sort_order = ?2 where id = ?1",
-            params![id, sort_order as i64],
-        )?;
-    }
-    transaction.commit()
+    with_tx(conn, TransactionBehavior::Deferred, |transaction| {
+        for (sort_order, id) in ordered_ids.iter().enumerate() {
+            transaction.execute(
+                "update directories set sort_order = ?2 where id = ?1",
+                params![id, sort_order as i64],
+            )?;
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]

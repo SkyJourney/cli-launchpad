@@ -1,4 +1,4 @@
-use std::io::Read;
+use crate::platform::bounded_read::read_bounded;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -645,18 +645,6 @@ fn map_project_file_open_error(error: std::io::Error) -> anyhow::Error {
     } else {
         anyhow::Error::new(error).context("项目文件不存在或无法访问")
     }
-}
-
-fn read_bounded(file: impl Read, maximum_bytes: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
-    file.take(maximum_bytes + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum_bytes {
-        return Err(FileError::TooLarge {
-            max_bytes: maximum_bytes,
-        }
-        .into());
-    }
-    Ok(bytes)
 }
 
 pub(crate) fn is_ignored_name(name: &str) -> bool {

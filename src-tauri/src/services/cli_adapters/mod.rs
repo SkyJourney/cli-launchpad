@@ -276,7 +276,7 @@ pub fn build_plan(tool_key: ToolKey, kind: InstallKind) -> Result<InstallPlan> {
     let context = plan_context_with(
         get(tool_key),
         Duration::from_secs(30),
-        crate::services::session_service::home_dir()?,
+        crate::platform::home::home_dir()?,
         &NativeExecutableResolver,
     );
     let mut plan = catch_adapter(tool_key, "构造安装或更新计划", || {

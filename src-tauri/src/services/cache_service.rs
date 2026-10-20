@@ -1,6 +1,6 @@
+use crate::util::time::checked_now_ms;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{de::DeserializeOwned, Serialize};
@@ -13,7 +13,7 @@ pub fn get_fresh<T: DeserializeOwned>(
     key: &CacheKey,
     ttl_ms: i64,
 ) -> Result<Option<T>> {
-    let minimum_time = now_ms()? - ttl_ms;
+    let minimum_time = checked_now_ms()? - ttl_ms;
     let value = crate::db::cache_repo::get(connection, key, Some(minimum_time))?;
     decode_or_remove(connection, key, value)
 }
@@ -27,7 +27,12 @@ pub fn get_any<T: DeserializeOwned>(
 }
 
 pub fn put<T: Serialize>(connection: &CacheConn<'_>, key: &CacheKey, value: &T) -> Result<()> {
-    crate::db::cache_repo::put(connection, key, &serde_json::to_string(value)?, now_ms()?)?;
+    crate::db::cache_repo::put(
+        connection,
+        key,
+        &serde_json::to_string(value)?,
+        checked_now_ms()?,
+    )?;
     Ok(())
 }
 
@@ -57,12 +62,6 @@ pub fn stats(connection: &CacheConn<'_>, database_path: &Path) -> Result<CacheSt
         entry_count,
         newest_entry_at_ms,
     })
-}
-
-fn now_ms() -> Result<i64> {
-    Ok(i64::try_from(
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
-    )?)
 }
 
 fn decode_or_remove<T: DeserializeOwned>(

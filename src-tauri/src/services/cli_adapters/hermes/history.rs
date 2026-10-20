@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 #[cfg(not(windows))]
-use crate::services::session_service::home_dir;
+use crate::platform::home::home_dir;
 use crate::services::session_service::{
     index_source, page_local, paths_match, read_search_metadata_file, truncate_chars,
     SearchDocument, SearchSource, MAX_SEARCH_FIELD_CHARS, TITLE_MAX_CHARS,

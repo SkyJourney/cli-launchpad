@@ -1,3 +1,4 @@
+use crate::db::tx::with_tx;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::models::workspace_layout::WorkspaceLayoutPresetSummary;
@@ -53,47 +54,44 @@ pub fn save_current(
     payload_json: &str,
     updated_at_ms: i64,
 ) -> rusqlite::Result<SaveCurrentOutcome> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let current: Option<(i64, i64)> = transaction
-        .query_row(
-            "select schema_version, revision from workspace_state where id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
+    with_tx(connection, TransactionBehavior::Immediate, |transaction| {
+        let current: Option<(i64, i64)> = transaction
+            .query_row(
+                "select schema_version, revision from workspace_state where id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
 
-    if let Some((stored_schema, stored_revision)) = current {
-        if stored_schema < 1 || stored_schema > schema_version {
-            transaction.commit()?;
-            return Ok(SaveCurrentOutcome::Incompatible {
-                stored_schema_version: stored_schema,
-            });
-        }
-        if revision <= stored_revision {
-            transaction.commit()?;
-            return Ok(SaveCurrentOutcome::Stale {
-                current_revision: stored_revision,
-            });
-        }
-        transaction.execute(
+        if let Some((stored_schema, stored_revision)) = current {
+            if stored_schema < 1 || stored_schema > schema_version {
+                return Ok(SaveCurrentOutcome::Incompatible {
+                    stored_schema_version: stored_schema,
+                });
+            }
+            if revision <= stored_revision {
+                return Ok(SaveCurrentOutcome::Stale {
+                    current_revision: stored_revision,
+                });
+            }
+            transaction.execute(
             "update workspace_state set schema_version = ?1, revision = ?2, payload_json = ?3, updated_at_ms = ?4 where id = 1 and revision < ?2",
             params![schema_version, revision, payload_json, updated_at_ms],
         )?;
-    } else {
-        if revision <= 0 {
-            transaction.commit()?;
-            return Ok(SaveCurrentOutcome::Stale {
-                current_revision: 0,
-            });
-        }
-        transaction.execute(
+        } else {
+            if revision <= 0 {
+                return Ok(SaveCurrentOutcome::Stale {
+                    current_revision: 0,
+                });
+            }
+            transaction.execute(
             "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, ?2, ?3, ?4)",
             params![schema_version, revision, payload_json, updated_at_ms],
         )?;
-    }
+        }
 
-    transaction.commit()?;
-    Ok(SaveCurrentOutcome::Saved { revision })
+        Ok(SaveCurrentOutcome::Saved { revision })
+    })
 }
 
 /// Explicit user reset is the only operation allowed to replace a current
@@ -104,25 +102,25 @@ pub fn reset_current(
     payload_json: &str,
     updated_at_ms: i64,
 ) -> rusqlite::Result<i64> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let current_revision: Option<i64> = transaction
-        .query_row(
-            "select revision from workspace_state where id = 1",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let revision = current_revision
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or(rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
+    with_tx(connection, TransactionBehavior::Immediate, |transaction| {
+        let current_revision: Option<i64> = transaction
+            .query_row(
+                "select revision from workspace_state where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let revision = current_revision
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
 
-    transaction.execute(
+        transaction.execute(
         "insert into workspace_state (id, schema_version, revision, payload_json, updated_at_ms) values (1, ?1, ?2, ?3, ?4) on conflict(id) do update set schema_version = excluded.schema_version, revision = excluded.revision, payload_json = excluded.payload_json, updated_at_ms = excluded.updated_at_ms",
         params![schema_version, revision, payload_json, updated_at_ms],
     )?;
-    transaction.commit()?;
-    Ok(revision)
+        Ok(revision)
+    })
 }
 
 pub fn list_presets(
@@ -176,21 +174,22 @@ pub fn create_preset(
     now_ms: i64,
     max_presets: usize,
 ) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let count: i64 =
-        transaction.query_row("select count(*) from workspace_layout_presets", [], |row| {
-            row.get(0)
-        })?;
-    if count >= max_presets as i64 {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "workspace layout preset limit reached".to_string(),
-        ));
-    }
-    transaction.execute(
+    with_tx(connection, TransactionBehavior::Immediate, |transaction| {
+        let count: i64 =
+            transaction.query_row("select count(*) from workspace_layout_presets", [], |row| {
+                row.get(0)
+            })?;
+        if count >= max_presets as i64 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "workspace layout preset limit reached".to_string(),
+            ));
+        }
+        transaction.execute(
         "insert into workspace_layout_presets (id, name, schema_version, payload_json, created_at_ms, updated_at_ms) values (?1, ?2, ?3, ?4, ?5, ?5)",
         params![id, name, schema_version, payload_json, now_ms],
     )?;
-    transaction.commit()
+        Ok(())
+    })
 }
 
 pub fn update_preset(

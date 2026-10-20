@@ -1,9 +1,7 @@
 use crate::error_codes::ErrorCode;
 use crate::models::workspace_layout::{LayoutResetCode, LayoutResetReason};
-use std::{
-    collections::{HashMap, HashSet},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use crate::util::time::now_ms;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -927,14 +925,6 @@ fn map_preset_write_error(error: rusqlite::Error) -> AppError {
         ),
         _ => AppError::from(error),
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(i64::MAX as u128) as i64
 }
 
 #[cfg(test)]

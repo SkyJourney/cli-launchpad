@@ -146,7 +146,7 @@ fn inspect_hermes_managed_install(path: &std::path::Path, home: &Path) -> Result
 }
 
 pub(super) fn validate_managed_install(path: &std::path::Path) -> Result<(), String> {
-    let home = crate::services::session_service::home_dir()
+    let home = crate::platform::home::home_dir()
         .map_err(|error| format!("无法确认 Hermes 用户目录：{error}"))?;
     inspect_hermes_managed_install(path, &home)
 }

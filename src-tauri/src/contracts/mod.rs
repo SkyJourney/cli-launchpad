@@ -4790,3 +4790,79 @@ fn pty_state_strings_exist_only_in_the_model_and_migrations() {
     )];
     assert_eq!(violations(&sample).len(), 1);
 }
+
+#[test]
+fn transactions_only_go_through_with_tx() {
+    const PATTERNS: [&str; 6] = [
+        "unchecked_transaction(",
+        ".transaction(",
+        "transaction_with_behavior(",
+        "execute_batch(\"BEGIN",
+        "execute_batch(\"COMMIT",
+        "execute_batch(\"ROLLBACK",
+    ];
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (path, text) in sources {
+            // 迁移运行器与 with_tx 自身是事务的唯一合法位置。
+            if path == "db/tx.rs" || path == "db/connection.rs" {
+                continue;
+            }
+            for pattern in PATTERNS {
+                if text.contains(pattern) {
+                    found.push(format!("{path} contains {pattern}"));
+                }
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    let found = violations(&sources);
+    assert!(found.is_empty(), "事务未经 with_tx：{found:?}");
+    // 反向自检：违规样例必须被报告。
+    let sample = vec![(
+        "services/x.rs".to_string(),
+        "let transaction = connection.unchecked_transaction()?;".to_string(),
+    )];
+    assert_eq!(violations(&sample).len(), 1);
+}
+
+#[test]
+fn shared_helpers_are_defined_once() {
+    // 以无参数签名精确匹配：项目里还有同名的 `now_ms(&self)` trait 方法，不属于这里的收口范围。
+    const HELPERS: [(&str, &str); 4] = [
+        ("fn now_ms() -> ", "util/time.rs"),
+        ("fn checked_now_ms() -> ", "util/time.rs"),
+        ("fn read_bounded(", "platform/bounded_read.rs"),
+        ("fn home_dir() -> ", "platform/home.rs"),
+    ];
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for (definition, home) in HELPERS {
+            let mut at_home = 0;
+            for (path, text) in sources {
+                let count = text.matches(definition).count();
+                if path == home {
+                    at_home += count;
+                } else if count > 0 {
+                    found.push(format!("{path} defines {definition}"));
+                }
+            }
+            if at_home != 1 {
+                found.push(format!("{home} defines {definition} {at_home} times"));
+            }
+        }
+        found
+    }
+    let sources = production_rust_sources();
+    let found = violations(&sources);
+    assert!(found.is_empty(), "共享工具函数重复定义：{found:?}");
+    // 反向自检：codec 之外的重复定义必须被报告。
+    let sample = vec![(
+        "services/x.rs".to_string(),
+        "fn now_ms() -> i64 { 0 }".to_string(),
+    )];
+    assert!(violations(&sample)
+        .iter()
+        .any(|finding| finding.contains("services/x.rs")));
+}

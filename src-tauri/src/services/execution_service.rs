@@ -1,9 +1,10 @@
 use crate::error_codes::ErrorCode;
+use crate::util::time::now_ms;
 use std::collections::HashMap;
 use std::future::Future;
 use std::process::Stdio;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -1002,14 +1003,6 @@ fn emit_log(app: &AppHandle, chunk: &ExecutionLogChunk) {
             chunk.task_id
         );
     }
-}
-
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(i64::MAX as u128) as i64
 }
 
 pub struct ExecutionExitCleanup {

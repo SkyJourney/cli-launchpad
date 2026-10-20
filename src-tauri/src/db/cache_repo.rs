@@ -1,3 +1,5 @@
+use crate::db::tx::with_tx;
+use rusqlite::TransactionBehavior;
 use rusqlite::{params, OptionalExtension};
 
 use crate::models::cache::CacheKey;
@@ -57,10 +59,11 @@ pub fn clear(connection: &CacheConn<'_>) -> rusqlite::Result<()> {
 }
 
 pub fn clear_session_search(connection: &CacheConn<'_>) -> rusqlite::Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute("delete from session_search_documents", [])?;
-    transaction.execute("delete from session_search_sources", [])?;
-    transaction.commit()
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        transaction.execute("delete from session_search_documents", [])?;
+        transaction.execute("delete from session_search_sources", [])?;
+        Ok(())
+    })
 }
 
 /// Number of entries and the newest write time; the session counter is gone with its prefix.

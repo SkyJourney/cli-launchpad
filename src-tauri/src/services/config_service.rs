@@ -1,5 +1,7 @@
+use crate::db::tx::with_tx;
 use anyhow::Result;
 use rusqlite::Connection;
+use rusqlite::TransactionBehavior;
 
 use crate::db::{app_setting_repo, directory_repo};
 use crate::models::app_setting::CloseBehavior;
@@ -103,17 +105,9 @@ pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     if bundle.version > CONFIG_BUNDLE_VERSION {
         anyhow::bail!("配置文件来自更新版本的应用，当前版本无法安全导入");
     }
-    conn.execute_batch("BEGIN")?;
-    match import_inner(conn, bundle) {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")?;
-            Ok(())
-        }
-        Err(error) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(error)
-        }
-    }
+    with_tx(conn, TransactionBehavior::Deferred, |transaction| {
+        import_inner(transaction, bundle)
+    })
 }
 
 /// Add any missing directories (matched by path), and refresh pinned/note

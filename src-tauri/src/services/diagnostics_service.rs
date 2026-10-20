@@ -1,6 +1,7 @@
+use crate::util::time::checked_now_ms;
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
 #[cfg(test)]
@@ -87,7 +88,7 @@ fn build_report(storage: &StoragePaths, schema_version: i64) -> Result<Diagnosti
         })
         .collect();
     let report = DiagnosticReport {
-        exported_at_ms: now_ms()?,
+        exported_at_ms: checked_now_ms()?,
         app_version: env!("CARGO_PKG_VERSION"),
         platform: std::env::consts::OS,
         storage_root: storage.root.display().to_string(),
@@ -113,12 +114,6 @@ fn is_app_log(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with("cli-launchpad"))
-}
-
-fn now_ms() -> Result<i64> {
-    Ok(i64::try_from(
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
-    )?)
 }
 
 const MAX_WINDOW_SYNC_LABEL_CHARS: usize = 128;

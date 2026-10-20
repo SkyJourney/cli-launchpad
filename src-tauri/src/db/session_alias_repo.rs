@@ -1,5 +1,5 @@
+use crate::util::time::now_ms;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
 
@@ -42,14 +42,6 @@ pub fn delete(
         "delete from session_aliases where tool_key = ?1 and session_id = ?2",
         params![tool_key.as_str(), session_id],
     )? > 0)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(i64::MAX as u128) as i64
 }
 
 #[cfg(test)]

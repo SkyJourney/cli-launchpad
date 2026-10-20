@@ -1,3 +1,4 @@
+use crate::platform::home::home_dir;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
@@ -11,8 +12,8 @@ use serde_json::{json, Value};
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 use crate::services::session_service::{
-    epoch_to_ms, extract_text_content, home_dir, index_source, mtime_ms, non_empty_field,
-    page_local, paths_match, safe_session_id, truncate_chars, SearchDocument, SearchSource,
+    epoch_to_ms, extract_text_content, index_source, mtime_ms, non_empty_field, page_local,
+    paths_match, safe_session_id, truncate_chars, SearchDocument, SearchSource,
     MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES, MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
     MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
 };

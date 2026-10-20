@@ -1,3 +1,4 @@
+use crate::platform::home::home_dir;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
@@ -9,10 +10,10 @@ use serde_json::Value;
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 use crate::services::session_service::{
-    home_dir, mtime_ms, non_empty_field, read_search_metadata_file, safe_session_id,
-    truncate_chars, SearchDocument, SearchSource, MAX_CLAUDE_PREVIEW_SCAN_BYTES,
-    MAX_SEARCH_DIRECTORY_ENTRIES, MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES,
-    MAX_SEARCH_PREVIEW_BYTES_PER_SESSION, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
+    mtime_ms, non_empty_field, read_search_metadata_file, safe_session_id, truncate_chars,
+    SearchDocument, SearchSource, MAX_CLAUDE_PREVIEW_SCAN_BYTES, MAX_SEARCH_DIRECTORY_ENTRIES,
+    MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES, MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
+    MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
 };
 
 /// Claude Code stores sessions under `~/.claude/projects/<slug>/`, where the

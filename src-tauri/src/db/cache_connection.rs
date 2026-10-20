@@ -1,3 +1,5 @@
+use crate::db::tx::with_tx;
+use rusqlite::TransactionBehavior;
 use std::fs;
 use std::path::Path;
 
@@ -105,14 +107,14 @@ fn remove_legacy_prefix_rows_once(connection: &mut Connection) -> Result<()> {
     if version >= LEGACY_PREFIX_CLEANUP_VERSION {
         return Ok(());
     }
-    let transaction = connection.transaction()?;
-    transaction.execute(
-        "delete from cache_entries where key like 'sessions:%' or key like 'workspace-file-index:%'",
-        [],
-    )?;
-    transaction.pragma_update(None, "user_version", LEGACY_PREFIX_CLEANUP_VERSION)?;
-    transaction.commit()?;
-    Ok(())
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        transaction.execute(
+            "delete from cache_entries where key like 'sessions:%' or key like 'workspace-file-index:%'",
+            [],
+        )?;
+        transaction.pragma_update(None, "user_version", LEGACY_PREFIX_CLEANUP_VERSION)?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

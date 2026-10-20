@@ -1,3 +1,4 @@
+use crate::platform::home::home_dir;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -9,9 +10,9 @@ use serde_json::Value;
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 use crate::services::session_service::{
-    epoch_to_ms, home_dir, index_source, non_empty_field, non_empty_string, page_local,
-    paths_match, percent_decode, read_search_metadata_file, truncate_chars, SearchDocument,
-    SearchSource, MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
+    epoch_to_ms, index_source, non_empty_field, non_empty_string, page_local, paths_match,
+    percent_decode, read_search_metadata_file, truncate_chars, SearchDocument, SearchSource,
+    MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
 };
 fn list_antigravity_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
     let home = home_dir()?;

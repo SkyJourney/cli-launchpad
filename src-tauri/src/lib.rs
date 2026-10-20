@@ -12,6 +12,7 @@ mod models;
 mod platform;
 mod runtime;
 mod services;
+mod util;
 
 use crate::error_codes::ErrorCode;
 use std::sync::Mutex;
@@ -90,10 +91,8 @@ pub fn run() {
                     .build(),
             )?;
             log::info!("application startup storage_root={}", paths.root.display());
-            let previous_exit = services::clean_exit_marker::begin_session(
-                &paths,
-                services::execution_service::now_ms(),
-            );
+            let previous_exit =
+                services::clean_exit_marker::begin_session(&paths, crate::util::time::now_ms());
             log::info!("previous session exit state={previous_exit:?}");
 
             // Register after storage migration so prior window state is available
@@ -167,15 +166,13 @@ pub fn run() {
             );
             let interrupted = db::execution_task_repo::mark_unfinished_interrupted(
                 &connection,
-                services::execution_service::now_ms(),
+                crate::util::time::now_ms(),
             )?;
             if interrupted != 0 {
                 log::warn!("marked {interrupted} unfinished execution task(s) as interrupted");
             }
-            let ended_pty_sessions = db::pty_session_repo::mark_running_ended(
-                &connection,
-                services::execution_service::now_ms(),
-            )?;
+            let ended_pty_sessions =
+                db::pty_session_repo::mark_running_ended(&connection, crate::util::time::now_ms())?;
             if ended_pty_sessions != 0 {
                 log::warn!("marked {ended_pty_sessions} stale PTY session(s) as ended");
             }

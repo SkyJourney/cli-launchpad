@@ -185,7 +185,7 @@ fn candidate_dirs() -> Vec<PathBuf> {
     // `/usr/local/bin`, Volta and nvm all follow the same layout on Linux
     // and macOS; only Homebrew's Apple Silicon prefix is macOS-specific.
     #[cfg(not(windows))]
-    if let Some(home) = home_dir() {
+    if let Some(home) = crate::platform::home::posix_home_dir() {
         dirs.push(home.join(".local/bin"));
         dirs.push(PathBuf::from("/usr/local/bin"));
         dirs.push(home.join(".volta/bin"));
@@ -205,11 +205,6 @@ fn windows_user_install_dirs(user_profile: Option<std::ffi::OsString>) -> Vec<Pa
         dirs.push(profile.join(".local").join("bin"));
     }
     dirs
-}
-
-#[cfg(not(windows))]
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 #[cfg(not(windows))]

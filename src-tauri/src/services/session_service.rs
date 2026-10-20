@@ -1,4 +1,5 @@
 use crate::error_codes::ErrorCode;
+use crate::platform::home::home_dir;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
@@ -450,13 +451,6 @@ pub async fn session_belongs_to_directory(
         SESSION_OWNERSHIP_BUDGET,
     )
     .await
-}
-
-pub(crate) fn home_dir() -> Result<PathBuf> {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .map_err(|_| anyhow!("无法确定用户主目录，不能读取会话历史"))
 }
 
 pub(crate) fn read_search_metadata_file(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {

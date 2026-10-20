@@ -1,5 +1,6 @@
+use crate::platform::bounded_read::read_bounded;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -272,7 +273,7 @@ where
             continue;
         }
 
-        let current = read_bounded(&locked, max_current_bytes)?;
+        let current = read_bounded(locked.try_clone()?, max_current_bytes)?;
         if revision_of(&current) != *expected_revision {
             return Ok(CompareAndSwapOutcome::Conflict);
         }
@@ -403,17 +404,6 @@ fn open_target_for_replacement_metadata(directory: &Dir, path: &Path) -> std::io
     directory
         .open_with(path, &options)
         .map(cap_std::fs::File::into_std)
-}
-
-fn read_bounded(file: &File, maximum_bytes: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
-    file.try_clone()?
-        .take(maximum_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum_bytes {
-        bail!("文件读取大小超过允许上限");
-    }
-    Ok(bytes)
 }
 
 struct TemporaryReplacement {
