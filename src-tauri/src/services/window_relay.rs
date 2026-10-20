@@ -211,10 +211,6 @@ mod tests {
             .to_string()
     }
 
-    fn kinds(rule: &MessageRule) -> (Vec<WindowKind>, Vec<WindowKind>) {
-        (rule.from.clone(), rule.to.clone())
-    }
-
     #[test]
     fn an_envelope_over_the_size_limit_is_rejected_and_never_delivered() {
         let registry = WindowInboxRegistry::default();
