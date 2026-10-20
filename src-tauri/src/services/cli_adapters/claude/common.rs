@@ -56,7 +56,7 @@ impl CliAdapter for ClaudeAdapter {
     }
 
     fn valid_session_id(&self, session_id: &str) -> bool {
-        crate::services::session_service::is_canonical_uuid(session_id)
+        crate::services::cli_adapters::support::is_canonical_uuid(session_id)
     }
 
     fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {

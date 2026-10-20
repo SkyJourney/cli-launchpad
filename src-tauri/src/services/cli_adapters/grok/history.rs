@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
-use crate::services::session_service::{
+use crate::services::cli_adapters::support::{
     index_source, mtime_ms, non_empty_field, page_local, paths_match, percent_decode,
     read_search_metadata_file, truncate_chars, SearchDocument, SearchSource,
     MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
@@ -327,7 +327,7 @@ pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
-    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+    let result = crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
         search_grok_documents_with_home(&directory_path, &context.home)
     })
     .await;

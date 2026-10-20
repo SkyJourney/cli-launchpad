@@ -9,7 +9,7 @@ use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource}
 use crate::models::tool::ToolKey;
 #[cfg(not(windows))]
 use crate::platform::home::home_dir;
-use crate::services::session_service::{
+use crate::services::cli_adapters::support::{
     index_source, page_local, paths_match, read_search_metadata_file, truncate_chars,
     SearchDocument, SearchSource, MAX_SEARCH_FIELD_CHARS, TITLE_MAX_CHARS,
 };
@@ -282,7 +282,7 @@ fn normalize_preview(value: &str) -> Option<String> {
     }
     if trimmed.starts_with(['[', '{']) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return crate::services::session_service::extract_text_content(&json);
+            return crate::services::cli_adapters::support::extract_text_content(&json);
         }
     }
     Some(trimmed.to_string())
@@ -327,7 +327,7 @@ pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
-    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+    let result = crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
         search_documents_in(&directory_path, &context.home)
     })
     .await

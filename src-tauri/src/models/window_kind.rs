@@ -98,7 +98,8 @@ pub fn window_kind_of(label: &str) -> Option<WindowKind> {
     })
 }
 
-#[allow(dead_code)] // Kept as the Rust-side counterpart to the shared TypeScript label factory.
+// Rust-side counterpart to the shared TypeScript label factory; only the tests create labels.
+#[cfg(test)]
 pub fn create_window_label(kind: WindowKind) -> String {
     let definition = definitions()
         .iter()
@@ -111,7 +112,9 @@ pub fn create_window_label(kind: WindowKind) -> String {
     }
 }
 
-#[allow(dead_code)] // Kept as the Rust-side counterpart to the shared TypeScript predicate.
+// Rust-side counterpart to the shared TypeScript predicate. The production caller is the
+// acceptance hook, so the function exists only where that hook or the tests are compiled.
+#[cfg(any(test, feature = "acceptance-hooks"))]
 pub fn is_detached_window_label(label: &str) -> bool {
     window_kind_of(label).is_some_and(|kind| !kind.is_primary())
 }

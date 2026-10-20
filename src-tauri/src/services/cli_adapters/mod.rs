@@ -31,6 +31,7 @@ pub(crate) mod codex;
 pub(crate) mod descriptor;
 pub(crate) mod grok;
 pub(crate) mod hermes;
+pub(crate) mod support;
 
 pub use descriptor::{
     ManagedUpdatePolicy, ProviderCapabilities, ProviderDescriptor, UpdateSemantics,
@@ -66,7 +67,7 @@ pub trait CliAdapter: Sync {
     fn resume_args(&self, session_id: &str) -> Result<Vec<String>>;
 
     fn valid_session_id(&self, session_id: &str) -> bool {
-        crate::services::session_service::safe_session_id(session_id)
+        crate::services::cli_adapters::support::safe_session_id(session_id)
     }
 
     fn command_candidates(&self) -> &'static [&'static str];

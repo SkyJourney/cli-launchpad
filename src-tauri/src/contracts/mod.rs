@@ -4866,3 +4866,47 @@ fn shared_helpers_are_defined_once() {
         .iter()
         .any(|finding| finding.contains("services/x.rs")));
 }
+
+#[test]
+fn cli_adapters_do_not_depend_on_session_service() {
+    fn violations(sources: &[(String, String)]) -> Vec<String> {
+        sources
+            .iter()
+            .filter(|(path, _)| path.starts_with("services/cli_adapters/"))
+            .filter(|(_, text)| text.contains("session_service"))
+            .map(|(path, _)| format!("{path} references session_service"))
+            .collect()
+    }
+    let sources = production_rust_sources();
+    let found = violations(&sources);
+    assert!(found.is_empty(), "适配器仍引用 session_service：{found:?}");
+    assert!(
+        sources
+            .iter()
+            .any(|(path, _)| path == "services/cli_adapters/support.rs"),
+        "缺少 services/cli_adapters/support.rs"
+    );
+    // 反向自检：适配器中的引用必须被报告。
+    let sample = vec![(
+        "services/cli_adapters/claude/history.rs".to_string(),
+        "use crate::services::session_service::home_dir;".to_string(),
+    )];
+    assert_eq!(violations(&sample).len(), 1);
+}
+
+#[test]
+fn window_label_helpers_have_no_dead_code_allowance() {
+    fn allows_dead_code(text: &str) -> bool {
+        text.contains("allow(dead_code)")
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/models/window_kind.rs");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !allows_dead_code(&text),
+        "window_kind.rs 仍含 allow(dead_code)"
+    );
+    assert!(text.contains("pub fn create_window_label"));
+    assert!(text.contains("pub fn is_detached_window_label"));
+    // 反向自检：违规样例必须被判定为含标注。
+    assert!(allows_dead_code("#[allow(dead_code)] pub fn x() {}"));
+}

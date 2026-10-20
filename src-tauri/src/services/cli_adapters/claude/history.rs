@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
-use crate::services::session_service::{
+use crate::services::cli_adapters::support::{
     mtime_ms, non_empty_field, read_search_metadata_file, safe_session_id, truncate_chars,
     SearchDocument, SearchSource, MAX_CLAUDE_PREVIEW_SCAN_BYTES, MAX_SEARCH_DIRECTORY_ENTRIES,
     MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES, MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
@@ -75,7 +75,7 @@ pub(super) async fn list_sessions_page(
 ) -> Result<SessionPage> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = project_dir_for_home(&context.home, &directory_path);
-        crate::services::session_service::page_local(
+        crate::services::cli_adapters::support::page_local(
             list_sessions_in(&dir)?,
             cursor.as_deref(),
             limit,
@@ -89,11 +89,11 @@ pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
-    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+    let result = crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
         search_documents_for_home(&directory_path, &context.home)
     })
     .await;
-    crate::services::session_service::index_source(ToolKey::Claude, result)
+    crate::services::cli_adapters::support::index_source(ToolKey::Claude, result)
 }
 
 pub(super) async fn session_belongs_to_directory(
@@ -324,7 +324,7 @@ fn search_first_user_message(path: &Path, max_bytes: u64) -> Result<(Option<Stri
 }
 
 fn message_text(entry: &Value) -> Option<String> {
-    super::super::super::session_service::extract_text_content(
+    crate::services::cli_adapters::support::extract_text_content(
         entry.get("message")?.get("content")?,
     )
 }

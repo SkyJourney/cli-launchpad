@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
-use crate::services::session_service::{
+use crate::services::cli_adapters::support::{
     epoch_to_ms, extract_text_content, index_source, mtime_ms, non_empty_field, page_local,
     paths_match, safe_session_id, truncate_chars, SearchDocument, SearchSource,
     MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES, MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
@@ -630,7 +630,7 @@ pub(super) async fn search_index_source(
             log::warn!("Codex 会话搜索失败，改用本地会话 metadata：{error}");
             let path = directory_path.clone();
             let home = context.home.clone();
-            crate::services::session_service::spawn_search_index_blocking(move || {
+            crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
                 search_codex_rollout_metadata_in(&path, &home)
             })
             .await
@@ -638,7 +638,7 @@ pub(super) async fn search_index_source(
         Err(_) => {
             log::warn!("Codex 会话搜索超时，改用本地会话 metadata");
             let home = context.home.clone();
-            crate::services::session_service::spawn_search_index_blocking(move || {
+            crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
                 search_codex_rollout_metadata_in(&directory_path, &home)
             })
             .await

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 805,
-    "Linux": 811,
-    "macOS": 807
+    "Windows": 807,
+    "Linux": 813,
+    "macOS": 809
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -524,7 +524,9 @@
       "platform::home::tests::posix_home_dir_reads_home_only",
       "platform::bounded_read::tests::reads_content_up_to_the_limit",
       "platform::bounded_read::tests::rejects_content_one_byte_over_the_limit_as_file_too_large",
-      "contracts::shared_helpers_are_defined_once"
+      "contracts::shared_helpers_are_defined_once",
+      "contracts::cli_adapters_do_not_depend_on_session_service",
+      "contracts::window_label_helpers_have_no_dead_code_allowance"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",
