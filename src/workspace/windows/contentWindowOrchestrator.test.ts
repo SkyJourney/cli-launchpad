@@ -116,7 +116,7 @@ function makeDetached(
     { kind: "window", windowLabel },
     token,
   );
-  f.coordinator.completeHandoff(ref, "detachReady", token);
+  f.coordinator.completeHandoff(ref, "detachReady", token, "window-" + token);
 }
 
 describe("contentWindowOrchestrator", () => {
@@ -179,6 +179,7 @@ describe("contentWindowOrchestrator", () => {
       onTimeout: vi.fn(),
       record: {
         documentId: "doc-1",
+        transferId: "tok-3",
         token: "tok-3",
         windowLabel: FILE_LABEL,
         window: window as never,
@@ -244,7 +245,7 @@ describe("contentWindowOrchestrator", () => {
       .sort((left, right) => left.documentId.localeCompare(right.documentId));
 
     expect(listed).toEqual([
-      { documentId: "doc-1", token: "tok-5", windowLabel: FILE_LABEL },
+      { documentId: "doc-1", token: "window-tok-5", windowLabel: FILE_LABEL },
       { documentId: "doc-2", token: "tok-6", windowLabel: OTHER_LABEL },
     ]);
   });

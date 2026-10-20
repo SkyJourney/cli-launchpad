@@ -25,6 +25,16 @@ export type ManagedWorkspacePaneContentRef = Extract<
   { kind: "pty" | "file" }
 >;
 
+/** One handoff (a detach or a return). Unique per handoff. */
+export function newTransferId(): string {
+  return crypto.randomUUID();
+}
+
+/** One window session, from window creation to window destruction. */
+export function newWindowToken(): string {
+  return crypto.randomUUID();
+}
+
 export function canChangeWorkspaceContentPane(
   state: WorkspaceContentLifecycleState | undefined,
 ): boolean {
@@ -103,6 +113,7 @@ export type WorkspaceContentLifecycleEvent =
   | ({
       type: "detachReady";
       transferId: string;
+      windowToken: string;
       generation: number;
     } & WorkspaceContentHandoffEventIdentity)
   | ({
@@ -279,7 +290,12 @@ export function transitionWorkspaceContentLifecycle(
       });
     }
     case "detachReady": {
-      if (state.phase !== "detaching" || !matchesTransfer(state, event)) {
+      if (
+        state.phase !== "detaching" ||
+        !matchesTransfer(state, event) ||
+        !hasText(event.windowToken) ||
+        event.windowToken === state.transferId
+      ) {
         return ignored(state);
       }
       return changed({
@@ -287,7 +303,7 @@ export function transitionWorkspaceContentLifecycle(
         content: state.content,
         generation: state.generation,
         owner: state.target,
-        windowToken: state.transferId,
+        windowToken: event.windowToken,
         lastPaneId: state.source.paneId,
       });
     }

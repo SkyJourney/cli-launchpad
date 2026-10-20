@@ -911,7 +911,7 @@ describe("persisted detached contents", () => {
   function returningCoordinator() {
     const coordinator = new WorkspaceContentCoordinator();
     coordinator.beginDetach(pty, paneOwner, windowOwner, "t1");
-    coordinator.completeHandoff(pty, "detachReady", "t1");
+    coordinator.completeHandoff(pty, "detachReady", "t1", "window-t1");
     coordinator.beginReturn(pty, "t2", "main", "p1");
     return coordinator;
   }

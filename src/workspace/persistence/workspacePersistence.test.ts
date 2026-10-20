@@ -507,7 +507,7 @@ describe("workspacePersistence", () => {
       { kind: "window", windowLabel: CHILD_LABEL },
       "tok",
     );
-    f.coordinator.completeHandoff(ref, "detachReady", "tok");
+    f.coordinator.completeHandoff(ref, "detachReady", "tok", "window-tok");
 
     const layout = f.persistence.currentPresetLayout();
     expect(layout.documents.map((d) => d.id)).toEqual(["doc-a"]);

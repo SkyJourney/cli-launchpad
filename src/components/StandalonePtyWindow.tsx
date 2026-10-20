@@ -31,6 +31,7 @@ import {
 } from "./workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 import { ptyContentRef } from "../lib/workspaceContentKey";
+import { newTransferId } from "../lib/workspaceContentLifecycle";
 
 interface StandalonePtyWindowProps {
   sessionId: string;
@@ -56,7 +57,7 @@ export function StandalonePtyWindow({
   const ToolIcon = TOOLS.find((tool) => tool.key === toolKey)?.icon;
   const exitHandledRef = useRef(false);
   const returnAttemptRef = useRef(0);
-  const currentReturnTokenRef = useRef(handoffToken);
+  const currentReturnTokenRef = useRef<string | null>(null);
   const returnHandoffContextRef =
     useRef<WorkspaceContentHandoffHookContext<"pty"> | null>(null);
   const returnHandoffPayloadRef = useRef<
@@ -153,7 +154,7 @@ export function StandalonePtyWindow({
             windowLabel: "main",
             paneId: targetPaneId ?? sourcePaneId,
           },
-          transferId: crypto.randomUUID(),
+          transferId: newTransferId(),
           capabilities: {
             prepare: async () => ({
               handoff: await terminal.captureHandoff("main"),
@@ -167,7 +168,6 @@ export function StandalonePtyWindow({
           },
         };
         const prepared = await prepareWorkspaceContentHandoff(driverContext);
-        driverContext = { ...driverContext, transferId: prepared.transferId };
         handoffPayload = prepared.payload;
         returnHandoffContextRef.current = driverContext;
         returnHandoffPayloadRef.current = prepared.payload;
@@ -186,6 +186,7 @@ export function StandalonePtyWindow({
           sessionId,
           windowLabel: currentWindow.label,
           token: prepared.transferId,
+          handoffToken: prepared.payload.handoff.token,
           targetPaneId,
         });
         if (!isCurrentAttempt()) {
@@ -376,7 +377,7 @@ export function StandalonePtyWindow({
           content: ptyContentRef(instanceId),
           source: { kind: "pane", windowLabel: "main", paneId: sourcePaneId },
           target: { kind: "window", windowLabel: currentWindow.label },
-          transferId: handoffToken,
+          transferId: newTransferId(),
           capabilities: {
             prepare: async () => ({ handoff: { token: handoffToken } }),
             attach: async (payload) => {

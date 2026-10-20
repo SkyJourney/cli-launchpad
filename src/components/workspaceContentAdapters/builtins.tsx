@@ -156,10 +156,10 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   lifecycle: {
     describeDisposalImpact: ({ isRunning, title }) =>
       isRunning ? [{ kind: "runningPty", title }] : [],
-    prepareHandoff: async ({ capabilities }) => {
-      const payload = await capabilities.prepare();
-      return { transferId: payload.handoff.token, payload };
-    },
+    prepareHandoff: async ({ transferId, capabilities }) => ({
+      transferId,
+      payload: await capabilities.prepare(),
+    }),
     attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),

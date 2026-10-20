@@ -103,13 +103,14 @@ function rejectReturnReady(
     content: WorkspacePaneContentRef,
     type: "detachReady" | "returnReady",
     transferId: string,
+    windowToken?: string,
   ) =>
     type === "returnReady"
       ? ({
           outcome: "ignored",
           state: coordinator.get(content)!,
         } as ReturnType<WorkspaceContentCoordinator["completeHandoff"]>)
-      : original(content, type, transferId);
+      : original(content, type, transferId, windowToken ?? "");
   const spy = vi.spyOn(coordinator, "completeHandoff");
   if (options.once) spy.mockImplementationOnce(intercept);
   else spy.mockImplementation(intercept);
@@ -163,6 +164,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush();
     expect(coordinator.get(content)?.phase).toBe("returning");
@@ -221,6 +223,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush(10);
 
@@ -229,7 +232,7 @@ describe("PTY return to the workspace", () => {
     expect(panesContaining(host, content)).toBe(0);
     expect(emittedTypesTo(windowLabel)).toContain("pty-return-failed");
     expect(terminal.cancelHandoff).toHaveBeenCalledTimes(1);
-    expect(terminal.cancelHandoff).toHaveBeenCalledWith("return-1");
+    expect(terminal.cancelHandoff).toHaveBeenCalledWith("rust-return-1");
     expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
     expect(coordinator.get(content)?.phase).toBe("detached");
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
@@ -256,6 +259,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush();
     expect(coordinator.get(content)?.phase).toBe("returning");
@@ -318,6 +322,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush();
 
@@ -355,6 +360,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush();
     expect(coordinator.get(content)).toMatchObject({
@@ -386,6 +392,7 @@ describe("PTY return to the workspace", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-2",
+      handoffToken: "rust-return-2",
     });
     await flush();
 
@@ -495,8 +502,10 @@ describe("file return to the workspace", () => {
     expect(rejected).toHaveBeenCalledWith(
       content,
       "returnReady",
-      detached.token,
+      expect.any(String),
     );
+    // 返回的 transferId 由主窗口生成，不等于窗口令牌。
+    expect(rejected.mock.calls[0][2]).not.toBe(detached.token);
     expect(panesContaining(host!, content)).toBe(0);
     expect(emittedTypesTo(detached.windowLabel)).toContain(
       "workspace-file-window-return-failed",
@@ -530,8 +539,10 @@ describe("file return to the workspace", () => {
     expect(rejected).toHaveBeenCalledWith(
       content,
       "returnReady",
-      detached.token,
+      expect.any(String),
     );
+    // 返回的 transferId 由主窗口生成，不等于窗口令牌。
+    expect(rejected.mock.calls[0][2]).not.toBe(detached.token);
     expect(panesContaining(host!, content)).toBe(0);
     expect(emittedTypesTo(detached.windowLabel)).toContain(
       "workspace-file-window-return-failed",
@@ -593,6 +604,7 @@ describe("named layouts while a PTY is returning", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     });
     await flush();
     expect(

@@ -40,6 +40,7 @@ import { registerAllOrCleanup } from "../lib/workspaceContentListenerSetup";
 import { completeWorkspaceFileWindowSetup } from "../lib/workspaceFileWindowSetup";
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { fileContentRef } from "../lib/workspaceContentKey";
+import { newTransferId } from "../lib/workspaceContentLifecycle";
 
 export function StandaloneWorkspaceFileWindow({
   documentId,
@@ -284,7 +285,7 @@ export function StandaloneWorkspaceFileWindow({
                     kind: "window",
                     windowLabel: currentWindow.label,
                   },
-                  transferId: token,
+                  transferId: newTransferId(),
                   capabilities: {
                     prepare: async () => ({
                       document: message.fileDocument,

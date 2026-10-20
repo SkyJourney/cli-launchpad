@@ -162,7 +162,7 @@ export function createFileProtocolHandlers(
                 kind: "window",
                 windowLabel: pending.windowLabel,
               },
-              transferId: pending.token,
+              transferId: pending.transferId,
               capabilities: {
                 prepare: async () => {
                   const document = deps.store
@@ -198,7 +198,7 @@ export function createFileProtocolHandlers(
               ).catch(() => undefined);
               deps
                 .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.token);
+                .failHandoff(content, "detachFailed", pending.transferId);
               takePendingWorkspaceContentWindow(
                 state.pending.file,
                 fileContentKey(pending.documentId),
@@ -226,7 +226,7 @@ export function createFileProtocolHandlers(
               ).catch(() => undefined);
               deps
                 .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.token);
+                .failHandoff(content, "detachFailed", pending.transferId);
               takePendingWorkspaceContentWindow(
                 state.pending.file,
                 fileContentKey(pending.documentId),
@@ -257,7 +257,12 @@ export function createFileProtocolHandlers(
             const content = fileContentRef(pending.documentId);
             const ownership = deps
               .getCoordinator()
-              .completeHandoff(content, "detachReady", pending.token);
+              .completeHandoff(
+                content,
+                "detachReady",
+                pending.transferId,
+                pending.token,
+              );
             if (ownership?.outcome !== "changed") {
               if (pending.handoffContext) {
                 void rollbackWorkspaceContentHandoff(
@@ -321,7 +326,7 @@ export function createFileProtocolHandlers(
               .failHandoff(
                 fileContentRef(pending.documentId),
                 "detachFailed",
-                pending.token,
+                pending.transferId,
               );
             takePendingWorkspaceContentWindow(
               state.pending.file,
@@ -399,7 +404,9 @@ export function createFileProtocolHandlers(
               return;
             }
             // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
-            if (deps.getCoordinator().isReturnCompleted(event.payload.token)) {
+            if (
+              deps.getCoordinator().isWindowReturnCompleted(event.payload.token)
+            ) {
               return;
             }
             const content = fileContentRef(event.payload.documentId);
@@ -429,10 +436,12 @@ export function createFileProtocolHandlers(
                 .catch(() => undefined);
               return;
             }
+            // 本次返回的 transferId 由主窗口生成；子窗口只携带窗口令牌。
+            const returnTransferId = deps.getCoordinator().newTransferId();
             let currentOwnership = deps.getCoordinator().get(content);
             if (
               currentOwnership?.phase === "returning" &&
-              currentOwnership.transferId === event.payload.token
+              currentOwnership.windowToken === event.payload.token
             ) {
               return;
             }
@@ -479,6 +488,7 @@ export function createFileProtocolHandlers(
                     kind: "window",
                     windowLabel: event.payload.windowLabel,
                   },
+                  deps.getCoordinator().newTransferId(),
                   event.payload.token,
                 );
                 currentOwnership = deps.getCoordinator().get(content);
@@ -545,7 +555,7 @@ export function createFileProtocolHandlers(
               .getCoordinator()
               .beginReturn(
                 content,
-                event.payload.token,
+                returnTransferId,
                 "main",
                 returnTargetPaneId,
               );
@@ -592,7 +602,7 @@ export function createFileProtocolHandlers(
                   windowLabel: "main",
                   paneId: targetPane.id,
                 },
-                transferId: event.payload.token,
+                transferId: returnTransferId,
                 capabilities: {
                   prepare: async () => ({
                     document,
@@ -618,7 +628,7 @@ export function createFileProtocolHandlers(
               const activeReturn = deps.getCoordinator().get(content);
               if (
                 activeReturn?.phase !== "returning" ||
-                activeReturn.transferId !== event.payload.token
+                activeReturn.transferId !== returnTransferId
               ) {
                 throw new Error(deps.translate("pty.detachedStateChanged"));
               }
@@ -640,7 +650,7 @@ export function createFileProtocolHandlers(
                 .completeHandoff(
                   fileContentRef(document.id),
                   "returnReady",
-                  event.payload.token,
+                  returnTransferId,
                 );
               if (ownership?.outcome !== "changed") {
                 deps
@@ -648,7 +658,7 @@ export function createFileProtocolHandlers(
                   .failHandoff(
                     fileContentRef(document.id),
                     "returnFailed",
-                    event.payload.token,
+                    returnTransferId,
                   );
                 await ports
                   .emit(event.payload.windowLabel, "file", "return-failed", {
@@ -691,7 +701,7 @@ export function createFileProtocolHandlers(
                 .failHandoff(
                   fileContentRef(event.payload.documentId),
                   "returnFailed",
-                  event.payload.token,
+                  returnTransferId,
                 );
               await ports
                 .emit(event.payload.windowLabel, "file", "return-failed", {

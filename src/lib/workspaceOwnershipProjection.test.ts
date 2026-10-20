@@ -59,7 +59,7 @@ function stateFor(phase: Phase): WorkspaceContentLifecycleState {
   }
   coordinator.beginDetach(content, paneOwner, windowOwner, "t1");
   if (phase === "detaching") return coordinator.get(content)!;
-  coordinator.completeHandoff(content, "detachReady", "t1");
+  coordinator.completeHandoff(content, "detachReady", "t1", "window-t1");
   if (phase === "detached") return coordinator.get(content)!;
   if (phase === "closing-window") {
     coordinator.approveClose(content, "close-2");

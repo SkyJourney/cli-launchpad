@@ -27,7 +27,10 @@ export interface ContentHandoffPayloads {
       instanceId: string;
       sessionId: string;
       windowLabel: string;
+      /** The return's transfer id, issued by the child window. */
       token: string;
+      /** The Rust handoff token; the main window attaches the PTY with it. */
+      handoffToken: string;
       targetPaneId?: string;
     };
     "return-complete": { instanceId: string; token: string };
@@ -255,7 +258,11 @@ function isValidHandoffPayload(
           "sessionId",
           "windowLabel",
           "token",
-        ]) && hasOptionalStringFields(value, ["targetPaneId"])
+          "handoffToken",
+        ]) &&
+        typeof value.handoffToken === "string" &&
+        value.handoffToken.length > 0 &&
+        hasOptionalStringFields(value, ["targetPaneId"])
       );
     case "pty:return-complete":
       return hasStringFields(value, ["instanceId", "token"]);

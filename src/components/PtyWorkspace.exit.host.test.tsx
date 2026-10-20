@@ -131,6 +131,7 @@ describe("exit impacts for detached files", () => {
         { kind: "pane", windowLabel: "main", paneId },
         { kind: "window", windowLabel },
         "tok-x",
+        "window-tok-x",
       );
     });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

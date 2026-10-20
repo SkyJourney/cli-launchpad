@@ -41,7 +41,12 @@ describe("workspace content coordinator", () => {
       { kind: "window", windowLabel: "terminal-1" },
       "transfer-1",
     );
-    coordinator.completeHandoff(content, "detachReady", "transfer-1");
+    coordinator.completeHandoff(
+      content,
+      "detachReady",
+      "transfer-1",
+      "window-transfer-1",
+    );
 
     expect(coordinator.listByPhase("detached")).toEqual([content]);
     expect(coordinator.listWindowOwned()).toEqual([content]);
@@ -84,7 +89,12 @@ describe("workspace content coordinator", () => {
       coordinator.beginDetach(content, source, target, "detach-1")?.state.phase,
     ).toBe("detaching");
     expect(
-      coordinator.completeHandoff(content, "detachReady", "detach-1")?.state,
+      coordinator.completeHandoff(
+        content,
+        "detachReady",
+        "detach-1",
+        "window-detach-1",
+      )?.state,
     ).toMatchObject({ phase: "detached", owner: target });
     expect(
       coordinator.beginReturn(content, "return-1", "main")?.state.phase,
@@ -97,6 +107,7 @@ describe("workspace content coordinator", () => {
       source,
       target,
       "duplicate-recovery",
+      "window-duplicate-recovery",
     );
     expect(coordinator.beginReturn(content, "return-1", "main")).toBeNull();
   });
@@ -137,6 +148,7 @@ describe("workspace content coordinator", () => {
       content,
       "detachReady",
       "detach-1",
+      "window-detach-1",
     );
     const detachedTree = removeWorkspaceContentFromTree(withFile, content);
     expect(detached?.state.phase).toBe("detached");
@@ -200,7 +212,13 @@ describe("workspace content coordinator", () => {
     } as const;
 
     expect(
-      coordinator.reconcileDetached(content, source, target, "recovered-1"),
+      coordinator.reconcileDetached(
+        content,
+        source,
+        target,
+        "recovered-1",
+        "window-recovered-1",
+      ),
     ).toMatchObject({ phase: "detached", owner: target, lastPaneId: "pane-2" });
   });
 
@@ -216,7 +234,12 @@ describe("workspace content coordinator", () => {
 
     coordinator.beginDetach(content, source, target, "detach-1");
     expect(
-      coordinator.completeHandoff(content, "detachReady", "wrong")?.outcome,
+      coordinator.completeHandoff(
+        content,
+        "detachReady",
+        "wrong",
+        "window-wrong",
+      )?.outcome,
     ).toBe("ignored");
     expect(coordinator.get(content)?.phase).toBe("detaching");
     coordinator.failHandoff(content, "detachCancelled", "detach-1");
@@ -265,7 +288,12 @@ describe("workspace content coordinator", () => {
     } as const;
     coordinator.ensureAttached(content, source);
     coordinator.beginDetach(content, source, target, "detach-1");
-    coordinator.completeHandoff(content, "detachReady", "detach-1");
+    coordinator.completeHandoff(
+      content,
+      "detachReady",
+      "detach-1",
+      "window-detach-1",
+    );
     coordinator.beginReturn(content, "ret-1", "main");
 
     expect(coordinator.isReturnCompleted("ret-1")).toBe(false);
@@ -279,9 +307,63 @@ describe("workspace content coordinator", () => {
     // 反向：returnFailed 路径不会把 transfer 记为已完成。
     coordinator.ensureAttached(content, source);
     coordinator.beginDetach(content, source, target, "detach-2");
-    coordinator.completeHandoff(content, "detachReady", "detach-2");
+    coordinator.completeHandoff(
+      content,
+      "detachReady",
+      "detach-2",
+      "window-detach-2",
+    );
     coordinator.beginReturn(content, "ret-2", "main");
     coordinator.failHandoff(content, "returnFailed", "ret-2");
     expect(coordinator.isReturnCompleted("ret-2")).toBe(false);
+  });
+
+  it("remembers the window token of a completed file return so late duplicates can be ignored", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "file", documentId: "doc-w" } as const;
+    const source = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const target = {
+      kind: "window",
+      windowLabel: "workspace-content-1",
+    } as const;
+    coordinator.ensureAttached(content, source);
+    coordinator.beginDetach(content, source, target, "detach-w");
+    coordinator.completeHandoff(content, "detachReady", "detach-w", "win-w");
+
+    // 反向：返回尚未完成时，窗口令牌不被记录。
+    expect(coordinator.isWindowReturnCompleted("win-w")).toBe(false);
+    coordinator.beginReturn(content, "return-w", "main");
+    expect(coordinator.isWindowReturnCompleted("win-w")).toBe(false);
+    coordinator.completeHandoff(content, "returnReady", "return-w");
+    expect(coordinator.isWindowReturnCompleted("win-w")).toBe(true);
+    expect(coordinator.isWindowReturnCompleted("other-window")).toBe(false);
+
+    coordinator.reset();
+    expect(coordinator.isWindowReturnCompleted("win-w")).toBe(false);
+  });
+
+  it("does not record a window token when the return fails", () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const content = { kind: "file", documentId: "doc-f" } as const;
+    const source = {
+      kind: "pane",
+      windowLabel: "main",
+      paneId: "pane-1",
+    } as const;
+    const target = {
+      kind: "window",
+      windowLabel: "workspace-content-2",
+    } as const;
+    coordinator.ensureAttached(content, source);
+    coordinator.beginDetach(content, source, target, "detach-f");
+    coordinator.completeHandoff(content, "detachReady", "detach-f", "win-f");
+    coordinator.beginReturn(content, "return-f", "main");
+    coordinator.failHandoff(content, "returnFailed", "return-f");
+
+    expect(coordinator.isWindowReturnCompleted("win-f")).toBe(false);
   });
 });

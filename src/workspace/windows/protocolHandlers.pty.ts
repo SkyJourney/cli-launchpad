@@ -73,7 +73,8 @@ export function createPtyProtocolHandlers(
       .completeHandoff(
         ptyContentRef(payload.instanceId),
         "detachReady",
-        pending.token,
+        pending.transferId,
+        pending.windowToken,
       );
     if (ownership?.outcome !== "changed") {
       void rollbackWorkspaceContentHandoff(
@@ -123,7 +124,7 @@ export function createPtyProtocolHandlers(
       .failHandoff(
         ptyContentRef(payload.instanceId),
         "detachFailed",
-        pending.token,
+        pending.transferId,
       );
     takePendingWorkspaceContentWindow(
       state.pending.pty,
@@ -326,7 +327,8 @@ export function createPtyProtocolHandlers(
             paneId: sourcePane.id,
           },
           { kind: "window", windowLabel: payload.windowLabel },
-          payload.token,
+          deps.getCoordinator().newTransferId(),
+          deps.getCoordinator().newWindowToken(),
         );
       }
     }
@@ -417,7 +419,7 @@ export function createPtyProtocolHandlers(
         target: { kind: "pane", windowLabel: "main", paneId: targetPane.id },
         transferId: payload.token,
         capabilities: {
-          prepare: async () => ({ handoff: { token: payload.token } }),
+          prepare: async () => ({ handoff: { token: payload.handoffToken } }),
           attach: async (handoffPayload) => {
             await terminal.attachHandoff(
               payload.sessionId,
@@ -431,7 +433,7 @@ export function createPtyProtocolHandlers(
           },
         },
       };
-      returnDriverPayload = { handoff: { token: payload.token } };
+      returnDriverPayload = { handoff: { token: payload.handoffToken } };
       await attachWorkspaceContentHandoff(
         returnDriverContext,
         returnDriverPayload,
@@ -540,7 +542,7 @@ export function createPtyProtocolHandlers(
                 .failHandoff(
                   ptyContentRef(event.payload.instanceId),
                   "detachCancelled",
-                  pending.token,
+                  pending.transferId,
                 );
               takePendingWorkspaceContentWindow(
                 state.pending.pty,

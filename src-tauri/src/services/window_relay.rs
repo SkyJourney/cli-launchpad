@@ -71,7 +71,8 @@ pub struct SendWindowMessageResult {
 /// run in this order: the message type is registered; the caller's window kind may send it; the
 /// target's window kind may receive it; the envelope has the registered `type` and `apiVersion`; the
 /// envelope is within the size limit; for a generic handoff type, the content kind in
-/// `payload.content.kind` is allowed for the type and matches the child window kind on the child side.
+/// `payload.content.kind` is allowed for the type and matches the child window kind on the child side;
+/// a PTY return request also carries a non-empty `handoffToken` in its inner payload.
 pub fn relay(
     registry: &WindowInboxRegistry,
     caller: &CallerWindow,
@@ -147,6 +148,19 @@ fn relay_within(
                 ErrorCode::WindowNotAllowed,
                 "内容类型与子窗口类别不匹配",
             ));
+        }
+        if message_type == "content-handoff-return-requested" && content_kind == "pty" {
+            // A PTY return carries the Rust handoff token the main window attaches with.
+            let has_handoff_token = envelope
+                .pointer("/payload/payload/handoffToken")
+                .and_then(Value::as_str)
+                .is_some_and(|token| !token.is_empty());
+            if !has_handoff_token {
+                return Err(AppError::coded(
+                    ErrorCode::WindowNotAllowed,
+                    "PTY 返回请求缺少交接令牌",
+                ));
+            }
         }
     }
     let source = InboxSource {
@@ -674,6 +688,63 @@ mod tests {
                 "payload": {}
             }
         })
+    }
+
+    #[test]
+    fn relay_requires_the_handoff_token_on_pty_return_requests() {
+        let registry = WindowInboxRegistry::default();
+        let main = subscribed(&registry, "main");
+        subscribed(&registry, TERMINAL);
+        subscribed(&registry, CONTENT);
+        let return_request = |kind: &str, inner: Value| {
+            json!({
+                "apiVersion": 1,
+                "type": "content-handoff-return-requested",
+                "payload": {
+                    "content": { "kind": kind, "id": "content-1" },
+                    "transferId": "return-1",
+                    "payload": inner
+                }
+            })
+        };
+
+        // Rejected: the PTY return has no handoff token, or an empty one.
+        for inner in [
+            json!({ "sessionId": "s1", "windowLabel": TERMINAL }),
+            json!({ "sessionId": "s1", "windowLabel": TERMINAL, "handoffToken": "" }),
+        ] {
+            assert!(relay(
+                &registry,
+                &caller(TERMINAL),
+                "main",
+                "content-handoff-return-requested",
+                return_request("pty", inner),
+            )
+            .is_err());
+        }
+        // Accepted: the PTY return carries the token.
+        relay(
+            &registry,
+            &caller(TERMINAL),
+            "main",
+            "content-handoff-return-requested",
+            return_request(
+                "pty",
+                json!({ "sessionId": "s1", "windowLabel": TERMINAL, "handoffToken": "rust-1" }),
+            ),
+        )
+        .unwrap();
+        // Unaffected: a file return has no handoff token and is still accepted.
+        relay(
+            &registry,
+            &caller(CONTENT),
+            "main",
+            "content-handoff-return-requested",
+            return_request("file", json!({ "windowLabel": CONTENT })),
+        )
+        .unwrap();
+        // Only the two accepted messages reached the main window.
+        assert_eq!(main.sent.lock().unwrap().len(), 2);
     }
 
     #[test]

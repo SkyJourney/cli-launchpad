@@ -305,6 +305,7 @@ describe("duplicate and out-of-order handoff events", () => {
       sessionId: slot.sessionId,
       windowLabel: ptyLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     };
     return { doc, slot, terminal, fileLabel, ptyLabel, fileReturn, ptyReturn };
   }
@@ -730,6 +731,7 @@ describe("untrusted window events", () => {
       sessionId: slot.sessionId,
       windowLabel,
       token: "return-1",
+      handoffToken: "rust-return-1",
     };
     const repliesTo = () =>
       tauriMock.state.relayedMessages.filter(

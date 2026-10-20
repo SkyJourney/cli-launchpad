@@ -43,6 +43,7 @@ function transferEvent(
   return {
     type,
     transferId,
+    ...(type === "detachReady" ? { windowToken: `window-${transferId}` } : {}),
     generation,
     content: state.content,
     source: state.source,
@@ -107,7 +108,7 @@ describe("workspace content lifecycle", () => {
     expect(result.state).toMatchObject({
       phase: "detached",
       owner: windowOwner,
-      windowToken: "detach-1",
+      windowToken: "window-detach-1",
       lastPaneId: paneOwner.paneId,
     });
   });
@@ -167,7 +168,7 @@ describe("workspace content lifecycle", () => {
       ).toMatchObject({
         phase: "detached",
         owner: windowOwner,
-        windowToken: "detach-1",
+        windowToken: "window-detach-1",
       });
     }
   });
@@ -182,14 +183,14 @@ describe("workspace content lifecycle", () => {
     expect(closing).toMatchObject({
       phase: "closing",
       owner: windowOwner,
-      windowToken: "detach-1",
+      windowToken: "window-detach-1",
     });
     expect(
       transition(closing, closeEvent(closing, "closeCancelled", "close-1")),
     ).toMatchObject({
       phase: "detached",
       owner: windowOwner,
-      windowToken: "detach-1",
+      windowToken: "window-detach-1",
     });
   });
 
@@ -222,6 +223,7 @@ describe("workspace content lifecycle", () => {
       transitionWorkspaceContentLifecycle(detached, {
         type: "detachReady",
         transferId: "detach-1",
+        windowToken: "window-detach-1",
         generation: 1,
         content,
         source: paneOwner,
