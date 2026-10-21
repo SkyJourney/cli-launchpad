@@ -5251,7 +5251,8 @@ fn window_label_helpers_have_no_dead_code_allowance() {
 
 #[test]
 fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts() {
-    let command = production_text(include_str!("../commands/pty_session.rs"));
+    // Windows checkouts use CRLF; normalize so the body end "\n}\n" is found on every platform.
+    let command = production_text(include_str!("../commands/pty_session.rs")).replace("\r\n", "\n");
     const APP_COMMANDS: &str = include_str!("../../../contracts/app-commands.json");
     const DEFAULT_CAPABILITY: &str = include_str!("../../capabilities/default.json");
     const TERMINAL_CAPABILITY: &str = include_str!("../../capabilities/terminal-window.json");
@@ -5331,7 +5332,7 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
 
 #[test]
 fn confirm_app_exit_goes_through_confirm_with_impacts() {
-    let command = production_text(include_str!("../commands/pty_session.rs"));
+    let command = production_text(include_str!("../commands/pty_session.rs")).replace("\r\n", "\n");
     let start = command
         .find("pub async fn confirm_app_exit(")
         .expect("command exists");
