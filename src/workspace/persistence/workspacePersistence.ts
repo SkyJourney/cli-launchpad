@@ -84,6 +84,8 @@ export interface RuntimeResetNext {
 export interface WorkspacePersistenceDeps {
   store: WorkspaceHostStore;
   getCoordinator: () => WorkspaceContentCoordinator;
+  /** m6-115：整体布局替换（水合、重置）发布之后调用一次，用于显式加载活动文件。 */
+  onLayoutApplied?: () => void;
   /** 命名布局应用的提交入口（m6-096）：状态检查、登记与树提交都在执行器里完成。 */
   execute: (command: HostCommand) => CommandOutcome;
   /** Latest project list; read at save time, never a trigger. */
@@ -172,6 +174,7 @@ export function latestPersistenceDeps(
     store,
     getCoordinator: () => current().getCoordinator(),
     execute: (command) => current().execute(command),
+    onLayoutApplied: () => current().onLayoutApplied?.(),
     getDirectories: () => current().getDirectories(),
     get translate() {
       return current().translate;
@@ -370,6 +373,7 @@ export function createWorkspacePersistence(
       saveQueueRef.current = createSaveQueue(revision);
       setLayoutSaveError(null);
       patchHost({ ...restoredPatch, hydrationStatus: "ready" }, "hydrated");
+      deps.onLayoutApplied?.();
       // An explicit step after the layout is published, never an effect dependency (R-FE-1).
       try {
         deps.afterHydrated?.(requestId);
@@ -422,6 +426,7 @@ export function createWorkspacePersistence(
       setHydrationError(null);
       setLayoutSaveError(null);
       patchHost({ hydrationStatus: "ready" }, "resetWorkspace:ready");
+      deps.onLayoutApplied?.();
     } catch (reason) {
       setLayoutResetError(toAppErrorState(reason));
       throw reason;

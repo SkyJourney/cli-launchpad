@@ -28,8 +28,10 @@ export function useCloseContents({
   domainTable,
   commitTree,
   tRef,
+  activeFileLoader,
 }: Pick<
   WorkspaceRuntime,
+  | "activeFileLoader"
   | "store"
   | "contentCoordinatorRef"
   | "closeConfirmation"
@@ -153,6 +155,8 @@ export function useCloseContents({
         );
       }
 
+      // m6-115：关闭之后活动文件可能变成另一个缺 buffer 的文件，显式加载（无论关闭成败）。
+      activeFileLoader.ensure();
       if (pendingCount > 0) {
         toast.info(tRef.current("pty.closePending", { count: pendingCount }));
       }
@@ -162,7 +166,13 @@ export function useCloseContents({
         );
       }
     },
-    [commitTree, closeConfirmation.confirm, domainTable, store],
+    [
+      activeFileLoader,
+      commitTree,
+      closeConfirmation.confirm,
+      domainTable,
+      store,
+    ],
   );
   return closeContents;
 }

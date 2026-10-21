@@ -41,9 +41,7 @@ const FILE: WorkspaceFileDocument = {
   relativePath: "a.txt",
 };
 
-function paneViewProps(
-  onLoadFile: (documentId: string) => Promise<void>,
-): ComponentProps<typeof WorkspacePaneView> {
+function paneViewProps(): ComponentProps<typeof WorkspacePaneView> {
   const content = { kind: "file", documentId: FILE.id } as const;
   return {
     node: { kind: "pane", id: "pane-1", paneNumber: 1, contents: [content] },
@@ -75,7 +73,6 @@ function paneViewProps(
     onDetachFile: vi.fn(),
     onMoveFile: vi.fn(),
     onEditFile: vi.fn(),
-    onLoadFile,
     onSaveFile: vi.fn(async () => undefined),
     onSplitPane: vi.fn(),
     onSplitAndMoveSession: vi.fn(),
@@ -91,27 +88,15 @@ function paneViewProps(
 }
 
 describe("language switch and business effects", () => {
-  it("reports a file load failure in the language active when it fails", async () => {
+  // m6-115：视图不再自行加载文件；加载失败的提示语言由宿主的显式加载器（activeFileLoader）决定。
+  it("the pane view never loads a file by itself, so a language change cannot trigger a load", async () => {
     const unregister = registerBuiltinContributions();
     try {
-      let reject: (reason: unknown) => void = () => undefined;
-      const onLoadFile = vi.fn(
-        () =>
-          new Promise<void>((_, rejectLoad) => {
-            reject = rejectLoad;
-          }),
-      );
-      render(<WorkspacePaneView {...paneViewProps(onLoadFile)} />);
-      expect(onLoadFile).toHaveBeenCalledTimes(1);
-
-      await setAppLanguage("zh");
-      expect(onLoadFile).toHaveBeenCalledTimes(1);
+      render(<WorkspacePaneView {...paneViewProps()} />);
       await act(async () => {
-        reject({ code: "project.not_found", message: "missing" });
+        await setAppLanguage("zh");
       });
-
-      await vi.waitFor(() => expect(toastSpy.error).toHaveBeenCalled());
-      expect(toastSpy.error.mock.calls[0][0]).toBe("找不到该项目目录。");
+      expect(toastSpy.error).not.toHaveBeenCalled();
     } finally {
       unregister();
     }

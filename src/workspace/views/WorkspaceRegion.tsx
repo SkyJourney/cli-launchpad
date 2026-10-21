@@ -66,7 +66,6 @@ export function WorkspaceRegion() {
     activateUnsupportedContent,
     closeContents,
     editFile,
-    loadFile,
     saveFile,
   } = usePtyWorkspace();
   const { data: directories } = useDirectories();
@@ -183,7 +182,6 @@ export function WorkspaceRegion() {
           }}
           onMoveFile={moveFile}
           onEditFile={editFile}
-          onLoadFile={loadFile}
           onSaveFile={saveFile}
           onSplitPane={splitPane}
           onSplitAndMoveSession={splitAndMoveSession}

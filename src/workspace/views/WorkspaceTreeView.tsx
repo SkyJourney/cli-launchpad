@@ -54,7 +54,6 @@ export interface WorkspaceTreeViewProps {
     documentId: string,
   ) => void;
   onEditFile: (documentId: string, content: string) => void;
-  onLoadFile: (documentId: string) => Promise<void>;
   onSaveFile: (documentId: string) => Promise<void>;
   onSplitPane: (paneId: string, direction: SplitDirection) => void;
   onSplitAndMoveSession: (

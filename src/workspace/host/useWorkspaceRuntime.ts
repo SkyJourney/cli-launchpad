@@ -39,6 +39,7 @@ import type { WorkspacePaneContentRef } from "../../lib/tauri";
 import { useAppStore } from "../../store/appStore";
 import { ProjectPathSemanticsRegistry } from "../../lib/projectPathSemantics";
 import { formatAppError } from "../../lib/appErrors";
+import { createActiveFileLoader } from "./activeFileLoader";
 import { checkProjectFilesSameIdentity } from "../../lib/tauri";
 import { createFileContentDomain } from "../domains/fileContentDomain";
 import { createFileDocumentsDomain } from "../domains/fileDocumentsDomain";
@@ -201,6 +202,14 @@ export function useWorkspaceRuntime({
   // 执行器与持久化互相需要：持久化先于执行器创建，用这个稳定引用打断环（m6-096，执行器创建后立即写入）。
   const executorRef = useRef<WorkspaceCommandExecutor | null>(null);
   const persistenceDepsRef = useRef<WorkspacePersistenceDeps | null>(null);
+  // m6-115：活动文件的显式加载入口（替代 WorkspacePaneView 的渲染期自动加载）。
+  const [activeFileLoader] = useState(() =>
+    createActiveFileLoader({
+      getSnapshot: () => store.getLive(),
+      load: (documentId) => fileDomain.load(documentId),
+      onError: (reason) => toast.error(formatAppError(reason, tRef.current)),
+    }),
+  );
   const [persistence] = useState(() =>
     createWorkspacePersistence(
       latestPersistenceDeps(persistenceDepsRef, store),
@@ -251,6 +260,10 @@ export function useWorkspaceRuntime({
   });
   persistenceDepsRef.current = {
     store,
+    onLayoutApplied: () => {
+      activeFileLoader.reset();
+      activeFileLoader.ensure();
+    },
     getCoordinator: () => contentCoordinatorRef.current,
     execute: (command) => {
       const executor = executorRef.current;
@@ -373,6 +386,7 @@ export function useWorkspaceRuntime({
       isRestoreInProgress: () => persistence.restoreLatch.active,
       afterCommit: (ref) => syncProjectContextRef.current(ref),
       newId: () => crypto.randomUUID(),
+      afterEffectiveCommit: () => activeFileLoader.ensure(),
     }),
   );
   executorRef.current = executor;
@@ -507,6 +521,7 @@ export function useWorkspaceRuntime({
   };
 
   return {
+    activeFileLoader,
     store,
     snapshot,
     tRef,

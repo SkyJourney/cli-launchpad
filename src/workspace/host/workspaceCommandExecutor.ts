@@ -103,6 +103,8 @@ export interface WorkspaceCommandExecutorDeps {
   newId: () => string;
   /** Present only when the host has an explicit persistence trigger. */
   schedulePersist?: () => void;
+  /** m6-115：每次有效提交之后调用一次，用于显式加载活动文件（替代渲染期的自动加载）。 */
+  afterEffectiveCommit?: () => void;
 }
 
 export interface WorkspaceCommandExecutor {
@@ -131,7 +133,10 @@ export function createWorkspaceCommandExecutor(
   ): CommandOutcome => {
     const before = store.commitCount;
     store.commit(update, `command:${type}`);
-    if (store.commitCount !== before) deps.schedulePersist?.();
+    if (store.commitCount !== before) {
+      deps.schedulePersist?.();
+      deps.afterEffectiveCommit?.();
+    }
     if (afterRef) deps.afterCommit(afterRef);
     return { status: "applied", focusPaneId };
   };

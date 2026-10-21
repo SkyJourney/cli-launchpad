@@ -83,7 +83,6 @@ export function WorkspacePaneView({
   onDetachFile,
   onMoveFile,
   onEditFile,
-  onLoadFile,
   onSaveFile,
   onSplitPane,
   onSplitAndMoveSession,
@@ -255,14 +254,6 @@ export function WorkspacePaneView({
     y: number;
   } | null>(null);
   const [dropActive, setDropActive] = useState(false);
-
-  useEffect(() => {
-    if (activeFileId && !activeFileBuffer) {
-      void onLoadFile(activeFileId).catch((reason) =>
-        toast.error(formatAppError(reason, tRef.current)),
-      );
-    }
-  }, [activeFileBuffer, activeFileId, onLoadFile]);
 
   useEffect(() => {
     const clearDropTarget = () => setDropActive(false);
