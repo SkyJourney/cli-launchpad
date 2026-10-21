@@ -15,6 +15,7 @@ import {
   createInitialHostSnapshot,
   WorkspaceHostStore,
 } from "../host/workspaceHostStore";
+import { createWorkspaceCommandExecutor } from "../host/workspaceCommandExecutor";
 import {
   createWorkspacePersistence,
   type WorkspacePersistenceDeps,
@@ -110,9 +111,18 @@ function makeFixture() {
   }));
   const invalidateDocuments = vi.fn();
   const releaseDocuments = vi.fn();
+  const fixtureExecutor = createWorkspaceCommandExecutor({
+    store,
+    coordinator,
+    addSlot: (live, slot) => ({ ...live, slots: [...live.slots, slot] }),
+    isRestoreInProgress: () => false,
+    afterCommit: () => undefined,
+    newId: () => crypto.randomUUID(),
+  });
   const deps: WorkspacePersistenceDeps = {
     store,
     getCoordinator: () => coordinator,
+    execute: (command) => fixtureExecutor.execute(command),
     getDirectories: () => [DIRECTORY_FIXTURE],
     translate,
     initialPaneId: "pane-1",

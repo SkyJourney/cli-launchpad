@@ -2,13 +2,16 @@ import type { TFunction } from "i18next";
 import type { PtyTerminalHandle } from "../../components/PtyTerminal";
 import type { IsolatedRegistrationFailure } from "../../lib/retryPolicy";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
+import type {
+  CommandOutcome,
+  HostCommand,
+} from "../host/workspaceCommandExecutor";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { createWindowLabel } from "../../lib/windowKinds";
 import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
-  findWorkspacePane,
   listWorkspacePanes,
   hasWorkspaceContent,
 } from "../../lib/ptyWorkspaceLayout";
@@ -55,7 +58,6 @@ import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceCo
 import { writeWindowLaunchParams } from "./windowLaunchParams";
 
 import type { WorkspaceHostStore } from "../host/workspaceHostStore";
-import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import {
   createWorkspaceContentWindow,
   prepareWorkspaceContentHandoff,
@@ -159,6 +161,8 @@ export interface ContentWindowDeps {
   translate: TFunction;
   commitTree: (next: WorkspaceNode) => void;
   setFocusedPane: (paneId: string) => void;
+  /** 窗口类命令的唯一提交入口（m6-096）：分离完成经由它提交树与焦点。 */
+  execute: (command: HostCommand) => CommandOutcome;
   removeSlot: (instanceId: string) => void;
   loadFile: (documentId: string) => Promise<void>;
   waitForFileSave: (documentId: string) => Promise<void>;
@@ -215,6 +219,7 @@ export function latestContentWindowDeps(ref: {
     },
     commitTree: (next) => current().commitTree(next),
     setFocusedPane: (paneId) => current().setFocusedPane(paneId),
+    execute: (command) => current().execute(command),
     removeSlot: (instanceId) => current().removeSlot(instanceId),
     loadFile: (documentId) => current().loadFile(documentId),
     waitForFileSave: (documentId) => current().waitForFileSave(documentId),
@@ -522,15 +527,13 @@ export function createContentWindowOrchestrator(
 
     if (effectiveAction === "accept-detached-owner") {
       if (!advancePendingWindowStage(tracked, "attachedAck")) return;
-      const ownership = deps
-        .getCoordinator()
-        .completeHandoff(
-          ptyContentRef(pending.instanceId),
-          "detachReady",
-          pending.transferId,
-          pending.windowToken,
-        );
-      if (ownership?.outcome !== "changed") {
+      const outcome = deps.execute({
+        type: "completeDetach",
+        ref: ptyContentRef(pending.instanceId),
+        token: pending.transferId,
+        windowToken: pending.windowToken,
+      });
+      if (outcome.status === "ignored") {
         await rollbackHandoffOnce(
           pending.handoffContext,
           pending.handoffPayload,
@@ -551,15 +554,6 @@ export function createContentWindowOrchestrator(
       );
       if (!promoted) return;
       state.handles.pty.set(ptyContentKey(pending.instanceId), pending.window);
-      const content = ptyContentRef(pending.instanceId);
-      const nextTree = reduceWorkspaceTree(deps.store.getLive().tree, {
-        type: "detach",
-        ref: content,
-      });
-      deps.commitTree(nextTree);
-      if (!findWorkspacePane(nextTree, deps.store.getLive().focusedPaneId)) {
-        deps.setFocusedPane(listWorkspacePanes(nextTree)[0].id);
-      }
       pending.resolve();
       return;
     }

@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { addWorkspaceFileToPane } from "../../lib/ptyWorkspaceLayout";
+import { createWorkspaceCommandExecutor } from "../host/workspaceCommandExecutor";
 import { registerPendingWorkspaceContentWindow } from "../../lib/workspaceContentWindowRegistry";
 import { initialPendingStage } from "../../lib/workspaceContentPendingStage";
 import { fileContentKey, ptyContentKey } from "../../lib/workspaceContentKey";
@@ -70,6 +71,14 @@ function makeFixture(options: { withFile?: boolean } = {}) {
     revokeFile: vi.fn(async (_label: string) => undefined),
     emit: vi.fn(async () => undefined),
   };
+  const fixtureExecutor = createWorkspaceCommandExecutor({
+    store,
+    coordinator,
+    addSlot: (live, slot) => ({ ...live, slots: [...live.slots, slot] }),
+    isRestoreInProgress: () => false,
+    afterCommit: () => undefined,
+    newId: () => crypto.randomUUID(),
+  });
   const deps: ContentWindowDeps = {
     store,
     getCoordinator: () => coordinator,
@@ -81,6 +90,7 @@ function makeFixture(options: { withFile?: boolean } = {}) {
         (live) => ({ ...live, focusedPaneId: paneId }),
         "test:focus",
       ),
+    execute: (command) => fixtureExecutor.execute(command),
     removeSlot: vi.fn(),
     loadFile: vi.fn(async () => undefined),
     waitForFileSave: vi.fn(async () => undefined),

@@ -9,7 +9,14 @@ import {
 } from "../../lib/ptyWorkspaceLayout";
 import type { PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
 import type { WorkspacePaneContentRef } from "../../lib/tauri";
-import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
+import {
+  planWorkspaceReturn,
+  reduceWorkspaceTree,
+} from "../../lib/workspaceContentCommand";
+import {
+  isWorkspaceApplyStateCurrent,
+  type WorkspaceApplyStateVersion,
+} from "../../lib/workspaceLayoutPersistence";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import { canChangeWorkspaceContentPane } from "../../lib/workspaceContentLifecycle";
 import type { HostSnapshot, WorkspaceHostStore } from "./workspaceHostStore";
@@ -36,7 +43,31 @@ export type HostCommand =
   | { type: "splitPane"; paneId: string; direction: SplitDirection }
   | { type: "place"; ref: ManagedContentRef }
   | { type: "launch"; slot: PtyWorkspaceSlot }
-  | { type: "closeEmptyPane"; paneId: string };
+  | { type: "closeEmptyPane"; paneId: string }
+  | {
+      type: "completeDetach";
+      ref: ManagedContentRef;
+      token: string;
+      windowToken: string;
+    }
+  | {
+      type: "completeReturn";
+      ref: ManagedContentRef;
+      token: string;
+      requestedPaneId?: string | null;
+      /** 调用方记录的目标 pane（beginReturn 时的协调器记录）；计算出的焦点不同则 `pane-mismatch`，不提交。 */
+      expectedPaneId?: string;
+      whenAlreadyInTree: "activate" | "relocate";
+    }
+  | { type: "reclaim"; ref: ManagedContentRef }
+  | {
+      type: "applyPreset";
+      expected: WorkspaceApplyStateVersion;
+      next: Pick<
+        HostSnapshot,
+        "tree" | "slots" | "documents" | "focusedPaneId"
+      >;
+    };
 
 export type CommandIgnoredReason =
   | "restore-in-progress"
@@ -46,7 +77,11 @@ export type CommandIgnoredReason =
   | "same-pane"
   | "owner-not-pane"
   | "no-change"
-  | "pane-not-empty";
+  | "pane-not-empty"
+  | "handoff-not-current"
+  | "no-target-pane"
+  | "pane-mismatch"
+  | "state-changed";
 
 export type CommandOutcome =
   | { status: "applied"; focusPaneId: string }
@@ -251,6 +286,111 @@ export function createWorkspaceCommandExecutor(
           tree: next,
           treeRevision: l.treeRevision + 1,
           focusedPaneId: focusPaneId,
+        }));
+      }
+      case "completeDetach": {
+        // 树的计算先于握手登记：登记失败时没有任何变更（纯计算不改状态）。
+        const next = reduceWorkspaceTree(live.tree, {
+          type: "detach",
+          ref: command.ref,
+        });
+        const ownership = coordinator.completeHandoff(
+          command.ref,
+          "detachReady",
+          command.token,
+          command.windowToken,
+        );
+        if (ownership?.outcome !== "changed") {
+          return ignored("handoff-not-current");
+        }
+        const focusPaneId = findWorkspacePane(next, live.focusedPaneId)
+          ? live.focusedPaneId
+          : listWorkspacePanes(next)[0].id;
+        return finish("completeDetach", focusPaneId, null, (l) => ({
+          ...l,
+          tree: next,
+          focusedPaneId: focusPaneId,
+        }));
+      }
+      case "completeReturn": {
+        const plan = planWorkspaceReturn(live.tree, {
+          ref: command.ref,
+          requestedPaneId: command.requestedPaneId,
+          focusedPaneId: live.focusedPaneId,
+          whenAlreadyInTree: command.whenAlreadyInTree,
+        });
+        if (!plan) return ignored("no-target-pane");
+        if (
+          command.expectedPaneId !== undefined &&
+          plan.focusPaneId !== command.expectedPaneId
+        ) {
+          return ignored("pane-mismatch");
+        }
+        const ownership = coordinator.completeHandoff(
+          command.ref,
+          "returnReady",
+          command.token,
+        );
+        if (ownership?.outcome !== "changed") {
+          return ignored("handoff-not-current");
+        }
+        return finish("completeReturn", plan.focusPaneId, null, (l) => ({
+          ...l,
+          tree: plan.nextTree,
+          focusedPaneId: plan.focusPaneId,
+        }));
+      }
+      case "reclaim": {
+        // 目标：已含该内容的 pane，否则焦点 pane，否则第一个 pane（与 planWorkspaceReturn 的回退顺序一致）。
+        const panes = listWorkspacePanes(live.tree);
+        const existing = panes.find((pane) =>
+          hasWorkspaceContent(pane, command.ref),
+        );
+        const target =
+          existing ??
+          findWorkspacePane(live.tree, live.focusedPaneId) ??
+          panes[0];
+        if (!target) return ignored("no-target-pane");
+        const next = reduceWorkspaceTree(
+          live.tree,
+          existing
+            ? { type: "activate", ref: command.ref, paneId: existing.id }
+            : { type: "return", ref: command.ref, toPaneId: target.id },
+        );
+        coordinator.ownerEnded(command.ref);
+        coordinator.ensureAttached(command.ref, mainPane(target.id));
+        const focusPaneId = existing?.id ?? target.id;
+        return finish("reclaim", focusPaneId, null, (l) => ({
+          ...l,
+          tree: next,
+          focusedPaneId: focusPaneId,
+        }));
+      }
+      case "applyPreset": {
+        // 陈旧检查先于任何登记：状态已变化时 coordinator 与树都不动。
+        // 保护集合与 HEAD 的 captureApplyState 一致：全部窗口持有的内容（含 returning）。
+        const current = {
+          tree: live.tree,
+          slots: live.slots,
+          focusedPaneId: live.focusedPaneId,
+          detachedContents: coordinator.listWindowOwned(),
+        };
+        if (!isWorkspaceApplyStateCurrent(command.expected, current)) {
+          return ignored("state-changed");
+        }
+        for (const pane of listWorkspacePanes(command.next.tree)) {
+          for (const content of pane.contents) {
+            if (content.kind === "unknown") continue;
+            coordinator.ensureAttached(content, mainPane(pane.id));
+          }
+        }
+        const { next } = command;
+        return finish("applyPreset", next.focusedPaneId, null, (l) => ({
+          ...l,
+          slots: next.slots,
+          documents: next.documents,
+          tree: next.tree,
+          focusedPaneId: next.focusedPaneId,
         }));
       }
     }

@@ -66,7 +66,10 @@ import {
 import { useCloseConfirmation } from "./useCloseConfirmation";
 import { useCoordinatorProjection } from "./useCoordinatorProjection";
 import type { HostResetReason, HostRuntimeSteps } from "./resetHostRuntime";
-import { createWorkspaceCommandExecutor } from "./workspaceCommandExecutor";
+import {
+  createWorkspaceCommandExecutor,
+  type WorkspaceCommandExecutor,
+} from "./workspaceCommandExecutor";
 import {
   WorkspaceHostStore,
   createInitialHostSnapshot,
@@ -195,6 +198,8 @@ export function useWorkspaceRuntime({
   // 布局持久化：hydrate 与保存只经显式入口（挂载、重试、恢复、拖拽结束、卸载）触发；依赖经 persistenceDepsRef 读取最新值（R-FE-1）。
   const directoriesRef = useRef(directories);
   directoriesRef.current = directories;
+  // 执行器与持久化互相需要：持久化先于执行器创建，用这个稳定引用打断环（m6-096，执行器创建后立即写入）。
+  const executorRef = useRef<WorkspaceCommandExecutor | null>(null);
   const persistenceDepsRef = useRef<WorkspacePersistenceDeps | null>(null);
   const [persistence] = useState(() =>
     createWorkspacePersistence(
@@ -247,6 +252,11 @@ export function useWorkspaceRuntime({
   persistenceDepsRef.current = {
     store,
     getCoordinator: () => contentCoordinatorRef.current,
+    execute: (command) => {
+      const executor = executorRef.current;
+      if (!executor) throw new Error("workspace command executor is not ready");
+      return executor.execute(command);
+    },
     getDirectories: () => directoriesRef.current,
     translate: tRef.current,
     initialPaneId,
@@ -365,6 +375,7 @@ export function useWorkspaceRuntime({
       newId: () => crypto.randomUUID(),
     }),
   );
+  executorRef.current = executor;
 
   const loadFile = fileDomain.load;
 
@@ -449,6 +460,7 @@ export function useWorkspaceRuntime({
     translate: tRef.current,
     commitTree,
     setFocusedPane,
+    execute: executor.execute,
     removeSlot,
     loadFile,
     waitForFileSave: (documentId) => fileDomain.waitForSave(documentId),

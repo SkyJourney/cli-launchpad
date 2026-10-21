@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { TFunction } from "i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createWorkspaceCommandExecutor } from "../host/workspaceCommandExecutor";
 
 vi.mock(
   "react-i18next",
@@ -44,6 +45,14 @@ function makeProtocolFixture() {
   const store = new WorkspaceHostStore(createInitialHostSnapshot("pane-1"));
   const coordinator = new WorkspaceContentCoordinator();
   const translate = ((key: string) => key) as unknown as TFunction;
+  const fixtureExecutor = createWorkspaceCommandExecutor({
+    store,
+    coordinator,
+    addSlot: (live, slot) => ({ ...live, slots: [...live.slots, slot] }),
+    isRestoreInProgress: () => false,
+    afterCommit: () => undefined,
+    newId: () => crypto.randomUUID(),
+  });
   const orchestrator = createContentWindowOrchestrator({
     store,
     getCoordinator: () => coordinator,
@@ -55,6 +64,7 @@ function makeProtocolFixture() {
         (live) => ({ ...live, focusedPaneId: paneId }),
         "test:focus",
       ),
+    execute: (command) => fixtureExecutor.execute(command),
     removeSlot: vi.fn(),
     loadFile: vi.fn(async () => undefined),
     waitForFileSave: vi.fn(async () => undefined),

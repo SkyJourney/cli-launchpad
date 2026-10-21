@@ -13,7 +13,6 @@ import { windowKindOf } from "../../lib/windowKinds";
 import { onInboxEvent } from "../../lib/windowInbox";
 import { onContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
-  addWorkspaceFileToPane,
   findWorkspacePane,
   listWorkspacePanes,
   hasWorkspaceContent,
@@ -37,11 +36,7 @@ import { requestWorkspaceFileBufferFlush } from "../../lib/workspaceFileExitFlus
 
 import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
 
-import {
-  planWorkspaceReturn,
-  reduceWorkspaceTree,
-  resolveWorkspaceReturnPaneId,
-} from "../../lib/workspaceContentCommand";
+import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand";
 import {
   attachWorkspaceContentHandoff,
   prepareWorkspaceContentHandoff,
@@ -105,35 +100,22 @@ export function createFileProtocolHandlers(
     const lost = coordinator.listWindowOwned().filter((content) => {
       if (content.kind !== "file") return false;
       const state = coordinator.get(content);
+      // F4（m6-096）：返回途中（returning）窗口崩溃的文件同样要收回，它的归属窗口是 source。
+      if (state?.phase === "returning") {
+        return state.source.windowLabel === windowLabel;
+      }
       return (
         state?.phase === "detached" &&
         state.owner.kind === "window" &&
         state.owner.windowLabel === windowLabel
       );
     });
-    if (lost.length === 0) return;
-    const targetPane =
-      findWorkspacePane(
-        deps.store.getLive().tree,
-        deps.store.getLive().focusedPaneId,
-      ) ?? listWorkspacePanes(deps.store.getLive().tree)[0];
-    let nextTree = deps.store.getLive().tree;
+    // 每个文件各一条收回命令（归属登记、树与焦点在执行器里一次提交）。
     for (const content of lost) {
       if (content.kind !== "file") continue;
-      coordinator.ownerEnded(content);
       state.handles.file.delete(fileContentKey(content.documentId));
-      coordinator.ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: targetPane.id,
-      });
-      nextTree = addWorkspaceFileToPane(
-        nextTree,
-        targetPane.id,
-        content.documentId,
-      );
+      deps.execute({ type: "reclaim", ref: content });
     }
-    deps.commitTree(nextTree);
   };
 
   return {
@@ -268,16 +250,13 @@ export function createFileProtocolHandlers(
             if (!advancePendingWindowStage(pending, "attachedAck")) {
               return;
             }
-            const content = fileContentRef(pending.documentId);
-            const ownership = deps
-              .getCoordinator()
-              .completeHandoff(
-                content,
-                "detachReady",
-                pending.transferId,
-                pending.windowToken,
-              );
-            if (ownership?.outcome !== "changed") {
+            const outcome = deps.execute({
+              type: "completeDetach",
+              ref: fileContentRef(pending.documentId),
+              token: pending.transferId,
+              windowToken: pending.windowToken,
+            });
+            if (outcome.status === "ignored") {
               if (pending.handoffContext) {
                 void rollbackHandoffOnce(
                   pending.handoffContext,
@@ -303,12 +282,6 @@ export function createFileProtocolHandlers(
               expectedWindowLabel: pending.windowLabel,
               toDetached: (record) => record.window,
             });
-            deps.commitTree(
-              reduceWorkspaceTree(deps.store.getLive().tree, {
-                type: "detach",
-                ref: content,
-              }),
-            );
             pending.resolve();
           }),
       },
@@ -649,27 +622,21 @@ export function createFileProtocolHandlers(
               ) {
                 throw new Error(deps.translate("pty.detachedStateChanged"));
               }
-              // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
               // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
+              // 计算、归属登记与树提交都在执行器里完成；归属被拒绝时树保持原样，子窗口仍可重试。
               const recordedPaneId = activeReturn.target.paneId;
-              const plan = planWorkspaceReturn(deps.store.getLive().tree, {
-                ref: content,
+              const outcome = deps.execute({
+                type: "completeReturn",
+                ref: fileContentRef(document.id),
+                token: returnTransferId,
                 requestedPaneId: recordedPaneId,
-                focusedPaneId: deps.store.getLive().focusedPaneId,
+                expectedPaneId: recordedPaneId,
                 whenAlreadyInTree: "relocate",
               });
-              if (!plan || plan.focusPaneId !== recordedPaneId) {
-                throw new Error(deps.translate("pty.workspaceRestoring"));
-              }
-              // 先确认归属变更成立，再改树；被拒绝时树保持原样，子窗口仍可重试。
-              const ownership = deps
-                .getCoordinator()
-                .completeHandoff(
-                  fileContentRef(document.id),
-                  "returnReady",
-                  returnTransferId,
-                );
-              if (ownership?.outcome !== "changed") {
+              if (outcome.status === "ignored") {
+                if (outcome.reason !== "handoff-not-current") {
+                  throw new Error(deps.translate("pty.workspaceRestoring"));
+                }
                 deps
                   .getCoordinator()
                   .failHandoff(
@@ -688,8 +655,6 @@ export function createFileProtocolHandlers(
                   .catch(() => undefined);
                 return;
               }
-              deps.commitTree(plan.nextTree);
-              deps.setFocusedPane(plan.focusPaneId);
               state.handles.file.delete(fileContentKey(document.id));
               await ports
                 .revokeFile(event.payload.windowLabel)

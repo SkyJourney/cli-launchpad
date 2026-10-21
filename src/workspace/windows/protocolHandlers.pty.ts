@@ -41,11 +41,7 @@ import { ptyContentKey, ptyContentRef } from "../../lib/workspaceContentKey";
 
 import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
 
-import {
-  planWorkspaceReturn,
-  reduceWorkspaceTree,
-  resolveWorkspaceReturnPaneId,
-} from "../../lib/workspaceContentCommand";
+import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand";
 import { attachWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 
@@ -66,15 +62,13 @@ export function createPtyProtocolHandlers(
       return;
     }
     if (!advancePendingWindowStage(pending, "attachedAck")) return;
-    const ownership = deps
-      .getCoordinator()
-      .completeHandoff(
-        ptyContentRef(payload.instanceId),
-        "detachReady",
-        pending.transferId,
-        pending.windowToken,
-      );
-    if (ownership?.outcome !== "changed") {
+    const outcome = deps.execute({
+      type: "completeDetach",
+      ref: ptyContentRef(payload.instanceId),
+      token: pending.transferId,
+      windowToken: pending.windowToken,
+    });
+    if (outcome.status === "ignored") {
       void rollbackHandoffOnce(
         pending.handoffContext,
         pending.handoffPayload,
@@ -96,15 +90,6 @@ export function createPtyProtocolHandlers(
       expectedWindowLabel: pending.windowLabel,
       toDetached: (record) => record.window,
     });
-    const content = ptyContentRef(payload.instanceId);
-    const nextTree = reduceWorkspaceTree(deps.store.getLive().tree, {
-      type: "detach",
-      ref: content,
-    });
-    deps.commitTree(nextTree);
-    if (!findWorkspacePane(nextTree, deps.store.getLive().focusedPaneId)) {
-      deps.setFocusedPane(listWorkspacePanes(nextTree)[0].id);
-    }
     pending.resolve();
   };
   const handleDetachedFailed = (
@@ -212,15 +197,6 @@ export function createPtyProtocolHandlers(
         .slots.find((candidate) => candidate.sessionId === sessionId);
       if (!slot) return;
       const content = ptyContentRef(slot.instanceId);
-      const currentTree = deps.store.getLive().tree;
-      const existingPane = listWorkspacePanes(currentTree).find((pane) =>
-        hasWorkspaceContent(pane, content),
-      );
-      const targetPane =
-        existingPane ??
-        findWorkspacePane(currentTree, deps.store.getLive().focusedPaneId) ??
-        listWorkspacePanes(currentTree)[0];
-      if (!targetPane) return;
       const pending = takePendingWorkspaceContentWindow(
         state.pending.pty,
         ptyContentKey(slot.instanceId),
@@ -229,21 +205,11 @@ export function createPtyProtocolHandlers(
       const detached = state.handles.pty.get(ptyContentKey(slot.instanceId));
       state.handles.pty.delete(ptyContentKey(slot.instanceId));
       if (detached) void detached.destroy().catch(() => undefined);
-      deps.getCoordinator().ownerEnded(content);
-      deps.getCoordinator().ensureAttached(content, {
-        kind: "pane",
-        windowLabel: "main",
-        paneId: targetPane.id,
-      });
-      const nextTree = reduceWorkspaceTree(
-        currentTree,
-        existingPane
-          ? { type: "activate", ref: content, paneId: existingPane.id }
-          : { type: "return", ref: content, toPaneId: targetPane.id },
-      );
-      deps.commitTree(nextTree);
-      deps.setFocusedPane(existingPane?.id ?? targetPane.id);
-      deps.openDirectory(slot.directoryId);
+      // 收回（归属登记、树与焦点的提交）由执行器一次完成；没有可用 pane 时不改任何状态。
+      const reclaimed = deps.execute({ type: "reclaim", ref: content });
+      if (reclaimed.status === "applied") {
+        deps.openDirectory(slot.directoryId);
+      }
     } finally {
       ownerLostRecoveries.delete(sessionId);
     }
@@ -443,27 +409,26 @@ export function createPtyProtocolHandlers(
       ) {
         throw new Error(deps.translate("pty.detachedStateChanged"));
       }
-      // 在最新树上计算；从这里到 commitTree 之间不得出现 await。
       // 目标 pane 以 beginReturn 时协调器记录的为准（returnReady 把 owner 设为它）。
+      // 计算、归属登记与树提交都在执行器里完成；被拒绝时抛出，由 catch 回滚终端交接并通知子窗口。
       const recordedPaneId = activeReturn.target.paneId;
-      const plan = planWorkspaceReturn(deps.store.getLive().tree, {
+      const outcome = deps.execute({
+        type: "completeReturn",
         ref: returningContent,
+        token: payload.token,
         requestedPaneId: recordedPaneId,
-        focusedPaneId: deps.store.getLive().focusedPaneId,
+        expectedPaneId: recordedPaneId,
         whenAlreadyInTree: "activate",
       });
-      if (!plan || plan.focusPaneId !== recordedPaneId) {
-        throw new Error(deps.translate("pty.workspaceRestoring"));
+      if (outcome.status === "ignored") {
+        throw new Error(
+          deps.translate(
+            outcome.reason === "handoff-not-current"
+              ? "pty.detachedStateChanged"
+              : "pty.workspaceRestoring",
+          ),
+        );
       }
-      // 先确认归属变更成立，再改树；被拒绝时抛出，由 catch 回滚终端交接并通知子窗口。
-      const ownership = deps
-        .getCoordinator()
-        .completeHandoff(returningContent, "returnReady", payload.token);
-      if (ownership?.outcome !== "changed") {
-        throw new Error(deps.translate("pty.detachedStateChanged"));
-      }
-      deps.commitTree(plan.nextTree);
-      deps.setFocusedPane(plan.focusPaneId);
       state.handles.pty.delete(ptyContentKey(payload.instanceId));
       deps.openDirectory(slot.directoryId);
       try {

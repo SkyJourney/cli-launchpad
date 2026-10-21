@@ -10,6 +10,10 @@ import {
   type WorkspaceLayoutSlot,
 } from "../../lib/tauri";
 import type { PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
+import type {
+  CommandOutcome,
+  HostCommand,
+} from "../host/workspaceCommandExecutor";
 import { toWorkspaceLayoutSlot } from "./workspaceLayoutSlot";
 import {
   createPersistenceStatus,
@@ -39,7 +43,6 @@ import {
 import {
   createWorkspacePane,
   type WorkspaceNode,
-  listWorkspacePanes,
 } from "../../lib/ptyWorkspaceLayout";
 
 import { type AppErrorState, toAppErrorState } from "../../lib/appErrors";
@@ -81,6 +84,8 @@ export interface RuntimeResetNext {
 export interface WorkspacePersistenceDeps {
   store: WorkspaceHostStore;
   getCoordinator: () => WorkspaceContentCoordinator;
+  /** 命名布局应用的提交入口（m6-096）：状态检查、登记与树提交都在执行器里完成。 */
+  execute: (command: HostCommand) => CommandOutcome;
   /** Latest project list; read at save time, never a trigger. */
   getDirectories: () => Directory[] | undefined;
   translate: TFunction;
@@ -166,6 +171,7 @@ export function latestPersistenceDeps(
   return {
     store,
     getCoordinator: () => current().getCoordinator(),
+    execute: (command) => current().execute(command),
     getDirectories: () => current().getDirectories(),
     get translate() {
       return current().translate;
@@ -472,29 +478,23 @@ export function createWorkspacePersistence(
       ]),
     });
 
-    // 必须在上面的状态一致性检查之后登记，否则检查失败时 coordinator 已被污染。
-    for (const pane of listWorkspacePanes(computed.restoredTree)) {
-      for (const content of pane.contents) {
-        if (content.kind === "unknown") continue;
-        deps.getCoordinator().ensureAttached(content, {
-          kind: "pane",
-          windowLabel: "main",
-          paneId: pane.id,
-        });
-      }
-    }
-
-    deps.releaseDocuments(
-      droppedFileDocumentIds(currentDocuments, computed.nextDocuments),
-    );
-    patchHost(
-      {
+    // 命令内部再次做陈旧检查，通过后才登记 coordinator 并提交；被拒绝时树、槽位与 coordinator 都不变。
+    const outcome = deps.execute({
+      type: "applyPreset",
+      expected: expectedState,
+      next: {
+        tree: computed.restoredTree,
         slots: computed.restoredSlots,
         documents: computed.nextDocuments,
-        tree: computed.restoredTree,
         focusedPaneId: computed.focusedPaneId,
       },
-      "applyWorkspaceLayoutPreset:apply",
+    });
+    if (outcome.status === "ignored") {
+      throw new Error(deps.translate("pty.layoutChangedDuringApply"));
+    }
+    // 提交之后再释放被丢弃的文件文档：只释放已不在新文档集合中的编辑资源（2.1 节记录的顺序差异）。
+    deps.releaseDocuments(
+      droppedFileDocumentIds(currentDocuments, computed.nextDocuments),
     );
   };
 
