@@ -15,6 +15,7 @@
   ],
   "required": {
     "all": [
+      "services::backup_service::tests::only_the_snapshot_runs_under_the_connection_lock",
       "models::install::tests::install_plan_serializes_without_an_effects_field",
       "models::install::tests::install_plan_ignores_a_legacy_effects_key",
       "contracts::command_manifest_has_no_companion_caller_check_file",

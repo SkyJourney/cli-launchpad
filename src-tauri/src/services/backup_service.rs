@@ -48,15 +48,18 @@ pub fn create(
 }
 
 /// Creates a backup from the business connection. Runs on a blocking thread (the command wraps it
-/// in `blocking_unbounded`); the connection lock is held for the whole backup.
+/// in `blocking_unbounded`). Only the snapshot itself runs under the connection lock; the staging
+/// and the publishing steps (validation, fsync, rename, manifest, pruning) run outside it.
 pub fn create_with(
     db: &Db,
     paths: &StoragePaths,
     reason: BackupReason,
 ) -> Result<BackupManifest, AppError> {
-    db.with_sync("backup.create", |connection| {
-        Ok(create(connection, paths, reason)?)
-    })
+    let staged = stage(paths, reason)?;
+    let schema_version = db.with_sync("backup.create", |connection| {
+        Ok(snapshot(connection, &staged)?)
+    })?;
+    Ok(publish(paths, staged, schema_version, None)?)
 }
 
 fn create_protecting(
@@ -65,34 +68,72 @@ fn create_protecting(
     reason: BackupReason,
     protected_id: Option<&str>,
 ) -> Result<BackupManifest> {
+    let staged = stage(paths, reason)?;
+    let schema_version = snapshot(connection, &staged)?;
+    publish(paths, staged, schema_version, protected_id)
+}
+
+/// A backup whose snapshot is being written to a temporary file.
+struct StagedBackup {
+    id: String,
+    created_at_ms: i64,
+    reason: BackupReason,
+    filename: String,
+    database_path: PathBuf,
+    temporary_path: PathBuf,
+}
+
+/// Picks the names and clears a stale temporary file. No database lock is needed.
+fn stage(paths: &StoragePaths, reason: BackupReason) -> Result<StagedBackup> {
     let (created_at_ms, unique_timestamp) = timestamps()?;
     let id = format!("{unique_timestamp}-{}", reason.as_str());
     let filename = format!("cli-launchpad-{id}.db");
     let database_path = paths.backup_database_dir.join(&filename);
     let temporary_path = database_path.with_extension("db.tmp");
-
     if temporary_path.exists() {
         fs::remove_file(&temporary_path)?;
     }
-    connection
-        .backup(DatabaseName::Main, &temporary_path, None)
-        .context("无法生成数据库备份")?;
-    validate_database(&temporary_path)?;
-    sync_file(&temporary_path)?;
-    fs::rename(&temporary_path, &database_path)?;
-
-    let schema_version = connection::schema_version(connection)?;
-    let manifest = BackupManifest {
+    Ok(StagedBackup {
         id,
         created_at_ms,
         reason,
+        filename,
+        database_path,
+        temporary_path,
+    })
+}
+
+/// The one step that must hold the connection: a consistent copy plus the schema version the copy
+/// was taken at. The copy itself is written to the staged temporary file.
+fn snapshot(connection: &Connection, staged: &StagedBackup) -> Result<i64> {
+    connection
+        .backup(DatabaseName::Main, &staged.temporary_path, None)
+        .context("无法生成数据库备份")?;
+    connection::schema_version(connection).map_err(Into::into)
+}
+
+/// Validates, syncs and renames the snapshot into place, then writes its manifest and prunes old
+/// backups. Runs without the connection lock.
+fn publish(
+    paths: &StoragePaths,
+    staged: StagedBackup,
+    schema_version: i64,
+    protected_id: Option<&str>,
+) -> Result<BackupManifest> {
+    validate_database(&staged.temporary_path)?;
+    sync_file(&staged.temporary_path)?;
+    fs::rename(&staged.temporary_path, &staged.database_path)?;
+    let manifest = BackupManifest {
+        id: staged.id,
+        created_at_ms: staged.created_at_ms,
+        reason: staged.reason,
         schema_version,
-        database_filename: filename,
-        size_bytes: fs::metadata(&database_path)?.len(),
+        database_filename: staged.filename,
+        size_bytes: fs::metadata(&staged.database_path)?.len(),
     };
     write_manifest(paths, &manifest)?;
     prune(paths, protected_id)?;
-    log::info!("database backup created reason={}", reason.as_str());
+    log::info!("database backup created reason={}", staged.reason.as_str());
     Ok(manifest)
 }
 
@@ -295,6 +336,34 @@ fn prune(paths: &StoragePaths, protected_id: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D6（m6-096 之后的收尾）：数据库锁内只能有快照步骤；校验、同步、改名、清单与清理都在锁外。
+    #[test]
+    fn only_the_snapshot_runs_under_the_connection_lock() {
+        let source = include_str!("backup_service.rs").replace("\r\n", "\n");
+        let body = &source[source
+            .find("pub fn create_with(")
+            .expect("create_with exists")..];
+        let locked = &body[body.find("with_sync(").expect("the lock is taken")..];
+        let locked = &locked[..locked.find(")?;").expect("the locked closure ends")];
+        assert!(
+            locked.contains("snapshot("),
+            "the snapshot is the locked step"
+        );
+        for step in [
+            "fs::",
+            "validate_database",
+            "sync_file",
+            "write_manifest",
+            "prune(",
+            "metadata",
+        ] {
+            assert!(
+                !locked.contains(step),
+                "{step} must run after the lock is released"
+            );
+        }
+    }
     use crate::db::{app_setting_repo, session_search_repo};
     use crate::db::{connection, directory_repo};
     use crate::models::app_setting::CloseBehavior;
