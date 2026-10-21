@@ -19,9 +19,14 @@ import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog"
 import {
   type AppErrorState,
   formatAppErrorState,
+  getAppErrorCode,
   toAppErrorState,
 } from "./lib/appErrors";
-import { parseExitRequestedPayload } from "./lib/exitRequest";
+import {
+  exitCountsGrew,
+  type ExitImpactsView,
+  parseExitRequestedPayload,
+} from "./lib/exitRequest";
 import {
   PtyWorkspaceProvider,
   PtyWorkspaceRegion,
@@ -68,14 +73,13 @@ import { useThemeSync } from "./hooks/useThemeSync";
 import { useWindowLevelBehaviors } from "./hooks/useWindowLevelBehaviors";
 import { type ViewName, useAppStore } from "./store/appStore";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
-import { confirmAppExit } from "./lib/tauri";
+import { confirmAppExit, reportExitImpacts } from "./lib/tauri";
 import { onInboxEvent } from "./lib/windowInbox";
 import { ImpactTitleList } from "./components/ImpactTitleList";
 import { ImpactDialogActions } from "./components/ImpactDialogActions";
 import { summarizeExitImpacts } from "./workspace/impacts/impactSummary";
 import {
   collectAppExitImpacts,
-  shouldExitWithoutPrompt,
   type AppExitRequest,
 } from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
@@ -86,6 +90,16 @@ import {
   readFileLaunchParams,
   readPtyLaunchParams,
 } from "./workspace/windows/windowLaunchParams";
+
+/** m6-101：把 Rust 下发的退出影响转成对话框状态（数字只来自 Rust）。 */
+function requestFromView(view: ExitImpactsView): AppExitRequest {
+  return {
+    requestId: view.requestId,
+    ptyCount: view.ptyCount,
+    executionTaskCount: view.executionTaskCount,
+    dirtyFiles: view.dirtyFiles,
+  };
+}
 
 export function App() {
   const { t } = useTranslation();
@@ -187,12 +201,10 @@ function AppContent() {
       void collectExitImpacts(ptyCount)
         .then(async (collected) => {
           if (exitRequestIdRef.current !== requestId) return;
-          const impacts: AppExitRequest = {
-            ...collected,
-            requestId,
-            executionTaskCount,
-          };
-          if (shouldExitWithoutPrompt(impacts)) {
+          // m6-101：计数与是否需要询问都由 Rust 重算并下发；事件载荷不再决定退出方式。
+          const view = await reportExitImpacts(requestId, collected.dirtyFiles);
+          if (exitRequestIdRef.current !== requestId) return;
+          if (!view.requiresPrompt) {
             setExitPending(true);
             try {
               await confirmAppExit(requestId);
@@ -201,14 +213,23 @@ function AppContent() {
               setExitPending(false);
               // 过期请求的失败不得覆盖当前对话框（R-EXIT-1）。
               if (exitRequestIdRef.current !== requestId) return;
-              // 后端拒绝静默退出（例如检查之后又启动了 PTY）：恢复为可操作的对话框，
-              // 不能停在“终止中”让两个按钮都被禁用。
-              setExitRequest(impacts);
+              if (getAppErrorCode(error) === "exit.impacts_changed") {
+                // 静默确认之后有了新的运行中工作：不显示错误，改为带新数字的对话框。
+                await reportExitImpacts(requestId, collected.dirtyFiles)
+                  .then((fresh) => {
+                    if (exitRequestIdRef.current === requestId)
+                      setExitRequest(requestFromView(fresh));
+                  })
+                  .catch(() => undefined);
+                return;
+              }
+              // 后端拒绝静默退出：恢复为可操作的对话框，不能停在“终止中”让两个按钮都被禁用。
+              setExitRequest(requestFromView(view));
               setExitError(toAppErrorState(error));
             }
             return;
           }
-          setExitRequest(impacts);
+          setExitRequest(requestFromView(view));
         })
         .catch((error) => {
           if (exitRequestIdRef.current !== requestId) return;
@@ -240,14 +261,33 @@ function AppContent() {
 
   // requestId 必须来自对话框展示的那次请求（exitRequest.requestId），不得读取最新收到的请求。
   const quitWithActiveSessions = async (requestId: string) => {
+    const shown = exitRequest;
+    const shownFiles = shown?.dirtyFiles ?? [];
     setExitPending(true);
     setExitError(null);
     try {
+      // m6-101：确认前重新上报；只要 Rust 的计数比对话框展示的更大，就不确认，改为带新数字的对话框。
+      const fresh = await reportExitImpacts(requestId, shownFiles);
+      if (exitRequestIdRef.current !== requestId) return;
+      if (shown && exitCountsGrew(shown, fresh)) {
+        setExitRequest(requestFromView(fresh));
+        setExitPending(false);
+        return;
+      }
       await confirmAppExit(requestId);
     } catch (error) {
       setExitPending(false);
       // 确认的请求已被新请求取代：失败只属于旧对话框，不得显示在新对话框上。
       if (exitRequestIdRef.current !== requestId) return;
+      if (getAppErrorCode(error) === "exit.impacts_changed") {
+        await reportExitImpacts(requestId, shownFiles)
+          .then((fresh) => {
+            if (exitRequestIdRef.current === requestId)
+              setExitRequest(requestFromView(fresh));
+          })
+          .catch(() => undefined);
+        return;
+      }
       setExitError(toAppErrorState(error));
     }
   };

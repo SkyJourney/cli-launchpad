@@ -11,6 +11,9 @@ use crate::models::window_kind::{WindowKind, WindowLabel};
 pub struct AppExitGate {
     authorized_at: Mutex<Option<Instant>>,
     pending_request: Mutex<PendingRequest>,
+    /// The impacts Rust reported for the pending request (m6-101). Lock order: `pending_request`
+    /// first, then `reported`.
+    reported: Mutex<Option<(String, ReportedImpacts)>>,
 }
 
 /// The newest exit request and whether its confirmation is currently terminating PTY sessions.
@@ -44,6 +47,21 @@ const AUTHORIZATION_TTL: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExitRequest {
     pub id: String,
+}
+
+/// Live counts that the exit confirmation covers (m6-101).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExitActivity {
+    pub pty_count: usize,
+    pub execution_task_count: usize,
+}
+
+/// What Rust reported for a pending request: the counts it recomputed and the dirty file count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportedImpacts {
+    pub activity: ExitActivity,
+    pub dirty_file_count: usize,
+    pub requires_prompt: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +105,9 @@ impl AppExitGate {
             }
             let id = uuid::Uuid::new_v4().to_string();
             pending.id = Some(id.clone());
+            if let Ok(mut reported) = self.reported.lock() {
+                *reported = None;
+            }
             return ExitRequest { id };
         }
         ExitRequest {
@@ -139,12 +160,59 @@ impl AppExitGate {
             }
             pending.id = None;
         }
+        if let Ok(mut reported) = self.reported.lock() {
+            *reported = None;
+        }
         self.authorize();
         Ok(())
     }
+
+    /// `Ok` only when `request_id` is the pending request (m6-101: checked before the payload).
+    pub(crate) fn check_pending(&self, request_id: &str) -> Result<(), ExitConfirmError> {
+        let pending = self
+            .pending_request
+            .lock()
+            .map_err(|_| ExitConfirmError::NoPendingRequest)?;
+        match pending.id.as_deref() {
+            None => Err(ExitConfirmError::NoPendingRequest),
+            Some(current) if current != request_id => Err(ExitConfirmError::RequestMismatch),
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// Records the impacts for the pending request; a later report replaces the earlier one.
+    pub(crate) fn record_report(
+        &self,
+        request_id: &str,
+        reported: ReportedImpacts,
+    ) -> Result<(), ExitConfirmError> {
+        let pending = self
+            .pending_request
+            .lock()
+            .map_err(|_| ExitConfirmError::NoPendingRequest)?;
+        match pending.id.as_deref() {
+            None => return Err(ExitConfirmError::NoPendingRequest),
+            Some(current) if current != request_id => {
+                return Err(ExitConfirmError::RequestMismatch)
+            }
+            Some(_) => {}
+        }
+        if let Ok(mut slot) = self.reported.lock() {
+            *slot = Some((request_id.to_string(), reported));
+        }
+        Ok(())
+    }
+
+    /// The impacts reported for `request_id`, if that request is the one reported on.
+    pub(crate) fn reported_for(&self, request_id: &str) -> Option<ReportedImpacts> {
+        let slot = self.reported.lock().ok()?;
+        slot.as_ref()
+            .filter(|(id, _)| id == request_id)
+            .map(|(_, reported)| reported.clone())
+    }
 }
 
-fn exit_confirm_error(error: ExitConfirmError) -> AppError {
+pub(crate) fn exit_confirm_error(error: ExitConfirmError) -> AppError {
     match error {
         ExitConfirmError::NoPendingRequest => {
             AppError::coded(ErrorCode::ExitNoPendingRequest, "没有待决的退出请求")
@@ -602,6 +670,72 @@ mod tests {
             decide_exit_request(&AppExitGate::default(), 3, 0, true),
             ExitRequestDecision::PreventAndAskMain { .. }
         ));
+    }
+
+    use super::{ExitActivity, ExitConfirmError, ReportedImpacts};
+
+    fn reported_counts(pty: usize, exec: usize) -> ReportedImpacts {
+        ReportedImpacts {
+            activity: ExitActivity {
+                pty_count: pty,
+                execution_task_count: exec,
+            },
+            dirty_file_count: 0,
+            requires_prompt: true,
+        }
+    }
+
+    #[test]
+    fn a_new_request_discards_the_previous_report() {
+        let gate = AppExitGate::default();
+        let a = gate.begin_request().id;
+        let reported = reported_counts(1, 0);
+        assert!(gate.record_report(&a, reported.clone()).is_ok());
+        assert_eq!(gate.reported_for(&a), Some(reported.clone()));
+        gate.authorize();
+        let b = gate.begin_request().id;
+        assert!(gate.reported_for(&a).is_none());
+        assert!(gate.reported_for(&b).is_none());
+        assert_eq!(
+            gate.record_report(&a, reported),
+            Err(ExitConfirmError::RequestMismatch)
+        );
+        // Beginning a request does not clear an authorization already granted.
+        assert!(gate.consume_authorization());
+    }
+
+    #[test]
+    fn a_report_needs_the_pending_request_and_a_later_report_replaces_it() {
+        let gate = AppExitGate::default();
+        let reported = reported_counts(1, 0);
+        let later = reported_counts(0, 2);
+        assert_eq!(
+            gate.record_report("x", reported.clone()),
+            Err(ExitConfirmError::NoPendingRequest)
+        );
+        let id = gate.begin_request().id;
+        assert_eq!(
+            gate.record_report("other", reported.clone()),
+            Err(ExitConfirmError::RequestMismatch)
+        );
+        assert!(gate.reported_for(&id).is_none());
+        assert!(gate.record_report(&id, reported).is_ok());
+        assert!(gate.record_report(&id, later.clone()).is_ok());
+        assert_eq!(gate.reported_for(&id), Some(later));
+        assert!(gate.reported_for("other").is_none());
+    }
+
+    #[test]
+    fn a_confirmed_request_clears_its_report() {
+        let gate = AppExitGate::default();
+        let id = gate.begin_request().id;
+        gate.record_report(&id, reported_counts(1, 0)).unwrap();
+        assert!(gate.confirm("wrong").is_err());
+        assert!(gate.reported_for(&id).is_some());
+        assert!(gate.confirm(&id).is_ok());
+        assert!(gate.reported_for(&id).is_none());
+        assert!(gate.pending_request_id().is_none());
+        assert!(gate.consume_authorization());
     }
 
     #[test]

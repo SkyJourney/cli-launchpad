@@ -6,6 +6,12 @@ type LocaleShape<T> = {
 
 export const fr = {
   errors: {
+    exitReportInvalid:
+      "Le rapport des conséquences de la fermeture était invalide. Réessayez de quitter.",
+    exitImpactsNotReported:
+      "Les conséquences de la fermeture n’ont pas encore été signalées. Réessayez de quitter.",
+    exitImpactsChanged:
+      "Les conséquences de la fermeture ont changé (nouvelle activité en cours). Veuillez confirmer à nouveau.",
     fileNotFound: "Fichier introuvable.",
     fileTooLarge: "Le fichier dépasse la taille autorisée.",
     ptySessionNotFound: "La session de terminal n'existe pas ou est terminée.",

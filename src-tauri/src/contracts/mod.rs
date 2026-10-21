@@ -1244,7 +1244,7 @@ fn golden_fixtures_match_serialized_dtos() {
         }
     }
 
-    assert_eq!(expected_files.len(), 38, "fixture 映射表必须恰好 38 个文件");
+    assert_eq!(expected_files.len(), 39, "fixture 映射表必须恰好 39 个文件");
     let found: BTreeSet<String> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
         .map(|entry| entry.expect("read fixture entry").path())
@@ -5247,4 +5247,126 @@ fn window_label_helpers_have_no_dead_code_allowance() {
     assert!(text.contains("pub fn is_detached_window_label"));
     // 反向自检：违规样例必须被判定为含标注。
     assert!(allows_dead_code("#[allow(dead_code)] pub fn x() {}"));
+}
+
+#[test]
+fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts() {
+    let command = production_text(include_str!("../commands/pty_session.rs"));
+    const APP_COMMANDS: &str = include_str!("../../../contracts/app-commands.json");
+    const DEFAULT_CAPABILITY: &str = include_str!("../../capabilities/default.json");
+    const TERMINAL_CAPABILITY: &str = include_str!("../../capabilities/terminal-window.json");
+    const WORKSPACE_CAPABILITY: &str =
+        include_str!("../../capabilities/workspace-content-window.json");
+
+    // (1) registered in the command contract, main window only (the contract records callerCheck and kinds)
+    let entry = APP_COMMANDS
+        .find("\"report_exit_impacts\"")
+        .expect("report_exit_impacts is listed in contracts/app-commands.json");
+    let entry = &APP_COMMANDS[entry..entry + 120.min(APP_COMMANDS.len() - entry)];
+    assert!(
+        entry.contains("\"require\""),
+        "callerCheck must be require: {entry}"
+    );
+    assert!(
+        entry.contains("[\"main\"]"),
+        "only the main window may report: {entry}"
+    );
+
+    // (2) capability: granted to the main window only
+    assert!(DEFAULT_CAPABILITY.contains("allow-report-exit-impacts"));
+    assert!(
+        !TERMINAL_CAPABILITY.contains("allow-report-exit-impacts"),
+        "terminal windows must not report exit impacts"
+    );
+    assert!(
+        !WORKSPACE_CAPABILITY.contains("allow-report-exit-impacts"),
+        "content windows must not report exit impacts"
+    );
+
+    // (3) the signature takes no client-supplied counts
+    let start = command
+        .find("pub async fn report_exit_impacts(")
+        .expect("command exists");
+    let params_end = command[start..]
+        .find(") -> Result<")
+        .expect("parameter list ends");
+    let params = &command[start..start + params_end];
+    let order = [
+        "caller:",
+        "exit_gate:",
+        "lifecycle:",
+        "request_id:",
+        "dirty_files:",
+    ];
+    let mut last = 0;
+    for name in order {
+        let at = params
+            .find(name)
+            .unwrap_or_else(|| panic!("report_exit_impacts must take `{name}`"));
+        assert!(at >= last, "parameter `{name}` is out of order");
+        last = at;
+    }
+    assert!(
+        !params.contains("count"),
+        "no client-supplied counts: {params}"
+    );
+    assert!(!params.contains("WebviewWindow") && !params.contains("Window<"));
+
+    // (4) the body checks the caller first and never touches the database or blocks
+    let body_start = start + command[start..].find('{').expect("body starts");
+    let body_end = body_start + command[body_start..].find("\n}\n").expect("body ends");
+    let body = &command[body_start + 1..body_end];
+    let first = body
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    assert_eq!(first.trim(), "caller.require(&[WindowKind::Main])?;");
+    for forbidden in [".await", "with_connection", ".call(", "with_sync"] {
+        assert!(
+            !body.contains(forbidden),
+            "report_exit_impacts must not contain `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn confirm_app_exit_goes_through_confirm_with_impacts() {
+    let command = production_text(include_str!("../commands/pty_session.rs"));
+    let start = command
+        .find("pub async fn confirm_app_exit(")
+        .expect("command exists");
+    let rest = &command[start..];
+    let end = rest[1..]
+        .find("#[tauri::command]")
+        .map(|i| i + 1)
+        .unwrap_or(rest.len());
+    let function = &rest[..end];
+
+    assert!(
+        function.contains("confirm_with_impacts("),
+        "confirm must check the reported impacts"
+    );
+    assert!(function.contains("Operation::Exit"));
+    assert!(function.contains("caller.require("));
+    assert!(
+        !function.contains("confirm_exit_with("),
+        "the command must not bypass the impact check"
+    );
+    let exit = function.find("Operation::Exit").expect("exit permit");
+    let check = function
+        .find("confirm_with_impacts(")
+        .expect("impact check");
+    assert!(
+        check > exit,
+        "the impact check runs after the Exit permit is taken"
+    );
+
+    let report_start = command
+        .find("pub async fn report_exit_impacts(")
+        .expect("report command exists");
+    let report = &command[report_start..];
+    assert!(
+        report.contains("exit_impacts::report("),
+        "report delegates to exit_impacts::report"
+    );
 }

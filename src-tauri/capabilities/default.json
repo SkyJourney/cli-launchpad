@@ -57,6 +57,7 @@
     "allow-report-window-sync-failure",
     "allow-terminate-pty-session",
     "allow-confirm-app-exit",
+    "allow-report-exit-impacts",
     "allow-subscribe-window-inbox",
     "allow-send-window-message",
     "allow-list-directories",

@@ -162,6 +162,29 @@ export function createBackend(
   };
 }
 
+/** m6-101 的默认响应：计数来自事件载荷（非有限数按 0），脏文件原样回显，requiresPrompt 与 Rust 的规则一致。 */
+function echoExitImpacts(args: { requestId: string; dirtyFiles: unknown[] }) {
+  const payload = (tauriMock.lastInboxPayload("app-exit-requested") ?? {}) as {
+    ptyCount?: unknown;
+    executionTaskCount?: unknown;
+  };
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : 0;
+  const ptyCount = count(payload.ptyCount);
+  const executionTaskCount = count(payload.executionTaskCount);
+  const dirtyFiles = args.dirtyFiles;
+  return {
+    requestId: args.requestId,
+    ptyCount,
+    executionTaskCount,
+    dirtyFiles,
+    requiresPrompt:
+      ptyCount > 0 || executionTaskCount > 0 || dirtyFiles.length > 0,
+  };
+}
+
 export function installBackend(backend: HostBackend) {
   const readFile = (relativePath: string) => {
     const file = backend.files.get(relativePath);
@@ -194,6 +217,8 @@ export function installBackend(backend: HostBackend) {
         return readFile("a.txt");
       case "save_granted_text_file":
         return saveFile(args);
+      case "report_exit_impacts":
+        return echoExitImpacts(args);
       case "grant_content_window_file":
       case "revoke_content_window_file":
       case "confirm_app_exit":

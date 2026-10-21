@@ -490,6 +490,8 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       "workspace-layout-save-result.json",
       "app-error.json",
       "exit-requested-payload.json",
+      // m6-101: covered by the exit impacts parser test (FD-1) and the Rust golden fixture.
+      "exit-impacts-view.json",
       "event-workspace-content-window-lost.json",
       "event-pty-session-owner-lost.json",
       "event-inbox-message.json",
@@ -514,9 +516,9 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       ...COVERED_ELSEWHERE,
     ]);
     expect(all.filter((file) => !known.has(file))).toEqual([]);
-    expect(all.length).toBe(38);
+    expect(all.length).toBe(39);
     expect(
       STRUCTS.length + VARIANT_TESTS.length + COVERED_ELSEWHERE.length,
-    ).toBe(38);
+    ).toBe(39);
   });
 });

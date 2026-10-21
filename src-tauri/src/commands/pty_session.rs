@@ -13,6 +13,7 @@ use crate::{
     },
     services::{
         app_lifecycle::{AppExitGate, AppLifecycle, Operation},
+        exit_impacts::{ExitImpactsView, ReportedDirtyFile},
         launch_service,
         project_directory::ProjectDirectory,
         pty_session_service::PtySessionManager,
@@ -263,6 +264,19 @@ pub async fn reattach_pty_session(
     .await
 }
 
+/// m6-101：主窗口上报未保存文件；PTY 数与执行任务数由 Rust 重算，不接受调用方提供的数字。
+#[tauri::command]
+pub async fn report_exit_impacts(
+    caller: CallerWindow,
+    exit_gate: State<'_, AppExitGate>,
+    lifecycle: State<'_, AppLifecycle>,
+    request_id: String,
+    dirty_files: Vec<ReportedDirtyFile>,
+) -> Result<ExitImpactsView, AppError> {
+    caller.require(&[WindowKind::Main])?;
+    crate::services::exit_impacts::report(&exit_gate, &lifecycle, &request_id, dirty_files)
+}
+
 #[tauri::command]
 pub async fn confirm_app_exit(
     caller: CallerWindow,
@@ -276,16 +290,23 @@ pub async fn confirm_app_exit(
     let exit_permit = lifecycle.admit(Operation::Exit)?;
     let starts_lifecycle = lifecycle.inner().clone();
     let sessions = state.inner().clone();
+    let counts_lifecycle = lifecycle.inner().clone();
     let blocking_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let exit_gate = blocking_app.state::<AppExitGate>();
-        crate::services::app_lifecycle::confirm_exit_with(&exit_gate, &request_id, || {
-            crate::services::exit_cleanup::terminate_ptys_after_starts_drain(
-                &starts_lifecycle,
-                &sessions,
-                std::time::Duration::from_secs(3),
-            )
-        })
+        // m6-101：核对上报的影响之后才终止；核对失败时请求与上报都保持待决。
+        crate::services::exit_impacts::confirm_with_impacts(
+            &exit_gate,
+            &counts_lifecycle,
+            &request_id,
+            || {
+                crate::services::exit_cleanup::terminate_ptys_after_starts_drain(
+                    &starts_lifecycle,
+                    &sessions,
+                    std::time::Duration::from_secs(3),
+                )
+            },
+        )
     })
     .await
     .map_err(|error| {

@@ -1,6 +1,11 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invokeApp } from "./invokeApp";
 import type { PathSemantics } from "./pathKey";
+import {
+  parseExitImpactsView,
+  type ExitImpactsView,
+  type ReportedDirtyFile,
+} from "./exitRequest";
 
 export type { PathSemantics };
 
@@ -825,6 +830,21 @@ export function terminatePtySession(sessionId: string) {
 
 export function confirmAppExit(requestId: string) {
   return invokeApp<void>("confirm_app_exit", { requestId });
+}
+
+/** m6-101：上报未保存文件，返回 Rust 重算后的退出影响；形状或请求 id 不符时拒绝。 */
+export function reportExitImpacts(
+  requestId: string,
+  dirtyFiles: ReportedDirtyFile[],
+): Promise<ExitImpactsView> {
+  return invokeApp<unknown>("report_exit_impacts", {
+    requestId,
+    dirtyFiles,
+  }).then((raw) => {
+    const view = parseExitImpactsView(raw, requestId);
+    if (!view) throw new Error("malformed exit impacts view");
+    return view;
+  });
 }
 
 export interface WindowInboxSource {

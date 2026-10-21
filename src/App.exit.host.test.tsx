@@ -521,3 +521,126 @@ describe("save all before exit (m6-108)", () => {
     expect(host!.errors).toEqual([]);
   });
 });
+
+describe("exit impacts reported by Rust (m6-101)", () => {
+  type ReportFn = (args: {
+    requestId: string;
+    dirtyFiles: unknown[];
+  }) => unknown;
+
+  function setReport(...responses: ReportFn[]) {
+    let index = 0;
+    host!.backend.handlers.set("report_exit_impacts", (args) => {
+      const respond = responses[Math.min(index, responses.length - 1)];
+      index += 1;
+      return respond(args);
+    });
+  }
+
+  const view = (
+    requestId: string,
+    ptyCount: number,
+    executionTaskCount: number,
+    dirtyFiles: unknown[] = [],
+  ) => ({
+    requestId,
+    ptyCount,
+    executionTaskCount,
+    dirtyFiles,
+    requiresPrompt:
+      ptyCount > 0 || executionTaskCount > 0 || dirtyFiles.length > 0,
+  });
+
+  it("FX-1 builds the prompt from the Rust report instead of the event payload", async () => {
+    await mountExitApp({ dirty: false });
+    // The event claims nothing is running; Rust reports one session, so the user must be asked.
+    setReport((args) => view(args.requestId, 2, 0));
+
+    await requestExit({ ptyCount: 0, executionTaskCount: 0 }, "r1");
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("appExit.description");
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+  });
+
+  it("FX-2 exits silently only when Rust reports no impacts, whatever the event payload claims", async () => {
+    await mountExitApp({ dirty: false });
+    setReport((args) => view(args.requestId, 0, 0));
+
+    await requestExit({ ptyCount: 5, executionTaskCount: 3 }, "r2");
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+    expect(invokes("confirm_app_exit")[0].args).toEqual({ requestId: "r2" });
+  });
+
+  it("FX-2b asks when Rust reports impacts even though the event payload is empty", async () => {
+    await mountExitApp({ dirty: false });
+    setReport((args) => view(args.requestId, 0, 0));
+    setReport((args) => view(args.requestId, 0, 1));
+
+    await requestExit({ ptyCount: 0, executionTaskCount: 0 }, "r2b");
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+  });
+
+  it("FX-4 refreshes the request when the silent exit is rejected with exit.impacts_changed", async () => {
+    await mountExitApp({ dirty: false });
+    setReport(
+      (args) => view(args.requestId, 0, 0),
+      (args) => view(args.requestId, 1, 0),
+    );
+    host!.backend.handlers.set("confirm_app_exit", () => {
+      throw { code: "exit.impacts_changed", message: "changed" };
+    });
+
+    await requestExit({ ptyCount: 0, executionTaskCount: 0 }, "r4");
+
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("appExit.description");
+    expect(dialog.querySelector(".error")).toBeNull();
+  });
+
+  it("FX-5 asks again with the updated counts when the dialog confirmation finds more running work", async () => {
+    await mountExitApp({ dirty: false });
+    setReport(
+      (args) => view(args.requestId, 1, 0),
+      (args) => view(args.requestId, 2, 0),
+    );
+
+    await requestExit({ ptyCount: 1, executionTaskCount: 0 }, "r5");
+    expect(screen.getByRole("dialog").textContent).toContain(
+      "appExit.description",
+    );
+
+    await clickInDialog("appExit.confirmDiscard");
+
+    expect(invokes("report_exit_impacts")).toHaveLength(2);
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("FX-6 falls back to the local dialog when the report fails and reports again on confirm", async () => {
+    await mountExitApp({ dirty: false });
+    setReport(
+      () => {
+        throw { code: "exit.report_invalid", message: "bad" };
+      },
+      (args) => view(args.requestId, 1, 0),
+    );
+
+    await requestExit({ ptyCount: 1, executionTaskCount: 0 }, "r6");
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("appExit.description");
+    expect(dialog.querySelector(".error")).not.toBeNull();
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+
+    await clickInDialog("appExit.confirmDiscard");
+
+    expect(invokes("report_exit_impacts")).toHaveLength(2);
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+  });
+});

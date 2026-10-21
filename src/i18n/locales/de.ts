@@ -6,6 +6,12 @@ type LocaleShape<T> = {
 
 export const de = {
   errors: {
+    exitReportInvalid:
+      "Die Meldung der Beendigungsfolgen war ungültig. Versuche es erneut.",
+    exitImpactsNotReported:
+      "Die Beendigungsfolgen wurden noch nicht gemeldet. Versuche es erneut.",
+    exitImpactsChanged:
+      "Die Beendigungsfolgen haben sich geändert (neue laufende Arbeit). Bitte erneut bestätigen.",
     fileNotFound: "Die Datei wurde nicht gefunden.",
     fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
     ptySessionNotFound:

@@ -214,6 +214,11 @@
       "callerCheck": "acl-only"
     },
     {
+      "name": "report_exit_impacts",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
       "name": "report_pty_frontend_stage",
       "callerCheck": "require",
       "kinds": ["main", "terminal"]

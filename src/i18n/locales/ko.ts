@@ -6,6 +6,12 @@ type LocaleShape<T> = {
 
 export const ko = {
   errors: {
+    exitReportInvalid:
+      "종료 영향 보고가 올바르지 않습니다. 다시 종료해 보세요.",
+    exitImpactsNotReported:
+      "종료 영향이 아직 보고되지 않았습니다. 다시 종료해 보세요.",
+    exitImpactsChanged:
+      "종료 영향이 바뀌었습니다(새로 실행 중인 작업이 있습니다). 다시 확인해 주세요.",
     fileNotFound: "파일을 찾을 수 없습니다.",
     fileTooLarge: "파일 크기가 허용된 한도를 초과했습니다.",
     ptySessionNotFound: "터미널 세션이 없거나 이미 종료되었습니다.",

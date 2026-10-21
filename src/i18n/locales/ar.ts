@@ -6,6 +6,11 @@ type LocaleShape<T> = {
 
 export const ar = {
   errors: {
+    exitReportInvalid: "تقرير تأثيرات الخروج غير صالح. حاول الخروج مرة أخرى.",
+    exitImpactsNotReported:
+      "لم يتم الإبلاغ عن تأثيرات الخروج بعد. حاول الخروج مرة أخرى.",
+    exitImpactsChanged:
+      "تغيّرت تأثيرات الخروج (بدأ عمل جارٍ جديد). يرجى التأكيد مرة أخرى.",
     fileNotFound: "تعذر العثور على الملف.",
     fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
     ptySessionNotFound: "جلسة الطرفية غير موجودة أو انتهت.",

@@ -1,5 +1,11 @@
 export const en = {
   errors: {
+    exitReportInvalid:
+      "The exit impacts report was invalid. Try quitting again.",
+    exitImpactsNotReported:
+      "The exit impacts have not been reported yet. Try quitting again.",
+    exitImpactsChanged:
+      "The exit impacts changed (new running work started). Please confirm again.",
     fileNotFound: "The file could not be found.",
     fileTooLarge: "The file exceeds the allowed size.",
     ptySessionNotFound: "The terminal session does not exist or has ended.",

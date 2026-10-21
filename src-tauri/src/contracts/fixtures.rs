@@ -1079,6 +1079,45 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         cases,
     });
 
+    // ExitImpactsView (m6-101)
+    let mut cases = Vec::new();
+    let name = "ExitImpactsView";
+    let impacts_view = |dirty: Vec<crate::services::exit_impacts::ReportedDirtyFile>, pty, exec| {
+        crate::services::exit_impacts::merge_exit_impacts(
+            "req-1",
+            crate::services::app_lifecycle::ExitActivity {
+                pty_count: pty,
+                execution_task_count: exec,
+            },
+            dirty,
+        )
+    };
+    sample(
+        &mut cases,
+        name,
+        "pending-work",
+        serde_json::to_value(impacts_view(
+            vec![crate::services::exit_impacts::ReportedDirtyFile {
+                document_id: "d1".to_string(),
+                relative_path: "a.ts".to_string(),
+            }],
+            2,
+            1,
+        ))
+        .expect("exit impacts view serializes"),
+    );
+    sample(
+        &mut cases,
+        name,
+        "idle",
+        serde_json::to_value(impacts_view(Vec::new(), 0, 0)).expect("exit impacts view serializes"),
+    );
+    all.push(DtoSamples {
+        fixture_file: Some("exit-impacts-view.json"),
+        type_name: name,
+        cases,
+    });
+
     // Directory (m6-071)
     let mut cases = Vec::new();
     let name = "Directory";

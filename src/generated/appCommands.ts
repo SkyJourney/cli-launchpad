@@ -50,6 +50,7 @@ export const APP_COMMANDS = [
   "remove_project_file_cas_residue",
   "rename_workspace_layout_preset",
   "reorder_directories",
+  "report_exit_impacts",
   "report_pty_frontend_stage",
   "report_window_sync_failure",
   "reset_workspace_layout",

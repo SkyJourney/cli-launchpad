@@ -1,5 +1,8 @@
 export const zh = {
   errors: {
+    exitReportInvalid: "退出影响的上报内容不合法，请重新尝试退出。",
+    exitImpactsNotReported: "尚未上报退出影响，请重新尝试退出。",
+    exitImpactsChanged: "退出影响已经变化（有新的运行中工作），请重新确认。",
     fileNotFound: "找不到该文件。",
     fileTooLarge: "文件超过允许的大小。",
     ptySessionNotFound: "终端会话不存在或已结束。",

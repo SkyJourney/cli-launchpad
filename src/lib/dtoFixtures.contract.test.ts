@@ -7,7 +7,7 @@ import type {
   WorkspaceLayoutDocument,
   WorkspaceLayoutSaveResult,
 } from "./tauri";
-import { parseExitRequestedPayload } from "./exitRequest";
+import { parseExitImpactsView, parseExitRequestedPayload } from "./exitRequest";
 import { createWorkspaceFileBuffer } from "./workspaceFileBuffer";
 import {
   createWorkspaceLayoutDocument,
@@ -46,6 +46,7 @@ const EXPECTED_FIXTURES: Record<string, string> = {
   "execution-task.json": "ExecutionTask",
   "file-identity-comparison.json": "FileIdentityComparison",
   "exit-requested-payload.json": "ExitRequestedPayload",
+  "exit-impacts-view.json": "ExitImpactsView",
   "install-plan.json": "InstallPlan",
   "latest-version.json": "LatestVersion",
   "launch-history-entry.json": "LaunchHistoryEntry",
@@ -158,7 +159,7 @@ describe("IPC DTO golden fixtures", () => {
 
   it("covers every variant fixture exported by the Rust golden fixture generator", () => {
     const paths = Object.keys(fixtures);
-    expect(paths.length, REGENERATE).toBe(38);
+    expect(paths.length, REGENERATE).toBe(39);
     const names = paths.map((path) => path.split("/").pop() as string).sort();
     expect(names).toEqual(Object.keys(EXPECTED_FIXTURES).sort());
 
@@ -281,5 +282,23 @@ describe("exit-requested payload fixture", () => {
     }
     // 反向：载荷是 camelCase，不得出现下划线键。
     expect(JSON.stringify(fixture)).not.toMatch(/"[a-z0-9]+_[a-z0-9_]+"\s*:/);
+  });
+});
+
+describe("exit impacts view fixture (m6-101)", () => {
+  it("FD-1 decodes the exit impacts view fixture with the response parser", () => {
+    const fixture = fixtureFile("exit-impacts-view.json");
+    expect(fixture.cases.map((item) => item.name).sort()).toEqual([
+      "idle",
+      "pending-work",
+    ]);
+    for (const item of fixture.cases) {
+      const value = item.value as { requestId: string };
+      expect(
+        parseExitImpactsView(item.value, value.requestId),
+        item.name,
+      ).toEqual(item.value);
+      expect(parseExitImpactsView(item.value, "other"), item.name).toBeNull();
+    }
   });
 });

@@ -30,3 +30,61 @@ export function parseExitRequestedPayload(
   }
   return { requestId, ptyCount, executionTaskCount: 0 };
 }
+
+/** 主窗口上报给 Rust 的一个未保存文件（m6-101）。 */
+export interface ReportedDirtyFile {
+  documentId: string;
+  relativePath: string;
+}
+
+/** Rust 重算并下发的退出影响；前端只显示它，不再自行计数（m6-101）。 */
+export interface ExitImpactsView {
+  requestId: string;
+  ptyCount: number;
+  executionTaskCount: number;
+  dirtyFiles: ReportedDirtyFile[];
+  requiresPrompt: boolean;
+}
+
+function isReportedDirtyFile(value: unknown): value is ReportedDirtyFile {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const { documentId, relativePath } = value as Record<string, unknown>;
+  return typeof documentId === "string" && typeof relativePath === "string";
+}
+
+// 只接受 report_exit_impacts 的返回形状，且 requestId 必须是本次请求；不合格返回 null。
+export function parseExitImpactsView(
+  raw: unknown,
+  requestId: string,
+): ExitImpactsView | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    return null;
+  const view = raw as Record<string, unknown>;
+  if (view.requestId !== requestId) return null;
+  if (!isCount(view.ptyCount) || !isCount(view.executionTaskCount)) return null;
+  if (typeof view.requiresPrompt !== "boolean") return null;
+  if (!Array.isArray(view.dirtyFiles)) return null;
+  if (!view.dirtyFiles.every(isReportedDirtyFile)) return null;
+  return {
+    requestId,
+    ptyCount: view.ptyCount,
+    executionTaskCount: view.executionTaskCount,
+    dirtyFiles: view.dirtyFiles.map((file) => ({
+      documentId: file.documentId,
+      relativePath: file.relativePath,
+    })),
+    requiresPrompt: view.requiresPrompt,
+  };
+}
+
+/** 确认前的核对（前端侧）：任一计数比对话框展示的更大，说明有新增的运行中工作。 */
+export function exitCountsGrew(
+  shown: { ptyCount: number; executionTaskCount: number },
+  fresh: { ptyCount: number; executionTaskCount: number },
+): boolean {
+  return (
+    fresh.ptyCount > shown.ptyCount ||
+    fresh.executionTaskCount > shown.executionTaskCount
+  );
+}

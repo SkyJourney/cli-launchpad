@@ -557,6 +557,9 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
   },
 }));
 
+/** 每个事件最近一次投递到收件箱的载荷（m6-101：report_exit_impacts 的默认回显读取它）。 */
+const lastInboxPayloads = new Map<string, unknown>();
+
 export const tauriMock = {
   state: mockState,
   setCurrentWindowLabel(label: string): void {
@@ -609,7 +612,12 @@ export const tauriMock = {
     payload: unknown,
     source: unknown = null,
   ): void {
+    lastInboxPayloads.set(event, payload);
     deliverToInbox(label, event, payload, source);
+  },
+  /** 最近一次投递给该事件的载荷；没有投递过则为 null。 */
+  lastInboxPayload(event: string): unknown {
+    return lastInboxPayloads.get(event) ?? null;
   },
   /** 让接下来 `times` 次收件箱订阅失败。 */
   failNextInboxSubscribe(error: unknown, times = 1): void {

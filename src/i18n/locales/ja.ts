@@ -6,6 +6,12 @@ type LocaleShape<T> = {
 
 export const ja = {
   errors: {
+    exitReportInvalid:
+      "終了の影響の報告が不正でした。もう一度終了してください。",
+    exitImpactsNotReported:
+      "終了の影響がまだ報告されていません。もう一度終了してください。",
+    exitImpactsChanged:
+      "終了の影響が変わりました（新しく実行中の処理があります）。もう一度確認してください。",
     fileNotFound: "ファイルが見つかりません。",
     fileTooLarge: "ファイルサイズが上限を超えています。",
     ptySessionNotFound:

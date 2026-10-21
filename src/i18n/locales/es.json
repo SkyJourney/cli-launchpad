@@ -1,5 +1,8 @@
 {
   "errors": {
+    "exitReportInvalid": "El informe de los efectos de la salida no era válido. Inténtalo de nuevo.",
+    "exitImpactsNotReported": "Los efectos de la salida aún no se han informado. Inténtalo de nuevo.",
+    "exitImpactsChanged": "Los efectos de la salida han cambiado (hay nuevo trabajo en curso). Confirma de nuevo.",
     "fileNotFound": "No se encontró el archivo.",
     "fileTooLarge": "El archivo supera el tamaño permitido.",
     "ptySessionNotFound": "La sesión de terminal no existe o ha finalizado.",
