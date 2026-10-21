@@ -1,4 +1,6 @@
 use crate::db::tx::with_tx;
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use anyhow::Result;
 use rusqlite::Connection;
 use rusqlite::TransactionBehavior;
@@ -184,7 +186,7 @@ mod tests {
         let grants = ContentWindowGrantRegistry::default();
         grants
             .grant(
-                "workspace-content-8e783338-f464-4b10-b15e-b534748c6241",
+                &test_label("workspace-content-8e783338-f464-4b10-b15e-b534748c6241"),
                 ContentWindowFileGrant {
                     directory_id: demo.id,
                     directory_path: path.clone(),

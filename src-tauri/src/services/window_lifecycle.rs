@@ -70,6 +70,7 @@ pub fn on_window_destroyed(
 
 #[cfg(test)]
 mod tests {
+    use crate::models::window_kind::test_label;
     use std::sync::Mutex;
 
     use super::{
@@ -121,8 +122,12 @@ mod tests {
     #[test]
     fn destroyed_file_window_revokes_only_its_grant() {
         let registry = ContentWindowGrantRegistry::default();
-        registry.grant(FILE_L1, grant("a.txt")).unwrap();
-        registry.grant(FILE_L2, grant("b.txt")).unwrap();
+        registry
+            .grant(&test_label(FILE_L1), grant("a.txt"))
+            .unwrap();
+        registry
+            .grant(&test_label(FILE_L2), grant("b.txt"))
+            .unwrap();
         let sessions = PtySessionManager::default();
         let sink = RecordingSink::default();
         let resources: [&dyn WindowScopedResource; 2] = [&registry, &sessions];
@@ -134,22 +139,22 @@ mod tests {
                 window_label: FILE_L1.to_string()
             }]
         );
-        assert!(registry.get(FILE_L1).is_err());
-        assert!(registry.get(FILE_L2).is_ok());
+        assert!(registry.get(&test_label(FILE_L1)).is_err());
+        assert!(registry.get(&test_label(FILE_L2)).is_ok());
 
         // repeating the destruction revokes nothing else
         let repeated = on_window_destroyed(&label(FILE_L1), &resources, &sink);
         assert_eq!(repeated.len(), 1);
-        assert!(registry.get(FILE_L1).is_err());
-        assert!(registry.get(FILE_L2).is_ok());
+        assert!(registry.get(&test_label(FILE_L1)).is_err());
+        assert!(registry.get(&test_label(FILE_L2)).is_ok());
 
         // main and terminal windows never touch file grants
         assert!(on_window_destroyed(&label("main"), &resources, &sink).is_empty());
         assert!(on_window_destroyed(&label(TERM_T1), &resources, &sink).is_empty());
-        assert!(registry.get(FILE_L2).is_ok());
+        assert!(registry.get(&test_label(FILE_L2)).is_ok());
 
         // a destroyed label can be granted again (window reuse)
-        assert!(registry.grant(FILE_L1, grant("a.txt")).is_ok());
+        assert!(registry.grant(&test_label(FILE_L1), grant("a.txt")).is_ok());
     }
 
     #[test]

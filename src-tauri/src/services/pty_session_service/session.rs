@@ -26,7 +26,7 @@ use crate::{
     models::{
         pty_session::{PtyEvent, PtySession, PtySizeUpdate},
         tool::ToolKey,
-        window_kind::{is_main_label, is_terminal_label},
+        window_kind::WindowLabel,
     },
     platform::execution_process::ProcessTree,
     AppError,
@@ -56,7 +56,7 @@ fn mirror_sink(route: &EventRoute, owner_lost_mode: bool) -> Option<Arc<dyn PtyE
     route
         .mirror
         .as_ref()
-        .filter(|(label, _)| owner_lost_mode || is_main_label(label))
+        .filter(|(label, _)| owner_lost_mode || label.is_main())
         .map(|(_, mirror)| Arc::clone(mirror))
 }
 
@@ -108,7 +108,7 @@ impl ManagedSession {
                 match owner {
                     Some(channel) => SendPlan {
                         epoch,
-                        owner: Some((channel, is_terminal_label(&route.window_label))),
+                        owner: Some((channel, !route.window_label.is_main())),
                         mirror: mirror_sink(route, false),
                     },
                     None if route.owner_lost => {
@@ -170,21 +170,21 @@ impl ManagedSession {
         Err("PTY 输出通道不可用：路由在发送期间多次变化".to_string())
     }
 
-    pub(super) fn is_output_observer(&self, window_label: &str) -> Result<bool, AppError> {
+    pub(super) fn is_output_observer(&self, window_label: &WindowLabel) -> Result<bool, AppError> {
         let guard = self
             .route_and_handoff
             .lock()
             .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
         let route = &guard.route;
-        Ok(route.window_label == window_label
+        Ok(route.window_label == *window_label
             || route
                 .mirror
                 .as_ref()
                 .is_some_and(|(label, _)| label == window_label)
-            || (route.owner_lost && is_main_label(window_label)))
+            || (route.owner_lost && window_label.is_main()))
     }
 
-    pub(super) fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
+    pub(super) fn ensure_owner(&self, window_label: &WindowLabel) -> Result<(), AppError> {
         let guard = self
             .route_and_handoff
             .lock()

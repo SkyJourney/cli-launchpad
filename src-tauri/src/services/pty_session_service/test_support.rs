@@ -1,5 +1,7 @@
 use super::*;
 use crate::models::pty_session::PtySessionState;
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::sync::mpsc::{self, Receiver};
 
 use anyhow::anyhow;
@@ -109,7 +111,7 @@ impl PtySessionManager {
             flow: Arc::new(OutputFlow::new()),
             route_and_handoff: Mutex::new(RouteAndHandoff {
                 route: EventRoute {
-                    window_label: owner_label.to_string(),
+                    window_label: test_label(owner_label),
                     channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
                     mirror: None,
                     owner_lost: false,
@@ -145,7 +147,7 @@ impl PtySessionManager {
         let session = self.get(session_id).expect("test session must exist");
         let route = session.route_guard();
         TestRoute {
-            window_label: route.window_label.clone(),
+            window_label: route.window_label.as_str().to_string(),
             owner_lost: route.owner_lost,
             has_channel: route.channel.is_some(),
             buffered_events: route.buffered_events.len(),
@@ -200,7 +202,7 @@ impl PtySessionManager {
             flow: Arc::new(OutputFlow::new()),
             route_and_handoff: Mutex::new(RouteAndHandoff {
                 route: EventRoute {
-                    window_label: owner_label.to_string(),
+                    window_label: test_label(owner_label),
                     channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
                     mirror: None,
                     owner_lost: false,
@@ -289,7 +291,7 @@ impl PtySessionManager {
             flow: Arc::new(OutputFlow::new()),
             route_and_handoff: Mutex::new(RouteAndHandoff {
                 route: EventRoute {
-                    window_label: owner_label.to_string(),
+                    window_label: test_label(owner_label),
                     channel: channel.map(|channel| Arc::new(channel) as Arc<dyn PtyEventSink>),
                     mirror: None,
                     owner_lost: false,

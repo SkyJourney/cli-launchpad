@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::models::app_setting::CloseBehavior;
-use crate::models::window_kind::{window_kind_of, WindowKind};
+use crate::models::window_kind::{WindowKind, WindowLabel};
 
 /// Authorization for the application's final exit request, and the pending request it answers.
 /// A confirmation is honoured only for the newest request and only within `AUTHORIZATION_TTL`.
@@ -266,11 +266,11 @@ pub enum MainCloseDecision {
 
 /// 纯决策：窗口类别通过注册表判断，不比较字符串字面量。
 pub fn decide_close_request(
-    window_label: &str,
+    window: &WindowLabel,
     stored: CloseBehavior,
     tray: &TrayAvailability,
 ) -> MainCloseDecision {
-    if window_kind_of(window_label) != Some(WindowKind::Main) {
+    if window.kind() != WindowKind::Main {
         return MainCloseDecision::NotMainWindow;
     }
     match effective_close_behavior(stored, tray) {
@@ -594,6 +594,7 @@ mod tests {
         quit_plan, setup_tray_or_degrade, ExitRequestDecision, MainCloseDecision, QuitPlan,
         TrayAvailability,
     };
+    use crate::models::window_kind::test_label;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
 
@@ -780,41 +781,43 @@ mod tests {
     fn main_close_request_decisions() {
         assert_eq!(
             decide_close_request(
-                "main",
+                &test_label("main"),
                 CloseBehavior::MinimizeToTray,
                 &TrayAvailability::Available
             ),
             MainCloseDecision::HideToTray
         );
         assert_eq!(
-            decide_close_request("main", CloseBehavior::Quit, &TrayAvailability::Available),
+            decide_close_request(
+                &test_label("main"),
+                CloseBehavior::Quit,
+                &TrayAvailability::Available
+            ),
             MainCloseDecision::RequestAppExit
         );
         assert_eq!(
-            decide_close_request(TERM_T1, CloseBehavior::Quit, &TrayAvailability::Available),
+            decide_close_request(
+                &test_label(TERM_T1),
+                CloseBehavior::Quit,
+                &TrayAvailability::Available
+            ),
             MainCloseDecision::NotMainWindow
         );
         assert_eq!(
             decide_close_request(
-                FILE_L1,
+                &test_label(FILE_L1),
                 CloseBehavior::MinimizeToTray,
                 &TrayAvailability::Available
             ),
             MainCloseDecision::NotMainWindow
         );
-        // 大小写与空白敏感。
-        assert_eq!(
-            decide_close_request("MAIN", CloseBehavior::Quit, &TrayAvailability::Available),
-            MainCloseDecision::NotMainWindow
-        );
-        assert_eq!(
-            decide_close_request("", CloseBehavior::Quit, &TrayAvailability::Available),
-            MainCloseDecision::NotMainWindow
-        );
-        assert_eq!(
-            decide_close_request("main ", CloseBehavior::Quit, &TrayAvailability::Available),
-            MainCloseDecision::NotMainWindow
-        );
+        // 大小写与空白敏感：这些标签不是规范窗口标签，在边界处即被拒绝（lib.rs 视为非主窗口）。
+        for raw in ["MAIN", "", "main "] {
+            assert!(
+                crate::models::window_kind::WindowLabel::parse(raw).is_err(),
+                "{raw:?}"
+            );
+        }
     }
 
     #[test]
@@ -850,7 +853,6 @@ mod tests {
             ("main", CloseBehavior::Quit, false, RequestAppExit),
             (TERM_T1, CloseBehavior::MinimizeToTray, false, NotMainWindow),
             (FILE_L1, CloseBehavior::Quit, false, NotMainWindow),
-            ("MAIN", CloseBehavior::Quit, false, NotMainWindow),
         ];
         for (index, (label, stored, available, expected)) in rows.into_iter().enumerate() {
             let tray = if available {
@@ -859,7 +861,7 @@ mod tests {
                 unavailable()
             };
             assert_eq!(
-                decide_close_request(label, stored, &tray),
+                decide_close_request(&test_label(label), stored, &tray),
                 expected,
                 "row {}",
                 index + 1
@@ -867,18 +869,21 @@ mod tests {
         }
         // 反向断言：降级后主窗关闭不会被隐藏到托盘（隐藏后窗口再也找不回来）。
         assert_ne!(
-            decide_close_request("main", CloseBehavior::MinimizeToTray, &unavailable()),
+            decide_close_request(
+                &test_label("main"),
+                CloseBehavior::MinimizeToTray,
+                &unavailable()
+            ),
             HideToTray
         );
         // 非主窗口不受托盘状态影响。
         for (label, stored) in [
             (TERM_T1, CloseBehavior::MinimizeToTray),
             (FILE_L1, CloseBehavior::Quit),
-            ("MAIN", CloseBehavior::Quit),
         ] {
             assert_eq!(
-                decide_close_request(label, stored, &TrayAvailability::Available),
-                decide_close_request(label, stored, &unavailable()),
+                decide_close_request(&test_label(label), stored, &TrayAvailability::Available),
+                decide_close_request(&test_label(label), stored, &unavailable()),
                 "{label}"
             );
         }
@@ -957,7 +962,7 @@ mod tests {
         let tray = unavailable();
 
         assert_eq!(
-            decide_close_request("main", CloseBehavior::MinimizeToTray, &tray),
+            decide_close_request(&test_label("main"), CloseBehavior::MinimizeToTray, &tray),
             MainCloseDecision::RequestAppExit
         );
         assert_eq!(

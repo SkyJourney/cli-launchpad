@@ -1,5 +1,7 @@
 use crate::db::tx::with_tx;
 use crate::error_codes::ErrorCode;
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use crate::util::time::now_ms;
 use rusqlite::TransactionBehavior;
 use std::path::Path;
@@ -119,10 +121,10 @@ mod removal_tests {
         let dir_b = directory_repo::add(&connection, "B", "C:/b", None).unwrap();
         let grants = ContentWindowGrantRegistry::default();
         grants
-            .grant(LABEL_A, grant_of(dir_a.id, "C:/a", "a.txt"))
+            .grant(&test_label(LABEL_A), grant_of(dir_a.id, "C:/a", "a.txt"))
             .unwrap();
         grants
-            .grant(LABEL_B, grant_of(dir_b.id, "C:/b", "b.txt"))
+            .grant(&test_label(LABEL_B), grant_of(dir_b.id, "C:/b", "b.txt"))
             .unwrap();
         let reclaimer = RecordingReclaimer::default();
         let revoker =
@@ -137,7 +139,7 @@ mod removal_tests {
             .snapshot()
             .unwrap()
             .into_iter()
-            .map(|(label, _)| label)
+            .map(|(label, _)| label.as_str().to_string())
             .collect();
         assert_eq!(remaining, vec![LABEL_B.to_string()]);
         assert!(directory_repo::get(&connection, dir_a.id)

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use crate::util::time::checked_now_ms;
 use std::fs;
 use std::path::Path;
@@ -9,6 +11,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::db::connection;
+use crate::models::window_kind::WindowLabel;
 use crate::{AppError, Db};
 
 use super::storage_service::StoragePaths;
@@ -122,14 +125,14 @@ const MAX_WINDOW_SYNC_MESSAGE_CHARS: usize = 512;
 
 /// Records a window synchronisation failure reported by a renderer. Every field is
 /// cleaned first, so text supplied by the renderer cannot forge extra log lines.
-pub fn log_window_sync_failure(window_label: &str, code: &str, message: &str) {
-    log::warn!("{}", window_sync_failure_line(window_label, code, message));
+pub fn log_window_sync_failure(window: &WindowLabel, code: &str, message: &str) {
+    log::warn!("{}", window_sync_failure_line(window, code, message));
 }
 
-fn window_sync_failure_line(window_label: &str, code: &str, message: &str) -> String {
+fn window_sync_failure_line(window: &WindowLabel, code: &str, message: &str) -> String {
     format!(
         "window sync failure window={} code={} message={}",
-        clean_text(window_label, MAX_WINDOW_SYNC_LABEL_CHARS),
+        clean_text(window.as_str(), MAX_WINDOW_SYNC_LABEL_CHARS),
         clean_code(code),
         clean_text(message, MAX_WINDOW_SYNC_MESSAGE_CHARS)
     )
@@ -259,8 +262,11 @@ mod tests {
 
     #[test]
     fn window_sync_failure_line_is_one_line_tagged_with_the_window_label() {
-        let line =
-            window_sync_failure_line("main", "window.set_focus_failed", "无法聚焦\n[WARN] forged");
+        let line = window_sync_failure_line(
+            &test_label("main"),
+            "window.set_focus_failed",
+            "无法聚焦\n[WARN] forged",
+        );
         assert!(!line.contains('\n'), "{line}");
         assert_eq!(
             line,

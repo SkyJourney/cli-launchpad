@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 840,
-    "Linux": 846,
-    "macOS": 842
+    "Windows": 850,
+    "Linux": 856,
+    "macOS": 852
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -199,7 +199,6 @@
       "services::window_lifecycle::tests::a_destroyed_window_releases_every_resource_exactly_once_in_order",
       "contracts::main_window_label_matches_every_tauri_config",
       "contracts::macos_window_config_repeats_the_base_window_fields",
-      "contracts::service_code_does_not_branch_on_window_label_literals",
       "services::session_service::tests::index_refresh_started_before_restore_is_discarded_after_restore",
       "services::session_service::tests::restore_generation_advances_monotonically_and_clones_share_state",
       "services::session_service::tests::discarded_outcome_maps_to_an_error_and_written_passes_through",
@@ -559,7 +558,18 @@
       "services::app_data_service::tests::no_database_or_cache_lock_is_held_while_grants_are_revoked_or_the_main_window_is_notified",
       "services::app_data_service::tests::step_failures_never_change_the_return_value",
       "contracts::data_replacement_flows_go_through_one_after_data_replaced_hook",
-      "contracts::app_data_service_has_no_async_emit_or_direct_locking"
+      "contracts::app_data_service_has_no_async_emit_or_direct_locking",
+      "services::pty_session_service::tests::owner_channel_failure_buffers_for_terminal_owners_and_errors_for_the_main_owner",
+      "services::pty_session_service::tests::only_a_main_labelled_mirror_receives_output_while_the_owner_is_alive",
+      "services::pty_session_service::tests::acknowledge_is_accepted_from_the_owner_a_mirror_or_main_after_owner_loss_only",
+      "services::pty_session_service::tests::reclaim_window_ignores_main_and_labels_without_sessions",
+      "services::pty_session_service::tests::handoff_targets_are_limited_to_main_and_terminal_windows",
+      "services::pty_session_service::tests::finalize_mirrors_the_source_channel_to_main_only_when_main_hands_off_to_a_terminal",
+      "services::content_window_grants::tests::only_content_window_labels_can_hold_a_grant",
+      "models::window_kind::tests::window_label_main_constructor_matches_the_contract",
+      "models::window_kind::tests::a_terminal_looking_label_without_a_canonical_uuid_is_not_a_window_label",
+      "contracts::services_do_not_classify_window_labels_with_strings",
+      "contracts::string_label_allowlist_has_no_stale_entries"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

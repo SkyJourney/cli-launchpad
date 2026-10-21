@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{Manager, State};
 
-use crate::models::window_kind::{window_kind_of, CallerWindow, WindowKind};
+use crate::models::window_kind::{CallerWindow, WindowKind, WindowLabel};
 use crate::platform::case_sensitivity::PathSemantics;
 use crate::services::content_window_grants::{
     ContentWindowFileGrant, ContentWindowGrantRegistry, ContentWindowReclaimer,
@@ -21,8 +21,8 @@ use crate::{blocking, blocking_unbounded, budgets, AppError, Db};
 pub(crate) struct TauriContentWindowReclaimer(pub(crate) tauri::AppHandle);
 
 impl ContentWindowReclaimer for TauriContentWindowReclaimer {
-    fn reclaim(&self, label: &str) -> Result<(), String> {
-        match self.0.get_webview_window(label) {
+    fn reclaim(&self, label: &WindowLabel) -> Result<(), String> {
+        match self.0.get_webview_window(label.as_str()) {
             Some(window) => window.destroy().map_err(|error| error.to_string()),
             None => Ok(()),
         }
@@ -148,13 +148,14 @@ pub async fn grant_content_window_file(
     relative_path: String,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main])?;
+    let target = WindowLabel::parse(&target_label)?;
     if relative_path.is_empty() {
         return Err(AppError::internal("文件授权必须指向一个项目内文件"));
     }
     open_project(&state, directory_id, directory_path.clone()).await?;
     grants
         .grant(
-            &target_label,
+            &target,
             ContentWindowFileGrant {
                 directory_id,
                 directory_path,
@@ -171,9 +172,7 @@ pub async fn open_granted_file(
     grants: State<'_, ContentWindowGrantRegistry>,
 ) -> Result<ProjectFileOpenResult, AppError> {
     caller.require(&[WindowKind::WorkspaceContent])?;
-    let grant = grants
-        .get(caller.label().as_str())
-        .map_err(AppError::from)?;
+    let grant = grants.get(caller.label()).map_err(AppError::from)?;
     let root = open_project(&state, grant.directory_id, grant.directory_path.clone()).await?;
     blocking(
         "project_files.open_granted",
@@ -192,9 +191,7 @@ pub async fn save_granted_text_file(
     expected_revision: String,
 ) -> Result<ProjectTextFileSaveResult, AppError> {
     caller.require(&[WindowKind::WorkspaceContent])?;
-    let grant = grants
-        .get(caller.label().as_str())
-        .map_err(AppError::from)?;
+    let grant = grants.get(caller.label()).map_err(AppError::from)?;
     let root = open_project(&state, grant.directory_id, grant.directory_path.clone()).await?;
     // Writes are unbounded: a timed-out save may still land, see `blocking_unbounded`.
     blocking_unbounded("project_files.save_granted", move || {
@@ -213,10 +210,11 @@ pub fn revoke_content_window_file(
     target_label: String,
 ) -> Result<bool, AppError> {
     caller.require(&[WindowKind::Main])?;
-    if window_kind_of(&target_label) != Some(WindowKind::WorkspaceContent) {
+    let target = WindowLabel::parse(&target_label)?;
+    if target.kind() != WindowKind::WorkspaceContent {
         return Err(AppError::internal("撤销目标不是已登记的内容窗口"));
     }
-    grants.revoke(&target_label).map_err(AppError::from)
+    grants.revoke(&target).map_err(AppError::from)
 }
 
 #[tauri::command]

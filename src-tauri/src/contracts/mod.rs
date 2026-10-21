@@ -2089,72 +2089,6 @@ fn macos_window_config_repeats_the_base_window_fields() {
     }
 }
 
-#[test]
-fn service_code_does_not_branch_on_window_label_literals() {
-    for (name, source) in [
-        (
-            "pty_session_service.rs",
-            include_str!("../services/pty_session_service.rs"),
-        ),
-        (
-            "pty_session_service/flow.rs",
-            include_str!("../services/pty_session_service/flow.rs"),
-        ),
-        (
-            "pty_session_service/handoff.rs",
-            include_str!("../services/pty_session_service/handoff.rs"),
-        ),
-        (
-            "pty_session_service/input.rs",
-            include_str!("../services/pty_session_service/input.rs"),
-        ),
-        (
-            "pty_session_service/persistence.rs",
-            include_str!("../services/pty_session_service/persistence.rs"),
-        ),
-        (
-            "pty_session_service/ports.rs",
-            include_str!("../services/pty_session_service/ports.rs"),
-        ),
-        (
-            "pty_session_service/process.rs",
-            include_str!("../services/pty_session_service/process.rs"),
-        ),
-        (
-            "pty_session_service/registry.rs",
-            include_str!("../services/pty_session_service/registry.rs"),
-        ),
-        (
-            "pty_session_service/route.rs",
-            include_str!("../services/pty_session_service/route.rs"),
-        ),
-        (
-            "pty_session_service/session.rs",
-            include_str!("../services/pty_session_service/session.rs"),
-        ),
-        (
-            "pty_session_service/window.rs",
-            include_str!("../services/pty_session_service/window.rs"),
-        ),
-        (
-            "content_window_grants.rs",
-            include_str!("../services/content_window_grants.rs"),
-        ),
-    ] {
-        let source = production_text(source);
-        for forbidden in [
-            "\"main\"",
-            "starts_with(\"terminal-\")",
-            "starts_with(\"workspace-content-\")",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "services/{name} must not contain {forbidden}; use models::window_kind helpers"
-            );
-        }
-    }
-}
-
 // ---- m6-033: error code and event contracts (red phase) ----
 
 const ERROR_CODES_JSON: &str = include_str!("../../../contracts/error-codes.json");
@@ -3051,6 +2985,224 @@ fn app_data_service_has_no_async_emit_or_direct_locking() {
     );
 }
 
+/// Production sources of `src/services`, cut before each `#[cfg(test)] mod` (m6-102 ST-1/ST-2).
+fn services_production_files() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut paths = Vec::new();
+    walk(&root.join("services"), &mut paths);
+    paths.sort();
+    paths
+        .into_iter()
+        .filter(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            name != "tests.rs" && name != "test_support.rs"
+        })
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(&path).unwrap();
+            (relative, production_part(&text))
+        })
+        .collect()
+}
+
+/// Cuts the text at the first `#[cfg(test)]` that is followed by a `mod` declaration.
+fn production_part(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() != "#[cfg(test)]" {
+            continue;
+        }
+        let next = lines[index + 1..]
+            .iter()
+            .map(|candidate| candidate.trim())
+            .find(|candidate| !candidate.is_empty() && !candidate.starts_with("#["))
+            .unwrap_or("");
+        if next.starts_with("mod ")
+            || next.starts_with("pub mod ")
+            || next.starts_with("pub(crate) mod ")
+        {
+            return lines[..index].join("\n");
+        }
+    }
+    text.to_string()
+}
+
+/// Production lines that legitimately keep a string window label (ST-1 allowlist).
+/// Each entry is (file, a fragment of the line, reason). Reasons start with `事件载荷：`
+/// (an event or wire payload) or `仅测试 seam：` (a test-only seam).
+const ALLOWED_STRING_LABELS: &[(&str, &str, &str)] = &[
+    (
+        "services/window_inbox.rs",
+        "pub label: String,",
+        "事件载荷：InboxSource 是序列化给前端的消息来源（DTO 字段）",
+    ),
+    (
+        "services/window_lifecycle.rs",
+        "WorkspaceContentWindowLost { window_label: String }",
+        "事件载荷：应用事件 WorkspaceContentWindowLost 携带的窗口标签，随事件发给前端",
+    ),
+];
+
+/// Production lines that are not window labels at all (ST-1 exclusions).
+/// Each reason starts with `窗口无关：`.
+const NON_WINDOW_LABEL_LINES: &[(&str, &str, &str)] = &[
+    (
+        "services/storage_service.rs",
+        "fn migrate_if_missing(source: &Path, target: &Path, label: &str)",
+        "窗口无关：文件迁移的日志名，不是窗口标签",
+    ),
+    (
+        "services/execution_service.rs",
+        "fn spawn_logged<F>(label: String, future: F)",
+        "窗口无关：执行任务的日志名，不是窗口标签",
+    ),
+];
+
+fn is_label_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// True when the line declares a `label` / `*_label` name with a string type (`name: &str`, `String`, ...).
+fn declares_string_label(line: &str) -> bool {
+    const STRING_TYPES: [&str; 5] = [
+        "&str",
+        "&'static str",
+        "String",
+        "Option<String>",
+        "Option<&str>",
+    ];
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_label_identifier_byte(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_label_identifier_byte(bytes[index]) {
+            index += 1;
+        }
+        let identifier = &line[start..index];
+        if identifier == "label" || identifier.ends_with("_label") {
+            if let Some(after_colon) = line[index..].trim_start().strip_prefix(':') {
+                let ty = after_colon.trim_start();
+                if STRING_TYPES
+                    .iter()
+                    .any(|string_type| ty.starts_with(string_type))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The rule (name) a service line breaks, if any: literals, prefix checks, classifier calls,
+/// or a string-typed label declaration. Comment lines never count.
+fn string_label_violation(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim();
+    if trimmed.starts_with("//") {
+        return None;
+    }
+    if trimmed.contains("\"main\"")
+        || trimmed.contains("\"terminal-")
+        || trimmed.contains("\"workspace-content-")
+    {
+        return Some("literal");
+    }
+    if trimmed.contains("starts_with(\"terminal")
+        || trimmed.contains("starts_with(\"workspace-content")
+    {
+        return Some("prefix");
+    }
+    if trimmed.contains("is_main_label(")
+        || trimmed.contains("is_terminal_label(")
+        || trimmed.contains("window_kind_of(")
+    {
+        return Some("classifier");
+    }
+    if declares_string_label(trimmed) {
+        return Some("declaration");
+    }
+    None
+}
+
+fn is_excused(file: &str, line: &str, list: &[(&str, &str, &str)]) -> bool {
+    list.iter()
+        .any(|(allowed_file, fragment, _)| file == *allowed_file && line.contains(fragment))
+}
+
+#[test]
+fn services_do_not_classify_window_labels_with_strings() {
+    let mut violations = Vec::new();
+    for (file, text) in services_production_files() {
+        for (index, line) in text.lines().enumerate() {
+            let Some(rule) = string_label_violation(line) else {
+                continue;
+            };
+            if is_excused(&file, line, ALLOWED_STRING_LABELS)
+                || is_excused(&file, line, NON_WINDOW_LABEL_LINES)
+            {
+                continue;
+            }
+            violations.push(format!("{file}:{}: {rule}: {}", index + 1, line.trim()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "services must not classify window labels with strings ({} lines):\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn string_label_allowlist_has_no_stale_entries() {
+    let files = services_production_files();
+    let text_of = |file: &str| -> String {
+        files
+            .iter()
+            .find(|(candidate, _)| candidate == file)
+            .map(|(_, text)| text.clone())
+            .unwrap_or_else(|| panic!("missing production source {file}"))
+    };
+    for (file, fragment, reason) in ALLOWED_STRING_LABELS {
+        assert!(
+            text_of(file).lines().any(|line| line.contains(fragment)),
+            "stale allowlist entry: {file} no longer contains `{fragment}`"
+        );
+        assert!(
+            reason.starts_with("事件载荷：") || reason.starts_with("仅测试 seam："),
+            "allowlist reason for {file} must name an event payload or a test seam: {reason}"
+        );
+    }
+    for (file, fragment, reason) in NON_WINDOW_LABEL_LINES {
+        assert!(
+            text_of(file).lines().any(|line| line.contains(fragment)),
+            "stale exclusion: {file} no longer contains `{fragment}`"
+        );
+        assert!(
+            reason.starts_with("窗口无关："),
+            "exclusion reason for {file} must start with 窗口无关：: {reason}"
+        );
+    }
+}
+
 #[test]
 fn with_sync_is_confined_to_the_allowed_files() {
     let sources = production_sources();
@@ -3850,7 +4002,7 @@ fn commands_take_no_raw_window_parameters_and_compare_no_labels() {
         .iter()
         .find(|(file, _)| file == "files.rs")
         .expect("files.rs");
-    assert!(production_text(grants).contains("window_kind_of(&target_label)"));
+    assert!(production_text(grants).contains("WindowLabel::parse(&target_label)"));
 }
 
 #[test]

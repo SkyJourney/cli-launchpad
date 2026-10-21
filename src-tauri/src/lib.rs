@@ -332,11 +332,14 @@ pub fn run() {
                     .unwrap_or_else(|| services::app_lifecycle::TrayAvailability::Unavailable {
                         reason: "tray state not initialized".to_string(),
                     });
-                match services::app_lifecycle::decide_close_request(
-                    window.label(),
-                    close_behavior,
-                    &tray,
-                ) {
+                // A label that is not a canonical window label cannot be the main window.
+                let decision = match models::window_kind::WindowLabel::parse(window.label()) {
+                    Ok(label) => {
+                        services::app_lifecycle::decide_close_request(&label, close_behavior, &tray)
+                    }
+                    Err(_) => services::app_lifecycle::MainCloseDecision::NotMainWindow,
+                };
+                match decision {
                     services::app_lifecycle::MainCloseDecision::NotMainWindow => {}
                     services::app_lifecycle::MainCloseDecision::HideToTray => {
                         api.prevent_close();

@@ -5,6 +5,8 @@
 //! caller of `after_data_replaced`. The replacement itself runs inside the database lock; every
 //! step runs after that lock is released, while the permit is still held.
 
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -378,6 +380,7 @@ mod tests {
 
     use crate::db::connection;
     use crate::models::execution::ExecutionStatus;
+    use crate::models::window_kind::WindowLabel;
     use crate::services::content_window_grants::{
         test_support::RecordingReclaimer, ContentWindowFileGrant, ContentWindowGrantRegistry,
         ContentWindowRevoker, RevocationReason,
@@ -818,7 +821,9 @@ mod tests {
                 insert_task(&conn, "t-run", ExecutionStatus::Running);
             }
             let registry = ContentWindowGrantRegistry::default();
-            registry.grant(LABEL_A, grant_for(9999, "C:/gone")).unwrap();
+            registry
+                .grant(&test_label(LABEL_A), grant_for(9999, "C:/gone"))
+                .unwrap();
             let reclaimer = RecordingReclaimer::default();
             let revoker =
                 ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::RestoreBackup);
@@ -860,7 +865,7 @@ mod tests {
                     },
                 ]
             );
-            assert!(registry.get(LABEL_A).is_err());
+            assert!(registry.get(&test_label(LABEL_A)).is_err());
             assert_eq!(reclaimer.reclaimed(), vec![LABEL_A.to_string()]);
             {
                 let conn = cache.lock_for_test();
@@ -886,7 +891,9 @@ mod tests {
                 insert_task(&conn, "t-run", ExecutionStatus::Running);
             }
             let registry = ContentWindowGrantRegistry::default();
-            registry.grant(LABEL_A, grant_for(9999, "C:/gone")).unwrap();
+            registry
+                .grant(&test_label(LABEL_A), grant_for(9999, "C:/gone"))
+                .unwrap();
             let reclaimer = RecordingReclaimer::default();
             let revoker =
                 ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::ImportConfig);
@@ -919,7 +926,7 @@ mod tests {
                     Ok(StepOutcome::Skipped),
                 ]
             );
-            assert!(registry.get(LABEL_A).is_err());
+            assert!(registry.get(&test_label(LABEL_A)).is_err());
             // Reverse: the import clears nothing, reconciles nothing and notifies nobody.
             {
                 let conn = cache.lock_for_test();
@@ -1181,7 +1188,9 @@ mod tests {
             insert_task(&conn, "t-run", ExecutionStatus::Running);
         }
         let registry = ContentWindowGrantRegistry::default();
-        registry.grant(LABEL_A, grant_for(1, "C:/a")).unwrap();
+        registry
+            .grant(&test_label(LABEL_A), grant_for(1, "C:/a"))
+            .unwrap();
         let reclaimer = RecordingReclaimer::default();
         let revoker =
             ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::RestoreBackup);
@@ -1207,7 +1216,10 @@ mod tests {
         .expect("a failed replacement is an error");
         assert!(error.to_string().contains("replace failed"), "{error}");
         assert_eq!(notifier.calls.load(Ordering::SeqCst), 0);
-        assert!(registry.get(LABEL_A).is_ok(), "no grant is revoked");
+        assert!(
+            registry.get(&test_label(LABEL_A)).is_ok(),
+            "no grant is revoked"
+        );
         assert!(reclaimer.reclaimed().is_empty());
         {
             let conn = cache.lock_for_test();
@@ -1241,7 +1253,7 @@ mod tests {
     }
 
     impl crate::services::content_window_grants::ContentWindowReclaimer for LockProbeReclaimer {
-        fn reclaim(&self, _label: &str) -> Result<(), String> {
+        fn reclaim(&self, _label: &WindowLabel) -> Result<(), String> {
             let db_free = self.db.try_lock().is_ok();
             let cache_free = self.cache.try_lock().is_ok();
             self.log
@@ -1277,7 +1289,9 @@ mod tests {
         let shared_db = db.shared_for_test();
         let shared_cache = cache.shared_for_test();
         let registry = ContentWindowGrantRegistry::default();
-        registry.grant(LABEL_A, grant_for(1, "C:/a")).unwrap();
+        registry
+            .grant(&test_label(LABEL_A), grant_for(1, "C:/a"))
+            .unwrap();
         let log: LockLog = Arc::new(Mutex::new(Vec::new()));
         let reclaimer = LockProbeReclaimer {
             db: shared_db.clone(),

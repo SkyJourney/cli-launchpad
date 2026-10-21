@@ -10,6 +10,8 @@
 //! decides when to take the surrounding lock.
 
 use crate::domain_errors::PtyError;
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -19,33 +21,33 @@ use crate::{
     error_codes::ErrorCode,
     models::{
         pty_session::{PtyEvent, PtyHandoff, PtyTerminalSnapshot},
-        window_kind::{window_kind_of, WindowLabel},
+        window_kind::WindowLabel,
     },
     AppError,
 };
 
 pub(super) struct Paused {
     pub(super) token: String,
-    pub(super) source: String,
+    pub(super) source: WindowLabel,
     pub(super) sequence: u64,
     /// The window registered at `begin` as the only one that may complete this handoff.
-    pub(super) reserved_target: String,
+    pub(super) reserved_target: WindowLabel,
 }
 
 pub(super) struct Staged {
     pub(super) token: String,
-    pub(super) source: String,
+    pub(super) source: WindowLabel,
     pub(super) sequence: u64,
     pub(super) snapshot: PtyTerminalSnapshot,
-    pub(super) reserved_target: String,
+    pub(super) reserved_target: WindowLabel,
 }
 
 pub(super) struct Bound {
     pub(super) token: String,
-    pub(super) source: String,
+    pub(super) source: WindowLabel,
     pub(super) sequence: u64,
     pub(super) snapshot: PtyTerminalSnapshot,
-    pub(super) target: String,
+    pub(super) target: WindowLabel,
     pub(super) sink: Arc<dyn PtyEventSink>,
 }
 
@@ -77,16 +79,14 @@ pub(super) fn deliver_snapshot(
 /// and the direction must be main -> terminal window or terminal window -> main. Terminal to
 /// terminal handoffs are not offered by the UI and are refused.
 pub(super) fn validate_handoff_target(
-    source_label: &str,
-    target_label: &str,
+    source_label: &WindowLabel,
+    target_label: &WindowLabel,
 ) -> Result<(), AppError> {
-    let target = WindowLabel::parse(target_label)?;
     // Exactly one side is the primary window and both sides can host a terminal view.
-    let allowed = window_kind_of(source_label).is_some_and(|source| {
-        source.is_pty_host()
-            && target.kind().is_pty_host()
-            && source.is_primary() != target.kind().is_primary()
-    });
+    let source = source_label.kind();
+    let target = target_label.kind();
+    let allowed =
+        source.is_pty_host() && target.is_pty_host() && source.is_primary() != target.is_primary();
     if allowed {
         Ok(())
     } else {
@@ -113,36 +113,36 @@ impl HandoffState {
     }
 
     /// The source window of a bound handoff; `None` in every other state.
-    pub(super) fn bound_source(&self) -> Option<&str> {
+    pub(super) fn bound_source(&self) -> Option<&WindowLabel> {
         match self {
-            Self::Bound(bound) => Some(bound.source.as_str()),
+            Self::Bound(bound) => Some(&bound.source),
             _ => None,
         }
     }
 
     /// The source window, or the target of a bound handoff.
-    pub(super) fn references_window(&self, window_label: &str) -> bool {
+    pub(super) fn references_window(&self, window_label: &WindowLabel) -> bool {
         match self {
             Self::Idle => false,
-            Self::Paused(paused) => paused.source == window_label,
-            Self::Staged(staged) => staged.source == window_label,
-            Self::Bound(bound) => bound.source == window_label || bound.target == window_label,
+            Self::Paused(paused) => paused.source == *window_label,
+            Self::Staged(staged) => staged.source == *window_label,
+            Self::Bound(bound) => bound.source == *window_label || bound.target == *window_label,
         }
     }
 
     /// The window that may complete this handoff: the one registered at `begin`, or the target a
     /// bound handoff already carries (the same window).
-    fn reserved_target(&self) -> Option<&str> {
+    fn reserved_target(&self) -> Option<&WindowLabel> {
         match self {
             Self::Idle => None,
-            Self::Paused(paused) => Some(paused.reserved_target.as_str()),
-            Self::Staged(staged) => Some(staged.reserved_target.as_str()),
-            Self::Bound(bound) => Some(bound.target.as_str()),
+            Self::Paused(paused) => Some(&paused.reserved_target),
+            Self::Staged(staged) => Some(&staged.reserved_target),
+            Self::Bound(bound) => Some(&bound.target),
         }
     }
 
     /// `(token, source, sequence)` of a handoff that is not Idle.
-    fn identity(&self) -> Option<(String, String, u64)> {
+    fn identity(&self) -> Option<(String, WindowLabel, u64)> {
         match self {
             Self::Idle => None,
             Self::Paused(paused) => {
@@ -165,8 +165,8 @@ impl HandoffState {
     pub(super) fn begin(
         &mut self,
         flow: &OutputFlow,
-        source: &str,
-        reserved_target: &str,
+        source: &WindowLabel,
+        reserved_target: &WindowLabel,
     ) -> Result<PtyHandoff, AppError> {
         if let Some((_, _, sequence)) = self.identity() {
             if flow.is_paused_at(sequence) {
@@ -178,9 +178,9 @@ impl HandoffState {
         let token = Uuid::new_v4().to_string();
         *self = Self::Paused(Paused {
             token: token.clone(),
-            source: source.to_string(),
+            source: source.clone(),
             sequence,
-            reserved_target: reserved_target.to_string(),
+            reserved_target: reserved_target.clone(),
         });
         Ok(PtyHandoff { token, sequence })
     }
@@ -188,7 +188,7 @@ impl HandoffState {
     pub(super) fn stage(
         &mut self,
         flow: &OutputFlow,
-        source: &str,
+        source: &WindowLabel,
         token: &str,
         sequence: u64,
         snapshot: PtyTerminalSnapshot,
@@ -196,7 +196,7 @@ impl HandoffState {
         let matches = self
             .identity()
             .is_some_and(|(state_token, state_source, state_sequence)| {
-                state_token == token && state_source == source && state_sequence == sequence
+                state_token == token && state_source == *source && state_sequence == sequence
             });
         if !matches {
             return Err(expired());
@@ -231,7 +231,7 @@ impl HandoffState {
         &mut self,
         flow: &OutputFlow,
         session_id: &str,
-        target: &str,
+        target: &WindowLabel,
         token: &str,
     ) -> Result<CompletePlan, AppError> {
         let Some((state_token, state_source, sequence)) = self.identity() else {
@@ -240,7 +240,7 @@ impl HandoffState {
         if state_token != token {
             return Err(expired());
         }
-        if state_source == target {
+        if state_source == *target {
             return Err(AppError::coded(
                 ErrorCode::PtyHandoffTargetIsSource,
                 "目标窗口与源窗口相同，无法交接终端",
@@ -278,7 +278,7 @@ impl HandoffState {
     pub(super) fn bind(
         &mut self,
         flow: &OutputFlow,
-        target: &str,
+        target: &WindowLabel,
         token: &str,
         sink: Arc<dyn PtyEventSink>,
     ) -> Result<(), AppError> {
@@ -299,7 +299,7 @@ impl HandoffState {
                     source: staged.source,
                     sequence: staged.sequence,
                     snapshot: staged.snapshot,
-                    target: target.to_string(),
+                    target: target.clone(),
                     sink,
                 });
                 Ok(())
@@ -319,11 +319,11 @@ impl HandoffState {
     pub(super) fn check_finalize(
         &mut self,
         flow: &OutputFlow,
-        target: &str,
+        target: &WindowLabel,
         token: &str,
     ) -> Result<(), AppError> {
         let sequence = match self {
-            Self::Bound(bound) if bound.token == token && bound.target == target => bound.sequence,
+            Self::Bound(bound) if bound.token == token && bound.target == *target => bound.sequence,
             _ => return Err(AppError::from(PtyError::HandoffExpired)),
         };
         if !flow.is_paused_at(sequence) {
@@ -347,13 +347,13 @@ impl HandoffState {
     pub(super) fn cancel(
         &mut self,
         flow: &OutputFlow,
-        source: &str,
+        source: &WindowLabel,
         token: &str,
     ) -> Result<(), AppError> {
         let Some((state_token, state_source, _)) = self.identity() else {
             return Ok(());
         };
-        if state_token != token || state_source != source {
+        if state_token != token || state_source != *source {
             return Err(AppError::from(PtyError::HandoffExpired));
         }
         self.lapse(flow);
@@ -363,10 +363,10 @@ impl HandoffState {
     /// Returns to Idle when the window is the registered target of a handoff that has not been
     /// completed yet (a completed one is covered by `clear_for_window`). The caller resumes the
     /// output like for any other cleared handoff.
-    pub(super) fn clear_for_reserved_target(&mut self, window_label: &str) -> bool {
+    pub(super) fn clear_for_reserved_target(&mut self, window_label: &WindowLabel) -> bool {
         let reserved = match self {
-            Self::Paused(paused) => paused.reserved_target == window_label,
-            Self::Staged(staged) => staged.reserved_target == window_label,
+            Self::Paused(paused) => paused.reserved_target == *window_label,
+            Self::Staged(staged) => staged.reserved_target == *window_label,
             Self::Idle | Self::Bound(_) => false,
         };
         if reserved {
@@ -377,7 +377,7 @@ impl HandoffState {
 
     /// Returns to Idle when the handoff references the window. It does not touch the flow; the
     /// caller decides based on the route.
-    pub(super) fn clear_for_window(&mut self, window_label: &str) -> bool {
+    pub(super) fn clear_for_window(&mut self, window_label: &WindowLabel) -> bool {
         if self.references_window(window_label) {
             *self = Self::Idle;
             true
@@ -431,7 +431,7 @@ mod tests {
     fn complete_all(
         state: &mut HandoffState,
         flow: &OutputFlow,
-        target: &str,
+        target: &WindowLabel,
         token: &str,
         sink: &Arc<FakeSink>,
     ) -> Result<(), AppError> {
@@ -442,21 +442,29 @@ mod tests {
 
     fn begun(flow: &OutputFlow) -> (HandoffState, PtyHandoff) {
         let mut state = HandoffState::default();
-        let handoff = state.begin(flow, SRC, TGT).unwrap();
+        let handoff = state
+            .begin(flow, &test_label(SRC), &test_label(TGT))
+            .unwrap();
         (state, handoff)
     }
 
     fn staged(flow: &OutputFlow) -> (HandoffState, PtyHandoff) {
         let (mut state, handoff) = begun(flow);
         state
-            .stage(flow, SRC, &handoff.token, handoff.sequence, snap("A"))
+            .stage(
+                flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("A"),
+            )
             .unwrap();
         (state, handoff)
     }
 
     fn bound(flow: &OutputFlow, sink: &Arc<FakeSink>) -> (HandoffState, PtyHandoff) {
         let (mut state, handoff) = staged(flow);
-        complete_all(&mut state, flow, TGT, &handoff.token, sink).unwrap();
+        complete_all(&mut state, flow, &test_label(TGT), &handoff.token, sink).unwrap();
         (state, handoff)
     }
 
@@ -467,7 +475,9 @@ mod tests {
         flow.reserve(1).unwrap();
         let mut state = HandoffState::default();
 
-        let handoff = state.begin(&flow, SRC, TGT).unwrap();
+        let handoff = state
+            .begin(&flow, &test_label(SRC), &test_label(TGT))
+            .unwrap();
 
         assert_eq!(handoff.sequence, 2);
         Uuid::parse_str(&handoff.token).expect("the token is a UUID");
@@ -478,14 +488,18 @@ mod tests {
         let busy = OutputFlow::new();
         busy.pause_indefinitely();
         let mut idle = HandoffState::default();
-        let error = idle.begin(&busy, SRC, TGT).unwrap_err();
+        let error = idle
+            .begin(&busy, &test_label(SRC), &test_label(TGT))
+            .unwrap_err();
         assert!(describe(&error).contains("正在进行其他窗口交接"));
         assert!(idle.is_idle());
 
         let closed = OutputFlow::new();
         closed.close();
         let mut idle = HandoffState::default();
-        let error = idle.begin(&closed, SRC, TGT).unwrap_err();
+        let error = idle
+            .begin(&closed, &test_label(SRC), &test_label(TGT))
+            .unwrap_err();
         assert!(describe(&error).contains("已经结束"));
         assert!(idle.is_idle());
     }
@@ -501,24 +515,28 @@ mod tests {
                 _ => bound(&flow, &sink),
             };
 
-            let error = state.begin(&flow, SRC, TGT).unwrap_err();
+            let error = state
+                .begin(&flow, &test_label(SRC), &test_label(TGT))
+                .unwrap_err();
 
             assert!(
                 describe(&error)
                     .contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试"),
                 "{stage}"
             );
-            assert!(state.references_window(SRC), "{stage}");
+            assert!(state.references_window(&test_label(SRC)), "{stage}");
             assert!(flow_paused(&flow), "{stage}");
             assert!(!state.is_idle(), "{stage}");
             assert_eq!(state.bound_source().is_some(), stage == "bound", "{stage}");
             if stage == "bound" {
-                assert_eq!(state.bound_source(), Some(SRC));
+                assert_eq!(state.bound_source(), Some(&test_label(SRC)));
             }
         }
         // Reverse: from Idle the same call succeeds.
         let flow = OutputFlow::new();
-        assert!(HandoffState::default().begin(&flow, SRC, TGT).is_ok());
+        assert!(HandoffState::default()
+            .begin(&flow, &test_label(SRC), &test_label(TGT))
+            .is_ok());
     }
 
     #[test]
@@ -527,15 +545,29 @@ mod tests {
         let (mut state, first) = begun(&flow);
         lapse(&flow);
 
-        let second = state.begin(&flow, SRC, TGT).unwrap();
+        let second = state
+            .begin(&flow, &test_label(SRC), &test_label(TGT))
+            .unwrap();
 
         assert_ne!(second.token, first.token);
         let error = state
-            .stage(&flow, SRC, &first.token, first.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &first.token,
+                first.sequence,
+                snap("x"),
+            )
             .unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
         state
-            .stage(&flow, SRC, &second.token, second.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &second.token,
+                second.sequence,
+                snap("x"),
+            )
             .unwrap();
         let guard = flow.state.lock().unwrap();
         assert!(guard.paused);
@@ -553,19 +585,31 @@ mod tests {
             (handoff.token.as_str(), SRC, handoff.sequence + 1),
         ] {
             let error = state
-                .stage(&flow, source, token, sequence, snap("x"))
+                .stage(&flow, &test_label(source), token, sequence, snap("x"))
                 .unwrap_err();
             assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
         }
         // The state is still Paused: the correct call succeeds.
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x"),
+            )
             .unwrap();
 
         // T03: Idle.
         let mut idle = HandoffState::default();
         let error = idle
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x"),
+            )
             .unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
     }
@@ -577,7 +621,13 @@ mod tests {
         lapse(&flow);
 
         let error = state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x"),
+            )
             .unwrap_err();
 
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
@@ -588,7 +638,13 @@ mod tests {
         let live = OutputFlow::new();
         let (mut state, handoff) = begun(&live);
         assert!(state
-            .stage(&live, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &live,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x")
+            )
             .is_ok());
     }
 
@@ -598,13 +654,25 @@ mod tests {
         let sink = Arc::new(FakeSink::new());
         let (mut state, handoff) = begun(&flow);
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("A"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("A"),
+            )
             .unwrap();
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("B"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("B"),
+            )
             .unwrap();
 
-        complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap();
+        complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap();
 
         let events = sink.events();
         assert_eq!(events.len(), 1);
@@ -615,12 +683,18 @@ mod tests {
 
         // Bound: staging again keeps the binding and replaces the snapshot only.
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("C"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("C"),
+            )
             .unwrap();
-        assert_eq!(state.bound_source(), Some(SRC));
+        assert_eq!(state.bound_source(), Some(&test_label(SRC)));
         let committed = state.commit_finalize().expect("still bound");
         assert_eq!(committed.snapshot.data, "C");
-        assert_eq!(committed.target, TGT);
+        assert_eq!(committed.target, test_label(TGT));
     }
 
     #[test]
@@ -629,32 +703,40 @@ mod tests {
         let flow = OutputFlow::new();
         let sink = Arc::new(FakeSink::new());
         let mut state = HandoffState::default();
-        let error = complete_all(&mut state, &flow, TGT, "any", &sink).unwrap_err();
+        let error = complete_all(&mut state, &flow, &test_label(TGT), "any", &sink).unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
 
         // S2: wrong token.
         let flow = OutputFlow::new();
         let (mut state, _handoff) = begun(&flow);
-        let error = complete_all(&mut state, &flow, TGT, "wrong", &sink).unwrap_err();
+        let error = complete_all(&mut state, &flow, &test_label(TGT), "wrong", &sink).unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
 
         // S3: the target equals the source; checked before the expiry.
         let flow = OutputFlow::new();
         let (mut state, handoff) = begun(&flow);
-        let error = complete_all(&mut state, &flow, SRC, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(SRC), &handoff.token, &sink).unwrap_err();
         let text = describe(&error);
         assert!(text.contains("pty.handoff_target_is_source"), "{text}");
         assert!(text.contains("目标窗口与源窗口相同"), "{text}");
         assert!(flow_paused(&flow));
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x"),
+            )
             .expect("the state is still Paused");
 
         // S4: lapsed.
         let flow = OutputFlow::new();
         let (mut state, handoff) = begun(&flow);
         lapse(&flow);
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
@@ -662,12 +744,19 @@ mod tests {
         // S5: Paused, live: the snapshot is not ready.
         let flow = OutputFlow::new();
         let (mut state, handoff) = begun(&flow);
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
         assert!(
             describe(&error).contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试")
         );
         state
-            .stage(&flow, SRC, &handoff.token, handoff.sequence, snap("x"))
+            .stage(
+                &flow,
+                &test_label(SRC),
+                &handoff.token,
+                handoff.sequence,
+                snap("x"),
+            )
             .expect("the state is still Paused");
 
         // S6: Staged, the delivery fails; S7: then it succeeds.
@@ -675,11 +764,12 @@ mod tests {
         let sink = Arc::new(FakeSink::new());
         let (mut state, handoff) = staged(&flow);
         sink.fail_next_with("closed");
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
         assert!(describe(&error).contains("新窗口终端尚未就绪：closed"));
         assert!(sink.events().is_empty());
         assert_eq!(state.bound_source(), None, "still Staged");
-        complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap();
+        complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap();
         let events = sink.events();
         assert_eq!(events.len(), 1);
         match &events[0] {
@@ -699,11 +789,12 @@ mod tests {
         }
 
         // S8: Bound: a second complete is rejected and sends nothing.
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
         assert!(
             describe(&error).contains("pty.handoff_in_progress 终端正在进行窗口交接，请稍后重试")
         );
-        assert_eq!(state.bound_source(), Some(SRC));
+        assert_eq!(state.bound_source(), Some(&test_label(SRC)));
         assert_eq!(sink.events().len(), 1);
     }
 
@@ -714,14 +805,16 @@ mod tests {
         let (mut state, handoff) = staged(&flow);
         lapse(&flow);
 
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
 
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
         assert!(state.is_idle());
         assert!(!flow_paused(&flow));
         assert!(sink.events().is_empty());
         // Cleaned: a second call reports the handoff as gone (it used to time out again).
-        let error = complete_all(&mut state, &flow, TGT, &handoff.token, &sink).unwrap_err();
+        let error =
+            complete_all(&mut state, &flow, &test_label(TGT), &handoff.token, &sink).unwrap_err();
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期"));
     }
 
@@ -745,7 +838,9 @@ mod tests {
             ),
         ] {
             let paused_before = flow_paused(flow);
-            let error = state.check_finalize(flow, TGT, token).unwrap_err();
+            let error = state
+                .check_finalize(flow, &test_label(TGT), token)
+                .unwrap_err();
             assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
             assert_eq!(flow_paused(flow), paused_before, "the flow is left alone");
         }
@@ -753,12 +848,16 @@ mod tests {
         let flow = OutputFlow::new();
         let (mut state, handoff) = bound(&flow, &sink);
         for (target, token) in [(TGT, "wrong"), (SRC, handoff.token.as_str())] {
-            let error = state.check_finalize(&flow, target, token).unwrap_err();
+            let error = state
+                .check_finalize(&flow, &test_label(target), token)
+                .unwrap_err();
             assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
-            assert_eq!(state.bound_source(), Some(SRC));
+            assert_eq!(state.bound_source(), Some(&test_label(SRC)));
         }
-        state.check_finalize(&flow, TGT, &handoff.token).unwrap();
-        assert_eq!(state.bound_source(), Some(SRC));
+        state
+            .check_finalize(&flow, &test_label(TGT), &handoff.token)
+            .unwrap();
+        assert_eq!(state.bound_source(), Some(&test_label(SRC)));
         assert!(flow_paused(&flow));
     }
 
@@ -770,7 +869,7 @@ mod tests {
         lapse(&flow);
 
         let error = state
-            .check_finalize(&flow, TGT, &handoff.token)
+            .check_finalize(&flow, &test_label(TGT), &handoff.token)
             .unwrap_err();
 
         assert!(describe(&error).contains("pty.handoff_expired 终端窗口交接已过期，请重试"));
@@ -786,7 +885,7 @@ mod tests {
         for (source, token) in [(SRC, "any"), (OTHER, "other")] {
             let flow = OutputFlow::new();
             let mut state = HandoffState::default();
-            assert!(state.cancel(&flow, source, token).is_ok());
+            assert!(state.cancel(&flow, &test_label(source), token).is_ok());
             assert!(state.is_idle());
             assert!(!flow_paused(&flow));
         }
@@ -809,7 +908,7 @@ mod tests {
                     };
                     let label = format!("{stage} lapsed={lapsed} {variant}");
 
-                    let result = state.cancel(&flow, source, &token);
+                    let result = state.cancel(&flow, &test_label(source), &token);
 
                     if variant == "correct" {
                         assert!(result.is_ok(), "{label}");
@@ -845,31 +944,39 @@ mod tests {
 
         for stage in ["paused", "staged", "bound"] {
             let mut state = make(stage);
-            assert!(state.references_window(SRC), "{stage}");
+            assert!(state.references_window(&test_label(SRC)), "{stage}");
             assert!(
                 !state.is_idle(),
                 "references_window must not change the state"
             );
-            assert!(state.clear_for_window(SRC), "{stage}");
+            assert!(state.clear_for_window(&test_label(SRC)), "{stage}");
             assert!(state.is_idle(), "{stage}");
         }
         // The target only counts once bound.
         for (stage, expected) in [("paused", false), ("staged", false), ("bound", true)] {
             let mut state = make(stage);
-            assert_eq!(state.references_window(TGT), expected, "{stage}");
-            assert_eq!(state.clear_for_window(TGT), expected, "{stage}");
+            assert_eq!(
+                state.references_window(&test_label(TGT)),
+                expected,
+                "{stage}"
+            );
+            assert_eq!(
+                state.clear_for_window(&test_label(TGT)),
+                expected,
+                "{stage}"
+            );
             assert_eq!(state.is_idle(), expected, "{stage}");
         }
         for stage in ["paused", "staged", "bound"] {
             let mut state = make(stage);
-            assert!(!state.references_window(THIRD), "{stage}");
-            assert!(!state.clear_for_window(THIRD), "{stage}");
+            assert!(!state.references_window(&test_label(THIRD)), "{stage}");
+            assert!(!state.clear_for_window(&test_label(THIRD)), "{stage}");
             assert!(!state.is_idle(), "{stage}");
             assert_eq!(state.bound_source().is_some(), stage == "bound", "{stage}");
         }
         let mut idle = HandoffState::default();
-        assert!(!idle.references_window(SRC));
-        assert!(!idle.clear_for_window(SRC));
+        assert!(!idle.references_window(&test_label(SRC)));
+        assert!(!idle.clear_for_window(&test_label(SRC)));
         assert!(idle.bound_source().is_none());
     }
 
@@ -941,7 +1048,7 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.begin(f, SRC, TGT).map(|_| ())
+        s.begin(f, &test_label(SRC), &test_label(TGT)).map(|_| ())
     }
     fn e_stage_ok(
         s: &mut HandoffState,
@@ -949,7 +1056,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.stage(f, SRC, &h.token, h.sequence, snap("N"))
+        s.stage(f, &test_label(SRC), &h.token, h.sequence, snap("N"))
     }
     fn e_stage_bad_token(
         s: &mut HandoffState,
@@ -957,7 +1064,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.stage(f, SRC, "wrong", h.sequence, snap("N"))
+        s.stage(f, &test_label(SRC), "wrong", h.sequence, snap("N"))
     }
     fn e_stage_bad_source(
         s: &mut HandoffState,
@@ -965,7 +1072,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.stage(f, OTHER, &h.token, h.sequence, snap("N"))
+        s.stage(f, &test_label(OTHER), &h.token, h.sequence, snap("N"))
     }
     fn e_stage_bad_sequence(
         s: &mut HandoffState,
@@ -973,7 +1080,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.stage(f, SRC, &h.token, h.sequence + 1, snap("N"))
+        s.stage(f, &test_label(SRC), &h.token, h.sequence + 1, snap("N"))
     }
     fn e_check_complete_ok(
         s: &mut HandoffState,
@@ -981,7 +1088,8 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_complete(f, SESSION, TGT, &h.token).map(|_| ())
+        s.check_complete(f, SESSION, &test_label(TGT), &h.token)
+            .map(|_| ())
     }
     fn e_check_complete_bad_token(
         s: &mut HandoffState,
@@ -989,7 +1097,8 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_complete(f, SESSION, TGT, "wrong").map(|_| ())
+        s.check_complete(f, SESSION, &test_label(TGT), "wrong")
+            .map(|_| ())
     }
     fn e_check_complete_same(
         s: &mut HandoffState,
@@ -997,7 +1106,8 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_complete(f, SESSION, SRC, &h.token).map(|_| ())
+        s.check_complete(f, SESSION, &test_label(SRC), &h.token)
+            .map(|_| ())
     }
     fn e_check_complete_bad_token_same(
         s: &mut HandoffState,
@@ -1005,7 +1115,8 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_complete(f, SESSION, SRC, "wrong").map(|_| ())
+        s.check_complete(f, SESSION, &test_label(SRC), "wrong")
+            .map(|_| ())
     }
     fn e_deliver_fails(
         s: &mut HandoffState,
@@ -1013,7 +1124,7 @@ mod tests {
         sink: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        let plan = s.check_complete(f, SESSION, TGT, &h.token)?;
+        let plan = s.check_complete(f, SESSION, &test_label(TGT), &h.token)?;
         sink.fail_next_with("closed");
         deliver_snapshot(&plan, sink.as_ref())
     }
@@ -1023,7 +1134,7 @@ mod tests {
         sink: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.bind(f, TGT, &h.token, sink.clone())
+        s.bind(f, &test_label(TGT), &h.token, sink.clone())
     }
     fn e_bind_bad_token(
         s: &mut HandoffState,
@@ -1031,7 +1142,7 @@ mod tests {
         sink: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.bind(f, TGT, "wrong", sink.clone())
+        s.bind(f, &test_label(TGT), "wrong", sink.clone())
     }
     fn e_check_finalize_ok(
         s: &mut HandoffState,
@@ -1039,7 +1150,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_finalize(f, TGT, &h.token)
+        s.check_finalize(f, &test_label(TGT), &h.token)
     }
     fn e_check_finalize_bad_token(
         s: &mut HandoffState,
@@ -1047,7 +1158,7 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_finalize(f, TGT, "wrong")
+        s.check_finalize(f, &test_label(TGT), "wrong")
     }
     fn e_check_finalize_bad_target(
         s: &mut HandoffState,
@@ -1055,7 +1166,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.check_finalize(f, OTHER, &h.token)
+        s.check_finalize(f, &test_label(OTHER), &h.token)
     }
     fn e_commit_finalize(
         s: &mut HandoffState,
@@ -1074,7 +1185,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.cancel(f, SRC, &h.token)
+        s.cancel(f, &test_label(SRC), &h.token)
     }
     fn e_cancel_bad_token(
         s: &mut HandoffState,
@@ -1082,7 +1193,7 @@ mod tests {
         _: &Arc<FakeSink>,
         _: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.cancel(f, SRC, "wrong")
+        s.cancel(f, &test_label(SRC), "wrong")
     }
     fn e_cancel_bad_source(
         s: &mut HandoffState,
@@ -1090,7 +1201,7 @@ mod tests {
         _: &Arc<FakeSink>,
         h: &PtyHandoff,
     ) -> Result<(), AppError> {
-        s.cancel(f, OTHER, &h.token)
+        s.cancel(f, &test_label(OTHER), &h.token)
     }
 
     const EXPIRED: &str = "pty.handoff_expired 终端窗口交接已过期";

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -5,27 +7,20 @@ use anyhow::{bail, Result};
 
 use crate::db::directory_repo;
 use crate::models::directory::Directory;
-use crate::models::window_kind::{window_kind_of, WindowKind, WindowLabel};
+use crate::models::window_kind::WindowLabel;
 use crate::platform::path_identity;
 use crate::services::project_directory::ProjectDirectory;
 use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
 use crate::{AppError, Db};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContentWindowFileGrant {
-    pub directory_id: i64,
-    pub directory_path: String,
-    pub relative_path: String,
-}
-
 #[derive(Default)]
 pub struct ContentWindowGrantRegistry {
-    grants: Mutex<HashMap<String, ContentWindowFileGrant>>,
+    grants: Mutex<HashMap<WindowLabel, ContentWindowFileGrant>>,
 }
 
 impl ContentWindowGrantRegistry {
-    pub fn grant(&self, label: &str, grant: ContentWindowFileGrant) -> Result<()> {
-        if !window_kind_of(label).is_some_and(WindowKind::has_file_grant) {
+    pub fn grant(&self, label: &WindowLabel, grant: ContentWindowFileGrant) -> Result<()> {
+        if !label.kind().has_file_grant() {
             bail!("文件授权目标不是已登记的内容窗口");
         }
         ProjectDirectory::validate_relative_path(&grant.relative_path)?;
@@ -33,7 +28,7 @@ impl ContentWindowGrantRegistry {
             .grants
             .lock()
             .map_err(|_| anyhow::anyhow!("内容窗口授权表锁中毒"))?;
-        match grants.entry(label.to_string()) {
+        match grants.entry(label.clone()) {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(grant);
                 Ok(())
@@ -44,8 +39,8 @@ impl ContentWindowGrantRegistry {
         }
     }
 
-    pub fn get(&self, label: &str) -> Result<ContentWindowFileGrant> {
-        if !window_kind_of(label).is_some_and(WindowKind::has_file_grant) {
+    pub fn get(&self, label: &WindowLabel) -> Result<ContentWindowFileGrant> {
+        if !label.kind().has_file_grant() {
             bail!("调用窗口不是已登记的内容窗口");
         }
         self.grants
@@ -56,7 +51,7 @@ impl ContentWindowGrantRegistry {
             .ok_or_else(|| anyhow::anyhow!("文件窗口没有文件授权"))
     }
 
-    pub fn revoke(&self, label: &str) -> Result<bool> {
+    pub fn revoke(&self, label: &WindowLabel) -> Result<bool> {
         Ok(self
             .grants
             .lock()
@@ -71,7 +66,7 @@ impl WindowScopedResource for ContentWindowGrantRegistry {
         if !window.kind().has_file_grant() {
             return Vec::new();
         }
-        if let Err(error) = self.revoke(window.as_str()) {
+        if let Err(error) = self.revoke(window) {
             log::warn!("unable to revoke file grant for destroyed window label={window}: {error}");
         }
         vec![AppEvent::WorkspaceContentWindowLost {
@@ -83,7 +78,7 @@ impl WindowScopedResource for ContentWindowGrantRegistry {
 /// Closes a content window whose grant was revoked. Implementations perform
 /// IPC; callers must not hold any lock while calling it.
 pub trait ContentWindowReclaimer {
-    fn reclaim(&self, label: &str) -> Result<(), String>;
+    fn reclaim(&self, label: &WindowLabel) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,16 +108,16 @@ pub struct RevocationReport {
 
 impl ContentWindowGrantRegistry {
     /// All grants sorted by label.
-    pub fn snapshot(&self) -> Result<Vec<(String, ContentWindowFileGrant)>> {
+    pub fn snapshot(&self) -> Result<Vec<(WindowLabel, ContentWindowFileGrant)>> {
         let grants = self
             .grants
             .lock()
             .map_err(|_| anyhow::anyhow!("内容窗口授权表锁中毒"))?;
-        let mut entries: Vec<(String, ContentWindowFileGrant)> = grants
+        let mut entries: Vec<(WindowLabel, ContentWindowFileGrant)> = grants
             .iter()
             .map(|(label, grant)| (label.clone(), grant.clone()))
             .collect();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
         Ok(entries)
     }
 
@@ -131,17 +126,17 @@ impl ContentWindowGrantRegistry {
     pub fn revoke_matching(
         &self,
         predicate: impl Fn(&ContentWindowFileGrant) -> bool,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<WindowLabel>> {
         let mut grants = self
             .grants
             .lock()
             .map_err(|_| anyhow::anyhow!("内容窗口授权表锁中毒"))?;
-        let mut labels: Vec<String> = grants
+        let mut labels: Vec<WindowLabel> = grants
             .iter()
             .filter(|(_, grant)| predicate(grant))
             .map(|(label, _)| label.clone())
             .collect();
-        labels.sort();
+        labels.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         for label in &labels {
             grants.remove(label);
         }
@@ -149,7 +144,11 @@ impl ContentWindowGrantRegistry {
     }
 
     /// Removes the grant of `label` only when it still equals `expected`.
-    pub fn revoke_exact(&self, label: &str, expected: &ContentWindowFileGrant) -> Result<bool> {
+    pub fn revoke_exact(
+        &self,
+        label: &WindowLabel,
+        expected: &ContentWindowFileGrant,
+    ) -> Result<bool> {
         let mut grants = self
             .grants
             .lock()
@@ -228,7 +227,7 @@ impl<'a> ContentWindowRevoker<'a> {
         Ok(self.revoke_stale(&directories))
     }
 
-    fn finish(&self, revoked: Result<Vec<String>>) -> RevocationReport {
+    fn finish(&self, revoked: Result<Vec<WindowLabel>>) -> RevocationReport {
         let revoked = match revoked {
             Ok(labels) => labels,
             Err(error) => {
@@ -243,7 +242,7 @@ impl<'a> ContentWindowRevoker<'a> {
         for label in &revoked {
             if let Err(error) = self.reclaimer.reclaim(label) {
                 log::warn!("unable to reclaim content window label={label}: {error}");
-                reclaim_failed.push(label.clone());
+                reclaim_failed.push(label.as_str().to_string());
             }
         }
         log::info!(
@@ -253,10 +252,21 @@ impl<'a> ContentWindowRevoker<'a> {
             reclaim_failed.len()
         );
         RevocationReport {
-            revoked,
+            revoked: revoked
+                .iter()
+                .map(|label| label.as_str().to_string())
+                .collect(),
             reclaim_failed,
         }
     }
+}
+
+/// A file grant for one content window: one relative file inside one project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentWindowFileGrant {
+    pub directory_id: i64,
+    pub directory_path: String,
+    pub relative_path: String,
 }
 
 #[cfg(test)]
@@ -280,33 +290,52 @@ mod tests {
     fn grants_only_registered_content_windows_and_one_relative_file() {
         let registry = ContentWindowGrantRegistry::default();
 
-        assert!(registry.grant("main", grant("notes.md")).is_err());
         assert!(registry
-            .grant("workspace-content-invalid", grant("notes.md"))
+            .grant(&test_label("main"), grant("notes.md"))
             .is_err());
-        assert!(registry.grant(FIRST_LABEL, grant("../outside.md")).is_err());
+        // A non-canonical label cannot be built at all: `parse` refuses it (WL-B).
+        assert!(
+            crate::models::window_kind::WindowLabel::parse("workspace-content-invalid").is_err()
+        );
+        assert!(registry
+            .grant(&test_label(FIRST_LABEL), grant("../outside.md"))
+            .is_err());
 
-        registry.grant(FIRST_LABEL, grant("notes.md")).unwrap();
-        assert_eq!(registry.get(FIRST_LABEL).unwrap(), grant("notes.md"));
-        assert!(registry.get(SECOND_LABEL).is_err());
+        registry
+            .grant(&test_label(FIRST_LABEL), grant("notes.md"))
+            .unwrap();
+        assert_eq!(
+            registry.get(&test_label(FIRST_LABEL)).unwrap(),
+            grant("notes.md")
+        );
+        assert!(registry.get(&test_label(SECOND_LABEL)).is_err());
     }
 
     #[test]
     fn revocation_is_scoped_to_the_exact_window_label() {
         let registry = ContentWindowGrantRegistry::default();
-        registry.grant(FIRST_LABEL, grant("one.md")).unwrap();
-        registry.grant(SECOND_LABEL, grant("two.md")).unwrap();
+        registry
+            .grant(&test_label(FIRST_LABEL), grant("one.md"))
+            .unwrap();
+        registry
+            .grant(&test_label(SECOND_LABEL), grant("two.md"))
+            .unwrap();
 
-        assert!(registry.revoke(FIRST_LABEL).unwrap());
-        assert!(registry.get(FIRST_LABEL).is_err());
-        assert_eq!(registry.get(SECOND_LABEL).unwrap(), grant("two.md"));
-        assert!(!registry.revoke(FIRST_LABEL).unwrap());
+        assert!(registry.revoke(&test_label(FIRST_LABEL)).unwrap());
+        assert!(registry.get(&test_label(FIRST_LABEL)).is_err());
+        assert_eq!(
+            registry.get(&test_label(SECOND_LABEL)).unwrap(),
+            grant("two.md")
+        );
+        assert!(!registry.revoke(&test_label(FIRST_LABEL)).unwrap());
     }
 
     #[test]
     fn release_window_still_reports_the_lost_window_when_the_grant_table_is_poisoned() {
         let registry = ContentWindowGrantRegistry::default();
-        registry.grant(FIRST_LABEL, grant("a.txt")).unwrap();
+        registry
+            .grant(&test_label(FIRST_LABEL), grant("a.txt"))
+            .unwrap();
         // A panic while the table lock is held poisons it, so the revocation fails.
         let poisoning = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _held = registry.grants.lock().unwrap();
@@ -314,7 +343,7 @@ mod tests {
         }));
         assert!(poisoning.is_err());
         assert!(
-            registry.revoke(FIRST_LABEL).is_err(),
+            registry.revoke(&test_label(FIRST_LABEL)).is_err(),
             "the revocation must really fail for this test to mean anything"
         );
 
@@ -362,10 +391,13 @@ mod tests {
         assert!(reclaimer.reclaimed().is_empty());
 
         registry
-            .grant(FIRST_LABEL, grant_in(7, "C:/workspace", "one.md"))
+            .grant(
+                &test_label(FIRST_LABEL),
+                grant_in(7, "C:/workspace", "one.md"),
+            )
             .unwrap();
         registry
-            .grant(SECOND_LABEL, grant_in(8, "C:/other", "two.md"))
+            .grant(&test_label(SECOND_LABEL), grant_in(8, "C:/other", "two.md"))
             .unwrap();
 
         let report = revoker.revoke_all();
@@ -378,8 +410,8 @@ mod tests {
             reclaimer.reclaimed(),
             vec![SECOND_LABEL.to_string(), FIRST_LABEL.to_string()]
         );
-        assert!(registry.get(FIRST_LABEL).is_err());
-        assert!(registry.get(SECOND_LABEL).is_err());
+        assert!(registry.get(&test_label(FIRST_LABEL)).is_err());
+        assert!(registry.get(&test_label(SECOND_LABEL)).is_err());
         assert!(registry.snapshot().unwrap().is_empty());
 
         // 再撤销一次：没有授权可撤，每个窗口只回收一次。
@@ -394,13 +426,19 @@ mod tests {
         let revoker =
             ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::RemoveDirectory);
         registry
-            .grant(FIRST_LABEL, grant_in(7, "C:/workspace", "one.md"))
+            .grant(
+                &test_label(FIRST_LABEL),
+                grant_in(7, "C:/workspace", "one.md"),
+            )
             .unwrap();
         registry
-            .grant(SECOND_LABEL, grant_in(8, "C:/other", "two.md"))
+            .grant(&test_label(SECOND_LABEL), grant_in(8, "C:/other", "two.md"))
             .unwrap();
         registry
-            .grant(THIRD_LABEL, grant_in(7, "C:/workspace", "three.md"))
+            .grant(
+                &test_label(THIRD_LABEL),
+                grant_in(7, "C:/workspace", "three.md"),
+            )
             .unwrap();
 
         let report = revoker.revoke_for_directory(7);
@@ -414,12 +452,12 @@ mod tests {
         );
         // 反向：其他项目的授权完好。
         assert_eq!(
-            registry.get(SECOND_LABEL).unwrap(),
+            registry.get(&test_label(SECOND_LABEL)).unwrap(),
             grant_in(8, "C:/other", "two.md")
         );
 
         assert!(revoker.revoke_for_directory(99).revoked.is_empty());
-        assert!(registry.get(SECOND_LABEL).is_ok());
+        assert!(registry.get(&test_label(SECOND_LABEL)).is_ok());
         assert_eq!(reclaimer.reclaimed().len(), 2);
     }
 
@@ -430,15 +468,21 @@ mod tests {
         let revoker =
             ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::ImportConfig);
         registry
-            .grant(FIRST_LABEL, grant_in(7, "C:/workspace", "one.md"))
+            .grant(
+                &test_label(FIRST_LABEL),
+                grant_in(7, "C:/workspace", "one.md"),
+            )
             .unwrap();
         // 项目 8 已不存在。
         registry
-            .grant(SECOND_LABEL, grant_in(8, "C:/gone", "two.md"))
+            .grant(&test_label(SECOND_LABEL), grant_in(8, "C:/gone", "two.md"))
             .unwrap();
         // 项目 9 的路径已变。
         registry
-            .grant(THIRD_LABEL, grant_in(9, "C:/old-path", "three.md"))
+            .grant(
+                &test_label(THIRD_LABEL),
+                grant_in(9, "C:/old-path", "three.md"),
+            )
             .unwrap();
         let directories = vec![directory(7, "C:/workspace"), directory(9, "C:/new-path")];
 
@@ -452,7 +496,7 @@ mod tests {
             vec![SECOND_LABEL.to_string(), THIRD_LABEL.to_string()]
         );
         assert_eq!(
-            registry.get(FIRST_LABEL).unwrap(),
+            registry.get(&test_label(FIRST_LABEL)).unwrap(),
             grant_in(7, "C:/workspace", "one.md")
         );
         assert!(!reclaimer.reclaimed().contains(&FIRST_LABEL.to_string()));
@@ -468,13 +512,16 @@ mod tests {
         let revoker =
             ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::RestoreBackup);
         registry
-            .grant(FIRST_LABEL, grant_in(7, "C:/workspace", "a.md"))
+            .grant(
+                &test_label(FIRST_LABEL),
+                grant_in(7, "C:/workspace", "a.md"),
+            )
             .unwrap();
         registry
-            .grant(SECOND_LABEL, grant_in(8, "C:/other", "b.md"))
+            .grant(&test_label(SECOND_LABEL), grant_in(8, "C:/other", "b.md"))
             .unwrap();
         registry
-            .grant(THIRD_LABEL, grant_in(9, "C:/third", "c.md"))
+            .grant(&test_label(THIRD_LABEL), grant_in(9, "C:/third", "c.md"))
             .unwrap();
 
         let report = revoker.revoke_all();
@@ -504,14 +551,22 @@ mod tests {
         let registry = ContentWindowGrantRegistry::default();
         let old = grant_in(7, "C:/workspace", "old.md");
         let newer = grant_in(7, "C:/workspace", "new.md");
-        registry.grant(FIRST_LABEL, old.clone()).unwrap();
-        registry.revoke(FIRST_LABEL).unwrap();
-        registry.grant(FIRST_LABEL, newer.clone()).unwrap();
+        registry
+            .grant(&test_label(FIRST_LABEL), old.clone())
+            .unwrap();
+        registry.revoke(&test_label(FIRST_LABEL)).unwrap();
+        registry
+            .grant(&test_label(FIRST_LABEL), newer.clone())
+            .unwrap();
 
-        assert!(!registry.revoke_exact(FIRST_LABEL, &old).unwrap());
-        assert_eq!(registry.get(FIRST_LABEL).unwrap(), newer);
-        assert!(registry.revoke_exact(FIRST_LABEL, &newer).unwrap());
-        assert!(registry.get(FIRST_LABEL).is_err());
+        assert!(!registry
+            .revoke_exact(&test_label(FIRST_LABEL), &old)
+            .unwrap());
+        assert_eq!(registry.get(&test_label(FIRST_LABEL)).unwrap(), newer);
+        assert!(registry
+            .revoke_exact(&test_label(FIRST_LABEL), &newer)
+            .unwrap());
+        assert!(registry.get(&test_label(FIRST_LABEL)).is_err());
     }
 
     #[test]
@@ -526,10 +581,16 @@ mod tests {
         let revoker =
             ContentWindowRevoker::new(&registry, &reclaimer, RevocationReason::ImportConfig);
         registry
-            .grant(FIRST_LABEL, grant_in(a.id, "C:/workspace", "one.md"))
+            .grant(
+                &test_label(FIRST_LABEL),
+                grant_in(a.id, "C:/workspace", "one.md"),
+            )
             .unwrap();
         registry
-            .grant(SECOND_LABEL, grant_in(b.id, "C:/other", "two.md"))
+            .grant(
+                &test_label(SECOND_LABEL),
+                grant_in(b.id, "C:/other", "two.md"),
+            )
             .unwrap();
 
         // 两个项目都有效时不撤销。
@@ -544,7 +605,29 @@ mod tests {
         let report = revoker.revoke_stale_for_database(&db).unwrap();
         assert_eq!(report.revoked, vec![SECOND_LABEL.to_string()]);
         assert_eq!(reclaimer.reclaimed(), vec![SECOND_LABEL.to_string()]);
-        assert!(registry.get(FIRST_LABEL).is_ok());
+        assert!(registry.get(&test_label(FIRST_LABEL)).is_ok());
+    }
+
+    #[test]
+    fn only_content_window_labels_can_hold_a_grant() {
+        // m6-102 CZ-7: characterization, passes on HEAD.
+        const TERMINAL_LABEL: &str = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+        let registry = ContentWindowGrantRegistry::default();
+
+        assert!(registry.grant(&test_label("main"), grant("a.md")).is_err());
+        assert!(registry
+            .grant(&test_label(TERMINAL_LABEL), grant("a.md"))
+            .is_err());
+        registry
+            .grant(&test_label(FIRST_LABEL), grant("a.md"))
+            .unwrap();
+        assert_eq!(
+            registry.get(&test_label(FIRST_LABEL)).unwrap(),
+            grant("a.md")
+        );
+        // Reverse: the two rejected labels hold nothing.
+        assert!(registry.get(&test_label("main")).is_err());
+        assert!(registry.get(&test_label(TERMINAL_LABEL)).is_err());
     }
 }
 
@@ -554,6 +637,7 @@ pub(crate) mod test_support {
     use std::sync::{Arc, Mutex};
 
     use super::ContentWindowReclaimer;
+    use crate::models::window_kind::WindowLabel;
 
     /// Records every reclaim attempt in call order; labels in `fail` return an error.
     #[derive(Default)]
@@ -583,9 +667,9 @@ pub(crate) mod test_support {
     }
 
     impl ContentWindowReclaimer for RecordingReclaimer {
-        fn reclaim(&self, label: &str) -> Result<(), String> {
-            self.log.lock().unwrap().push(label.to_string());
-            if self.fail.contains(label) {
+        fn reclaim(&self, label: &WindowLabel) -> Result<(), String> {
+            self.log.lock().unwrap().push(label.as_str().to_string());
+            if self.fail.contains(label.as_str()) {
                 Err("window busy".to_string())
             } else {
                 Ok(())

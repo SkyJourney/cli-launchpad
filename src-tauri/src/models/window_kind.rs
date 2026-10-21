@@ -133,20 +133,6 @@ pub fn main_window_label() -> &'static str {
         .expect("window-kinds.json must declare the main window label")
 }
 
-pub fn is_main_label(label: &str) -> bool {
-    label == main_window_label()
-}
-
-/// Prefix check (no UUID validation) kept for hot paths that already receive
-/// labels validated at the command boundary by `WindowLabel::parse`.
-pub fn is_terminal_label(label: &str) -> bool {
-    definitions()
-        .iter()
-        .find(|definition| definition.id == WindowKind::Terminal)
-        .and_then(|definition| definition.label_prefix.as_deref())
-        .is_some_and(|prefix| label.starts_with(prefix))
-}
-
 /// A window label that is known to belong to a registered window kind.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WindowLabel {
@@ -164,6 +150,15 @@ impl WindowLabel {
         })
     }
 
+    /// The main window's label. The label comes from `contracts/window-kinds.json`, so it is
+    /// canonical by construction and needs no parsing.
+    pub fn main() -> Self {
+        Self {
+            raw: main_window_label().to_string(),
+            kind: WindowKind::Main,
+        }
+    }
+
     pub fn kind(&self) -> WindowKind {
         self.kind
     }
@@ -172,7 +167,6 @@ impl WindowLabel {
         &self.raw
     }
 
-    #[cfg(test)]
     pub fn is_main(&self) -> bool {
         self.kind == WindowKind::Main
     }
@@ -182,6 +176,12 @@ impl std::fmt::Display for WindowLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.raw)
     }
+}
+
+/// Builds a label for tests; the label must be canonical.
+#[cfg(test)]
+pub(crate) fn test_label(raw: &str) -> WindowLabel {
+    WindowLabel::parse(raw).expect("test labels are canonical")
 }
 
 /// The window that invoked a command, resolved and validated at the command boundary.
@@ -220,7 +220,10 @@ impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CallerWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_window_label, is_detached_window_label, window_kind_of, WindowKind};
+    use super::{
+        create_window_label, is_detached_window_label, test_label, window_kind_of, WindowKind,
+        WindowLabel,
+    };
 
     const WINDOW_LABEL_FIXTURES_JSON: &str =
         include_str!("../../../contracts/window-label-fixtures.json");
@@ -420,22 +423,10 @@ mod tests {
 
     #[test]
     fn main_label_helpers_read_the_contract() {
-        use super::{is_main_label, is_terminal_label, main_window_label};
+        use super::main_window_label;
         assert_eq!(main_window_label(), "main");
-        assert!(is_main_label("main"));
-        assert!(!is_main_label("Main"));
-        assert!(!is_main_label("main "));
-        assert!(is_terminal_label(
-            "terminal-8e783338-f464-4b10-b15e-b534748c6241"
-        ));
-        assert!(
-            is_terminal_label("terminal-anything"),
-            "prefix semantics are kept on purpose"
-        );
-        assert!(!is_terminal_label(
-            "workspace-content-11111111-2222-4333-8444-555555555555"
-        ));
-        assert!(!is_terminal_label("main"));
+        // The classifier helpers are gone (m6-102): the window class comes from `WindowLabel::kind`,
+        // and the canonical-UUID rule for terminals is covered by WL-B.
     }
 
     #[test]
@@ -456,5 +447,43 @@ mod tests {
         assert!(value["message"]
             .as_str()
             .is_some_and(|message| !message.is_empty()));
+    }
+
+    #[test]
+    fn window_label_main_constructor_matches_the_contract() {
+        // m6-102 WL-A: the constructor agrees with the contract and with parsing.
+        assert_eq!(WindowLabel::main().kind(), WindowKind::Main);
+        assert_eq!(WindowLabel::main().as_str(), super::main_window_label());
+        assert!(WindowLabel::main().is_main());
+        assert_eq!(
+            WindowLabel::main(),
+            WindowLabel::parse(super::main_window_label()).unwrap()
+        );
+        // Reverse: a terminal label is never the main window.
+        assert_ne!(
+            WindowLabel::main(),
+            test_label("terminal-8e783338-f464-4b10-b15e-b534748c6241")
+        );
+    }
+
+    #[test]
+    fn a_terminal_looking_label_without_a_canonical_uuid_is_not_a_window_label() {
+        // m6-102 WL-B: parsing is canonical-UUID only, so the old prefix meaning is gone.
+        for raw in [
+            "terminal-anything",
+            "terminal-a",
+            "workspace-content-invalid",
+            "settings",
+        ] {
+            let error = WindowLabel::parse(raw).expect_err(raw);
+            assert_eq!(
+                serde_json::to_value(&error).unwrap()["code"],
+                "window.label_invalid",
+                "{raw}"
+            );
+        }
+        // Reverse: the canonical terminal label is accepted.
+        let terminal = WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap();
+        assert_eq!(terminal.kind(), WindowKind::Terminal);
     }
 }

@@ -6,7 +6,7 @@ use super::ports::PtyEventSink;
 use crate::{
     models::{
         pty_session::{PtyEvent, PtySessionWindowStatus},
-        window_kind::main_window_label,
+        window_kind::WindowLabel,
     },
     AppError,
 };
@@ -14,9 +14,9 @@ use crate::{
 pub(super) const MAX_OWNER_LOST_BUFFER_BYTES: usize = 256 * 1024;
 
 pub(super) struct EventRoute {
-    pub(super) window_label: String,
+    pub(super) window_label: WindowLabel,
     pub(super) channel: Option<Arc<dyn PtyEventSink>>,
-    pub(super) mirror: Option<(String, Arc<dyn PtyEventSink>)>,
+    pub(super) mirror: Option<(WindowLabel, Arc<dyn PtyEventSink>)>,
     pub(super) owner_lost: bool,
     pub(super) buffered_events: VecDeque<PtyEvent>,
     pub(super) buffered_bytes: usize,
@@ -43,8 +43,8 @@ pub(super) fn pty_event_sequence(event: &PtyEvent) -> Option<u64> {
     }
 }
 
-pub(super) fn ensure_route_owner(route: &EventRoute, window_label: &str) -> Result<(), AppError> {
-    if route.window_label != window_label {
+pub(super) fn ensure_route_owner(route: &EventRoute, window: &WindowLabel) -> Result<(), AppError> {
+    if route.window_label != *window {
         return Err(AppError::from(PtyError::OwnerMismatch));
     }
     Ok(())
@@ -65,17 +65,14 @@ pub(super) fn buffer_owner_lost_event(
     true
 }
 
-pub(super) fn reclaim_event_route(route: &mut EventRoute, window_label: &str) -> bool {
+pub(super) fn reclaim_event_route(route: &mut EventRoute, window: &WindowLabel) -> bool {
     let had_mirror = route.mirror.is_some();
-    route.mirror = route
-        .mirror
-        .take()
-        .filter(|(label, _)| label != window_label);
+    route.mirror = route.mirror.take().filter(|(label, _)| label != window);
     if had_mirror && route.mirror.is_none() {
         route.epoch += 1;
     }
-    if route.window_label == window_label {
-        route.window_label = main_window_label().to_string();
+    if route.window_label == *window {
+        route.window_label = WindowLabel::main();
         route.channel = None;
         route.owner_lost = true;
         route.epoch += 1;
@@ -86,8 +83,8 @@ pub(super) fn reclaim_event_route(route: &mut EventRoute, window_label: &str) ->
 }
 
 pub(super) fn session_window_status(
-    owner_window_label: Option<&str>,
-    queried_window_label: &str,
+    owner_window_label: Option<&WindowLabel>,
+    queried_window_label: &WindowLabel,
     ended: bool,
 ) -> PtySessionWindowStatus {
     if ended {

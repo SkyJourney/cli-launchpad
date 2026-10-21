@@ -3,7 +3,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 use crate::{
     blocking, bounded, budgets,
-    models::window_kind::{CallerWindow, WindowKind},
+    models::window_kind::{CallerWindow, WindowKind, WindowLabel},
     models::{
         pty_session::{
             PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatusReport,
@@ -70,7 +70,7 @@ pub async fn create_pty_session(
     let start_permit = lifecycle.admit(Operation::PtyStart)?;
     let manager = state.inner().clone();
     let database = db.inner().clone();
-    let window_label = caller.label().as_str().to_string();
+    let window_label = caller.label().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _start_permit = start_permit;
         manager.create(
@@ -102,7 +102,7 @@ pub fn write_pty_session(
     data: String,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.write(&session_id, caller.label().as_str(), data.as_bytes())
+    state.write(&session_id, caller.label(), data.as_bytes())
 }
 
 #[tauri::command]
@@ -114,7 +114,7 @@ pub async fn resize_pty_session(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = caller.label().as_str().to_string();
+    let label = caller.label().clone();
     blocking("pty.resize", budgets::PTY_CONTROL, move || {
         manager.resize(&session_id, &label, size)
     })
@@ -130,7 +130,7 @@ pub fn acknowledge_pty_output(
     sequence: u64,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.acknowledge(&session_id, caller.label().as_str(), sequence)
+    state.acknowledge(&session_id, caller.label(), sequence)
 }
 
 #[tauri::command]
@@ -142,7 +142,7 @@ pub fn report_pty_frontend_stage(
     stage: PtyFrontendStage,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.report_frontend_stage(&session_id, caller.label().as_str(), stage)
+    state.report_frontend_stage(&session_id, caller.label(), stage)
 }
 
 #[tauri::command]
@@ -153,7 +153,7 @@ pub async fn terminate_pty_session(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = caller.label().as_str().to_string();
+    let label = caller.label().clone();
     blocking("pty.terminate", budgets::PTY_CONTROL, move || {
         manager.terminate(&session_id, &label)
     })
@@ -169,7 +169,8 @@ pub fn begin_pty_handoff(
     target_window_label: String,
 ) -> Result<PtyHandoff, AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.begin_handoff(&session_id, caller.label().as_str(), &target_window_label)
+    let target = WindowLabel::parse(&target_window_label)?;
+    state.begin_handoff(&session_id, caller.label(), &target)
 }
 
 #[tauri::command]
@@ -183,13 +184,7 @@ pub fn stage_pty_handoff_snapshot(
     snapshot: PtyTerminalSnapshot,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.stage_handoff_snapshot(
-        &session_id,
-        caller.label().as_str(),
-        &token,
-        sequence,
-        snapshot,
-    )
+    state.stage_handoff_snapshot(&session_id, caller.label(), &token, sequence, snapshot)
 }
 
 #[tauri::command]
@@ -202,7 +197,7 @@ pub async fn complete_pty_handoff(
 ) -> Result<PtySession, AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = caller.label().as_str().to_string();
+    let label = caller.label().clone();
     blocking("pty.complete_handoff", budgets::PTY_CONTROL, move || {
         manager.complete_handoff(&session_id, &label, &token, on_event)
     })
@@ -219,7 +214,7 @@ pub async fn finalize_pty_handoff(
 ) -> Result<PtySession, AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
     let manager = state.inner().clone();
-    let label = caller.label().as_str().to_string();
+    let label = caller.label().clone();
     blocking("pty.finalize_handoff", budgets::PTY_CONTROL, move || {
         manager.finalize_handoff(&session_id, &label, &token, size)
     })
@@ -235,7 +230,7 @@ pub fn cancel_pty_handoff(
     token: String,
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.cancel_handoff(&session_id, caller.label().as_str(), &token)
+    state.cancel_handoff(&session_id, caller.label(), &token)
 }
 
 #[tauri::command]
@@ -246,7 +241,7 @@ pub fn get_pty_session_window_status(
     session_id: String,
 ) -> Result<PtySessionWindowStatusReport, AppError> {
     caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
-    state.window_status_report(&session_id, caller.label().as_str())
+    state.window_status_report(&session_id, caller.label())
 }
 
 #[tauri::command]
@@ -261,7 +256,7 @@ pub async fn reattach_pty_session(
 ) -> Result<PtySession, AppError> {
     caller.require(&[WindowKind::Main])?;
     let manager = state.inner().clone();
-    let label = caller.label().as_str().to_string();
+    let label = caller.label().clone();
     blocking("pty.reattach", budgets::PTY_CONTROL, move || {
         manager.reattach(&session_id, &label, on_event, snapshot, sequence, size)
     })

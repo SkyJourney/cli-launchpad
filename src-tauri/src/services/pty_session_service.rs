@@ -45,7 +45,7 @@ use registry::SessionRegistry;
 use route::EventRoute;
 use session::{ManagedSession, RouteAndHandoff, TerminalState};
 
-use crate::models::window_kind::{is_main_label, main_window_label, WindowLabel};
+use crate::models::window_kind::WindowLabel;
 use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
 
 use crate::{
@@ -82,9 +82,8 @@ impl Default for PtySessionManager {
     }
 }
 
-fn is_supported_workspace_window(window_label: &str) -> bool {
-    crate::models::window_kind::window_kind_of(window_label)
-        .is_some_and(crate::models::window_kind::WindowKind::is_pty_host)
+fn is_supported_workspace_window(window_label: &WindowLabel) -> bool {
+    window_label.kind().is_pty_host()
 }
 
 fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppError> {
@@ -176,7 +175,7 @@ impl PtySessionManager {
         payload: &launch_service::CliLaunchPayload,
         resume_session_id: Option<&str>,
         size: PtySizeUpdate,
-        window_label: &str,
+        window_label: &WindowLabel,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         // The project was opened and checked once by `ProjectDirectory::open_ref`; here only the
@@ -231,7 +230,7 @@ impl PtySessionManager {
         tool_key: ToolKey,
         payload: &launch_service::CliLaunchPayload,
         size: PtySizeUpdate,
-        window_label: &str,
+        window_label: &WindowLabel,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         validate_size(size)?;
@@ -305,7 +304,7 @@ impl PtySessionManager {
             flow: Arc::new(OutputFlow::new()),
             route_and_handoff: Mutex::new(RouteAndHandoff {
                 route: EventRoute {
-                    window_label: window_label.to_string(),
+                    window_label: window_label.clone(),
                     channel: Some(Arc::new(on_event) as Arc<dyn PtyEventSink>),
                     mirror: None,
                     owner_lost: false,
@@ -402,7 +401,12 @@ impl PtySessionManager {
         self.registry.get(session_id)
     }
 
-    pub fn write(&self, session_id: &str, window_label: &str, data: &[u8]) -> Result<(), AppError> {
+    pub fn write(
+        &self,
+        session_id: &str,
+        window_label: &WindowLabel,
+        data: &[u8],
+    ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
         enqueue_pty_input(&session.writer, data)
@@ -411,7 +415,7 @@ impl PtySessionManager {
     pub fn resize(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         size: PtySizeUpdate,
     ) -> Result<(), AppError> {
         validate_size(size)?;
@@ -431,7 +435,7 @@ impl PtySessionManager {
     pub fn acknowledge(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         sequence: u64,
     ) -> Result<(), AppError> {
         let session = self.registry.find(session_id)?;
@@ -464,7 +468,7 @@ impl PtySessionManager {
     pub fn report_frontend_stage(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         stage: PtyFrontendStage,
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
@@ -477,7 +481,7 @@ impl PtySessionManager {
         Ok(())
     }
 
-    pub fn terminate(&self, session_id: &str, window_label: &str) -> Result<(), AppError> {
+    pub fn terminate(&self, session_id: &str, window_label: &WindowLabel) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
         session
@@ -506,8 +510,8 @@ impl PtySessionManager {
     pub fn begin_handoff(
         &self,
         session_id: &str,
-        window_label: &str,
-        target_window_label: &str,
+        window_label: &WindowLabel,
+        target_window_label: &WindowLabel,
     ) -> Result<PtyHandoff, AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
@@ -525,7 +529,7 @@ impl PtySessionManager {
     pub fn stage_handoff_snapshot(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         token: &str,
         sequence: u64,
         snapshot: PtyTerminalSnapshot,
@@ -545,7 +549,7 @@ impl PtySessionManager {
     pub fn complete_handoff(
         &self,
         session_id: &str,
-        target_window_label: &str,
+        target_window_label: &WindowLabel,
         token: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
@@ -584,7 +588,7 @@ impl PtySessionManager {
     pub fn finalize_handoff(
         &self,
         session_id: &str,
-        target_window_label: &str,
+        target_window_label: &WindowLabel,
         token: &str,
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
@@ -608,7 +612,7 @@ impl PtySessionManager {
             .handoff
             .bound_source()
             .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?
-            .to_string();
+            .clone();
         // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
         // `cancel` or `reclaim_window` can still clean it up.
         if guard.route.window_label != source_window_label {
@@ -619,19 +623,16 @@ impl PtySessionManager {
             .commit_finalize()
             .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?;
         let route = &mut guard.route;
-        route.window_label = target_window_label.to_string();
-        route.mirror = if is_main_label(target_window_label) {
+        route.window_label = target_window_label.clone();
+        route.mirror = if target_window_label.is_main() {
             None
-        } else if is_main_label(&source_window_label) {
+        } else if source_window_label.is_main() {
             route
                 .channel
                 .take()
-                .map(|source_channel| (main_window_label().to_string(), source_channel))
+                .map(|source_channel| (WindowLabel::main(), source_channel))
         } else {
-            route
-                .mirror
-                .take()
-                .filter(|(label, _)| is_main_label(label))
+            route.mirror.take().filter(|(label, _)| label.is_main())
         };
         route.channel = Some(bound.sink);
         route.owner_lost = false;
@@ -644,7 +645,7 @@ impl PtySessionManager {
     pub fn cancel_handoff(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         token: &str,
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
@@ -963,7 +964,7 @@ impl WindowScopedResource for PtySessionManager {
         if !window.kind().owns_pty() {
             return Vec::new();
         }
-        self.reclaim_window(window.as_str())
+        self.reclaim_window(window)
             .into_iter()
             .map(|session_id| AppEvent::PtySessionOwnerLost { session_id })
             .collect()

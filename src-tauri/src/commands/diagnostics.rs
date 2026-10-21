@@ -33,6 +33,6 @@ pub fn report_window_sync_failure(
         WindowKind::Terminal,
         WindowKind::WorkspaceContent,
     ])?;
-    diagnostics_service::log_window_sync_failure(caller.label().as_str(), &code, &message);
+    diagnostics_service::log_window_sync_failure(caller.label(), &code, &message);
     Ok(())
 }

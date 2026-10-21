@@ -15,7 +15,7 @@ use crate::{
             PtyEvent, PtySession, PtySessionWindowStatus, PtySessionWindowStatusReport,
             PtySizeUpdate, PtyTerminalSnapshot,
         },
-        window_kind::is_main_label,
+        window_kind::WindowLabel,
     },
     AppError,
 };
@@ -24,7 +24,7 @@ impl PtySessionManager {
     pub fn window_status_report(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
     ) -> Result<PtySessionWindowStatusReport, AppError> {
         // The table lock is released as soon as the session is found; only the session's own
         // lock is taken below.
@@ -47,12 +47,12 @@ impl PtySessionManager {
         let route = &guard.route;
         Ok(PtySessionWindowStatusReport {
             status: session_window_status(Some(&route.window_label), window_label, false),
-            owner_window_label: Some(route.window_label.clone()),
+            owner_window_label: Some(route.window_label.as_str().to_string()),
         })
     }
 
-    pub fn reclaim_window(&self, window_label: &str) -> Vec<String> {
-        if is_main_label(window_label) {
+    pub fn reclaim_window(&self, window_label: &WindowLabel) -> Vec<String> {
+        if window_label.is_main() {
             return Vec::new();
         }
         let sessions = match self.registry.snapshot() {
@@ -97,13 +97,13 @@ impl PtySessionManager {
     pub fn reattach(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         channel: Channel<PtyEvent>,
         snapshot: PtyTerminalSnapshot,
         sequence: u64,
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
-        if !is_main_label(window_label) {
+        if !window_label.is_main() {
             return Err(AppError::coded(
                 ErrorCode::WindowNotAllowed,
                 "只有主窗口可以重新接管终端",
@@ -140,7 +140,7 @@ impl PtySessionManager {
                 .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 事件路由")))?;
             let route = &mut guard.route;
             if !route.owner_lost
-                || !is_main_label(&route.window_label)
+                || !route.window_label.is_main()
                 || route.channel.is_some()
                 || route.reattaching
             {

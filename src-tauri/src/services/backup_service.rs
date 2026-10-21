@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -346,10 +348,10 @@ mod tests {
             ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         grants
-            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
             .unwrap();
         grants
-            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
             .unwrap();
         let notifier = OrderedNotifier { log: log.clone() };
 
@@ -391,10 +393,10 @@ mod tests {
             .execute("drop table session_search_documents", [])
             .unwrap();
         grants
-            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
             .unwrap();
         grants
-            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
             .unwrap();
         let notifier = RecordingNotifier::failing();
 
@@ -427,10 +429,10 @@ mod tests {
             ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, _backup) = scenario();
         grants
-            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
             .unwrap();
         grants
-            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
             .unwrap();
         let log = Arc::new(Mutex::new(Vec::<String>::new()));
         let notifier = OrderedNotifier { log: log.clone() };
