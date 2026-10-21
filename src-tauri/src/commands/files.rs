@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::models::window_kind::{window_kind_of, CallerWindow, WindowKind};
 use crate::platform::case_sensitivity::PathSemantics;
-use crate::services::content_window_grants::{ContentWindowFileGrant, ContentWindowGrantRegistry};
+use crate::services::content_window_grants::{
+    ContentWindowFileGrant, ContentWindowGrantRegistry, ContentWindowReclaimer,
+};
 use crate::services::file_service::{
     self, FileIdentityComparison, ProjectDirectoryListing, ProjectFileCasResidue,
     ProjectFileCasResidueListing, ProjectFileOpenResult, ProjectTextFileSaveResult,
@@ -12,6 +14,20 @@ use crate::services::file_service::{
 use crate::services::project_directory::ProjectDirectory;
 use crate::services::project_path_semantics::{probe_semantics, CaseSensitivityCache};
 use crate::{blocking, blocking_unbounded, budgets, AppError, Db};
+
+/// Destroys a content window whose grant was revoked. `destroy` skips the window's own
+/// CloseRequested interception, which would otherwise start the "return the file to the main
+/// window" flow that cannot finish once the data the window belonged to was replaced.
+pub(crate) struct TauriContentWindowReclaimer(pub(crate) tauri::AppHandle);
+
+impl ContentWindowReclaimer for TauriContentWindowReclaimer {
+    fn reclaim(&self, label: &str) -> Result<(), String> {
+        match self.0.get_webview_window(label) {
+            Some(window) => window.destroy().map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    }
+}
 
 /// Database stage (`Db::call`, no filesystem) followed by the filesystem
 /// stage (`blocking`, no database lock): path snapshot comparison and open.

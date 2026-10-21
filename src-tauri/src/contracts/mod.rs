@@ -2711,6 +2711,10 @@ const WITH_SYNC_ALLOWED_FILES: &[(&str, &str)] = &[
         "services/execution_service.rs",
         "the exit cleanup target runs on the exit thread",
     ),
+    (
+        "services/content_window_grants.rs",
+        "revoke_stale_for_database reads the directory table on the blocking thread that runs the import",
+    ),
 ];
 
 /// Files that legitimately contain `.0.lock()` on a mutex that is not a database connection.
@@ -2912,6 +2916,123 @@ fn no_direct_database_lock_outside_the_runtime_module() {
         "let a = db.with_connection_x(f);",
         "with_connection("
     ));
+}
+
+/// The production part of a source file, with CRLF normalized to LF.
+fn production_source(relative: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join(relative);
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
+        .replace("\r\n", "\n");
+    source.split("#[cfg(test)]").next().unwrap().to_string()
+}
+
+fn position_of(source: &str, needle: &str, file: &str) -> usize {
+    source
+        .find(needle)
+        .unwrap_or_else(|| panic!("{file} must contain '{needle}'"))
+}
+
+#[test]
+fn data_replacing_operations_revoke_content_window_grants() {
+    let backup = production_source("services/backup_service.rs");
+    assert_eq!(
+        backup.matches("revoker.revoke_all()").count(),
+        1,
+        "backup_service.rs must revoke the content-window grants exactly once"
+    );
+    assert!(
+        position_of(
+            &backup,
+            "revoker.revoke_all()",
+            "services/backup_service.rs"
+        ) < position_of(
+            &backup,
+            "notifier.workspace_data_restored()",
+            "services/backup_service.rs"
+        ),
+        "the revocation must run before the main window is notified"
+    );
+
+    let backup_command = production_source("commands/backup.rs");
+    assert!(
+        backup_command.contains("ContentWindowRevoker::new("),
+        "commands/backup.rs"
+    );
+    assert!(
+        backup_command.contains("RevocationReason::RestoreBackup"),
+        "commands/backup.rs"
+    );
+
+    let config_command = production_source("commands/config.rs");
+    assert!(
+        config_command.contains("revoke_stale_for_database("),
+        "commands/config.rs must revoke the stale grants after the import"
+    );
+    assert!(
+        config_command.contains("RevocationReason::ImportConfig"),
+        "commands/config.rs"
+    );
+    assert!(
+        position_of(
+            &config_command,
+            "revoke_stale_for_database(",
+            "commands/config.rs"
+        ) > position_of(
+            &config_command,
+            "config_service::import_with(",
+            "commands/config.rs"
+        ),
+        "the stale-grant revocation must follow the import"
+    );
+
+    let directory_command = production_source("commands/directory.rs");
+    assert!(
+        directory_command.contains("revoke_removed_directory("),
+        "commands/directory.rs must revoke the removed directory's grants"
+    );
+    assert!(
+        directory_command.contains("RevocationReason::RemoveDirectory"),
+        "commands/directory.rs"
+    );
+    assert!(
+        position_of(
+            &directory_command,
+            "revoke_removed_directory(",
+            "commands/directory.rs"
+        ) > position_of(
+            &directory_command,
+            "directory_service::remove_directory(",
+            "commands/directory.rs"
+        ),
+        "the revocation must follow the removal"
+    );
+
+    let files = production_source("commands/files.rs");
+    assert_eq!(
+        files.matches(".destroy()").count(),
+        1,
+        "commands/files.rs must reclaim windows with destroy()"
+    );
+    assert!(
+        !files.contains(".close()"),
+        "commands/files.rs must not close windows: close() runs the return-to-main flow"
+    );
+
+    for (file, source) in [
+        ("commands/backup.rs", &backup_command),
+        ("commands/config.rs", &config_command),
+        ("commands/directory.rs", &directory_command),
+    ] {
+        for forbidden in [".revoke_matching(", ".revoke_exact(", "grants.revoke("] {
+            assert!(
+                !source.contains(forbidden),
+                "{file} must revoke through ContentWindowRevoker, not '{forbidden}'"
+            );
+        }
+    }
 }
 
 #[test]

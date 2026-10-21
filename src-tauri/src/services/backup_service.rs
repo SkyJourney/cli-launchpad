@@ -162,6 +162,7 @@ pub fn restore_with_runtime_invalidation(
     backup_id: &str,
     notifier: &dyn RestoreNotifier,
     generation: &crate::services::session_service::RestoreGeneration,
+    revoker: &crate::services::content_window_grants::ContentWindowRevoker<'_>,
 ) -> Result<RestoreOutcome, AppError> {
     // Admission comes before the database lock and is held until this function returns,
     // so the replacement, cache invalidation and notification are all covered.
@@ -187,6 +188,9 @@ pub fn restore_with_runtime_invalidation(
         };
         Ok((manifest, close_behavior))
     })?;
+    // The database lock is released here. Revoking before the cache cleanup and the notification
+    // means no window can keep a grant to the replaced data, whatever happens after this point.
+    revoker.revoke_all();
     // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
     let cache_warning = cache.with_sync("backup.restore_cache", |connection| {
         let targeted = (|| -> anyhow::Result<()> {
@@ -312,9 +316,170 @@ mod tests {
     use crate::models::tool::ToolKey;
     use crate::runtime::CacheConn;
     use crate::services::cache_service;
+    use crate::services::content_window_grants::{
+        test_support::RecordingReclaimer, ContentWindowGrantRegistry, ContentWindowRevoker,
+        RevocationReason,
+    };
     use crate::services::session_service::RestoreGeneration;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    const LABEL_A: &str = "workspace-content-11111111-2222-4333-8444-555555555555";
+    const LABEL_B: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+
+    /// Writes "notify" into the same log as the reclaimer, so the order of the two is observable.
+    struct OrderedNotifier {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RestoreNotifier for OrderedNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            self.log.lock().unwrap().push("notify".to_string());
+            Ok(())
+        }
+    }
+
+    fn grant_for(
+        directory_id: i64,
+        path: &str,
+        relative_path: &str,
+    ) -> crate::services::content_window_grants::ContentWindowFileGrant {
+        crate::services::content_window_grants::ContentWindowFileGrant {
+            directory_id,
+            directory_path: path.to_string(),
+            relative_path: relative_path.to_string(),
+        }
+    }
+
+    #[test]
+    fn restore_revokes_content_window_grants_before_notifying_the_main_window() {
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::with_log(log.clone());
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        grants
+            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let notifier = OrderedNotifier { log: log.clone() };
+
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                LABEL_A.to_string(),
+                LABEL_B.to_string(),
+                "notify".to_string()
+            ]
+        );
+        assert!(grants.snapshot().unwrap().is_empty());
+        // 数据库确实被恢复：备份之后添加的目录 B 消失。
+        assert_eq!(directory_names(&db), vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn restore_revokes_grants_even_when_cache_cleanup_and_notification_fail() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        // 与既有的缓存清理失败用例同款：删除会话搜索表，两级清理都失败。
+        cache
+            .lock_for_test()
+            .execute("drop table session_search_documents", [])
+            .unwrap();
+        grants
+            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let notifier = RecordingNotifier::failing();
+
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+
+        assert!(outcome.cache_warning.is_some());
+        assert_eq!(notifier.calls(), 1);
+        assert!(grants.snapshot().unwrap().is_empty());
+        assert_eq!(
+            reclaimer.reclaimed(),
+            vec![LABEL_A.to_string(), LABEL_B.to_string()]
+        );
+    }
+
+    #[test]
+    fn failed_restore_keeps_content_window_grants_and_reclaims_nothing() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, _backup) = scenario();
+        grants
+            .grant(LABEL_A, grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(LABEL_B, grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let notifier = OrderedNotifier { log: log.clone() };
+        // 反向基线：失败的恢复不清缓存。
+        cache_service::put(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+            &"x",
+        )
+        .unwrap();
+
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            "missing-backup",
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(grants.snapshot().unwrap().len(), 2);
+        assert!(reclaimer.reclaimed().is_empty());
+        assert!(log.lock().unwrap().is_empty());
+        let conn = cache.lock_for_test();
+        assert!(cache_service::get_any::<String>(
+            &CacheConn::for_test(&conn),
+            &CacheKey::CliStatusAll
+        )
+        .unwrap()
+        .is_some());
+    }
 
     fn setup() -> (tempfile::TempDir, StoragePaths, Connection) {
         let directory = tempdir().unwrap();
@@ -719,6 +884,10 @@ mod tests {
 
     #[test]
     fn restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         // 子场景 A：缓存清理两级都失败（会话搜索表被删除，两级清理都要先清它）。
         {
             let (_directory, paths, db, cache, backup) = scenario();
@@ -735,6 +904,7 @@ mod tests {
                 &backup.id,
                 &notifier,
                 &RestoreGeneration::default(),
+                &revoker,
             )
             .unwrap();
             assert!(outcome.cache_warning.is_some());
@@ -762,6 +932,7 @@ mod tests {
                 &backup.id,
                 &notifier,
                 &RestoreGeneration::default(),
+                &revoker,
             )
             .unwrap();
             assert!(outcome.cache_warning.is_none());
@@ -805,6 +976,7 @@ mod tests {
                 "missing-backup",
                 &notifier,
                 &RestoreGeneration::default(),
+                &revoker,
             );
             assert!(result.is_err());
             assert_eq!(notifier.calls(), 0);
@@ -824,6 +996,10 @@ mod tests {
 
     #[test]
     fn restore_invalidates_the_session_search_index() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         {
             let conn = cache.lock_for_test();
@@ -847,6 +1023,7 @@ mod tests {
             &backup.id,
             &notifier,
             &RestoreGeneration::default(),
+            &revoker,
         )
         .unwrap();
         {
@@ -874,6 +1051,10 @@ mod tests {
 
     #[test]
     fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         cache_service::put(
             &CacheConn::for_test(&cache.lock_for_test()),
@@ -896,6 +1077,7 @@ mod tests {
             &backup.id,
             &notifier,
             &RestoreGeneration::default(),
+            &revoker,
         ) {
             Ok(_) => panic!("restore must fail while a session is starting"),
             Err(error) => error,
@@ -924,6 +1106,7 @@ mod tests {
             &backup.id,
             &notifier,
             &RestoreGeneration::default(),
+            &revoker,
         )
         .unwrap();
         assert_eq!(notifier.calls(), 1);
@@ -936,6 +1119,10 @@ mod tests {
 
     #[test]
     fn restore_notification_failure_is_logged_and_does_not_fail_the_restore() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         let notifier = RecordingNotifier::failing();
         let outcome = restore_with_runtime_invalidation(
@@ -946,6 +1133,7 @@ mod tests {
             &backup.id,
             &notifier,
             &RestoreGeneration::default(),
+            &revoker,
         )
         .unwrap();
         assert_eq!(notifier.calls(), 1);
@@ -957,6 +1145,10 @@ mod tests {
 
     #[test]
     fn restore_keeps_admission_closed_until_the_notification_is_sent() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         let lifecycle = test_lifecycle();
         let notifier = AdmissionProbeNotifier {
@@ -971,6 +1163,7 @@ mod tests {
             &backup.id,
             &notifier,
             &RestoreGeneration::default(),
+            &revoker,
         )
         .unwrap();
         assert_eq!(
@@ -1013,6 +1206,10 @@ mod tests {
 
     #[test]
     fn restore_advances_the_generation_and_discards_an_in_flight_index_refresh() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
@@ -1025,6 +1222,7 @@ mod tests {
             &backup.id,
             &notifier,
             &generation,
+            &revoker,
         )
         .unwrap();
         assert_eq!(generation.current(), g0 + 1);
@@ -1058,6 +1256,10 @@ mod tests {
 
     #[test]
     fn failed_restore_does_not_advance_the_generation_and_keeps_an_in_flight_refresh_valid() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
@@ -1072,6 +1274,7 @@ mod tests {
             "missing-backup",
             &notifier,
             &generation,
+            &revoker,
         );
         assert!(result.is_err());
         assert_eq!(generation.current(), g0);
@@ -1101,6 +1304,7 @@ mod tests {
             &backup.id,
             &notifier,
             &generation,
+            &revoker,
         );
         assert!(result.is_err());
         assert_eq!(generation.current(), g0);
@@ -1113,6 +1317,7 @@ mod tests {
             &backup.id,
             &notifier,
             &generation,
+            &revoker,
         )
         .unwrap();
         assert_eq!(generation.current(), g0 + 1);
@@ -1120,6 +1325,10 @@ mod tests {
 
     #[test]
     fn generation_advances_even_when_cache_cleanup_fails() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
         let (_directory, paths, db, cache, backup) = scenario();
         let generation = RestoreGeneration::default();
         let g0 = generation.current();
@@ -1141,6 +1350,7 @@ mod tests {
             &backup.id,
             &notifier,
             &generation,
+            &revoker,
         )
         .unwrap();
         cache

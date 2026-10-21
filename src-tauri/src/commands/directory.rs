@@ -1,12 +1,16 @@
 use crate::error_codes::ErrorCode;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
+use crate::commands::files::TauriContentWindowReclaimer;
 use crate::db::directory_repo;
 use crate::models::directory::Directory;
 use crate::services::cache_service;
+use crate::services::content_window_grants::{
+    ContentWindowGrantRegistry, ContentWindowRevoker, RevocationReason,
+};
 use crate::services::directory_service;
 use crate::services::pty_session_service::PtySessionManager;
-use crate::{blocking, budgets, AppError, CacheDb, Db};
+use crate::{blocking, blocking_unbounded, budgets, AppError, CacheDb, Db};
 
 fn contains_exactly(expected_ids: &[i64], submitted_ids: &[i64]) -> bool {
     let expected = expected_ids
@@ -68,6 +72,7 @@ async fn remove_directory_reconciled(
     db: &Db,
     flush: impl FnOnce() + Send + 'static,
     running_in: impl FnOnce(i64) -> Vec<String> + Send + 'static,
+    revoke: impl FnOnce(i64) + Send + 'static,
     id: i64,
 ) -> Result<(), AppError> {
     // A failed write is only logged by the retry store. This is its own database access, never
@@ -82,7 +87,19 @@ async fn remove_directory_reconciled(
         let running = running_in(id);
         directory_service::remove_directory(connection, id, &running)
     })
+    .await?;
+    // Only after the removal has committed: a refused removal returned early above and keeps the grants.
+    // The removal is already committed, so a failed or slow revocation must not be reported as a
+    // failed removal (and must not skip the callers' cleanup): it is logged and the removal succeeds.
+    if let Err(error) = blocking_unbounded("directory.revoke_grants", move || {
+        revoke(id);
+        Ok(())
+    })
     .await
+    {
+        log::warn!("directory removal: unable to revoke the content window grants: {error:?}");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -94,18 +111,30 @@ pub async fn remove_directory(
         std::sync::Arc<crate::services::project_path_semantics::CaseSensitivityCache>,
     >,
     sessions: State<'_, PtySessionManager>,
+    app: AppHandle,
     id: i64,
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let manager = sessions.inner().clone();
     let flush_db = db.clone();
     let flush_manager = manager.clone();
+    let revoke_app = app.clone();
     remove_directory_reconciled(
         &db,
         move || {
             flush_manager.flush_pending_persistence(&flush_db);
         },
         move |directory_id| manager.running_in(directory_id),
+        move |directory_id| {
+            let grants = revoke_app.state::<ContentWindowGrantRegistry>();
+            let reclaimer = TauriContentWindowReclaimer(revoke_app.clone());
+            let revoker = ContentWindowRevoker::new(
+                grants.inner(),
+                &reclaimer,
+                RevocationReason::RemoveDirectory,
+            );
+            directory_service::revoke_removed_directory(&revoker, directory_id);
+        },
         id,
     )
     .await?;
@@ -190,6 +219,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refused_removal_does_not_revoke_the_directory_grants() {
+        let db = memory_db();
+        let id = add_directory(&db, "refused");
+        let revoked = Arc::new(Mutex::new(Vec::<i64>::new()));
+        let revoke_log = Arc::clone(&revoked);
+
+        let error = remove_directory_reconciled(
+            &db,
+            || {},
+            |_| vec!["running-session".to_string()],
+            move |directory_id| revoke_log.lock().unwrap().push(directory_id),
+            id,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(code_of(&error), "directory.in_use");
+        assert!(
+            revoked.lock().unwrap().is_empty(),
+            "a refused removal keeps the directory's grants"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_committed_removal_revokes_the_directory_grants_once() {
+        let db = memory_db();
+        let id = add_directory(&db, "removed");
+        let revoked = Arc::new(Mutex::new(Vec::<i64>::new()));
+        let revoke_log = Arc::clone(&revoked);
+
+        remove_directory_reconciled(
+            &db,
+            || {},
+            |_| Vec::new(),
+            move |directory_id| revoke_log.lock().unwrap().push(directory_id),
+            id,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(*revoked.lock().unwrap(), vec![id]);
+        let connection = db.lock_for_test();
+        assert!(directory_repo::get(&connection, id).unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn remove_directory_flushes_pending_finishes_while_the_database_lock_is_free() {
         let db = memory_db();
         let id = add_directory(&db, "flush");
@@ -208,6 +283,7 @@ mod tests {
                 running_log.lock().unwrap().push("running_in".to_string());
                 Vec::new()
             },
+            |_| {},
             id,
         )
         .await
@@ -244,6 +320,7 @@ mod tests {
                     .push(format!("running_in held={held}"));
                 Vec::new()
             },
+            |_| {},
             id,
         )
         .await
@@ -272,6 +349,7 @@ mod tests {
             &db,
             || {},
             move |directory_id| running_manager.running_in(directory_id),
+            |_| {},
             saved,
         )
         .await
@@ -288,6 +366,7 @@ mod tests {
             &db,
             || {},
             move |directory_id| running_manager.running_in(directory_id),
+            |_| {},
             other,
         )
         .await
@@ -324,6 +403,7 @@ mod tests {
                 flush_manager.flush_pending_persistence(&flush_db);
             },
             move |directory_id| running_manager.running_in(directory_id),
+            |_| {},
             id,
         )
         .await

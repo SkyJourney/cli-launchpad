@@ -1,8 +1,12 @@
-use tauri::State;
+use tauri::{Manager, State};
 
+use crate::commands::files::TauriContentWindowReclaimer;
 use crate::models::backup::{BackupManifest, BackupReason};
 use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::app_lifecycle::AppLifecycle;
+use crate::services::content_window_grants::{
+    ContentWindowGrantRegistry, ContentWindowRevoker, RevocationReason,
+};
 use crate::services::session_service::RestoreGeneration;
 use crate::services::{backup_service, storage_service::StoragePaths};
 use crate::{
@@ -73,7 +77,11 @@ pub async fn restore_backup(
     let paths = paths.inner().clone();
     let app = app.clone();
     let outcome = blocking_unbounded("backup.restore", move || {
-        let notifier = TauriRestoreNotifier(app);
+        let reclaimer = TauriContentWindowReclaimer(app.clone());
+        let grants = app.state::<ContentWindowGrantRegistry>();
+        let revoker =
+            ContentWindowRevoker::new(grants.inner(), &reclaimer, RevocationReason::RestoreBackup);
+        let notifier = TauriRestoreNotifier(app.clone());
         backup_service::restore_with_runtime_invalidation(
             &db,
             &cache,
@@ -82,6 +90,7 @@ pub async fn restore_backup(
             &backup_id,
             &notifier,
             &generation,
+            &revoker,
         )
     })
     .await?;

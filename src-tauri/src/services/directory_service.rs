@@ -78,6 +78,15 @@ fn path_for_storage(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// Revokes the content-window grants of a directory whose removal has committed. Called only
+/// after the database removal succeeded and outside any database lock (IPC happens here).
+pub fn revoke_removed_directory(
+    revoker: &crate::services::content_window_grants::ContentWindowRevoker<'_>,
+    id: i64,
+) -> crate::services::content_window_grants::RevocationReport {
+    revoker.revoke_for_directory(id)
+}
+
 #[cfg(test)]
 mod removal_tests {
     use super::*;
@@ -85,6 +94,59 @@ mod removal_tests {
     use crate::models::pty_session::PtySessionState;
     use crate::models::tool::ToolKey;
     use tempfile::tempdir;
+
+    use crate::services::content_window_grants::{
+        test_support::RecordingReclaimer, ContentWindowFileGrant, ContentWindowGrantRegistry,
+        ContentWindowRevoker, RevocationReason,
+    };
+
+    const LABEL_A: &str = "workspace-content-11111111-2222-4333-8444-555555555555";
+    const LABEL_B: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+
+    fn grant_of(directory_id: i64, path: &str, relative_path: &str) -> ContentWindowFileGrant {
+        ContentWindowFileGrant {
+            directory_id,
+            directory_path: path.to_string(),
+            relative_path: relative_path.to_string(),
+        }
+    }
+
+    #[test]
+    fn removing_a_directory_revokes_only_its_content_window_grants() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection::apply_migrations(&connection).unwrap();
+        let dir_a = directory_repo::add(&connection, "A", "C:/a", None).unwrap();
+        let dir_b = directory_repo::add(&connection, "B", "C:/b", None).unwrap();
+        let grants = ContentWindowGrantRegistry::default();
+        grants
+            .grant(LABEL_A, grant_of(dir_a.id, "C:/a", "a.txt"))
+            .unwrap();
+        grants
+            .grant(LABEL_B, grant_of(dir_b.id, "C:/b", "b.txt"))
+            .unwrap();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RemoveDirectory);
+
+        remove_directory(&connection, dir_a.id, &[]).unwrap();
+        let report = revoke_removed_directory(&revoker, dir_a.id);
+
+        assert_eq!(report.revoked, vec![LABEL_A.to_string()]);
+        assert_eq!(reclaimer.reclaimed(), vec![LABEL_A.to_string()]);
+        let remaining: Vec<String> = grants
+            .snapshot()
+            .unwrap()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
+        assert_eq!(remaining, vec![LABEL_B.to_string()]);
+        assert!(directory_repo::get(&connection, dir_a.id)
+            .unwrap()
+            .is_none());
+        assert!(directory_repo::get(&connection, dir_b.id)
+            .unwrap()
+            .is_some());
+    }
 
     #[test]
     fn removal_refuses_a_running_session_and_preserves_the_directory() {

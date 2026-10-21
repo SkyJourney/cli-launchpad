@@ -153,6 +153,58 @@ mod tests {
     use crate::db::connection;
     use crate::models::app_setting::CloseBehavior;
 
+    #[test]
+    fn import_that_only_adds_projects_keeps_every_content_window_grant() {
+        use crate::services::content_window_grants::{
+            test_support::RecordingReclaimer, ContentWindowFileGrant, ContentWindowGrantRegistry,
+            ContentWindowRevoker, RevocationReason,
+        };
+        let conn = seeded_db();
+        let path = absolute_test_path("demo");
+        let demo = directory_repo::add(&conn, "demo", &path, None).unwrap();
+        let mut bundle = export(&conn).unwrap();
+        bundle.directories[0].note = Some("changed".to_string());
+        bundle.directories.push(ExportedDirectory {
+            name: "extra".to_string(),
+            path: absolute_test_path("extra"),
+            pinned: false,
+            note: None,
+        });
+        import(&conn, &bundle).unwrap();
+        let db = Db::new(conn);
+        let grants = ContentWindowGrantRegistry::default();
+        grants
+            .grant(
+                "workspace-content-8e783338-f464-4b10-b15e-b534748c6241",
+                ContentWindowFileGrant {
+                    directory_id: demo.id,
+                    directory_path: path.clone(),
+                    relative_path: "a.txt".to_string(),
+                },
+            )
+            .unwrap();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::ImportConfig);
+
+        let report = revoker.revoke_stale_for_database(&db).unwrap();
+
+        assert!(report.revoked.is_empty());
+        assert!(reclaimer.reclaimed().is_empty());
+        assert_eq!(grants.snapshot().unwrap().len(), 1);
+        // 反向基线：导入确实生效，测试不是空转。
+        let conn = db.lock_for_test();
+        assert_eq!(directory_repo::list(&conn).unwrap().len(), 2);
+        assert_eq!(
+            directory_repo::get(&conn, demo.id)
+                .unwrap()
+                .unwrap()
+                .note
+                .as_deref(),
+            Some("changed")
+        );
+    }
+
     fn seeded_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();

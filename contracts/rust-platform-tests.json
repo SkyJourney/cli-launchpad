@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 812,
-    "Linux": 818,
-    "macOS": 814
+    "Windows": 826,
+    "Linux": 832,
+    "macOS": 828
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -531,7 +531,21 @@
       "services::window_relay::tests::relay_rejects_generic_messages_with_a_malformed_content_field",
       "services::window_relay::tests::relay_rejects_the_retired_per_kind_message_types_and_still_accepts_preferences",
       "services::window_relay::tests::relay_requires_the_handoff_token_on_pty_return_requests",
-      "app_menu::tests::quit_is_authorized_before_the_exit_request_is_issued"
+      "app_menu::tests::quit_is_authorized_before_the_exit_request_is_issued",
+      "services::content_window_grants::tests::revoke_all_removes_every_grant_and_reclaims_each_window_once",
+      "services::content_window_grants::tests::revoke_for_directory_only_touches_grants_of_that_directory",
+      "services::content_window_grants::tests::revoke_stale_keeps_grants_of_unchanged_projects_and_revokes_the_rest",
+      "services::content_window_grants::tests::a_failed_reclaim_is_reported_and_does_not_stop_the_remaining_windows",
+      "services::content_window_grants::tests::revoke_exact_does_not_remove_a_newer_grant_for_the_same_window",
+      "services::content_window_grants::tests::revoke_stale_for_database_reads_the_current_directory_table",
+      "services::backup_service::tests::restore_revokes_content_window_grants_before_notifying_the_main_window",
+      "services::backup_service::tests::restore_revokes_grants_even_when_cache_cleanup_and_notification_fail",
+      "services::backup_service::tests::failed_restore_keeps_content_window_grants_and_reclaims_nothing",
+      "services::directory_service::removal_tests::removing_a_directory_revokes_only_its_content_window_grants",
+      "services::config_service::tests::import_that_only_adds_projects_keeps_every_content_window_grant",
+      "contracts::data_replacing_operations_revoke_content_window_grants",
+      "commands::directory::tests::a_refused_removal_does_not_revoke_the_directory_grants",
+      "commands::directory::tests::a_committed_removal_revokes_the_directory_grants_once"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

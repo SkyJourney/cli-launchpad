@@ -1,8 +1,12 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
+use crate::commands::files::TauriContentWindowReclaimer;
 use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::config_service;
+use crate::services::content_window_grants::{
+    ContentWindowGrantRegistry, ContentWindowRevoker, RevocationReason,
+};
 use crate::services::session_service::RestoreGeneration;
 use crate::services::storage_service::StoragePaths;
 use crate::{blocking_unbounded, update_close_behavior_state, AppError, CloseBehaviorState, Db};
@@ -20,6 +24,7 @@ pub async fn export_config_to_path(state: State<'_, Db>, path: String) -> Result
 #[tauri::command]
 pub async fn import_config_from_path(
     caller: CallerWindow,
+    app: AppHandle,
     state: State<'_, Db>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     storage: State<'_, StoragePaths>,
@@ -29,6 +34,7 @@ pub async fn import_config_from_path(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main])?;
     let db = state.inner().clone();
+    let stale_db = db.clone();
     let generation = generation.inner().clone();
     let storage = storage.inner().clone();
     let lifecycle = lifecycle.inner().clone();
@@ -36,6 +42,24 @@ pub async fn import_config_from_path(
         config_service::import_with(&db, &storage, &lifecycle, &generation, &path)
     })
     .await?;
+    // Only after the import has committed. Only the grants whose project was removed or re-pathed
+    // are revoked; a failure here is logged and does not fail the import.
+    let stale = blocking_unbounded("config.revoke_stale_grants", move || {
+        let grants = app.state::<ContentWindowGrantRegistry>();
+        let reclaimer = TauriContentWindowReclaimer(app.clone());
+        let revoker =
+            ContentWindowRevoker::new(grants.inner(), &reclaimer, RevocationReason::ImportConfig);
+        revoker.revoke_stale_for_database(&stale_db)
+    })
+    .await;
+    match stale {
+        Ok(_report) => {}
+        Err(error) => {
+            log::warn!(
+                "configuration import: unable to revoke the stale content window grants: {error:?}"
+            );
+        }
+    }
     update_close_behavior_state(&close_behavior_state, close_behavior)?;
     Ok(())
 }
