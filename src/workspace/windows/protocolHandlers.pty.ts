@@ -162,6 +162,18 @@ export function createPtyProtocolHandlers(
               return { kind: "ended" };
             }
             if (status?.state === "ownedByAnotherWindow") {
+              // 另一窗口已持有会话（F1，m6-096 裁定 A）：已分离内容改归该窗口，不再重试、不移除槽位。
+              const owned = deps.store
+                .getLive()
+                .slots.find((candidate) => candidate.sessionId === sessionId);
+              if (owned && status.ownerLabel) {
+                deps
+                  .getCoordinator()
+                  .adoptForeignOwner(
+                    ptyContentRef(owned.instanceId),
+                    status.ownerLabel,
+                  );
+              }
               return { kind: "foreign-owner" };
             }
             console.warn(

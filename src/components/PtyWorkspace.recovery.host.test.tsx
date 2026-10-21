@@ -688,6 +688,35 @@ describe("PTY owner-lost recovery", () => {
     ).toBe(true);
   });
 
+  // F1 的 owner-lost 路径（m6-096 裁定 A）：另一窗口已持有会话时，已分离内容改归该窗口。
+  it("records a detached session as owned by the foreign window once another window holds it", async () => {
+    toastSpy.error.mockClear();
+    const { coordinator, slot, terminal } = await detachedPtyHost({
+      status: "ownedByAnotherWindow",
+      ownerWindowLabel: FOREIGN_TERMINAL,
+    });
+    terminal.reattachLostSession.mockRejectedValue(new Error("not yet"));
+    vi.useFakeTimers({ toFake: [...FAKE_TIMERS] });
+
+    await emitBackendEvent(OWNER_LOST_EVENT, { sessionId: slot.sessionId });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(
+      coordinator.get({ kind: "pty", slotId: slot.instanceId }),
+    ).toMatchObject({
+      phase: "detached",
+      owner: { kind: "window", windowLabel: FOREIGN_TERMINAL },
+    });
+    expect(
+      host!
+        .ctx()
+        .slots.some((candidate) => candidate.instanceId === slot.instanceId),
+    ).toBe(true);
+    expect(host!.errors).toEqual([]);
+  });
+
   it("removes the slot and stops when the session already ended", async () => {
     toastSpy.error.mockClear();
     const { slot, terminal } = await detachedPtyHost({

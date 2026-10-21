@@ -255,6 +255,22 @@ export class WorkspaceContentCoordinator {
     } as WorkspaceContentLifecycleEvent);
   }
 
+  /** 已分离内容的会话被另一窗口持有：归属改为该窗口，窗口句柄与树都不变（m6-096 F1）。 */
+  adoptForeignOwner(
+    content: WorkspacePaneContentRef,
+    ownerWindowLabel: string,
+  ) {
+    const state = this.states.get(workspaceContentKey(content));
+    if (!state || state.phase !== "detached") return null;
+    return this.dispatch(content, {
+      type: "foreignOwnerAdopted",
+      ownerWindowLabel,
+      content: state.content,
+      owner: state.owner,
+      generation: state.generation,
+    });
+  }
+
   failHandoff(
     content: WorkspacePaneContentRef,
     type:

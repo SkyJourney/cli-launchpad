@@ -170,7 +170,12 @@ export type WorkspaceContentLifecycleEvent =
       type: "disposeCompleted";
       requestId: string;
     } & WorkspaceContentCloseEventIdentity)
-  | ({ type: "ownerEnded" } & WorkspaceContentOwnerEndEventIdentity);
+  | ({ type: "ownerEnded" } & WorkspaceContentOwnerEndEventIdentity)
+  // 已分离内容的会话被另一窗口持有（owner-lost 重连发现外来所有者）：内容改归该窗口（m6-096 F1）。
+  | ({
+      type: "foreignOwnerAdopted";
+      ownerWindowLabel: string;
+    } & WorkspaceContentOwnerEndEventIdentity);
 
 export interface WorkspaceContentLifecycleTransition {
   state: WorkspaceContentLifecycleState;
@@ -312,6 +317,22 @@ export function transitionWorkspaceContentLifecycle(
         owner: state.target,
         windowToken: event.windowToken,
         lastPaneId: state.source.paneId,
+      });
+    }
+    case "foreignOwnerAdopted": {
+      if (
+        state.phase !== "detached" ||
+        !sameContent(state.content, event.content) ||
+        state.generation !== event.generation ||
+        !hasText(event.ownerWindowLabel)
+      ) {
+        return ignored(state);
+      }
+      return changed({
+        ...state,
+        owner: { kind: "window", windowLabel: event.ownerWindowLabel },
+        // 新持有者没有本窗口签发的握手 token：派生一个确定的占位值，旧 token 不再有效。
+        windowToken: `foreign:${state.windowToken}`,
       });
     }
     case "foreignOwnerRecognized": {
