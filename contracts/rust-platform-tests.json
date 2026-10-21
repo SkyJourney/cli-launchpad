@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 826,
-    "Linux": 832,
-    "macOS": 828
+    "Windows": 840,
+    "Linux": 846,
+    "macOS": 842
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -543,9 +543,23 @@
       "services::backup_service::tests::failed_restore_keeps_content_window_grants_and_reclaims_nothing",
       "services::directory_service::removal_tests::removing_a_directory_revokes_only_its_content_window_grants",
       "services::config_service::tests::import_that_only_adds_projects_keeps_every_content_window_grant",
-      "contracts::data_replacing_operations_revoke_content_window_grants",
       "commands::directory::tests::a_refused_removal_does_not_revoke_the_directory_grants",
-      "commands::directory::tests::a_committed_removal_revokes_the_directory_grants_once"
+      "commands::directory::tests::a_committed_removal_revokes_the_directory_grants_once",
+      "services::app_data_service::tests::steps_run_in_the_fixed_order_and_every_step_is_reported",
+      "services::app_data_service::tests::a_permuted_or_incomplete_step_list_runs_nothing",
+      "services::app_data_service::tests::a_failing_step_does_not_stop_the_remaining_steps",
+      "services::app_data_service::tests::a_panicking_step_is_isolated_and_reported",
+      "services::app_data_service::tests::the_hook_refuses_to_run_outside_a_matching_data_replace_permit",
+      "services::app_data_service::tests::import_runs_only_the_grant_step_and_restore_runs_all_four",
+      "services::app_data_service::tests::the_cache_step_degrades_to_a_full_clear_and_only_errors_when_both_levels_fail",
+      "services::app_data_service::tests::execution_reconcile_interrupts_only_unfinished_rows_and_never_with_live_tasks",
+      "services::app_data_service::tests::the_data_replace_permit_covers_the_whole_hook",
+      "services::app_data_service::tests::a_second_replacement_is_rejected_while_the_hook_runs_and_never_reruns_it",
+      "services::app_data_service::tests::a_failed_replacement_does_not_run_the_hook_and_releases_the_permit",
+      "services::app_data_service::tests::no_database_or_cache_lock_is_held_while_grants_are_revoked_or_the_main_window_is_notified",
+      "services::app_data_service::tests::step_failures_never_change_the_return_value",
+      "contracts::data_replacement_flows_go_through_one_after_data_replaced_hook",
+      "contracts::app_data_service_has_no_async_emit_or_direct_locking"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

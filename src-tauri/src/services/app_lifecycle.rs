@@ -470,7 +470,7 @@ impl AppLifecycle {
         }
     }
 
-    #[cfg(test)]
+    /// The current phase; the data replacement hook checks it before running (m6-099).
     pub fn phase(&self) -> Phase {
         self.inner
             .state

@@ -2715,6 +2715,10 @@ const WITH_SYNC_ALLOWED_FILES: &[(&str, &str)] = &[
         "services/content_window_grants.rs",
         "revoke_stale_for_database reads the directory table on the blocking thread that runs the import",
     ),
+    (
+        "services/app_data_service.rs",
+        "the data replacement hook runs the database replacement on a blocking thread (m6-099)",
+    ),
 ];
 
 /// Files that legitimately contain `.0.lock()` on a mutex that is not a database connection.
@@ -2918,129 +2922,141 @@ fn no_direct_database_lock_outside_the_runtime_module() {
     ));
 }
 
-/// The production part of a source file, with CRLF normalized to LF.
-fn production_source(relative: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join(relative);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
-        .replace("\r\n", "\n");
-    source.split("#[cfg(test)]").next().unwrap().to_string()
+#[test]
+fn data_replacement_flows_go_through_one_after_data_replaced_hook() {
+    let sources = production_sources();
+    let text_of = |path: &str| -> String {
+        sources
+            .iter()
+            .find(|(candidate, _)| candidate == path)
+            .map(|(_, text)| text.clone())
+            .unwrap_or_else(|| panic!("missing production source {path}"))
+    };
+
+    // The hook is called from exactly one place, and that place is the hook's own module.
+    let hook_calls: Vec<(String, usize)> = sources
+        .iter()
+        .map(|(path, text)| {
+            // Whole-word calls only: `invalidate_after_data_replaced(` is another function.
+            let count = call_count(text, "after_data_replaced(")
+                - text.matches("pub fn after_data_replaced(").count();
+            (path.clone(), count)
+        })
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    assert_eq!(
+        hook_calls,
+        vec![("services/app_data_service.rs".to_string(), 1)],
+        "after_data_replaced must be called from one place only"
+    );
+
+    // Both replacement flows run through the single entry point.
+    let backup = text_of("services/backup_service.rs");
+    assert!(
+        backup.contains("run_data_replacement("),
+        "backup_service.rs"
+    );
+    for forbidden in [
+        ".revoke_all(",
+        "workspace_data_restored()",
+        "invalidate_after_data_replaced",
+        "cache_service::clear(",
+        "mark_unfinished_interrupted(",
+        ".admit(",
+    ] {
+        assert!(
+            !backup.contains(forbidden),
+            "backup_service.rs must leave '{forbidden}' to the hook"
+        );
+    }
+    let config = text_of("services/config_service.rs");
+    for needle in ["run_data_replacement(", "ReplacementFlavour::ImportConfig"] {
+        assert!(
+            config.contains(needle),
+            "config_service.rs must contain '{needle}'"
+        );
+    }
+    let config_command = text_of("commands/config.rs");
+    for needle in [
+        "ContentWindowRevoker::new(",
+        "RevocationReason::ImportConfig",
+    ] {
+        assert!(
+            config_command.contains(needle),
+            "commands/config.rs must contain '{needle}'"
+        );
+    }
+
+    // The DataReplace permit is taken in exactly one production place.
+    assert_eq!(
+        permit_sites(&sources),
+        vec!["services/app_data_service.rs".to_string()]
+    );
 }
 
-fn position_of(source: &str, needle: &str, file: &str) -> usize {
-    source
-        .find(needle)
-        .unwrap_or_else(|| panic!("{file} must contain '{needle}'"))
+/// Occurrences of `name` (a call such as `f(`) that are not part of a longer identifier.
+fn call_count(text: &str, name: &str) -> usize {
+    text.match_indices(name)
+        .filter(|(index, _)| {
+            text[..*index]
+                .chars()
+                .last()
+                .map_or(true, |c| !(c.is_alphanumeric() || c == '_'))
+        })
+        .count()
+}
+
+/// Files that take the DataReplace permit (`admit(Operation::DataReplace(`), ignoring whitespace.
+fn permit_sites(sources: &[(String, String)]) -> Vec<String> {
+    sources
+        .iter()
+        .filter(|(_, text)| {
+            let squashed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            squashed.contains("admit(Operation::DataReplace(")
+                || squashed
+                    .contains("admit(crate::services::app_lifecycle::Operation::DataReplace(")
+        })
+        .map(|(path, _)| path.clone())
+        .collect()
 }
 
 #[test]
-fn data_replacing_operations_revoke_content_window_grants() {
-    let backup = production_source("services/backup_service.rs");
-    assert_eq!(
-        backup.matches("revoker.revoke_all()").count(),
-        1,
-        "backup_service.rs must revoke the content-window grants exactly once"
-    );
-    assert!(
-        position_of(
-            &backup,
-            "revoker.revoke_all()",
-            "services/backup_service.rs"
-        ) < position_of(
-            &backup,
-            "notifier.workspace_data_restored()",
-            "services/backup_service.rs"
-        ),
-        "the revocation must run before the main window is notified"
-    );
-
-    let backup_command = production_source("commands/backup.rs");
-    assert!(
-        backup_command.contains("ContentWindowRevoker::new("),
-        "commands/backup.rs"
-    );
-    assert!(
-        backup_command.contains("RevocationReason::RestoreBackup"),
-        "commands/backup.rs"
-    );
-
-    let config_command = production_source("commands/config.rs");
-    assert!(
-        config_command.contains("revoke_stale_for_database("),
-        "commands/config.rs must revoke the stale grants after the import"
-    );
-    assert!(
-        config_command.contains("RevocationReason::ImportConfig"),
-        "commands/config.rs"
-    );
-    assert!(
-        position_of(
-            &config_command,
-            "revoke_stale_for_database(",
-            "commands/config.rs"
-        ) > position_of(
-            &config_command,
-            "config_service::import_with(",
-            "commands/config.rs"
-        ),
-        "the stale-grant revocation must follow the import"
-    );
-
-    let directory_command = production_source("commands/directory.rs");
-    assert!(
-        directory_command.contains("revoke_removed_directory("),
-        "commands/directory.rs must revoke the removed directory's grants"
-    );
-    assert!(
-        directory_command.contains("RevocationReason::RemoveDirectory"),
-        "commands/directory.rs"
-    );
-    assert!(
-        position_of(
-            &directory_command,
-            "revoke_removed_directory(",
-            "commands/directory.rs"
-        ) > position_of(
-            &directory_command,
-            "directory_service::remove_directory(",
-            "commands/directory.rs"
-        ),
-        "the revocation must follow the removal"
-    );
-
-    let files = production_source("commands/files.rs");
-    assert_eq!(
-        files.matches(".destroy()").count(),
-        1,
-        "commands/files.rs must reclaim windows with destroy()"
-    );
-    assert!(
-        !files.contains(".close()"),
-        "commands/files.rs must not close windows: close() runs the return-to-main flow"
-    );
-
-    for (file, source) in [
-        ("commands/backup.rs", &backup_command),
-        ("commands/config.rs", &config_command),
-        ("commands/directory.rs", &directory_command),
+fn app_data_service_has_no_async_emit_or_direct_locking() {
+    let sources = production_sources();
+    let text = sources
+        .iter()
+        .find(|(path, _)| path == "services/app_data_service.rs")
+        .map(|(_, text)| text.clone())
+        .expect("services/app_data_service.rs");
+    for forbidden in [
+        "async fn",
+        ".await",
+        "emit_to(",
+        ".emit(",
+        "notify_main(",
+        ".lock()",
+        "std::thread::sleep",
+        "std::fs",
+        "tokio::",
     ] {
-        for forbidden in [".revoke_matching(", ".revoke_exact(", "grants.revoke("] {
-            assert!(
-                !source.contains(forbidden),
-                "{file} must revoke through ContentWindowRevoker, not '{forbidden}'"
-            );
-        }
+        assert!(
+            !text.contains(forbidden),
+            "app_data_service.rs must not contain '{forbidden}' (PD-17, R-RS-1)"
+        );
     }
+    assert!(text.contains("catch_unwind("), "panic isolation must stay");
+    assert!(
+        text.matches("with_sync(").count() >= 2,
+        "database and cache access must go through the with_sync executor"
+    );
 }
 
 #[test]
 fn with_sync_is_confined_to_the_allowed_files() {
     let sources = production_sources();
     assert!(
-        WITH_SYNC_ALLOWED_FILES.len() <= 6,
-        "with_sync callers are limited to six files"
+        WITH_SYNC_ALLOWED_FILES.len() <= 7,
+        "with_sync callers are limited to seven files"
     );
     for (path, reason) in WITH_SYNC_ALLOWED_FILES {
         assert!(!reason.trim().is_empty(), "{path} needs a reason");

@@ -141,10 +141,7 @@ pub fn restore(
     Ok(manifest)
 }
 
-/// 恢复完成后通知主窗口的抽象，便于测试替换 Tauri 的 emit。
-pub trait RestoreNotifier {
-    fn workspace_data_restored(&self) -> Result<(), String>;
-}
+pub use crate::services::app_data_service::RestoreNotifier;
 
 pub struct RestoreOutcome {
     pub manifest: BackupManifest,
@@ -164,13 +161,18 @@ pub fn restore_with_runtime_invalidation(
     generation: &crate::services::session_service::RestoreGeneration,
     revoker: &crate::services::content_window_grants::ContentWindowRevoker<'_>,
 ) -> Result<RestoreOutcome, AppError> {
-    // Admission comes before the database lock and is held until this function returns,
-    // so the replacement, cache invalidation and notification are all covered.
-    let _data_replace_permit =
-        lifecycle.admit(crate::services::app_lifecycle::Operation::DataReplace(
-            crate::services::app_lifecycle::DataReplaceKind::RestoreBackup,
-        ))?;
-    let (manifest, close_behavior) = db.with_sync("backup.restore", |connection| {
+    // The replacement runs in the hook entry point: admission, the database lock, the cache
+    // cleanup, the execution task reconciliation and the main-window notification all live there.
+    let ctx = crate::services::app_data_service::DataReplacementContext {
+        flavour: crate::services::app_data_service::ReplacementFlavour::RestoreBackup {
+            cache,
+            notifier,
+        },
+        lifecycle,
+        db,
+        revoker,
+    };
+    let replaced = crate::services::app_data_service::run_data_replacement(&ctx, |connection| {
         let manifest = restore(connection, paths, backup_id)?;
         // The business database has been replaced: any index refresh that captured an
         // older generation must not write to the cache any more (SEAM-20).
@@ -188,29 +190,12 @@ pub fn restore_with_runtime_invalidation(
         };
         Ok((manifest, close_behavior))
     })?;
-    // The database lock is released here. Revoking before the cache cleanup and the notification
-    // means no window can keep a grant to the replaced data, whatever happens after this point.
-    revoker.revoke_all();
-    // 数据库已经替换：此后不再返回 Err，只记录警告，保证前端与后端状态一致。
-    let cache_warning = cache.with_sync("backup.restore_cache", |connection| {
-        let targeted = (|| -> anyhow::Result<()> {
-            crate::services::cache_service::invalidate_after_data_replaced(connection)?;
-            Ok(())
-        })();
-        if let Err(targeted_error) = targeted {
-            log::warn!(
-                "backup restore: targeted cache cleanup failed, clearing the whole cache: {targeted_error}"
-            );
-            if let Err(clear_error) = crate::services::cache_service::clear(connection) {
-                return Ok(Some(format!("缓存清理失败：{clear_error}")));
-            }
-        }
-        Ok(None)
-    })
-    .unwrap_or_else(|lock_error| Some(format!("缓存清理失败：{lock_error}")));
-    if let Err(error) = notifier.workspace_data_restored() {
-        log::error!("backup restore: unable to notify the main window: {error}");
-    }
+    let (manifest, close_behavior) = replaced.value;
+    // A failed cache cleanup is reported to the frontend as a warning, not as an error.
+    let cache_warning = replaced
+        .report
+        .error_of(crate::services::app_data_service::StepName::InvalidateCaches)
+        .map(str::to_string);
     Ok(RestoreOutcome {
         manifest,
         close_behavior,

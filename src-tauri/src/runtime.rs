@@ -144,6 +144,12 @@ impl CacheDb {
         self.0.lock().unwrap()
     }
 
+    /// Test-only shared handle, so a test can probe whether the cache lock is held.
+    #[cfg(test)]
+    pub(crate) fn shared_for_test(&self) -> Arc<Mutex<Connection>> {
+        self.0.clone()
+    }
+
     /// The only entry point for cache database access.
     pub async fn call<T: Send + 'static>(
         &self,

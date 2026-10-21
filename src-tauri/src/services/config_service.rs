@@ -7,8 +7,12 @@ use crate::db::{app_setting_repo, directory_repo};
 use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::BackupReason;
 use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
-use crate::services::app_lifecycle::{AppLifecycle, DataReplaceKind, Operation};
+use crate::services::app_data_service::{
+    run_data_replacement, DataReplacementContext, ReplacementFlavour,
+};
+use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::backup_service;
+use crate::services::content_window_grants::ContentWindowRevoker;
 use crate::services::session_service::RestoreGeneration;
 use crate::services::storage_service::StoragePaths;
 use crate::{AppError, Db};
@@ -64,13 +68,18 @@ pub fn import_with(
     storage: &StoragePaths,
     lifecycle: &AppLifecycle,
     generation: &RestoreGeneration,
+    revoker: &ContentWindowRevoker<'_>,
     path: &str,
 ) -> Result<CloseBehavior, AppError> {
     let bundle = read_bundle_from_path(path)?;
-    // Held until the import finishes.
-    let _data_replace_permit =
-        lifecycle.admit(Operation::DataReplace(DataReplaceKind::ImportConfig))?;
-    let close_behavior = db.with_sync("config.import", |conn| {
+    let ctx = DataReplacementContext {
+        flavour: ReplacementFlavour::ImportConfig,
+        lifecycle,
+        db,
+        revoker,
+    };
+    // The hook entry point takes the DataReplace permit and runs the replacement under the lock.
+    let replaced = run_data_replacement(&ctx, |conn| {
         backup_service::create(conn, storage, BackupReason::PreImport)?;
         match import(conn, &bundle) {
             Ok(()) => {
@@ -86,7 +95,7 @@ pub fn import_with(
             }
         }
     })?;
-    Ok(close_behavior)
+    Ok(replaced.value)
 }
 
 /// Import a config bundle from a JSON file path.
@@ -260,7 +269,16 @@ mod tests {
         let g0 = generation.current();
         let bundle = write_bundle(&root, &absolute_test_path("imported"));
 
-        import_with(&db, &storage, &lifecycle, &generation, &bundle).unwrap();
+        let registry =
+            crate::services::content_window_grants::ContentWindowGrantRegistry::default();
+        let reclaimer =
+            crate::services::content_window_grants::test_support::RecordingReclaimer::default();
+        let revoker = crate::services::content_window_grants::ContentWindowRevoker::new(
+            &registry,
+            &reclaimer,
+            crate::services::content_window_grants::RevocationReason::ImportConfig,
+        );
+        import_with(&db, &storage, &lifecycle, &generation, &revoker, &bundle).unwrap();
 
         assert_eq!(generation.current(), g0 + 1);
         let cache = crate::CacheDb::new(
@@ -286,7 +304,16 @@ mod tests {
         // A relative directory identity makes the import fail and roll back.
         let bundle = write_bundle(&root, "relative/path");
 
-        let error = import_with(&db, &storage, &lifecycle, &generation, &bundle)
+        let registry =
+            crate::services::content_window_grants::ContentWindowGrantRegistry::default();
+        let reclaimer =
+            crate::services::content_window_grants::test_support::RecordingReclaimer::default();
+        let revoker = crate::services::content_window_grants::ContentWindowRevoker::new(
+            &registry,
+            &reclaimer,
+            crate::services::content_window_grants::RevocationReason::ImportConfig,
+        );
+        let error = import_with(&db, &storage, &lifecycle, &generation, &revoker, &bundle)
             .expect_err("a relative directory identity must be rejected");
 
         // The pre-import backup was taken, so the failure came from the import itself.

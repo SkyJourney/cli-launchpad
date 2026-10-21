@@ -34,32 +34,19 @@ pub async fn import_config_from_path(
 ) -> Result<(), AppError> {
     caller.require(&[WindowKind::Main])?;
     let db = state.inner().clone();
-    let stale_db = db.clone();
     let generation = generation.inner().clone();
     let storage = storage.inner().clone();
     let lifecycle = lifecycle.inner().clone();
     let close_behavior = blocking_unbounded("config.import", move || {
-        config_service::import_with(&db, &storage, &lifecycle, &generation, &path)
-    })
-    .await?;
-    // Only after the import has committed. Only the grants whose project was removed or re-pathed
-    // are revoked; a failure here is logged and does not fail the import.
-    let stale = blocking_unbounded("config.revoke_stale_grants", move || {
+        // The revoker is built here and handed to the hook entry point, which revokes only the
+        // grants whose project was removed or re-pathed by the import (m6-099).
         let grants = app.state::<ContentWindowGrantRegistry>();
         let reclaimer = TauriContentWindowReclaimer(app.clone());
         let revoker =
             ContentWindowRevoker::new(grants.inner(), &reclaimer, RevocationReason::ImportConfig);
-        revoker.revoke_stale_for_database(&stale_db)
+        config_service::import_with(&db, &storage, &lifecycle, &generation, &revoker, &path)
     })
-    .await;
-    match stale {
-        Ok(_report) => {}
-        Err(error) => {
-            log::warn!(
-                "configuration import: unable to revoke the stale content window grants: {error:?}"
-            );
-        }
-    }
+    .await?;
     update_close_behavior_state(&close_behavior_state, close_behavior)?;
     Ok(())
 }
