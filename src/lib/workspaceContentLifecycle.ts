@@ -117,6 +117,13 @@ export type WorkspaceContentLifecycleEvent =
       generation: number;
     } & WorkspaceContentHandoffEventIdentity)
   | ({
+      // 超时对账时 Rust 报告会话归外来窗口：内容归该窗口（m6-096 F1）。
+      type: "foreignOwnerRecognized";
+      transferId: string;
+      ownerWindowLabel: string;
+      generation: number;
+    } & WorkspaceContentHandoffEventIdentity)
+  | ({
       type: "detachFailed";
       transferId: string;
       generation: number;
@@ -304,6 +311,24 @@ export function transitionWorkspaceContentLifecycle(
         generation: state.generation,
         owner: state.target,
         windowToken: event.windowToken,
+        lastPaneId: state.source.paneId,
+      });
+    }
+    case "foreignOwnerRecognized": {
+      if (
+        state.phase !== "detaching" ||
+        !matchesTransfer(state, event) ||
+        !hasText(event.ownerWindowLabel)
+      ) {
+        return ignored(state);
+      }
+      return changed({
+        phase: "detached",
+        content: state.content,
+        generation: state.generation,
+        owner: { kind: "window", windowLabel: event.ownerWindowLabel },
+        // 外来窗口的握手 token 不由本窗口持有；使用只与 transfer 绑定的稳定占位值（非空且不同于 transfer id）。
+        windowToken: `foreign:${state.transferId}`,
         lastPaneId: state.source.paneId,
       });
     }

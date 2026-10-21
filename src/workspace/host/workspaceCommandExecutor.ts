@@ -59,6 +59,12 @@ export type HostCommand =
       expectedPaneId?: string;
       whenAlreadyInTree: "activate" | "relocate";
     }
+  | {
+      type: "recognizeForeignOwner";
+      ref: ManagedContentRef;
+      token: string;
+      ownerWindowLabel: string;
+    }
   | { type: "reclaim"; ref: ManagedContentRef }
   | {
       type: "applyPreset";
@@ -338,6 +344,29 @@ export function createWorkspaceCommandExecutor(
           ...l,
           tree: plan.nextTree,
           focusedPaneId: plan.focusPaneId,
+        }));
+      }
+      case "recognizeForeignOwner": {
+        // 与 completeDetach 相同的纯计算与焦点回退；登记的归属是外来窗口而不是本次创建的子窗口。
+        const next = reduceWorkspaceTree(live.tree, {
+          type: "detach",
+          ref: command.ref,
+        });
+        const ownership = coordinator.recognizeForeignOwner(
+          command.ref,
+          command.token,
+          command.ownerWindowLabel,
+        );
+        if (ownership?.outcome !== "changed") {
+          return ignored("handoff-not-current");
+        }
+        const focusPaneId = findWorkspacePane(next, live.focusedPaneId)
+          ? live.focusedPaneId
+          : listWorkspacePanes(next)[0].id;
+        return finish("recognizeForeignOwner", focusPaneId, null, (l) => ({
+          ...l,
+          tree: next,
+          focusedPaneId: focusPaneId,
         }));
       }
       case "reclaim": {

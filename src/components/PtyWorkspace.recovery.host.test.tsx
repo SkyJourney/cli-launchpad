@@ -358,7 +358,9 @@ async function advance(ms: number) {
 }
 
 describe("PTY detach timeout reconciliation", () => {
-  it("does not accept a detach when Rust reports a foreign owner", async () => {
+  // F1（m6-096 裁定 A）：Rust 判定会话归外来窗口时，内容记为归该窗口的分离内容，不再留在本窗口的 attached。
+  it("records a detach as owned by the foreign window when Rust reports a foreign owner", async () => {
+    const FOREIGN = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator });
     const { slot } = await launchPty(host);
@@ -366,22 +368,25 @@ describe("PTY detach timeout reconciliation", () => {
     const child = lastChildLabel();
     reportStatus(host, () => ({
       status: "ownedByAnotherWindow",
-      ownerWindowLabel: "terminal-8e783338-f464-4b10-b15e-b534748c6241",
+      ownerWindowLabel: FOREIGN,
     }));
 
     await advance(15_000);
 
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
     expect(destroyedChild(child)).toBe(true);
     expect(outcome.rejection).toBeInstanceOf(Error);
     expect((outcome.rejection as Error).message).toContain(
       "pty.detachedStateChanged",
     );
-    expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
+    expect(ptyOccurrences(host, slot.instanceId)).toBe(0);
     expect(
-      coordinator.get({ kind: "pty", slotId: slot.instanceId })?.phase,
-    ).toBe("attached");
-    // 反向断言：没有走 accept 分支（槽位没有离开树），宿主没有报错。
+      coordinator.get({ kind: "pty", slotId: slot.instanceId }),
+    ).toMatchObject({
+      phase: "detached",
+      owner: { kind: "window", windowLabel: FOREIGN },
+    });
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    // 反向断言：宿主没有报错。
     expect(host.errors).toEqual([]);
   });
 

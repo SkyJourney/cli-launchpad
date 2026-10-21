@@ -586,13 +586,23 @@ export function createContentWindowOrchestrator(
       pending.handoffPayload,
       new Error(failureMessage),
     ).catch(() => undefined);
-    deps
-      .getCoordinator()
-      .failHandoff(
-        ptyContentRef(pending.instanceId),
-        "detachFailed",
-        pending.transferId,
-      );
+    // F1（m6-096 裁定 A）：会话已归外来窗口时，内容记为归该窗口的分离内容；否则按原路径标记分离失败。
+    const content = ptyContentRef(pending.instanceId);
+    const foreignOwner =
+      effectiveAction === "reject-foreign-owner" ? status?.ownerLabel : null;
+    const recognized =
+      !!foreignOwner &&
+      deps.execute({
+        type: "recognizeForeignOwner",
+        ref: content,
+        token: pending.transferId,
+        ownerWindowLabel: foreignOwner,
+      }).status === "applied";
+    if (!recognized) {
+      deps
+        .getCoordinator()
+        .failHandoff(content, "detachFailed", pending.transferId);
+    }
     void pending.window.destroy().catch(() => undefined);
     pending.reject(new Error(failureMessage));
   };

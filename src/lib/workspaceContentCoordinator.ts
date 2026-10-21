@@ -236,6 +236,25 @@ export class WorkspaceContentCoordinator {
     return transition;
   }
 
+  /** 超时对账时 Rust 报告会话归外来窗口：分离握手转为归该窗口的分离内容（m6-096 F1）。 */
+  recognizeForeignOwner(
+    content: WorkspacePaneContentRef,
+    transferId: string,
+    ownerWindowLabel: string,
+  ) {
+    const state = this.states.get(workspaceContentKey(content));
+    if (!state || state.phase !== "detaching") return null;
+    return this.dispatch(content, {
+      type: "foreignOwnerRecognized",
+      transferId,
+      ownerWindowLabel,
+      generation: state.generation,
+      content: state.content,
+      source: state.source,
+      target: state.target,
+    } as WorkspaceContentLifecycleEvent);
+  }
+
   failHandoff(
     content: WorkspacePaneContentRef,
     type:

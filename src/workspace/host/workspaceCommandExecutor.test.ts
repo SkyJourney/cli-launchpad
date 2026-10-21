@@ -923,6 +923,49 @@ describe("workspaceCommandExecutor", () => {
       expect(s.coordinator.get(FILE)?.phase).toBe("returning");
     });
 
+    it("recognizeForeignOwner moves the content out of its pane and registers the foreign window as owner", () => {
+      const s = setup();
+      begin(s, FILE, "t1");
+      const before = s.store.commitCount;
+      const persistBefore = s.schedulePersist.mock.calls.length;
+      expect(
+        s.executor.execute({
+          type: "recognizeForeignOwner",
+          ref: FILE,
+          token: "t1",
+          ownerWindowLabel: "terminal-foreign",
+        }),
+      ).toEqual({ status: "applied", focusPaneId: "pa" });
+      expect(paneOf(s.store, "pa").contents).not.toContainEqual(FILE);
+      expect(s.coordinator.get(FILE)).toMatchObject({
+        phase: "detached",
+        owner: { kind: "window", windowLabel: "terminal-foreign" },
+      });
+      expect(s.store.commitCount).toBe(before + 1);
+      expect(s.store.lastReason).toBe("command:recognizeForeignOwner");
+      expect(s.schedulePersist.mock.calls.length).toBe(persistBefore + 1);
+      expect(s.afterCommit).not.toHaveBeenCalled();
+    });
+
+    it("recognizeForeignOwner is ignored without any change when the transfer is not current", () => {
+      const s = setup();
+      begin(s, FILE, "t1");
+      const before = s.store.commitCount;
+      const treeBefore = s.store.getSnapshot().tree;
+      expect(
+        s.executor.execute({
+          type: "recognizeForeignOwner",
+          ref: FILE,
+          token: "stale",
+          ownerWindowLabel: "terminal-foreign",
+        }),
+      ).toEqual({ status: "ignored", reason: "handoff-not-current" });
+      expect(s.store.commitCount).toBe(before);
+      expect(s.store.getSnapshot().tree).toBe(treeBefore);
+      expect(s.coordinator.get(FILE)?.phase).toBe("detaching");
+      expect(paneOf(s.store, "pa").contents).toContainEqual(FILE);
+    });
+
     it("reclaim puts content back into the pane that already holds it or into the focused pane", () => {
       const first = setup();
       detach(first, PTY, "t1");
