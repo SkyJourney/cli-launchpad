@@ -193,7 +193,8 @@ pub enum ExitRequestDecision {
         pty_count: usize,
         execution_task_count: usize,
     },
-    /// 没有主窗但仍有运行中的 PTY：只阻止，无处可问。
+    /// 没有主窗但仍有运行中的 PTY：阻止退出，先恢复主窗再询问（109 与 114 合并的方案，
+    /// 2026-10-21 用户裁定）。恢复失败时调用方放行，退出清理终止全部会话。
     PreventWithoutMain,
 }
 
@@ -219,38 +220,6 @@ pub fn decide_exit_request(
     } else {
         ExitRequestDecision::AllowExit
     }
-}
-
-/// 用户明确发起退出（托盘“退出”、macOS 应用菜单 Quit）时的处理方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuitPlan {
-    /// 走常规退出请求：由 `decide_exit_request` 决定放行或询问主窗。
-    RequestThroughMain,
-    /// 主窗已不存在而仍有 PTY 会话：没有地方可以询问，直接授权退出，由退出清理终止全部会话
-    /// （否则 `PreventWithoutMain` 会让应用永远无法退出，F13）。
-    ForceQuit,
-}
-
-/// 纯决策：只看主窗是否存在与活动 PTY 数。`decide_exit_request` 本身不变（RS-T07）。
-pub fn quit_plan(main_window_present: bool, active_pty_count: usize) -> QuitPlan {
-    if !main_window_present && active_pty_count > 0 {
-        QuitPlan::ForceQuit
-    } else {
-        QuitPlan::RequestThroughMain
-    }
-}
-
-/// 用户明确发起退出前的准备：`ForceQuit` 时先授权，使随后的 `ExitRequested` 被放行。
-pub fn prepare_quit(
-    gate: &AppExitGate,
-    main_window_present: bool,
-    active_pty_count: usize,
-) -> QuitPlan {
-    let plan = quit_plan(main_window_present, active_pty_count);
-    if plan == QuitPlan::ForceQuit {
-        gate.authorize();
-    }
-    plan
 }
 
 /// 窗口收到关闭请求时的处理结论。
@@ -590,9 +559,8 @@ mod tests {
     use super::AppExitGate;
     use super::{confirm_exit_with, exit_requested_payload, ExitRequest};
     use super::{
-        decide_close_request, decide_exit_request, effective_close_behavior, prepare_quit,
-        quit_plan, setup_tray_or_degrade, ExitRequestDecision, MainCloseDecision, QuitPlan,
-        TrayAvailability,
+        decide_close_request, decide_exit_request, effective_close_behavior, setup_tray_or_degrade,
+        ExitRequestDecision, MainCloseDecision, TrayAvailability,
     };
     use crate::models::window_kind::test_label;
     use std::cell::Cell;
@@ -612,54 +580,55 @@ mod tests {
     const LIB_RS: &str = include_str!("../lib.rs");
 
     #[test]
-    fn an_explicit_quit_forces_the_exit_only_when_the_main_window_is_gone_and_sessions_run() {
-        use QuitPlan::{ForceQuit, RequestThroughMain};
-        // (主窗存在, 活动 PTY 数, 期望)
-        for (main_present, ptys, expected) in [
-            (true, 0, RequestThroughMain),
-            (true, 3, RequestThroughMain),
-            (false, 0, RequestThroughMain),
-            (false, 1, ForceQuit),
-            (false, 3, ForceQuit),
-        ] {
-            assert_eq!(
-                quit_plan(main_present, ptys),
-                expected,
-                "main_present={main_present} ptys={ptys}"
-            );
-        }
-    }
-
-    #[test]
-    fn preparing_a_quit_authorizes_the_exit_only_for_a_forced_quit() {
-        // A forced quit authorizes once: the next exit request is allowed, the one after is not.
+    fn a_missing_main_window_with_sessions_restores_the_window_instead_of_authorizing_the_exit() {
+        // 109 与 114 合并（2026-10-21 裁定）：显式退出不再预先授权。主窗缺失且有 PTY 时决策为
+        // PreventWithoutMain，由调用方先恢复主窗再询问；决策本身不消费也不产生授权。
         let gate = AppExitGate::default();
         assert_eq!(
             decide_exit_request(&gate, 2, 0, false),
             ExitRequestDecision::PreventWithoutMain
         );
-        assert_eq!(prepare_quit(&gate, false, 2), QuitPlan::ForceQuit);
         assert_eq!(
             decide_exit_request(&gate, 2, 0, false),
+            ExitRequestDecision::PreventWithoutMain,
+            "the decision must not authorize on its own"
+        );
+        // 没有会话或主窗存在时，决策不变：放行或询问主窗。
+        assert_eq!(
+            decide_exit_request(&AppExitGate::default(), 0, 0, false),
             ExitRequestDecision::AllowExit
         );
-        assert_eq!(
-            decide_exit_request(&gate, 2, 0, false),
-            ExitRequestDecision::PreventWithoutMain
-        );
+        assert!(matches!(
+            decide_exit_request(&AppExitGate::default(), 3, 0, true),
+            ExitRequestDecision::PreventAndAskMain { .. }
+        ));
+    }
 
-        // Every other combination leaves the gate alone, so the normal confirmation applies.
-        for (main_present, ptys) in [(true, 0), (true, 3), (false, 0)] {
-            let gate = AppExitGate::default();
-            assert_eq!(
-                prepare_quit(&gate, main_present, ptys),
-                QuitPlan::RequestThroughMain
-            );
-            assert!(
-                !gate.consume_authorization(),
-                "main_present={main_present} ptys={ptys} must not authorize"
-            );
-        }
+    #[test]
+    fn the_no_main_exit_restores_the_main_window_before_asking() {
+        // 接线守护：PreventWithoutMain 分支必须先恢复主窗，恢复失败时不阻止退出（不会让应用永远无法退出）。
+        let start = LIB_RS
+            .find("services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {")
+            .expect("the no-main branch is handled");
+        let branch = &LIB_RS[start..];
+        let restore = branch
+            .find("restore_main_window(app)")
+            .expect("restore first");
+        let ask = branch.find("ask_main_to_confirm_exit(").expect("then ask");
+        let prevent = branch
+            .find("api.prevent_exit()")
+            .expect("prevent once restored");
+        assert!(
+            restore < prevent && prevent < ask,
+            "restore, then prevent, then ask"
+        );
+        let fallback = branch
+            .find("Err(error) =>")
+            .expect("a failed restore is handled");
+        assert!(
+            ask < fallback,
+            "the failure arm follows the success arm, which carries the prevent and the ask"
+        );
     }
 
     #[test]
@@ -823,7 +792,8 @@ mod tests {
     #[test]
     fn lib_rs_delegates_exit_and_window_events_to_decision_functions() {
         let start = LIB_RS.find("fn handle_run_event").unwrap();
-        let end = LIB_RS.find("fn show_main_window").unwrap();
+        // 退出确认的发送在 handle_run_event 之后的 ask_main_to_confirm_exit 中，区间延伸到其后的函数。
+        let end = LIB_RS.find("fn exit_cleanup_targets").unwrap();
         let run_event = &LIB_RS[start..end];
         assert!(run_event.contains("decide_exit_request("));
         assert!(!run_event.contains("consume_authorization"));
@@ -1515,7 +1485,7 @@ mod tests {
         assert_eq!(error_code(&stale.unwrap_err()), "exit.request_mismatch");
 
         let run_event = &LIB_RS[LIB_RS.find("fn handle_run_event").unwrap()
-            ..LIB_RS.find("fn show_main_window").unwrap()];
+            ..LIB_RS.find("fn exit_cleanup_targets").unwrap()];
         assert_eq!(run_event.matches("begin_request()").count(), 1);
         assert_eq!(run_event.matches("exit_requested_payload(").count(), 1);
         assert!(

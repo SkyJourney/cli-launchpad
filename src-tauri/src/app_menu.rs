@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 use tauri_plugin_window_state::AppHandleExt;
 
 /// 自定义 Quit 菜单项 id；大小写敏感。
@@ -83,26 +83,8 @@ pub fn request_app_exit<R: Runtime>(app: &AppHandle<R>) {
     if let Err(error) = app.save_window_state(crate::persistent_window_state_flags()) {
         log::warn!("unable to save main window state before exit request: {error}");
     }
-    // Without a main window there is nobody to ask: authorize the exit up front so that
-    // `PreventWithoutMain` cannot keep the application alive forever (F13). The exit cleanup then
-    // terminates every remaining session.
-    let main_window_present = app
-        .get_webview_window(crate::models::window_kind::main_window_label())
-        .is_some();
-    let active_ptys = app
-        .try_state::<crate::services::pty_session_service::PtySessionManager>()
-        .map_or(0, |sessions| sessions.active_count());
-    let plan = match app.try_state::<crate::services::app_lifecycle::AppExitGate>() {
-        Some(gate) => {
-            crate::services::app_lifecycle::prepare_quit(&gate, main_window_present, active_ptys)
-        }
-        None => crate::services::app_lifecycle::quit_plan(main_window_present, active_ptys),
-    };
-    if plan == crate::services::app_lifecycle::QuitPlan::ForceQuit {
-        log::warn!(
-            "quit requested without a main window; forcing exit with {active_ptys} sessions"
-        );
-    }
+    // Every explicit quit goes through the same ExitRequested gate. When the main window is gone
+    // and sessions run, the gate restores the main window and asks there (109 与 114 合并).
     app.exit(0);
 }
 
@@ -241,10 +223,10 @@ mod macos_menu {
 
 #[cfg(test)]
 mod tests {
-    /// F13: a forced quit authorizes the exit before `app.exit` starts the ExitRequested cycle, or the
-    /// no-main-window guard would keep the application alive. Both quit entries must use this path.
+    /// 109 与 114 合并：显式退出只发起 `app.exit`，不预先授权；主窗缺失时由 ExitRequested 闸门
+    /// 先恢复主窗再询问。两个退出入口都必须走这条路径。
     #[test]
-    fn quit_is_authorized_before_the_exit_request_is_issued() {
+    fn explicit_quit_requests_the_exit_without_authorizing_it() {
         // Windows checkouts use CRLF; normalize so the function end "\n}\n" is found on every platform.
         let source = include_str!("app_menu.rs").replace("\r\n", "\n");
         let start = source
@@ -258,11 +240,11 @@ mod tests {
 ",
             )
             .expect("request_app_exit ends")];
-        let plan = body
-            .find("prepare_quit(")
-            .expect("the quit plan is applied");
-        let exit = body.find("app.exit(0)").expect("the exit is requested");
-        assert!(plan < exit, "the quit plan must run before app.exit");
+        assert!(
+            !body.contains("authorize") && !body.contains("prepare_quit"),
+            "an explicit quit must not authorize the exit itself"
+        );
+        assert!(body.contains("app.exit(0)"), "the exit is requested");
 
         let lib = include_str!("lib.rs");
         assert!(

@@ -408,20 +408,26 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
                     if let Some(window) = &main_window {
                         show_main_window(window);
                     }
-                    let request = exit_gate.begin_request();
-                    let _ = services::window_inbox::notify_main(
-                        app,
-                        crate::events::APP_EXIT_REQUESTED,
-                        serde_json::to_value(services::app_lifecycle::exit_requested_payload(
-                            &request,
-                            pty_count,
-                            execution_task_count,
-                        ))
-                        .unwrap_or(serde_json::Value::Null),
-                    );
+                    ask_main_to_confirm_exit(app, &exit_gate, pty_count, execution_task_count);
                 }
                 services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {
-                    api.prevent_exit();
+                    // 主窗缺失：先按配置重建主窗，再由它确认（109 与 114 合并，2026-10-21 裁定）。
+                    // 重建失败时放行退出，退出清理终止全部会话（最后的兜底，不会让应用无法退出）。
+                    match restore_main_window(app) {
+                        Ok(window) => {
+                            api.prevent_exit();
+                            show_main_window(&window);
+                            ask_main_to_confirm_exit(
+                                app,
+                                &exit_gate,
+                                pty_count,
+                                execution_task_count,
+                            );
+                        }
+                        Err(error) => log::error!(
+                            "exit: unable to restore the main window ({error}); exiting and terminating {pty_count} sessions"
+                        ),
+                    }
                 }
             }
         }
@@ -465,6 +471,68 @@ fn show_main_window(window: &WebviewWindow) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+}
+
+/// 退出确认的重试参数：主窗重建后要等它订阅收件箱，之后消息才会被接收。
+const EXIT_REQUEST_RETRY_ATTEMPTS: u32 = 100;
+const EXIT_REQUEST_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 主窗缺失时按应用配置重建主窗（与启动时由配置创建的主窗使用同一份参数）。
+fn restore_main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    let label = models::window_kind::main_window_label();
+    if let Some(window) = app.get_webview_window(label) {
+        return Ok(window);
+    }
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == label)
+        .ok_or_else(|| format!("no window configuration for {label}"))?;
+    tauri::WebviewWindowBuilder::from_config(app, config)
+        .and_then(|builder| builder.build())
+        .map_err(|error| error.to_string())
+}
+
+/// 把退出确认交给主窗。刚重建的主窗还没有订阅收件箱，`notify_main` 返回 `NoInbox`，
+/// 因此在后台有限次重试，直到消息被发送或缓冲。
+fn ask_main_to_confirm_exit(
+    app: &tauri::AppHandle,
+    exit_gate: &services::app_lifecycle::AppExitGate,
+    pty_count: usize,
+    execution_task_count: usize,
+) {
+    let request = exit_gate.begin_request();
+    let payload = serde_json::to_value(services::app_lifecycle::exit_requested_payload(
+        &request,
+        pty_count,
+        execution_task_count,
+    ))
+    .unwrap_or(serde_json::Value::Null);
+    let first = services::window_inbox::notify_main(
+        app,
+        crate::events::APP_EXIT_REQUESTED,
+        payload.clone(),
+    );
+    if !matches!(first, services::window_inbox::DeliverOutcome::NoInbox) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        for _ in 0..EXIT_REQUEST_RETRY_ATTEMPTS {
+            std::thread::sleep(EXIT_REQUEST_RETRY_INTERVAL);
+            let outcome = services::window_inbox::notify_main(
+                &app,
+                crate::events::APP_EXIT_REQUESTED,
+                payload.clone(),
+            );
+            if !matches!(outcome, services::window_inbox::DeliverOutcome::NoInbox) {
+                return;
+            }
+        }
+        log::warn!("exit confirmation was not delivered: the main window never subscribed");
+    });
 }
 
 fn exit_cleanup_targets(
