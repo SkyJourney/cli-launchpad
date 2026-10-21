@@ -3,7 +3,10 @@ import { FileText, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
 import type { WorkspaceFileDocument } from "../../lib/tauri";
-import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
+import {
+  isWorkspaceFileBufferDirty,
+  type WorkspaceFileBuffer,
+} from "../../lib/workspaceFileBuffer";
 import type { WorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { registerWorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { createWorkspaceEditorModelUri } from "../../lib/workspaceEditorModel";
@@ -250,14 +253,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     return {
       title: document?.relativePath ?? content.documentId,
       icon: <FileText size={13} />,
-      status:
-        buffer &&
-        (buffer.content !== buffer.savedContent ||
-          buffer.saving ||
-          buffer.conflict === true ||
-          buffer.identityChanged === true)
-          ? "dirty"
-          : undefined,
+      status: isWorkspaceFileBufferDirty(buffer) ? "dirty" : undefined,
       tooltip: document?.relativePath ?? content.documentId,
       closeLabelKey: "workspaceFiles.closeFile",
     };

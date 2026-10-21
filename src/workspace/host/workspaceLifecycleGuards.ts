@@ -1,8 +1,10 @@
-import { collectAppExitImpacts } from "../../lib/appExitImpacts";
+import {
+  collectAppExitImpacts,
+  mergeExitFlushResults,
+} from "../../lib/appExitImpacts";
 import type { PtySession } from "../../lib/tauri";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import { workspaceContentKey } from "../../lib/workspaceContentKey";
-import { isWorkspaceFileBufferNewer } from "../../lib/workspaceFileBuffer";
 import { hasWorkspaceDataRestoreBlockers } from "../../lib/workspaceRestorePolicy";
 import type { WorkspacePersistence } from "../persistence/workspacePersistence";
 import { requestFileWindowFlush } from "../windows/protocolHandlers.file";
@@ -78,39 +80,24 @@ export function createWorkspaceLifecycleGuards(
         response: await requestFileWindowFlush(deps.orchestrator, managed),
       })),
     );
-    const uncertainDocumentIds: string[] = [];
-    let nextBuffers = store.getLive().buffers;
-    for (const { managed, response } of flushResults) {
-      const currentDocument = store
-        .getLive()
-        .documents.find((document) => document.id === managed.documentId);
-      if (
-        !response ||
-        !currentDocument ||
-        response.fileDocument.directoryId !== currentDocument.directoryId ||
-        response.fileDocument.directoryPath !== currentDocument.directoryPath ||
-        response.fileDocument.relativePath !== currentDocument.relativePath
-      ) {
-        uncertainDocumentIds.push(managed.documentId);
-        continue;
-      }
-      const currentBuffer = nextBuffers[managed.documentId];
-      if (isWorkspaceFileBufferNewer(response.fileBuffer, currentBuffer)) {
-        if (nextBuffers === store.getLive().buffers) {
-          nextBuffers = { ...store.getLive().buffers };
-        }
-        nextBuffers[managed.documentId] = response.fileBuffer;
-      }
-    }
-    if (nextBuffers !== store.getLive().buffers) {
-      deps.mergeFileBuffers(nextBuffers, "collectExitImpacts:buffers");
+    const live = store.getLive();
+    const merged = mergeExitFlushResults({
+      documents: live.documents,
+      buffers: live.buffers,
+      outcomes: flushResults.map(({ managed, response }) => ({
+        documentId: managed.documentId,
+        response,
+      })),
+    });
+    if (merged.buffers !== live.buffers) {
+      deps.mergeFileBuffers(merged.buffers, "collectExitImpacts:buffers");
     }
 
     return collectAppExitImpacts({
       ptyCount,
       documents: store.getLive().documents,
       buffers: store.getLive().buffers,
-      uncertainDocumentIds,
+      uncertainDocumentIds: merged.uncertainDocumentIds,
     });
   };
 

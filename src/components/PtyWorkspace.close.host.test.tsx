@@ -430,3 +430,41 @@ describe("mixed content close", () => {
     expect(host!.ctx().slots).toEqual([]);
   });
 });
+
+describe("close dialog impact lists", () => {
+  it("lists running terminals and dirty files in two shared list elements", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator } as never);
+    const doc = await openFile(host);
+    await act(async () => {
+      host!.ctx().editFile(doc.id, "dirty");
+    });
+    const { slot } = await launchPty(host);
+    const refs = [
+      { kind: "pty" as const, slotId: slot.instanceId },
+      { kind: "file" as const, documentId: doc.id },
+    ];
+    await act(async () => {
+      void host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+
+    const dialog = screen.getByRole("alertdialog");
+    const lists = dialog.querySelectorAll("ul.app-exit-unsaved-files");
+    expect(lists).toHaveLength(2);
+    expect(lists[0]!.querySelectorAll("li")).toHaveLength(1);
+    expect(
+      [...lists[1]!.querySelectorAll("li")].map((item) => item.textContent),
+    ).toEqual(["a.txt"]);
+    expect(dialog.textContent).toContain("pty.confirmCloseMany");
+    expect(dialog.textContent).toContain("workspaceFiles.discardChanges");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "common.cancel" }),
+    );
+    await flush();
+    // 反向：取消之后内容都还在。
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(host!.ctx().fileDocuments).toHaveLength(1);
+    expect(host!.ctx().slots).toHaveLength(1);
+  });
+});

@@ -467,3 +467,21 @@ describe("application exit requests in flight", () => {
     ).toEqual(["req-1"]);
   });
 });
+
+describe("exit dialog impact list", () => {
+  it("lists dirty files in the shared list element", async () => {
+    const host = await mountExitApp({ dirty: true });
+    await requestExit({ ptyCount: 0, executionTaskCount: 0 });
+
+    const dialog = screen.getByRole("dialog");
+    const lists = dialog.querySelectorAll("ul.app-exit-unsaved-files");
+    expect(lists).toHaveLength(1);
+    expect(
+      [...lists[0]!.querySelectorAll("li")].map((item) => item.textContent),
+    ).toEqual(["a.txt"]);
+    expect(dialog.textContent).toContain("appExit.unsavedDescription");
+    // 反向：没有确认，也没有错误。
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(host.errors).toEqual([]);
+  });
+});

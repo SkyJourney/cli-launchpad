@@ -70,6 +70,8 @@ import { type ViewName, useAppStore } from "./store/appStore";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import { confirmAppExit } from "./lib/tauri";
 import { onInboxEvent } from "./lib/windowInbox";
+import { ImpactTitleList } from "./components/ImpactTitleList";
+import { summarizeExitImpacts } from "./workspace/impacts/impactSummary";
 import {
   collectAppExitImpacts,
   shouldExitWithoutPrompt,
@@ -266,6 +268,13 @@ function AppContent() {
     }
   }, [view]);
 
+  const exitSummary = exitRequest
+    ? summarizeExitImpacts(exitRequest)
+    : summarizeExitImpacts({
+        ptyCount: 0,
+        executionTaskCount: 0,
+        dirtyFiles: [],
+      });
   return (
     <>
       <WorkspaceDataRestoreListener />
@@ -396,18 +405,14 @@ function AppContent() {
                 })}
               </p>
             )}
-            {exitRequest.dirtyFiles.length > 0 && (
+            {exitSummary.dirtyFiles.length > 0 && (
               <>
                 <p>
                   {t("appExit.unsavedDescription", {
-                    count: exitRequest.dirtyFiles.length,
+                    count: exitSummary.dirtyFiles.length,
                   })}
                 </p>
-                <ul className="app-exit-unsaved-files">
-                  {exitRequest.dirtyFiles.map((file) => (
-                    <li key={file.documentId}>{file.relativePath}</li>
-                  ))}
-                </ul>
+                <ImpactTitleList items={exitSummary.dirtyFiles} />
               </>
             )}
             {exitError && (

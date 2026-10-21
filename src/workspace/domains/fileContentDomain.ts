@@ -1,3 +1,4 @@
+import { isWorkspaceFileBufferDirty } from "../../lib/workspaceFileBuffer";
 import type { WorkspaceHostStore } from "../host/workspaceHostStore";
 import type { FileDocumentsDomain } from "./fileDocumentsDomain";
 import type {
@@ -27,13 +28,7 @@ export function createFileContentDomain(
         return undefined;
       }
       const buffer = live.buffers[ref.documentId];
-      const isDirty = Boolean(
-        buffer &&
-        (buffer.content !== buffer.savedContent ||
-          buffer.saving ||
-          buffer.conflict === true ||
-          buffer.identityChanged === true),
-      );
+      const isDirty = isWorkspaceFileBufferDirty(buffer);
       return { title: document.relativePath, isDirty, isRunning: false };
     },
     close: async (refs) => {

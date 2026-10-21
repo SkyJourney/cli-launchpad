@@ -43,6 +43,22 @@ export function hasUnsavedWorkspaceFileEdits(
   );
 }
 
+/**
+ * The single answer to "does this buffer hold work that would be lost?". The tab status, the close
+ * prompt and the exit prompt all call it. It does not depend on the buffer kind (m6-095).
+ */
+export function isWorkspaceFileBufferDirty(
+  buffer: WorkspaceFileBuffer | undefined,
+): boolean {
+  if (!buffer) return false;
+  return (
+    buffer.content !== buffer.savedContent ||
+    buffer.saving ||
+    buffer.conflict === true ||
+    buffer.identityChanged === true
+  );
+}
+
 export function createWorkspaceFileBuffer(
   file: ProjectFileOpenResult,
   epoch = 0,

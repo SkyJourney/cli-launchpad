@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { type WorkspaceContentDisposalImpact } from "../../lib/workspaceContentClose";
+import { ImpactTitleList } from "../../components/ImpactTitleList";
+import { summarizeDisposalImpacts } from "../impacts/impactSummary";
 
 export function ImpactConfirmDialog({
   impacts,
@@ -11,35 +13,29 @@ export function ImpactConfirmDialog({
   onConfirm: () => void;
 }) {
   const { t } = useTranslation();
-  const runningSessions = impacts.filter(
-    (impact) => impact.kind === "runningPty",
-  );
-  const dirtyFiles = impacts.filter((impact) => impact.kind === "dirtyFile");
+  const summary = summarizeDisposalImpacts(impacts);
+  const runningCount = summary.runningPtys.count;
+  const dirtyFiles = summary.dirtyFiles;
 
   return (
     <div className="app-exit-overlay">
       <section className="app-exit-dialog" role="alertdialog" aria-modal="true">
         <h2>{t("common.confirm")}</h2>
-        {runningSessions.length > 0 && (
+        {runningCount > 0 && (
           <>
-            <p>
-              {t("pty.confirmCloseMany", { count: runningSessions.length })}
-            </p>
-            <ul className="app-exit-unsaved-files">
-              {runningSessions.map((impact) => (
-                <li key={`pty:${impact.title}`}>{impact.title}</li>
-              ))}
-            </ul>
+            <p>{t("pty.confirmCloseMany", { count: runningCount })}</p>
+            <ImpactTitleList
+              items={summary.runningPtys.titles.map((title) => ({
+                key: `pty:${title}`,
+                title,
+              }))}
+            />
           </>
         )}
         {dirtyFiles.length > 0 && (
           <>
             <p>{t("workspaceFiles.discardChanges")}</p>
-            <ul className="app-exit-unsaved-files">
-              {dirtyFiles.map((impact) => (
-                <li key={`file:${impact.title}`}>{impact.title}</li>
-              ))}
-            </ul>
+            <ImpactTitleList items={dirtyFiles} />
           </>
         )}
         <div className="app-exit-actions">

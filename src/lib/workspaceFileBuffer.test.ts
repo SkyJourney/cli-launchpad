@@ -7,6 +7,7 @@ import {
   editWorkspaceFileBuffer,
   failWorkspaceFileSave,
   hasUnsavedWorkspaceFileEdits,
+  isWorkspaceFileBufferDirty,
   isWorkspaceFileBufferNewer,
   markWorkspaceFileSaveConflict,
   markWorkspaceFileIdentityChanged,
@@ -15,6 +16,7 @@ import {
   WorkspaceFileOperationFlights,
   type WorkspaceFileBuffer,
 } from "./workspaceFileBuffer";
+import { collectAppExitImpacts } from "./appExitImpacts";
 
 const textBuffer = (content = "original", revision = "revision") =>
   createWorkspaceFileBuffer({ kind: "text", content, revision });
@@ -290,5 +292,117 @@ describe("hasUnsavedWorkspaceFileEdits", () => {
         kind: "image",
       } as WorkspaceFileBuffer),
     ).toBe(false);
+  });
+});
+
+describe("isWorkspaceFileBufferDirty", () => {
+  const bufferWith = (
+    overrides: Partial<WorkspaceFileBuffer> = {},
+  ): WorkspaceFileBuffer => ({
+    kind: "text",
+    epoch: 0,
+    version: 0,
+    content: "x",
+    savedContent: "x",
+    revision: "1",
+    saving: false,
+    ...overrides,
+  });
+
+  it("is false for a missing buffer and for a clean text buffer", () => {
+    expect(isWorkspaceFileBufferDirty(undefined)).toBe(false);
+    expect(isWorkspaceFileBufferDirty(bufferWith())).toBe(false);
+    expect(isWorkspaceFileBufferDirty(bufferWith({ content: "y" }))).toBe(true);
+  });
+
+  it("is true when the content differs from the saved content", () => {
+    expect(isWorkspaceFileBufferDirty(bufferWith({ content: "edited" }))).toBe(
+      true,
+    );
+    expect(
+      isWorkspaceFileBufferDirty(
+        bufferWith({ content: "", savedContent: "x" }),
+      ),
+    ).toBe(true);
+    expect(
+      isWorkspaceFileBufferDirty(
+        bufferWith({ content: "x", savedContent: "x" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("is true while saving, in conflict, or after the project identity changed", () => {
+    expect(isWorkspaceFileBufferDirty(bufferWith({ saving: true }))).toBe(true);
+    expect(isWorkspaceFileBufferDirty(bufferWith({ conflict: true }))).toBe(
+      true,
+    );
+    expect(
+      isWorkspaceFileBufferDirty(bufferWith({ identityChanged: true })),
+    ).toBe(true);
+    expect(
+      isWorkspaceFileBufferDirty(
+        bufferWith({ conflict: false, identityChanged: false }),
+      ),
+    ).toBe(false);
+  });
+
+  it("counts flagged non-text buffers as dirty so no path loses a prompt", () => {
+    const image = {
+      ...bufferWith({ content: "", savedContent: "" }),
+      kind: "image" as const,
+    };
+    const unsupported = { ...image, kind: "unsupported" as const };
+    const noKind = bufferWith({ content: "edited" });
+    delete noKind.kind;
+    expect(
+      isWorkspaceFileBufferDirty({ ...image, identityChanged: true }),
+    ).toBe(true);
+    expect(isWorkspaceFileBufferDirty({ ...unsupported, conflict: true })).toBe(
+      true,
+    );
+    expect(isWorkspaceFileBufferDirty(noKind)).toBe(true);
+    expect(isWorkspaceFileBufferDirty(image)).toBe(false);
+    expect(isWorkspaceFileBufferDirty(unsupported)).toBe(false);
+  });
+
+  it("agrees with the exit-impact collector for every buffer shape", () => {
+    const doc = {
+      id: "d1",
+      directoryId: 1,
+      directoryPath: "C:/project",
+      relativePath: "a.txt",
+    };
+    const blankImage = {
+      ...bufferWith({ content: "", savedContent: "" }),
+      kind: "image" as const,
+    };
+    const noKind = bufferWith({ content: "y" });
+    delete noKind.kind;
+    // The expected answers are written out, so this test does not depend on the helper it checks.
+    const shapes: Array<[string, WorkspaceFileBuffer, boolean]> = [
+      ["clean-text", bufferWith(), false],
+      ["edited-text", bufferWith({ content: "y" }), true],
+      ["saving-text", bufferWith({ saving: true }), true],
+      ["conflict-text", bufferWith({ conflict: true }), true],
+      ["identity-text", bufferWith({ identityChanged: true }), true],
+      ["clean-image", blankImage, false],
+      ["identity-image", { ...blankImage, identityChanged: true }, true],
+      [
+        "conflict-unsupported",
+        { ...blankImage, kind: "unsupported" as const, conflict: true },
+        true,
+      ],
+      ["edited-no-kind", noKind, true],
+    ];
+    for (const [name, buffer, expected] of shapes) {
+      const collected =
+        collectAppExitImpacts({
+          ptyCount: 0,
+          documents: [doc],
+          buffers: { d1: buffer },
+        }).dirtyFiles.length === 1;
+      expect(isWorkspaceFileBufferDirty(buffer), name).toBe(expected);
+      expect(collected, name).toBe(expected);
+    }
   });
 });
