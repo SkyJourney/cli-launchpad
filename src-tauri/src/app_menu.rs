@@ -245,7 +245,8 @@ mod tests {
     /// no-main-window guard would keep the application alive. Both quit entries must use this path.
     #[test]
     fn quit_is_authorized_before_the_exit_request_is_issued() {
-        let source = include_str!("app_menu.rs");
+        // Windows checkouts use CRLF; normalize so the function end "\n}\n" is found on every platform.
+        let source = include_str!("app_menu.rs").replace("\r\n", "\n");
         let start = source
             .find("pub fn request_app_exit")
             .expect("request_app_exit is defined");
