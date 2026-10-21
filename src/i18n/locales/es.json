@@ -9,7 +9,7 @@
     "layoutNameExists": "Ya existe un diseño con este nombre. Usa otro nombre.",
     "layoutPresetLimit": "Se admiten como máximo {{max}} diseños con nombre.",
     "filePermissionDenied": "Permiso denegado. Revisa los permisos del archivo o la carpeta.",
-    "backupIndexRefreshDiscarded": "Se restauró una copia de seguridad, así que se descartó la actualización del índice de sesiones iniciada antes.",
+    "backupIndexRefreshDiscarded": "Se restauró una copia de seguridad o se importó una configuración, así que se descartó la actualización del índice de sesiones iniciada antes.",
     "projectIdentityUnreadable": "No se pudo leer la identidad del directorio del proyecto.",
     "fileConflict": "El archivo del disco cambió. Vuelve a cargarlo antes de guardar.",
     "fileIdentityChanged": "La identidad de la carpeta del proyecto cambió. Vuelve a cargar el documento o guárdalo en otra ubicación.",
