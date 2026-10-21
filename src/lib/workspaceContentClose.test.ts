@@ -342,7 +342,7 @@ describe("workspace content close adapters", () => {
     expect(confirmImpacts).toHaveBeenCalledOnce();
     expect(confirmImpacts).toHaveBeenCalledWith([
       { kind: "runningPty", title: "Terminal" },
-      { kind: "dirtyFile", title: "src/main.ts" },
+      { kind: "dirtyFile", title: "src/main.ts", documentId: "file-1" },
     ]);
     expect(execute).not.toHaveBeenCalled();
     expect(dispose).not.toHaveBeenCalled();

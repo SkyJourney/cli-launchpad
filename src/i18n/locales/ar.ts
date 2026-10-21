@@ -124,12 +124,12 @@ export const ar = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "حفظ الكل والخروج",
     title: "هل تريد إنهاء CLI Launchpad؟",
     description:
       "لا تزال {{count}} جلسة طرفية مضمّنة قيد التشغيل. سيؤدي الإنهاء إلى إنهاء هذه الجلسات والعمليات التابعة لها.",
     executionTasks:
       "لا تزال {{count}} مهمة تثبيت أو تحديث قيد التشغيل. ستؤدي مغادرة التطبيق إلى إيقافها.",
-    confirm: "إنهاء الجلسات والخروج",
     unsavedDescription: "تحتوي {{count}} من الملفات على تغييرات غير محفوظة:",
     confirmDiscard: "تجاهل التغييرات والخروج",
     terminating: "جارٍ الخروج…",
@@ -654,6 +654,12 @@ export const ar = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "حفظ الكل والإغلاق",
+    discardAndClose: "تجاهل التغييرات والإغلاق",
+    saveAllInProgress: "جارٍ الحفظ…",
+    saveAllFailedQuit: "تعذّر حفظ {{count}} ملف؛ أُلغي الخروج",
+    saveAllFailedClose: "تعذّر حفظ {{count}} ملف؛ أُلغي الإغلاق",
+    confirmCloseTitle: "تأكيد الإغلاق",
     caseVariantsMerged:
       "تم دمج {{count}} من المستندات التي كانت مساراتها تختلف في حالة الأحرف فقط.",
     rightPanelTabs: "علامات تبويب اللوحة اليمنى",

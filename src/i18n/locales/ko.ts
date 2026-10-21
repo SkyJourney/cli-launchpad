@@ -130,12 +130,12 @@ export const ko = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "모두 저장 후 종료",
     title: "CLI Launchpad를 종료할까요?",
     description:
       "내장 터미널 세션 {{count}}개가 아직 실행 중입니다. 종료하면 해당 세션과 하위 프로세스가 종료됩니다.",
     executionTasks:
       "설치 또는 업데이트 작업 {{count}}개가 아직 실행 중입니다. 종료하면 이 작업이 중단됩니다.",
-    confirm: "세션 종료 후 앱 닫기",
     unsavedDescription: "저장되지 않은 변경 사항이 있는 파일 {{count}}개:",
     confirmDiscard: "변경 사항을 버리고 종료",
     terminating: "종료 중…",
@@ -662,6 +662,12 @@ export const ko = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "모두 저장 후 닫기",
+    discardAndClose: "변경 사항 버리고 닫기",
+    saveAllInProgress: "저장 중…",
+    saveAllFailedQuit: "{{count}}개 파일을 저장하지 못해 종료를 취소했습니다",
+    saveAllFailedClose: "{{count}}개 파일을 저장하지 못해 닫기를 취소했습니다",
+    confirmCloseTitle: "닫기 확인",
     caseVariantsMerged: "대소문자만 다른 문서 {{count}}개를 병합했습니다.",
     rightPanelTabs: "오른쪽 패널 탭",
     files: "파일",

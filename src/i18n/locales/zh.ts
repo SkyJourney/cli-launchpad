@@ -106,12 +106,12 @@ export const zh = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "保存全部并退出",
     title: "退出 CLI Launchpad？",
     description:
       "还有 {{count}} 个内置终端会话正在运行。退出将结束这些会话及其子进程。",
     executionTasks:
       "还有 {{count}} 个安装或更新任务正在运行。退出将中断这些任务。",
-    confirm: "结束会话并退出",
     unsavedDescription: "还有 {{count}} 个文件包含未保存的更改：",
     confirmDiscard: "放弃更改并退出",
     terminating: "正在退出…",
@@ -604,6 +604,12 @@ export const zh = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "保存全部并关闭",
+    discardAndClose: "放弃修改并关闭",
+    saveAllInProgress: "正在保存…",
+    saveAllFailedQuit: "{{count}} 个文件未能保存，已取消退出",
+    saveAllFailedClose: "{{count}} 个文件未能保存，已取消关闭",
+    confirmCloseTitle: "确认关闭",
     caseVariantsMerged: "已合并 {{count}} 个仅大小写不同的重复文档。",
     rightPanelTabs: "右侧面板标签",
     files: "文件",

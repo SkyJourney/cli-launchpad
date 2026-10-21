@@ -19,6 +19,7 @@ import { tauriMock } from "../test/tauriMock";
 import { resetFakeTerminals } from "../test/host/hostMocks";
 import {
   flush,
+  invokes,
   mountWorkspace,
   openFile,
   type WorkspaceHost,
@@ -284,7 +285,8 @@ describe("mixed content close", () => {
     await flush();
     fireEvent.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "common.confirm",
+        // m6-108：有未保存文件时，危险动作是“放弃修改并关闭”（语义与旧的“确认”相同）。
+        name: "workspaceFiles.discardAndClose",
       }),
     );
     await flush();
@@ -299,6 +301,34 @@ describe("mixed content close", () => {
     expect(host!.errors).toEqual([]);
   });
 
+  // m6-108：保存全部后关闭。
+  it("saves the dirty file and then closes the contents", async () => {
+    const { terminal, refs } = await setup();
+    host!.backend.handlers.set("save_project_text_file", () => ({
+      kind: "saved",
+      content: "dirty",
+      revision: "r2",
+      warning: null,
+    }));
+    await act(async () => {
+      void host!.ctx().closeContents(refs, "menu");
+    });
+    await flush();
+
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", {
+          name: "workspaceFiles.saveAllAndClose",
+        }),
+      );
+    });
+    await flush(10);
+
+    expect(invokes("save_project_text_file")).toHaveLength(1);
+    expect(terminal.closeSession).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(host!.errors).toEqual([]);
+  });
   it("vetoes the whole batch when one adapter's beforeClose returns false", async () => {
     const copies = builtinAdapterCopies();
     const { doc, terminal, refs } = await setup({

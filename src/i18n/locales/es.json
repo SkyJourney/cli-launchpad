@@ -103,10 +103,10 @@
     "en": "English"
   },
   "appExit": {
+    "saveAllAndQuit": "Guardar todo y salir",
     "title": "¿Salir de CLI Launchpad?",
     "description": "Al salir, se cerrarán las sesiones de terminal integradas que estén en ejecución ({{count}}), junto con sus procesos secundarios.",
     "executionTasks": "Hay {{count}} tarea(s) de instalación o actualización en ejecución. Al salir, se detendrán.",
-    "confirm": "Finalizar sesiones y salir",
     "unsavedDescription": "{{count}} archivo(s) tienen cambios sin guardar:",
     "confirmDiscard": "Descartar cambios y salir",
     "terminating": "Saliendo..."
@@ -555,6 +555,12 @@
     }
   },
   "workspaceFiles": {
+    "saveAllAndClose": "Guardar todo y cerrar",
+    "discardAndClose": "Descartar cambios y cerrar",
+    "saveAllInProgress": "Guardando…",
+    "saveAllFailedQuit": "No se pudieron guardar {{count}} archivo(s); salida cancelada",
+    "saveAllFailedClose": "No se pudieron guardar {{count}} archivo(s); cierre cancelado",
+    "confirmCloseTitle": "Confirmar cierre",
     "caseVariantsMerged": "Se fusionaron {{count}} documento(s) cuyas rutas solo diferían en mayúsculas y minúsculas.",
     "rightPanelTabs": "Pestañas del panel derecho",
     "files": "Archivos",

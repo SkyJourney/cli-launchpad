@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
 import { AppLogo } from "./components/AppLogo";
 import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
@@ -71,6 +71,7 @@ import { useResolvedTheme } from "./hooks/useResolvedTheme";
 import { confirmAppExit } from "./lib/tauri";
 import { onInboxEvent } from "./lib/windowInbox";
 import { ImpactTitleList } from "./components/ImpactTitleList";
+import { ImpactDialogActions } from "./components/ImpactDialogActions";
 import { summarizeExitImpacts } from "./workspace/impacts/impactSummary";
 import {
   collectAppExitImpacts,
@@ -134,6 +135,7 @@ function AppContent() {
   useWindowLevelBehaviors();
   const {
     collectExitImpacts,
+    saveFiles,
     fileDocuments,
     fileBuffers,
     detachedFileIds,
@@ -158,6 +160,7 @@ function AppContent() {
   const { data: directories } = useDirectories();
   const [exitRequest, setExitRequest] = useState<AppExitRequest | null>(null);
   const [exitPending, setExitPending] = useState(false);
+  const [exitSaving, setExitSaving] = useState(false);
   const [exitError, setExitError] = useState<AppErrorState | null>(null);
   // 最近一次有效退出请求的 id：确认时只回传它，过期请求的异步结果据此丢弃。
   const exitRequestIdRef = useRef<string | null>(null);
@@ -247,6 +250,39 @@ function AppContent() {
       if (exitRequestIdRef.current !== requestId) return;
       setExitError(toAppErrorState(error));
     }
+  };
+
+  // m6-108：保存全部未保存的文件；全部成功后才退出。保存期间若出现新的退出请求，结果不再影响新对话框。
+  const saveAllAndQuit = async (request: AppExitRequest) => {
+    setExitSaving(true);
+    setExitError(null);
+    let remaining: string[];
+    try {
+      remaining = await saveFiles(
+        request.dirtyFiles.map((file) => file.documentId),
+      );
+    } finally {
+      setExitSaving(false);
+    }
+    if (exitRequestIdRef.current !== request.requestId) return;
+    if (remaining.length > 0) {
+      const stillUnsaved = new Set(remaining);
+      setExitRequest((current) =>
+        current && current.requestId === request.requestId
+          ? {
+              ...current,
+              dirtyFiles: current.dirtyFiles.filter((file) =>
+                stillUnsaved.has(file.documentId),
+              ),
+            }
+          : current,
+      );
+      toast.error(
+        t("workspaceFiles.saveAllFailedQuit", { count: remaining.length }),
+      );
+      return;
+    }
+    await quitWithActiveSessions(request.requestId);
   };
 
   useEffect(() => {
@@ -418,26 +454,24 @@ function AppContent() {
             {exitError && (
               <p className="error">{formatAppErrorState(exitError, t)}</p>
             )}
-            <div className="app-exit-actions">
-              <button
-                className="ghost-button"
-                disabled={exitPending}
-                onClick={() => setExitRequest(null)}
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                className="primary-button"
-                disabled={exitPending}
-                onClick={() =>
-                  void quitWithActiveSessions(exitRequest.requestId)
-                }
-              >
-                {exitPending
-                  ? t("appExit.terminating")
-                  : t("appExit.confirmDiscard")}
-              </button>
-            </div>
+            <ImpactDialogActions
+              hasUnsavedFiles={exitSummary.dirtyFiles.length > 0}
+              busy={exitPending || exitSaving}
+              confirming={exitPending}
+              labels={{
+                cancel: t("common.cancel"),
+                confirm: t("appExit.confirmDiscard"),
+                confirmBusy: t("appExit.terminating"),
+                saveAll: t("appExit.saveAllAndQuit"),
+                saveAllBusy: t("workspaceFiles.saveAllInProgress"),
+                discard: t("appExit.confirmDiscard"),
+              }}
+              onCancel={() => setExitRequest(null)}
+              onConfirm={() =>
+                void quitWithActiveSessions(exitRequest.requestId)
+              }
+              onSaveAll={() => void saveAllAndQuit(exitRequest)}
+            />
           </section>
         </div>
       )}

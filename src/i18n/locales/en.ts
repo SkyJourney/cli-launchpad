@@ -125,12 +125,12 @@ export const en = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Save all and quit",
     title: "Quit CLI Launchpad?",
     description:
       "{{count}} embedded terminal session(s) are still running. Quitting will end these sessions and their child processes.",
     executionTasks:
       "{{count}} install or update task(s) are still running. Quitting will stop them.",
-    confirm: "End sessions and quit",
     unsavedDescription: "{{count}} file(s) have unsaved changes:",
     confirmDiscard: "Discard changes and quit",
     terminating: "Quitting…",
@@ -667,6 +667,12 @@ export const en = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Save all and close",
+    discardAndClose: "Discard changes and close",
+    saveAllInProgress: "Saving…",
+    saveAllFailedQuit: "{{count}} file(s) could not be saved; quit cancelled",
+    saveAllFailedClose: "{{count}} file(s) could not be saved; close cancelled",
+    confirmCloseTitle: "Confirm close",
     caseVariantsMerged:
       "Merged {{count}} document(s) whose paths differed only by letter case.",
     rightPanelTabs: "Right panel tabs",

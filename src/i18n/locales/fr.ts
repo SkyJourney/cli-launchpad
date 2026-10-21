@@ -140,12 +140,12 @@ export const fr = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Tout enregistrer et quitter",
     title: "Quitter CLI Launchpad ?",
     description:
       "{{count}} session(s) de terminal intégrées sont toujours en cours. Quitter mettra fin à ces sessions et à leurs processus enfants.",
     executionTasks:
       "{{count}} tâche(s) d'installation ou de mise à jour sont encore en cours. Quitter les interrompra.",
-    confirm: "Terminer les sessions et quitter",
     unsavedDescription:
       "{{count}} fichier(s) contiennent des modifications non enregistrées :",
     confirmDiscard: "Abandonner les modifications et quitter",
@@ -702,6 +702,14 @@ export const fr = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Tout enregistrer et fermer",
+    discardAndClose: "Abandonner les modifications et fermer",
+    saveAllInProgress: "Enregistrement…",
+    saveAllFailedQuit:
+      "{{count}} fichier(s) n’ont pas pu être enregistrés ; fermeture annulée",
+    saveAllFailedClose:
+      "{{count}} fichier(s) n’ont pas pu être enregistrés ; fermeture annulée",
+    confirmCloseTitle: "Confirmer la fermeture",
     caseVariantsMerged:
       "{{count}} document(s) fusionné(s) dont les chemins ne différaient que par la casse.",
     rightPanelTabs: "Onglets du panneau droit",

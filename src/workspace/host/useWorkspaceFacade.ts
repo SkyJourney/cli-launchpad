@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { reportWindowSyncFailure } from "../../lib/windowSyncDiagnostics";
+import { saveAllDirtyFiles } from "../../lib/saveAllDirtyFiles";
+import { isWorkspaceFileBufferDirty } from "../../lib/workspaceFileBuffer";
 import {
   setWorkspaceSplitRatio,
   type SplitDirection,
@@ -134,6 +136,14 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
 
   const editFile = fileDomain.edit;
   const saveFile = fileDomain.save;
+  // m6-108：保存全部仍然脏的文件；脏状态每次都读取宿主的最新 buffer。
+  const saveFiles = useCallback(
+    (documentIds: readonly string[]) =>
+      saveAllDirtyFiles(documentIds, fileDomain.save, (documentId) =>
+        isWorkspaceFileBufferDirty(store.getLive().buffers[documentId]),
+      ),
+    [fileDomain, store],
+  );
 
   const focusPane = useCallback(
     (paneId: string) => {
@@ -329,6 +339,7 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       removeSlot,
       recordSession,
       collectExitImpacts,
+      saveFiles,
       getBackupRestoreBlockers,
       cancelBackupRestore,
       resumeAfterFailedRestore,
@@ -357,6 +368,7 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       removeSlot,
       recordSession,
       collectExitImpacts,
+      saveFiles,
       getBackupRestoreBlockers,
       cancelBackupRestore,
       resumeAfterFailedRestore,

@@ -485,3 +485,39 @@ describe("exit dialog impact list", () => {
     expect(host.errors).toEqual([]);
   });
 });
+
+describe("save all before exit (m6-108)", () => {
+  const SAVED = {
+    kind: "saved",
+    content: "dirty",
+    revision: "r2",
+    warning: null,
+  };
+
+  it("saves every dirty file and then confirms the exit", async () => {
+    await mountExitApp({ dirty: true });
+    host!.backend.handlers.set("save_project_text_file", () => SAVED);
+    await requestExit({ ptyCount: 0 });
+
+    await clickInDialog("appExit.saveAllAndQuit");
+
+    expect(invokes("save_project_text_file")).toHaveLength(1);
+    expect(invokes("confirm_app_exit")).toHaveLength(1);
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("a failed save keeps the dialog open and never confirms the exit", async () => {
+    await mountExitApp({ dirty: true });
+    host!.backend.handlers.set("save_project_text_file", () => {
+      throw new Error("disk full");
+    });
+    await requestExit({ ptyCount: 0 });
+
+    await clickInDialog("appExit.saveAllAndQuit");
+
+    expect(invokes("confirm_app_exit")).toHaveLength(0);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("appExit.saveAllAndQuit")).toBeTruthy();
+    expect(host!.errors).toEqual([]);
+  });
+});

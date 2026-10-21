@@ -132,12 +132,12 @@ export const ru = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Сохранить всё и выйти",
     title: "Выйти из CLI Launchpad?",
     description:
       "Запущено терминальных сессий: {{count}}. При выходе эти сессии и их дочерние процессы будут завершены.",
     executionTasks:
       "Выполняется задач установки или обновления: {{count}}. При выходе они будут прерваны.",
-    confirm: "Завершить сессии и выйти",
     unsavedDescription: "Файлов с несохранёнными изменениями: {{count}}",
     confirmDiscard: "Отменить изменения и выйти",
     terminating: "Выход…",
@@ -682,6 +682,13 @@ export const ru = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Сохранить всё и закрыть",
+    discardAndClose: "Отменить изменения и закрыть",
+    saveAllInProgress: "Сохранение…",
+    saveAllFailedQuit: "Не удалось сохранить файлов: {{count}}; выход отменён",
+    saveAllFailedClose:
+      "Не удалось сохранить файлов: {{count}}; закрытие отменено",
+    confirmCloseTitle: "Подтвердите закрытие",
     caseVariantsMerged:
       "Объединено документов: {{count}} (пути отличались только регистром).",
     rightPanelTabs: "Вкладки правой панели",

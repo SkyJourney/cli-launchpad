@@ -137,12 +137,12 @@ export const pt = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Salvar tudo e sair",
     title: "Sair do CLI Launchpad?",
     description:
       "Ao sair, as sessões de terminal incorporado que estiverem em execução ({{count}}) serão encerradas junto com seus processos filhos.",
     executionTasks:
       "{{count}} tarefa(s) de instalação ou atualização ainda estão em execução. Ao sair, elas serão interrompidas.",
-    confirm: "Encerrar sessões e sair",
     unsavedDescription: "{{count}} arquivo(s) têm alterações não salvas:",
     confirmDiscard: "Descartar alterações e sair",
     terminating: "Saindo…",
@@ -696,6 +696,14 @@ export const pt = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Salvar tudo e fechar",
+    discardAndClose: "Descartar alterações e fechar",
+    saveAllInProgress: "Salvando…",
+    saveAllFailedQuit:
+      "{{count}} arquivo(s) não puderam ser salvos; saída cancelada",
+    saveAllFailedClose:
+      "{{count}} arquivo(s) não puderam ser salvos; fechamento cancelado",
+    confirmCloseTitle: "Confirmar fechamento",
     caseVariantsMerged:
       "{{count}} documento(s) mesclado(s) cujos caminhos diferiam apenas em maiúsculas e minúsculas.",
     rightPanelTabs: "Guias do painel direito",

@@ -35,6 +35,7 @@ const FROZEN_FACADE_KEYS: string[] = [
   "closeEmptyPane",
   "closingContentKeys",
   "collectExitImpacts",
+  "saveFiles",
   "detachedFileIds",
   "detachedInstanceIds",
   "detachFile",

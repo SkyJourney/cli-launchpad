@@ -6,6 +6,8 @@ export interface CloseConfirmation {
   impacts: WorkspaceContentDisposalImpact[] | null;
   confirm: (impacts: WorkspaceContentDisposalImpact[]) => Promise<boolean>;
   resolve: (confirmed: boolean) => void;
+  /** m6-108：保存部分失败后，只保留仍未保存的文件项。 */
+  keepUnsavedFiles: (remainingDocumentIds: readonly string[]) => void;
 }
 
 /** 关闭确认对话框的状态与 resolver：同一时刻只允许一个进行中的确认。 */
@@ -35,5 +37,20 @@ export function useCloseConfirmation(): CloseConfirmation {
     resolver?.(confirmed);
   }, []);
 
-  return { impacts, confirm, resolve };
+  const keepUnsavedFiles = useCallback(
+    (remainingDocumentIds: readonly string[]) => {
+      setImpacts(
+        (current) =>
+          current?.filter(
+            (impact) =>
+              impact.kind !== "dirtyFile" ||
+              (impact.documentId !== undefined &&
+                remainingDocumentIds.includes(impact.documentId)),
+          ) ?? null,
+      );
+    },
+    [],
+  );
+
+  return { impacts, confirm, resolve, keepUnsavedFiles };
 }

@@ -137,12 +137,12 @@ export const ja = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "すべて保存して終了",
     title: "CLI Launchpad を終了しますか？",
     description:
       "{{count}} 個の埋め込みターミナルセッションが実行中です。終了すると、これらのセッションと子プロセスも終了します。",
     executionTasks:
       "インストールまたは更新のタスクが {{count}} 件実行中です。終了すると、これらのタスクは中断されます。",
-    confirm: "セッションを終了してアプリを閉じる",
     unsavedDescription: "未保存の変更があるファイル：{{count}} 件",
     confirmDiscard: "変更を破棄して終了",
     terminating: "終了しています…",
@@ -682,6 +682,14 @@ export const ja = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "すべて保存して閉じる",
+    discardAndClose: "変更を破棄して閉じる",
+    saveAllInProgress: "保存中…",
+    saveAllFailedQuit:
+      "{{count}} 個のファイルを保存できなかったため、終了を取り消しました",
+    saveAllFailedClose:
+      "{{count}} 個のファイルを保存できなかったため、閉じる操作を取り消しました",
+    confirmCloseTitle: "閉じることを確認",
     caseVariantsMerged:
       "大文字・小文字だけが異なる {{count}} 件のドキュメントを統合しました。",
     rightPanelTabs: "右側パネルのタブ",

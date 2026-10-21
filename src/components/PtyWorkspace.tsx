@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   PtyWorkspaceContext,
   WorkspaceCommandsContext,
@@ -30,6 +32,31 @@ export function PtyWorkspaceProvider(props: PtyWorkspaceProviderProps) {
   const runtime = useWorkspaceRuntime(options);
   const { commands, value } = useWorkspaceFacade(runtime);
   const { snapshot, closeConfirmation } = runtime;
+  const { t } = useTranslation();
+  const [closeSaving, setCloseSaving] = useState(false);
+  // m6-108：保存全部未保存的文件；全部成功后继续关闭，否则只保留仍未保存的文件并中止关闭。
+  const saveAllAndClose = async () => {
+    const documentIds = (closeConfirmation.impacts ?? []).flatMap((impact) =>
+      impact.kind !== "runningPty" && impact.documentId !== undefined
+        ? [impact.documentId]
+        : [],
+    );
+    setCloseSaving(true);
+    let remaining: string[];
+    try {
+      remaining = await commands.saveFiles(documentIds);
+    } finally {
+      setCloseSaving(false);
+    }
+    if (remaining.length === 0) {
+      closeConfirmation.resolve(true);
+      return;
+    }
+    closeConfirmation.keepUnsavedFiles(remaining);
+    toast.error(
+      t("workspaceFiles.saveAllFailedClose", { count: remaining.length }),
+    );
+  };
   return (
     <WorkspaceHostStoreContext.Provider value={runtime.store}>
       <WorkspaceCommandsContext.Provider value={commands}>
@@ -38,8 +65,10 @@ export function PtyWorkspaceProvider(props: PtyWorkspaceProviderProps) {
           {closeConfirmation.impacts && (
             <ImpactConfirmDialog
               impacts={closeConfirmation.impacts}
+              busy={closeSaving}
               onCancel={() => closeConfirmation.resolve(false)}
               onConfirm={() => closeConfirmation.resolve(true)}
+              onSaveAll={() => void saveAllAndClose()}
             />
           )}
           {(snapshot.hydrationStatus === "ready" ||

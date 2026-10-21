@@ -239,7 +239,9 @@ describe("in-flight saves", () => {
     await flush();
     const dialog = screen.getByRole("alertdialog");
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "common.confirm" }),
+      within(dialog).getByRole("button", {
+        name: "workspaceFiles.discardAndClose",
+      }),
     );
     await flush();
 

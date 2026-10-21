@@ -110,6 +110,8 @@ export interface PtyWorkspaceContextValue {
   ) => void;
   recordSession: (instanceId: string, session: PtySession | null) => void;
   collectExitImpacts: (ptyCount: number) => Promise<AppExitImpacts>;
+  /** m6-108：按顺序保存仍然脏的文件，返回保存后仍未保存的文件 id（空数组表示全部已保存）。 */
+  saveFiles: (documentIds: readonly string[]) => Promise<string[]>;
   getBackupRestoreBlockers: () => Promise<WorkspaceDataRestoreBlockers>;
   cancelBackupRestore: () => void;
   resumeAfterFailedRestore: () => void;
@@ -164,6 +166,7 @@ export const WORKSPACE_COMMAND_KEYS = [
   "removeSlot",
   "recordSession",
   "collectExitImpacts",
+  "saveFiles",
   "getBackupRestoreBlockers",
   "cancelBackupRestore",
   "resumeAfterFailedRestore",

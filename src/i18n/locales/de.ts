@@ -144,12 +144,12 @@ export const de = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Alle speichern und beenden",
     title: "CLI Launchpad beenden?",
     description:
       "{{count}} eingebettete Terminalsitzungen laufen noch. Beim Beenden werden diese Sitzungen und ihre Kindprozesse beendet.",
     executionTasks:
       "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Beim Beenden werden sie abgebrochen.",
-    confirm: "Sitzungen beenden und schließen",
     unsavedDescription:
       "{{count}} Datei(en) enthalten ungespeicherte Änderungen:",
     confirmDiscard: "Änderungen verwerfen und schließen",
@@ -704,6 +704,14 @@ export const de = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Alle speichern und schließen",
+    discardAndClose: "Änderungen verwerfen und schließen",
+    saveAllInProgress: "Wird gespeichert…",
+    saveAllFailedQuit:
+      "{{count}} Datei(en) konnten nicht gespeichert werden; Beenden abgebrochen",
+    saveAllFailedClose:
+      "{{count}} Datei(en) konnten nicht gespeichert werden; Schließen abgebrochen",
+    confirmCloseTitle: "Schließen bestätigen",
     caseVariantsMerged:
       "{{count}} Dokument(e) zusammengeführt, deren Pfade sich nur in der Groß-/Kleinschreibung unterschieden.",
     rightPanelTabs: "Register der rechten Seitenleiste",
