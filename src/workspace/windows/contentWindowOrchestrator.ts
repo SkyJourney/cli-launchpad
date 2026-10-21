@@ -59,10 +59,10 @@ import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import {
   createWorkspaceContentWindow,
   prepareWorkspaceContentHandoff,
-  rollbackWorkspaceContentHandoff,
   WORKSPACE_CONTENT_WINDOW_HANDOFF_TIMEOUT_MS,
 } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
+import { rollbackHandoffOnce } from "./handoffRollback";
 
 export interface DetachedWindowRecord {
   instanceId: string;
@@ -76,7 +76,6 @@ export interface PendingContentWindow<
   kind: K;
   stage: PendingWindowStage;
   transferId: string;
-  token: string;
   window: WebviewWindow;
   resolve: () => void;
   reject: (reason: Error) => void;
@@ -88,6 +87,8 @@ export type PendingDetachedWindow = PendingContentWindow<"pty"> &
   DetachedWindowRecord & {
     handoffContext: WorkspaceContentHandoffHookContext<"pty">;
     handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
+    /** The Rust handoff token that attaches the PTY back. */
+    handoffToken: string;
     windowToken: string;
     /** 对账时 owner 查询已连续失败的次数；随 tracked 展开复制。 */
     ownerQueryRetries?: number;
@@ -107,6 +108,8 @@ export interface PtyReturnRequestEvent extends DetachedWindowRecord {
 
 export interface PendingWorkspaceFileWindow extends PendingContentWindow<"file"> {
   documentId: string;
+  /** The window session token; the child window echoes it back. */
+  windowToken: string;
   sourcePaneId?: string;
 }
 export interface ManagedFileWindow {
@@ -293,7 +296,7 @@ export function createContentWindowOrchestrator(
   const disposeAll = () => {
     const cleanupError = new Error("工作区内容宿主已卸载");
     clearPendingWorkspaceContentWindows(state.pending.pty, (pending) => {
-      void rollbackWorkspaceContentHandoff(
+      void rollbackHandoffOnce(
         pending.handoffContext,
         pending.handoffPayload,
         cleanupError,
@@ -310,7 +313,7 @@ export function createContentWindowOrchestrator(
     });
     clearPendingWorkspaceContentWindows(state.pending.file, (pending) => {
       if (pending.handoffContext) {
-        void rollbackWorkspaceContentHandoff(
+        void rollbackHandoffOnce(
           pending.handoffContext,
           pending.handoffPayload,
           cleanupError,
@@ -348,7 +351,7 @@ export function createContentWindowOrchestrator(
     for (const pending of state.pending.file.values()) {
       managedWindows.set(pending.documentId, {
         documentId: pending.documentId,
-        token: pending.token,
+        token: pending.windowToken,
         windowLabel: pending.windowLabel,
       });
     }
@@ -405,7 +408,7 @@ export function createContentWindowOrchestrator(
       childUrl.hash = "";
       writeWindowLaunchParams(childUrl.searchParams, {
         ...fileContentRef(documentId),
-        handoffToken: windowToken,
+        windowToken,
         sourcePaneId: sourcePane.id,
       });
       await new Promise<void>((resolve, reject) => {
@@ -447,7 +450,7 @@ export function createContentWindowOrchestrator(
           record: {
             documentId,
             transferId,
-            token: windowToken,
+            windowToken,
             windowLabel,
             sourcePaneId: sourcePane.id,
             window: child,
@@ -528,7 +531,7 @@ export function createContentWindowOrchestrator(
           pending.windowToken,
         );
       if (ownership?.outcome !== "changed") {
-        await rollbackWorkspaceContentHandoff(
+        await rollbackHandoffOnce(
           pending.handoffContext,
           pending.handoffPayload,
           new Error(deps.translate("pty.detachedStateChanged")),
@@ -584,7 +587,7 @@ export function createContentWindowOrchestrator(
       effectiveAction === "reject-foreign-owner"
         ? deps.translate("pty.detachedStateChanged")
         : deps.translate("pty.detachedStartTimedOut");
-    await rollbackWorkspaceContentHandoff(
+    await rollbackHandoffOnce(
       pending.handoffContext,
       pending.handoffPayload,
       new Error(failureMessage),
@@ -659,7 +662,7 @@ export function createContentWindowOrchestrator(
       .getCoordinator()
       .beginDetach(content, source, target, transferId);
     if (lifecycle?.outcome !== "changed") {
-      await rollbackWorkspaceContentHandoff(
+      await rollbackHandoffOnce(
         driverContext,
         prepared.payload,
         new Error(deps.translate("pty.detachedMoveUnavailable")),
@@ -720,7 +723,7 @@ export function createContentWindowOrchestrator(
             stage: initialPendingStage("pty"),
             transferId,
             windowToken,
-            token: handoff.token,
+            handoffToken: handoff.token,
             resolve,
             reject,
             window: child,
@@ -731,11 +734,9 @@ export function createContentWindowOrchestrator(
         });
       });
     } catch (reason) {
-      await rollbackWorkspaceContentHandoff(
-        driverContext,
-        prepared.payload,
-        reason,
-      ).catch(() => undefined);
+      await rollbackHandoffOnce(driverContext, prepared.payload, reason).catch(
+        () => undefined,
+      );
       deps
         .getCoordinator()
         .failHandoff(ptyContentRef(instanceId), "detachFailed", transferId);

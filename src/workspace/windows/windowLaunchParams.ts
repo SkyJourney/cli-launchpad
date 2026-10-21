@@ -15,7 +15,8 @@ export interface PtyLaunchParams {
 export interface FileLaunchParams {
   kind: "file";
   documentId: string;
-  handoffToken: string;
+  /** The window session token; the URL carries it under the name fileHandoffToken. */
+  windowToken: string;
   sourcePaneId: string;
 }
 
@@ -56,7 +57,7 @@ export function writeWindowLaunchParams(
   }
   const names = LAUNCH_PARAM_NAMES.file;
   search.set(names.documentId, params.documentId);
-  search.set(names.handoffToken, params.handoffToken);
+  search.set(names.handoffToken, params.windowToken);
   search.set(names.sourcePaneId, params.sourcePaneId);
 }
 
@@ -91,11 +92,11 @@ export function readFileLaunchParams(
 ): FileLaunchParams | null {
   const names = LAUNCH_PARAM_NAMES.file;
   const documentId = search.get(names.documentId);
-  const handoffToken = search.get(names.handoffToken);
-  if (!documentId || !handoffToken) return null;
+  const windowToken = search.get(names.handoffToken);
+  if (!documentId || !windowToken) return null;
   return {
     ...fileContentRef(documentId),
-    handoffToken,
+    windowToken,
     sourcePaneId: search.get(names.sourcePaneId) ?? UNKNOWN_PANE,
   };
 }

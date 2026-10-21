@@ -13,7 +13,7 @@ export const en = {
     filePermissionDenied:
       "Permission denied. Check the file or folder permissions.",
     backupIndexRefreshDiscarded:
-      "A backup was restored, so a session index refresh that started before it was discarded.",
+      "The data was replaced (a backup was restored or a configuration was imported), so a session index refresh that started before it was discarded.",
     projectIdentityUnreadable:
       "The project directory identity could not be read.",
     fileConflict: "The file changed on disk. Reload it before saving.",

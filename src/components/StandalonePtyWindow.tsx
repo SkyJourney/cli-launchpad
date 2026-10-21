@@ -258,13 +258,7 @@ export function StandalonePtyWindow({
 
   const handleSessionChange = useCallback(
     (session: { state: string } | null) => {
-      if (
-        session?.state !== "exited" &&
-        session?.state !== "terminated" &&
-        session?.state !== "failed"
-      ) {
-        return;
-      }
+      if (!isEndedSessionState(session?.state)) return;
       closeAfterExitRef.current();
     },
     [],
@@ -408,11 +402,7 @@ export function StandalonePtyWindow({
             await attachWorkspaceContentHandoff(driverContext, attachedPayload);
             const attachedSession = attachedState;
             if (disposed) return;
-            if (
-              attachedSession === "exited" ||
-              attachedSession === "terminated" ||
-              attachedSession === "failed"
-            ) {
+            if (isEndedSessionState(attachedSession)) {
               closeAfterExitRef.current();
               return;
             }

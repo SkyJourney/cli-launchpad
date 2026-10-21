@@ -20,7 +20,7 @@ export const ko = {
     filePermissionDenied:
       "권한이 거부되었습니다. 파일 또는 폴더 권한을 확인하세요.",
     backupIndexRefreshDiscarded:
-      "백업이 복원되어, 복원 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
+      "데이터가 교체되어(백업 복원 또는 설정 가져오기), 교체 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
     projectIdentityUnreadable:
       "프로젝트 디렉터리의 신원 정보를 읽을 수 없습니다.",
     fileConflict:

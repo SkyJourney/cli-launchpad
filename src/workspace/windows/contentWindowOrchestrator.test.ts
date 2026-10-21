@@ -180,7 +180,7 @@ describe("contentWindowOrchestrator", () => {
       record: {
         documentId: "doc-1",
         transferId: "tok-3",
-        token: "tok-3",
+        windowToken: "tok-3",
         windowLabel: FILE_LABEL,
         window: window as never,
         resolve: vi.fn(),
@@ -228,7 +228,7 @@ describe("contentWindowOrchestrator", () => {
       onTimeout: vi.fn(),
       record: {
         documentId: "doc-2",
-        token: "tok-6",
+        windowToken: "tok-6",
         windowLabel: OTHER_LABEL,
         window: fakeWindow() as never,
         resolve: vi.fn(),
@@ -263,7 +263,7 @@ describe("contentWindowOrchestrator", () => {
       onTimeout: vi.fn(),
       record: {
         documentId: "doc-1",
-        token: "tok-7",
+        windowToken: "tok-7",
         windowLabel: FILE_LABEL,
         window: window as never,
         resolve: vi.fn(),

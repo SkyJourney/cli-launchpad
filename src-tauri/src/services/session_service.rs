@@ -59,7 +59,7 @@ impl IndexWriteOutcome {
             IndexWriteOutcome::Written(refresh) => Ok(refresh),
             IndexWriteOutcome::Discarded => Err(AppError::coded(
                 ErrorCode::BackupIndexRefreshDiscarded,
-                "备份已恢复，已丢弃恢复前开始的会话索引刷新",
+                "数据已替换（恢复备份或导入配置），已丢弃替换前开始的会话索引刷新",
             )),
         }
     }
@@ -769,8 +769,9 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
+        // Neutral wording: the same outcome follows a restore and an imported configuration.
         assert!(
-            message.contains("已丢弃恢复前开始的会话索引刷新"),
+            message.contains("数据已替换") && message.contains("已丢弃替换前开始的会话索引刷新"),
             "{message}"
         );
     }

@@ -28,7 +28,7 @@ const fixtures = import.meta.glob("../../contracts/fixtures/*.json", {
   import: "default",
 }) as Record<string, FixtureFile>;
 
-// 期望的 37 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
+// 期望的 38 个 fixture 文件与对应的 Rust 类型名；这里独立声明，不从 Rust 侧映射推导。
 const EXPECTED_FIXTURES: Record<string, string> = {
   "app-error.json": "AppError",
   "backup-manifest.json": "BackupManifest",
@@ -36,6 +36,7 @@ const EXPECTED_FIXTURES: Record<string, string> = {
   "cli-status.json": "CliStatus",
   "close-behavior.json": "CloseBehavior",
   "directory.json": "Directory",
+  "content-handoff-pty-return-requested.json": "ContentHandoffEnvelope",
   "event-inbox-message.json": "InboxMessage",
   "event-pty-session-owner-lost.json": "PtySessionOwnerLostPayload",
   "event-workspace-content-window-lost.json":
@@ -157,7 +158,7 @@ describe("IPC DTO golden fixtures", () => {
 
   it("covers every variant fixture exported by the Rust golden fixture generator", () => {
     const paths = Object.keys(fixtures);
-    expect(paths.length, REGENERATE).toBe(37);
+    expect(paths.length, REGENERATE).toBe(38);
     const names = paths.map((path) => path.split("/").pop() as string).sort();
     expect(names).toEqual(Object.keys(EXPECTED_FIXTURES).sort());
 

@@ -96,7 +96,7 @@ export function App() {
       <Suspense fallback={null}>
         <StandaloneWorkspaceFileWindow
           documentId={fileParams.documentId}
-          token={fileParams.handoffToken}
+          token={fileParams.windowToken}
           sourcePaneId={fileParams.sourcePaneId}
         />
       </Suspense>

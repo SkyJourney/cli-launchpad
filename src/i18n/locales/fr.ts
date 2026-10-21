@@ -22,7 +22,7 @@ export const fr = {
     filePermissionDenied:
       "Autorisation refusée. Vérifiez les autorisations du fichier ou du dossier.",
     backupIndexRefreshDiscarded:
-      "Une sauvegarde a été restaurée ; l'actualisation de l'index des sessions commencée avant a été abandonnée.",
+      "Les données ont été remplacées (sauvegarde restaurée ou configuration importée) ; l'actualisation de l'index des sessions commencée avant a été abandonnée.",
     projectIdentityUnreadable:
       "Impossible de lire l'identité du dossier du projet.",
     fileConflict:

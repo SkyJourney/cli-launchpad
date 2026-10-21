@@ -154,6 +154,8 @@ export function encodeContentHandoff(
   if (typeof id !== "string" || id === "") {
     throw new Error(`Content handoff payload has no ${idField}`);
   }
+  // The envelope's `transferId` slot carries the payload's `token`: the window token for file
+  // content, the PTY return's transfer id for PTY content (see architecture.md, 交接身份词汇).
   return {
     content: { kind, id },
     transferId: typeof token === "string" ? token : null,
@@ -389,14 +391,20 @@ export function sendContentHandoff<
   phase: P,
   payload: ContentHandoffPayloads[K][P],
 ): Promise<void> {
-  const type = contentHandoffMessageType(phase);
-  return sendWindowMessage(
-    target,
-    type,
-    encodeContentHandoff(kind, payload as unknown as Record<string, unknown>),
-  ).then((delivered) => {
-    if (!delivered) console.warn("window_message.target_unavailable", type);
-  });
+  // An invalid payload (for example an empty content id) rejects the promise like a failed send,
+  // so callers handle one failure path; it must not throw synchronously.
+  try {
+    const type = contentHandoffMessageType(phase);
+    return sendWindowMessage(
+      target,
+      type,
+      encodeContentHandoff(kind, payload as unknown as Record<string, unknown>),
+    ).then((delivered) => {
+      if (!delivered) console.warn("window_message.target_unavailable", type);
+    });
+  } catch (error) {
+    return Promise.reject(error);
+  }
 }
 
 export function getWorkspaceContentWindowLabelPrefix(

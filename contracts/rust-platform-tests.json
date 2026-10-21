@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 811,
-    "Linux": 817,
-    "macOS": 813
+    "Windows": 812,
+    "Linux": 818,
+    "macOS": 814
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -530,7 +530,8 @@
       "services::window_relay::tests::relay_binds_the_content_kind_to_the_child_window_kind",
       "services::window_relay::tests::relay_rejects_generic_messages_with_a_malformed_content_field",
       "services::window_relay::tests::relay_rejects_the_retired_per_kind_message_types_and_still_accepts_preferences",
-      "services::window_relay::tests::relay_requires_the_handoff_token_on_pty_return_requests"
+      "services::window_relay::tests::relay_requires_the_handoff_token_on_pty_return_requests",
+      "app_menu::tests::quit_is_authorized_before_the_exit_request_is_issued"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

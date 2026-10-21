@@ -493,6 +493,8 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       "event-workspace-content-window-lost.json",
       "event-pty-session-owner-lost.json",
       "event-inbox-message.json",
+      // The shared window envelope: covered by CH-9 (encoder and delivery) and by the Rust relay test.
+      "content-handoff-pty-return-requested.json",
     ];
     const VARIANT_TESTS = [
       "project-file-open-result.json",
@@ -512,9 +514,9 @@ describe("Rust-serialized DTO fixtures match the TypeScript types", () => {
       ...COVERED_ELSEWHERE,
     ]);
     expect(all.filter((file) => !known.has(file))).toEqual([]);
-    expect(all.length).toBe(37);
+    expect(all.length).toBe(38);
     expect(
       STRUCTS.length + VARIANT_TESTS.length + COVERED_ELSEWHERE.length,
-    ).toBe(37);
+    ).toBe(38);
   });
 });

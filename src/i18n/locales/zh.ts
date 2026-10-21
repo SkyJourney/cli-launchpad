@@ -9,7 +9,8 @@ export const zh = {
     layoutNameExists: "已存在同名布局，请使用其他名称。",
     layoutPresetLimit: "最多支持 {{max}} 个命名布局。",
     filePermissionDenied: "权限不足，请检查文件或文件夹的权限。",
-    backupIndexRefreshDiscarded: "已恢复备份，恢复前开始的会话索引刷新已丢弃。",
+    backupIndexRefreshDiscarded:
+      "数据已替换（恢复备份或导入配置），替换前开始的会话索引刷新已丢弃。",
     projectIdentityUnreadable: "无法读取项目目录身份。",
     fileConflict: "磁盘上的文件已更改，请重新载入后再保存。",
     fileIdentityChanged: "项目目录身份已变化，请重新载入文件或另存到其他位置。",

@@ -23,7 +23,7 @@ export const de = {
     filePermissionDenied:
       "Zugriff verweigert. Prüfen Sie die Berechtigungen der Datei oder des Ordners.",
     backupIndexRefreshDiscarded:
-      "Ein Backup wurde wiederhergestellt; eine vorher gestartete Aktualisierung des Sitzungsindex wurde verworfen.",
+      "Die Daten wurden ersetzt (Backup wiederhergestellt oder Konfiguration importiert); eine vorher gestartete Aktualisierung des Sitzungsindex wurde verworfen.",
     projectIdentityUnreadable:
       "Die Identität des Projektverzeichnisses konnte nicht gelesen werden.",
     fileConflict:

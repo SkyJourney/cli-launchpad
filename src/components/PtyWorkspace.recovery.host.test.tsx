@@ -408,14 +408,12 @@ describe("PTY detach timeout reconciliation", () => {
         expect(ptyOccurrences(host, slot.instanceId)).toBe(0);
         expect(outcome.settled).toBe("resolved");
       } else if (reported === "running") {
-        // 规格写的是“恰好 1 次”，但 reconcileTimedOutDetach 的回退路径与
-        // detachSession 的 catch 各回滚一次（既有的重复回滚，Rust 侧幂等）。
-        // 用户 2026-10-09 批准放宽为“至少 1 次且令牌全部相同”，缺陷登记给 m6-026。
+        // The handoff rolls back once (rollbackHandoffOnce): the owner-query fallback and the
+        // detach caller's catch no longer both cancel the Rust handoff.
         const cancelTokens = terminal.cancelHandoff.mock.calls.map(
           (call) => call[0],
         );
-        expect(cancelTokens.length).toBeGreaterThanOrEqual(1);
-        expect(new Set(cancelTokens).size).toBe(1);
+        expect(cancelTokens).toHaveLength(1);
         expect(cancelTokens[0]).toMatch(/^handoff-/);
         expect(ptyOccurrences(host, slot.instanceId)).toBe(1);
         expect(destroyedChild(child)).toBe(true);

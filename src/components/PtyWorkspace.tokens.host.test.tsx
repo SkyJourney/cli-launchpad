@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup } from "@testing-library/react";
+import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -177,6 +177,76 @@ describe("handoff identity layers in the host", () => {
     expect(
       coordinator.get({ kind: "pty", slotId: slot.instanceId })?.phase,
     ).toBe("detached");
+    expect(host.errors).toEqual([]);
+  });
+  it("keeps the Rust handoff token out of the coordinator state from detach to return", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+    const detached = await detachPtyToWindow(host, slot.instanceId);
+    await detached.detachPromise;
+    const rustToken = (await terminal.captureHandoff.mock.results[0].value)
+      .token;
+    const ref = { kind: "pty", slotId: slot.instanceId } as const;
+    expect(JSON.stringify(coordinator.get(ref))).not.toContain(rustToken);
+
+    terminal.attachHandoff.mockClear();
+    await emitToMain("pty-return-requested", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel: detached.windowLabel,
+      token: "return-9",
+      handoffToken: rustToken,
+    });
+    await flush(20);
+
+    expect(terminal.attachHandoff).toHaveBeenCalledWith(
+      slot.sessionId,
+      rustToken,
+    );
+    expect(coordinator.get(ref)?.phase).toBe("attached");
+    expect(JSON.stringify(coordinator.get(ref))).not.toContain(rustToken);
+    expect(host.errors).toEqual([]);
+  });
+
+  it("rolls a PTY detach back when the child fails before ready, cancelling the Rust token once", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot, terminal } = await launchPty(host);
+
+    let detachPromise!: Promise<void>;
+    await act(async () => {
+      detachPromise = host!.ctx().detachSession(slot.instanceId);
+    });
+    detachPromise.catch(() => undefined);
+    await flush();
+    const created =
+      tauriMock.state.createdWindows[tauriMock.state.createdWindows.length - 1];
+    expect(created).toBeDefined();
+    const rustToken = (await terminal.captureHandoff.mock.results[0].value)
+      .token;
+
+    // The child reports a failure instead of ready.
+    await emitToMain("pty-detached-failed", {
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel: created.label,
+      message: "child failed",
+    });
+    await flush(20);
+
+    await expect(detachPromise).rejects.toThrow();
+    expect(terminal.cancelHandoff).toHaveBeenCalledTimes(1);
+    expect(terminal.cancelHandoff).toHaveBeenCalledWith(rustToken);
+    expect(
+      coordinator.get({ kind: "pty", slotId: slot.instanceId })?.phase,
+    ).toBe("attached");
+    expect(tauriMock.state.windowActions).toContainEqual(
+      expect.objectContaining({
+        windowLabel: created.label,
+        action: "destroy",
+      }),
+    );
     expect(host.errors).toEqual([]);
   });
 });

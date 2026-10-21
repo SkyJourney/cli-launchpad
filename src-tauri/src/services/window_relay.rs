@@ -150,7 +150,8 @@ fn relay_within(
             ));
         }
         if message_type == "content-handoff-return-requested" && content_kind == "pty" {
-            // A PTY return carries the Rust handoff token the main window attaches with.
+            // A PTY return carries the Rust handoff token the main window attaches with. The envelope's
+            // `transferId` slot holds this return's transfer id, not the token (see architecture.md).
             let has_handoff_token = envelope
                 .pointer("/payload/payload/handoffToken")
                 .and_then(Value::as_str)
@@ -743,8 +744,37 @@ mod tests {
             return_request("file", json!({ "windowLabel": CONTENT })),
         )
         .unwrap();
-        // Only the two accepted messages reached the main window.
-        assert_eq!(main.sent.lock().unwrap().len(), 2);
+        // The shared sample (contracts/fixtures, read by the TypeScript encoder test too) is accepted;
+        // the same envelope without its handoff token is refused.
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../contracts/fixtures/content-handoff-pty-return-requested.json"
+        ))
+        .expect("shared fixture parses");
+        let shared = fixture["cases"][0]["value"].clone();
+        relay(
+            &registry,
+            &caller(TERMINAL),
+            "main",
+            "content-handoff-return-requested",
+            shared.clone(),
+        )
+        .unwrap();
+        let mut without_token = shared;
+        without_token["payload"]["payload"]
+            .as_object_mut()
+            .expect("inner payload is an object")
+            .remove("handoffToken");
+        assert!(relay(
+            &registry,
+            &caller(TERMINAL),
+            "main",
+            "content-handoff-return-requested",
+            without_token,
+        )
+        .is_err());
+
+        // Only the three accepted messages reached the main window.
+        assert_eq!(main.sent.lock().unwrap().len(), 3);
     }
 
     #[test]

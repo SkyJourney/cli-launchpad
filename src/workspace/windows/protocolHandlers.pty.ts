@@ -7,6 +7,7 @@ import type {
   PtyReturnRequestEvent,
   PtySessionOwnerLostEvent,
 } from "./contentWindowOrchestrator";
+import { rollbackHandoffOnce } from "./handoffRollback";
 
 import { toast } from "sonner";
 
@@ -45,10 +46,7 @@ import {
   reduceWorkspaceTree,
   resolveWorkspaceReturnPaneId,
 } from "../../lib/workspaceContentCommand";
-import {
-  attachWorkspaceContentHandoff,
-  rollbackWorkspaceContentHandoff,
-} from "../../components/workspaceContentHandoffRuntime";
+import { attachWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 
 export interface PtyProtocolHandlers {
@@ -77,7 +75,7 @@ export function createPtyProtocolHandlers(
         pending.windowToken,
       );
     if (ownership?.outcome !== "changed") {
-      void rollbackWorkspaceContentHandoff(
+      void rollbackHandoffOnce(
         pending.handoffContext,
         pending.handoffPayload,
         new Error(deps.translate("pty.detachedStateChanged")),
@@ -114,7 +112,7 @@ export function createPtyProtocolHandlers(
   ) => {
     const pending = state.pending.pty.get(ptyContentKey(payload.instanceId));
     if (!pending || !matchesDetachedWindow(pending, payload)) return;
-    void rollbackWorkspaceContentHandoff(
+    void rollbackHandoffOnce(
       pending.handoffContext,
       pending.handoffPayload,
       new Error(payload.message || deps.translate("pty.detachedStartFailed")),
@@ -481,7 +479,7 @@ export function createPtyProtocolHandlers(
       }
     } catch (reason) {
       if (returnDriverContext) {
-        void rollbackWorkspaceContentHandoff(
+        void rollbackHandoffOnce(
           returnDriverContext,
           returnDriverPayload,
           reason,
@@ -532,7 +530,7 @@ export function createPtyProtocolHandlers(
               ptyContentKey(event.payload.instanceId),
             );
             if (pending && matchesDetachedWindow(pending, event.payload)) {
-              void rollbackWorkspaceContentHandoff(
+              void rollbackHandoffOnce(
                 pending.handoffContext,
                 pending.handoffPayload,
                 new Error(deps.translate("pty.detachedExitedBeforeReady")),

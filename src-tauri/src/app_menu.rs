@@ -241,6 +241,35 @@ mod macos_menu {
 
 #[cfg(test)]
 mod tests {
+    /// F13: a forced quit authorizes the exit before `app.exit` starts the ExitRequested cycle, or the
+    /// no-main-window guard would keep the application alive. Both quit entries must use this path.
+    #[test]
+    fn quit_is_authorized_before_the_exit_request_is_issued() {
+        let source = include_str!("app_menu.rs");
+        let start = source
+            .find("pub fn request_app_exit")
+            .expect("request_app_exit is defined");
+        let rest = &source[start..];
+        let body = &rest[..rest
+            .find(
+                "
+}
+",
+            )
+            .expect("request_app_exit ends")];
+        let plan = body
+            .find("prepare_quit(")
+            .expect("the quit plan is applied");
+        let exit = body.find("app.exit(0)").expect("the exit is requested");
+        assert!(plan < exit, "the quit plan must run before app.exit");
+
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("\"quit\" => app_menu::request_app_exit(app)"),
+            "the tray quit must go through request_app_exit"
+        );
+    }
+
     use super::*;
 
     const LIB_RS: &str = include_str!("lib.rs");

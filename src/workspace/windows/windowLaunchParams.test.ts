@@ -17,7 +17,7 @@ const PTY = {
 const FILE = {
   kind: "file" as const,
   documentId: "d-1",
-  handoffToken: "t-1",
+  windowToken: "t-1",
   sourcePaneId: "p-2",
 };
 

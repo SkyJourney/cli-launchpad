@@ -1511,6 +1511,31 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
         cases,
     });
 
+    // The PTY return-requested envelope as the TypeScript encoder sends it. The TypeScript encoder
+    // test and the Rust relay test both read this file, so their views of the wire cannot diverge.
+    let mut cases = Vec::new();
+    cases.push((
+        "ptyReturnRequested".to_string(),
+        json!({
+            "apiVersion": 1,
+            "type": "content-handoff-return-requested",
+            "payload": {
+                "content": { "kind": "pty", "id": "8e783338-f464-4b10-b15e-b534748c6241" },
+                "transferId": "return-1",
+                "payload": {
+                    "sessionId": "session-1",
+                    "windowLabel": "terminal-8e783338-f464-4b10-b15e-b534748c6241",
+                    "handoffToken": "rust-return-1"
+                }
+            }
+        }),
+    ));
+    all.push(DtoSamples {
+        fixture_file: Some("content-handoff-pty-return-requested.json"),
+        type_name: "ContentHandoffEnvelope",
+        cases,
+    });
+
     all
 }
 

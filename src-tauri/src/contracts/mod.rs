@@ -1244,7 +1244,7 @@ fn golden_fixtures_match_serialized_dtos() {
         }
     }
 
-    assert_eq!(expected_files.len(), 37, "fixture 映射表必须恰好 37 个文件");
+    assert_eq!(expected_files.len(), 38, "fixture 映射表必须恰好 38 个文件");
     let found: BTreeSet<String> = fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("read fixture directory: {error}；{HINT}"))
         .map(|entry| entry.expect("read fixture entry").path())

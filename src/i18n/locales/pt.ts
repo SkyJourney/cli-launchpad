@@ -18,7 +18,7 @@ export const pt = {
     filePermissionDenied:
       "Permissão negada. Verifique as permissões do arquivo ou da pasta.",
     backupIndexRefreshDiscarded:
-      "Um backup foi restaurado, então a atualização do índice de sessões iniciada antes foi descartada.",
+      "Os dados foram substituídos (um backup foi restaurado ou uma configuração foi importada), então a atualização do índice de sessões iniciada antes foi descartada.",
     projectIdentityUnreadable:
       "Não foi possível ler a identidade do diretório do projeto.",
     fileConflict:

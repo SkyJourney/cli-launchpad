@@ -3,8 +3,10 @@ import { setupWorkspaceContentListeners } from "../../lib/workspaceContentListen
 import type {
   ContentWindowOrchestrator,
   ManagedFileWindow,
+  PendingWorkspaceFileWindow,
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
+import { rollbackHandoffOnce } from "./handoffRollback";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
@@ -43,7 +45,6 @@ import {
 import {
   attachWorkspaceContentHandoff,
   prepareWorkspaceContentHandoff,
-  rollbackWorkspaceContentHandoff,
 } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 
@@ -56,6 +57,15 @@ export interface FileProtocolHandlers {
   registrations(): IsolatedRegistration[];
   /** lost 组 1 项。 */
   lostRegistrations(): IsolatedRegistration[];
+}
+
+/** The window identity a file child must echo back; `token` is the wire name of the window token. */
+function pendingFileIdentity(pending: PendingWorkspaceFileWindow) {
+  return {
+    documentId: pending.documentId,
+    token: pending.windowToken,
+    windowLabel: pending.windowLabel,
+  };
 }
 
 /** 退出前请求文件窗口刷新缓冲；500 ms 超时与合并语义由调用方保持不变。 */
@@ -137,7 +147,10 @@ export function createFileProtocolHandlers(
             );
             if (
               !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
+              !matchesWorkspaceFileWindow(
+                pendingFileIdentity(pending),
+                event.payload,
+              )
             ) {
               return;
             }
@@ -191,11 +204,9 @@ export function createFileProtocolHandlers(
               pending.handoffContext = driverContext;
               pending.handoffPayload = prepared.payload;
             } catch (reason) {
-              void rollbackWorkspaceContentHandoff(
-                driverContext,
-                undefined,
-                reason,
-              ).catch(() => undefined);
+              void rollbackHandoffOnce(driverContext, undefined, reason).catch(
+                () => undefined,
+              );
               deps
                 .getCoordinator()
                 .failHandoff(content, "detachFailed", pending.transferId);
@@ -212,14 +223,14 @@ export function createFileProtocolHandlers(
             try {
               await ports.emit(pending.windowLabel, "file", "init", {
                 documentId: pending.documentId,
-                token: pending.token,
+                token: pending.windowToken,
                 windowLabel: pending.windowLabel,
                 fileDocument: prepared.payload.document,
                 fileBuffer: prepared.payload.buffer,
               });
             } catch (reason) {
               // init 没有送达：立即回滚并结束等待，不再依赖 15 秒超时兜底。
-              void rollbackWorkspaceContentHandoff(
+              void rollbackHandoffOnce(
                 driverContext,
                 prepared.payload,
                 reason,
@@ -246,7 +257,10 @@ export function createFileProtocolHandlers(
             );
             if (
               !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
+              !matchesWorkspaceFileWindow(
+                pendingFileIdentity(pending),
+                event.payload,
+              )
             ) {
               return;
             }
@@ -261,11 +275,11 @@ export function createFileProtocolHandlers(
                 content,
                 "detachReady",
                 pending.transferId,
-                pending.token,
+                pending.windowToken,
               );
             if (ownership?.outcome !== "changed") {
               if (pending.handoffContext) {
-                void rollbackWorkspaceContentHandoff(
+                void rollbackHandoffOnce(
                   pending.handoffContext,
                   pending.handoffPayload,
                   new Error(deps.translate("pty.detachedStateChanged")),
@@ -307,12 +321,15 @@ export function createFileProtocolHandlers(
             );
             if (
               !pending ||
-              !matchesWorkspaceFileWindow(pending, event.payload)
+              !matchesWorkspaceFileWindow(
+                pendingFileIdentity(pending),
+                event.payload,
+              )
             ) {
               return;
             }
             if (pending.handoffContext) {
-              void rollbackWorkspaceContentHandoff(
+              void rollbackHandoffOnce(
                 pending.handoffContext,
                 pending.handoffPayload,
                 new Error(
@@ -690,7 +707,7 @@ export function createFileProtocolHandlers(
                 .catch(() => managedWindow.destroy().catch(() => undefined));
             } catch (reason) {
               if (fileReturnDriverContext) {
-                await rollbackWorkspaceContentHandoff(
+                await rollbackHandoffOnce(
                   fileReturnDriverContext,
                   fileReturnDriverPayload,
                   reason,

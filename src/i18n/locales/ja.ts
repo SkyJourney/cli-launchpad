@@ -20,7 +20,7 @@ export const ja = {
     filePermissionDenied:
       "アクセスが拒否されました。ファイルまたはフォルダーのアクセス許可を確認してください。",
     backupIndexRefreshDiscarded:
-      "バックアップを復元したため、復元前に開始したセッションインデックスの更新は破棄されました。",
+      "データを置き換えたため（バックアップの復元または設定のインポート）、置き換え前に開始したセッションインデックスの更新は破棄されました。",
     projectIdentityUnreadable:
       "プロジェクトフォルダーの識別情報を読み取れませんでした。",
     fileConflict:
