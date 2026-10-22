@@ -110,15 +110,7 @@ pub struct ProjectDirectoryListing {
     pub path_semantics: PathSemantics,
 }
 
-/// Whether two project-relative paths name the same file on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FileIdentityComparison {
-    Same,
-    Different,
-    /// At least one of the files cannot be identified (missing, unreadable).
-    Unavailable,
-}
+pub use crate::models::file_identity::FileIdentityComparison;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

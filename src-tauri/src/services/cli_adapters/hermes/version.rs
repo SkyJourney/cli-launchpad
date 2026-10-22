@@ -4,8 +4,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::platform::detect;
+use crate::platform::detect::first_output_line;
 use crate::platform::process::{self, BoundedOutput};
-use crate::services::version_service::first_output_line;
 
 const HERMES_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const HERMES_OUTPUT_LIMIT: usize = 64 * 1024;

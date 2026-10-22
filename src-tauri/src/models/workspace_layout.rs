@@ -696,10 +696,7 @@ fn is_platform_invalid_file_path(document: &WorkspaceFileDocument) -> bool {
         )
         .is_ok()
         && !document.relative_path.is_empty()
-        && crate::services::project_directory::ProjectDirectory::validate_relative_path(
-            &document.relative_path,
-        )
-        .is_err()
+        && crate::platform::path_rules::validate_relative_path(&document.relative_path).is_err()
 }
 
 fn replace_file_references(
@@ -754,10 +751,7 @@ fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), Worksp
         "项目内相对路径",
     )?;
     if document.relative_path.is_empty()
-        || crate::services::project_directory::ProjectDirectory::validate_relative_path(
-            &document.relative_path,
-        )
-        .is_err()
+        || crate::platform::path_rules::validate_relative_path(&document.relative_path).is_err()
     {
         return invalid("文件引用必须是规范的项目内相对路径");
     }

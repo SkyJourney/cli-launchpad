@@ -103,7 +103,13 @@ async fn available_status(
 ) -> CliStatus {
     let tool_key = adapter.tool_key();
     let (version, version_error) = if probe_versions {
-        match adapter.probe_current_version(&path).await {
+        match cli_adapters::probe_version_bounded(
+            adapter,
+            path.clone(),
+            cli_adapters::VERSION_PROBE_BUDGET,
+        )
+        .await
+        {
             Ok(version) => (Some(version), None),
             Err(error) => {
                 log::warn!("cli version probe failed tool={}", tool_key.as_str());

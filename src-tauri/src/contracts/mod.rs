@@ -5371,3 +5371,263 @@ fn confirm_app_exit_goes_through_confirm_with_impacts() {
         "report delegates to exit_impacts::report"
     );
 }
+
+mod adapter_dependency_scan {
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn source_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    }
+
+    pub(super) fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("read source directory") {
+            let path = entry.expect("read entry").path();
+            if path.is_dir() {
+                rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    pub(super) fn read(path: &Path) -> String {
+        std::fs::read_to_string(path)
+            .expect("read source")
+            .replace("\r\n", "\n")
+    }
+
+    /// Everything before the first `#[cfg(test)]`.
+    pub(super) fn production(source: &str) -> &str {
+        source.split("#[cfg(test)]").next().unwrap_or(source)
+    }
+
+    pub(super) fn relative(path: &Path) -> String {
+        path.strip_prefix(source_root())
+            .expect("path under src")
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
+    /// Lines mentioning the services layer, ignoring `//` comment lines. A `services::`
+    /// path counts wherever it starts a path segment, so grouped imports
+    /// (`use crate::{models, services::x};`) and lines inside a multi-line group are caught.
+    pub(super) fn services_references(source: &str) -> Vec<String> {
+        source
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with("//"))
+            .filter(|line| mentions_services_segment(line))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn mentions_services_segment(line: &str) -> bool {
+        line.match_indices("services::").any(|(index, _)| {
+            line[..index]
+                .chars()
+                .last()
+                .is_none_or(|previous| !(previous.is_alphanumeric() || previous == '_'))
+        })
+    }
+
+    /// `(path, occurrences)` for every source whose production part contains `needle`.
+    pub(super) fn definitions(sources: &[(String, String)], needle: &str) -> Vec<(String, usize)> {
+        sources
+            .iter()
+            .filter_map(|(path, source)| {
+                let count = production(source).matches(needle).count();
+                (count > 0).then(|| (path.clone(), count))
+            })
+            .collect()
+    }
+
+    /// Text from `signature` to the closing brace at column 0.
+    pub(super) fn function_body<'a>(source: &'a str, signature: &str) -> &'a str {
+        let found: Vec<_> = source.match_indices(signature).collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "{signature} 必须恰好出现 1 次，实际 {}",
+            found.len()
+        );
+        let rest = &source[found[0].0..];
+        let end = rest
+            .find("\n}\n")
+            .unwrap_or_else(|| panic!("{signature} 没有位于第 0 列的结束大括号"));
+        &rest[..end]
+    }
+
+    pub(super) fn production_sources() -> Vec<(String, String)> {
+        let mut files = Vec::new();
+        rust_files(&source_root(), &mut files);
+        files
+            .iter()
+            .map(|file| (relative(file), read(file)))
+            .collect()
+    }
+}
+
+#[test]
+fn models_db_and_platform_do_not_depend_on_services() {
+    use adapter_dependency_scan::*;
+
+    assert_eq!(
+        services_references(
+            "use crate::services::cache_service;\n// crate::services in a comment\nfn x() {}"
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        services_references("use crate::{models::x, services::y};").len(),
+        1
+    );
+    assert_eq!(
+        services_references(
+            "use crate::{
+    models::x,
+    services::y,
+};"
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        services_references(
+            "use crate::pty_session_service::x;
+use crate::cli_services::y;"
+        )
+        .len(),
+        0
+    );
+    let mut violations = Vec::new();
+    let mut scanned = 0;
+    for layer in ["models", "db", "platform"] {
+        let mut files = Vec::new();
+        rust_files(&source_root().join(layer), &mut files);
+        for file in files {
+            scanned += 1;
+            for line in services_references(&read(&file)) {
+                violations.push(format!("{}: {line}", relative(&file)));
+            }
+        }
+    }
+    assert!(scanned >= 30, "扫描到的文件数异常：{scanned}");
+    assert!(
+        violations.is_empty(),
+        "models、db、platform 不得依赖 services：\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn shared_command_helpers_are_defined_once() {
+    use adapter_dependency_scan::*;
+
+    let sample = vec![(
+        "services/x.rs".to_string(),
+        "fn quote_command_path(p: &str) {}".to_string(),
+    )];
+    assert_eq!(
+        definitions(&sample, "fn quote_command_path("),
+        vec![("services/x.rs".to_string(), 1)]
+    );
+
+    let sources = production_sources();
+    assert!(sources.len() >= 50, "扫描到的文件数异常：{}", sources.len());
+    assert_eq!(
+        definitions(&sources, "fn quote_command_path("),
+        vec![("platform/command_path.rs".to_string(), 1)]
+    );
+    assert_eq!(
+        definitions(&sources, "fn first_output_line("),
+        vec![("platform/detect.rs".to_string(), 1)]
+    );
+}
+
+#[test]
+fn adapter_calls_are_budgeted_only_by_cli_runtime() {
+    use adapter_dependency_scan::*;
+
+    let sample = "fn a() {\n    one();\n}\n\nfn b() {\n    two();\n}\n";
+    assert!(function_body(sample, "fn a(").contains("one"));
+    assert!(!function_body(sample, "fn a(").contains("two"));
+
+    let sources = production_sources();
+    let production_of = |path: &str| -> String {
+        let source = sources
+            .iter()
+            .find(|(candidate, _)| candidate == path)
+            .unwrap_or_else(|| panic!("找不到 {path}"));
+        production(&source.1).to_string()
+    };
+
+    // (a) adapter methods may be called from exactly one file each.
+    let allowed = [
+        (".probe_current_version(", "services/cli_adapters/mod.rs"),
+        (".query_update(", "services/cli_adapters/mod.rs"),
+        (".execution_preflight(", "services/cli_adapters/mod.rs"),
+        (".list_sessions(", "services/session_service.rs"),
+        (
+            ".session_belongs_to_directory(",
+            "services/session_service.rs",
+        ),
+        (".search_index_source(", "services/session_service.rs"),
+    ];
+    for (needle, only_file) in allowed {
+        let found = definitions(&sources, needle);
+        let files: Vec<&str> = found.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(
+            files,
+            vec![only_file],
+            "{needle} 只能出现在 {only_file}：{found:?}"
+        );
+    }
+
+    // (b) no private timeouts or spawns next to adapter calls.
+    for (path, timeouts, spawns) in [
+        ("services/session_service.rs", 0, 0),
+        ("services/cli_detect_service.rs", 0, 0),
+        ("services/cli_adapters/mod.rs", 1, 0),
+    ] {
+        let source = production_of(path);
+        assert_eq!(
+            source.matches("tokio::time::timeout(").count(),
+            timeouts,
+            "{path} timeout"
+        );
+        assert_eq!(
+            source.matches("tokio::spawn(").count(),
+            spawns,
+            "{path} spawn"
+        );
+    }
+
+    // (c) the entry functions delegate to cli_runtime.
+    let session = production_of("services/session_service.rs");
+    let adapters = production_of("services/cli_adapters/mod.rs");
+    let entries = [
+        (&session, "async fn list_sessions_with("),
+        (&session, "async fn session_belongs_to_directory_with("),
+        (&session, "async fn bounded_search_index_source<"),
+        (&adapters, "pub async fn probe_version_bounded("),
+        (&adapters, "pub async fn execution_preflight_bounded("),
+    ];
+    for (source, signature) in entries {
+        let body = function_body(source, signature);
+        assert!(
+            body.contains("cli_runtime::run"),
+            "{signature} 必须经 cli_runtime"
+        );
+        for forbidden in ["tokio::spawn(", "tokio::time::timeout(", "spawn_blocking("] {
+            assert!(
+                !body.contains(forbidden),
+                "{signature} 不得直接使用 {forbidden}"
+            );
+        }
+    }
+    let detect = production_of("services/cli_detect_service.rs");
+    let status = function_body(&detect, "async fn available_status(");
+    assert!(status.contains("probe_version_bounded("));
+    assert!(!status.contains(".probe_current_version("));
+}

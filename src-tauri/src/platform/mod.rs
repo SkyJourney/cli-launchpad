@@ -1,5 +1,6 @@
 pub mod bounded_read;
 pub mod case_sensitivity;
+pub mod command_path;
 pub mod detect;
 pub mod executable_resolver;
 pub mod execution_process;

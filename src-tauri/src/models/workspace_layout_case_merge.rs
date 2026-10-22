@@ -6,12 +6,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::models::file_identity::FileIdentityComparison;
 use crate::models::workspace_layout::{
     WorkspaceLayoutDocument, WorkspaceLayoutNode, WorkspacePaneContentRef,
 };
 use crate::platform::case_sensitivity::{CaseSensitivity, PathSemantics};
 use crate::platform::path_key::PathKey;
-use crate::services::file_service::FileIdentityComparison;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MergedGroup {
@@ -216,12 +216,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{merge_case_variant_documents, MergedGroup};
+    use crate::models::file_identity::FileIdentityComparison;
     use crate::models::workspace_layout::{
         WorkspaceFileDocument, WorkspaceLayoutDocument, WorkspaceLayoutNode,
         WorkspacePaneContentRef, WorkspaceSplitDirection, WORKSPACE_LAYOUT_SCHEMA_VERSION,
     };
     use crate::platform::case_sensitivity::PathSemantics;
-    use crate::services::file_service::FileIdentityComparison;
 
     const CASES: &str = include_str!("../../../contracts/path-key/case-merge-cases.json");
 

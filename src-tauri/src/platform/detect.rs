@@ -54,7 +54,7 @@ pub(crate) async fn probe_version_with_env(
         .ok_or_else(|| "版本命令未返回内容".to_string())
 }
 
-fn first_output_line(bytes: &[u8]) -> Option<String> {
+pub(crate) fn first_output_line(bytes: &[u8]) -> Option<String> {
     let output = String::from_utf8_lossy(bytes);
     output
         .lines()

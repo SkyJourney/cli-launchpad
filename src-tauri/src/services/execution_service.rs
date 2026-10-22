@@ -407,9 +407,7 @@ async fn run_task_inner(
     }
     append_system_log(&app, &id, "任务已启动。\n").await;
 
-    let preflight_plan = plan.clone();
-    let preflight =
-        tokio::task::spawn_blocking(move || cli_adapters::execution_preflight(&preflight_plan));
+    let preflight = cli_adapters::execution_preflight(plan.clone());
     let preflight = match tokio::select! {
         biased;
         _ = &mut cancel => {
@@ -422,13 +420,9 @@ async fn run_task_inner(
         }
         result = preflight => result,
     } {
-        Ok(Ok(preflight)) => preflight,
-        Ok(Err(error)) => {
-            finish_failed_now(&app, &id, error).await;
-            return;
-        }
+        Ok(preflight) => preflight,
         Err(error) => {
-            finish_failed_now(&app, &id, format!("CLI 执行前校验任务异常：{error}")).await;
+            finish_failed_now(&app, &id, error).await;
             return;
         }
     };

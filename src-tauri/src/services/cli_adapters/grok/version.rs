@@ -1,8 +1,8 @@
 use std::process::Command;
 use std::time::Duration;
 
+use crate::platform::detect::first_output_line;
 use crate::platform::process::{self, BoundedOutput};
-use crate::services::version_service::first_output_line;
 
 const GROK_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) fn fetch_grok_update_check(

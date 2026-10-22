@@ -138,17 +138,7 @@ impl ProjectDirectory {
     }
 
     pub fn validate_relative_path(path: &str) -> Result<()> {
-        if path.is_empty() {
-            return Ok(());
-        }
-        if path.starts_with('/')
-            || path
-                .split('/')
-                .any(|part| crate::platform::path_rules::validate_component(part).is_err())
-        {
-            bail!("文件路径必须是规范的项目内相对路径");
-        }
-        Ok(())
+        crate::platform::path_rules::validate_relative_path(path)
     }
 
     pub fn validate_entry_name(name: &str) -> Result<()> {
@@ -435,5 +425,14 @@ mod tests {
             .verify_unchanged()
             .expect_err("a removed directory must be an error");
         assert!(error.to_string().contains("项目目录不存在或无法访问"));
+    }
+
+    #[test]
+    fn validate_relative_path_uses_the_platform_rules() {
+        assert!(ProjectDirectory::validate_relative_path("src/main.rs").is_ok());
+        assert!(ProjectDirectory::validate_relative_path("").is_ok());
+        let error = ProjectDirectory::validate_relative_path("a/../b").unwrap_err();
+        assert_eq!(error.to_string(), "文件路径必须是规范的项目内相对路径");
+        assert!(ProjectDirectory::path("a/../b").is_err());
     }
 }

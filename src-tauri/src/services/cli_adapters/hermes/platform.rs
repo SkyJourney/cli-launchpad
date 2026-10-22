@@ -112,7 +112,10 @@ pub(super) fn build_plan(
                 tool_key: ToolKey::Hermes,
                 kind: InstallKind::Update,
                 program: path.display().to_string(),
-                preview: format!("{} update", quote_command_path(&path.display().to_string())),
+                preview: format!(
+                    "{} update",
+                    crate::platform::command_path::quote_command_path(&path.display().to_string())
+                ),
                 args: vec!["update".to_string()],
                 fingerprint: String::new(),
                 source: "Hermes Agent 官方源码安装内置更新命令（任务启动前校验安装来源）"
@@ -155,14 +158,6 @@ pub(super) fn build_plan(
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         anyhow::bail!("当前平台不支持 Hermes Agent 官方安装流程")
-    }
-}
-
-fn quote_command_path(path: &str) -> String {
-    if path.chars().any(char::is_whitespace) {
-        format!("\"{}\"", path.replace('"', "\\\""))
-    } else {
-        path.to_string()
     }
 }
 

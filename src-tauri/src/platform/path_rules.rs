@@ -59,6 +59,22 @@ pub fn validate_entry_name(name: &str) -> Result<()> {
     validate_component(name)
 }
 
+/// Validate a project-relative path: `/`-separated, no leading `/`, every
+/// component valid on this platform. The empty string is allowed (project root).
+pub fn validate_relative_path(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Ok(());
+    }
+    if path.starts_with('/')
+        || path
+            .split('/')
+            .any(|part| validate_component(part).is_err())
+    {
+        bail!("文件路径必须是规范的项目内相对路径");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +206,20 @@ mod tests {
         }
         assert!(validate_component("a\nb").is_err());
         assert!(validate_entry_name("tab\tname").is_err());
+    }
+
+    #[test]
+    fn relative_path_rules_reject_absolute_empty_and_dot_components() {
+        assert!(validate_relative_path("").is_ok());
+        assert!(validate_relative_path("a").is_ok());
+        assert!(validate_relative_path("a/b.txt").is_ok());
+        for bad in ["/abs", "a//b", "a/", "a/./b", "a/../b", ".."] {
+            let error = validate_relative_path(bad).expect_err(bad);
+            assert_eq!(
+                error.to_string(),
+                "文件路径必须是规范的项目内相对路径",
+                "{bad}"
+            );
+        }
     }
 }

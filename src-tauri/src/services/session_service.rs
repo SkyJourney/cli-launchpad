@@ -231,9 +231,11 @@ async fn bounded_search_index_source<F>(
     budget: Duration,
 ) -> SessionSearchIndexSource
 where
-    F: std::future::Future<Output = SessionSearchIndexSource>,
+    F: std::future::Future<Output = SessionSearchIndexSource> + Send + 'static,
 {
-    match tokio::time::timeout(budget, source_future).await {
+    match crate::services::cli_runtime::run_future(tool_key, "会话索引扫描", budget, source_future)
+        .await
+    {
         Ok(source) if source.tool_key == tool_key => source,
         Ok(source) => {
             log::warn!(
@@ -247,11 +249,8 @@ where
                 incomplete: true,
             }
         }
-        Err(_) => {
-            log::warn!(
-                "{} 会话索引扫描超过预算，保留上次可用索引",
-                tool_key.as_str()
-            );
+        Err(error) => {
+            log::warn!("{error}，保留上次可用索引");
             SessionSearchIndexSource {
                 tool_key,
                 documents: None,
@@ -317,16 +316,11 @@ pub(crate) async fn list_sessions_with(
     if remaining.is_zero() {
         return Err(anyhow!("{} 会话读取超时", tool_key.as_str()));
     }
-    tokio::spawn(async move {
-        tokio::time::timeout(
-            remaining,
-            adapter.list_sessions(directory_path, cursor, limit, context),
-        )
-        .await
-        .map_err(|_| anyhow!("{} 会话读取超时", tool_key.as_str()))?
+    crate::services::cli_runtime::run_with(adapter, "会话读取", remaining, move |adapter| {
+        adapter.list_sessions(directory_path, cursor, limit, context)
     })
     .await
-    .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
+    .map_err(anyhow::Error::from)?
 }
 
 pub(crate) async fn session_belongs_to_directory_with(
@@ -335,17 +329,11 @@ pub(crate) async fn session_belongs_to_directory_with(
     session_id: String,
     budget: Duration,
 ) -> Result<bool> {
-    let tool_key = adapter.tool_key();
-    tokio::spawn(async move {
-        tokio::time::timeout(
-            budget,
-            adapter.session_belongs_to_directory(directory_path, session_id),
-        )
-        .await
-        .map_err(|_| anyhow!("{} 会话归属验证超时", tool_key.as_str()))?
+    crate::services::cli_runtime::run_with(adapter, "会话归属验证", budget, move |adapter| {
+        adapter.session_belongs_to_directory(directory_path, session_id)
     })
     .await
-    .map_err(|error| anyhow!("{} 会话归属验证适配器异常：{error}", tool_key.as_str()))?
+    .map_err(anyhow::Error::from)?
 }
 
 pub async fn session_belongs_to_directory(
@@ -1247,5 +1235,131 @@ mod tests {
             assert!(source.documents.is_none(), "{}", source.tool_key.as_str());
             assert!(source.incomplete, "{}", source.tool_key.as_str());
         }
+    }
+
+    struct PanicAdapter;
+
+    impl crate::services::cli_adapters::CliAdapter for PanicAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            use crate::services::cli_adapters::{
+                ManagedUpdatePolicy, ProviderCapabilities, ProviderDescriptor, UpdateSemantics,
+                PROVIDER_DESCRIPTOR_API_VERSION,
+            };
+            ProviderDescriptor {
+                tool_key: ToolKey::Claude,
+                api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+                capabilities: ProviderCapabilities {
+                    history: false,
+                    resume: false,
+                    update_semantics: UpdateSemantics::Version,
+                    managed_update: ManagedUpdatePolicy::Always,
+                    install_effects_key: None,
+                },
+            }
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            _context: crate::services::cli_adapters::AdapterContext,
+        ) -> crate::services::cli_adapters::AdapterFuture<Result<SessionPage>> {
+            Box::pin(async {
+                if true {
+                    panic!("list panic");
+                }
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> crate::services::cli_adapters::AdapterFuture<Result<bool>> {
+            Box::pin(async {
+                if true {
+                    panic!("ownership panic");
+                }
+                Ok(true)
+            })
+        }
+    }
+
+    static PANIC_ADAPTER: PanicAdapter = PanicAdapter;
+
+    #[tokio::test]
+    async fn list_sessions_reports_adapter_panics_through_cli_runtime() {
+        let home = tempfile::tempdir().unwrap();
+        let error = list_sessions_with(
+            &PANIC_ADAPTER,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            home.path().to_path_buf(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.starts_with("claude 会话读取适配器异常："), "{text}");
+        assert!(text.contains("panic"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn ownership_check_keeps_the_adapter_panic_message() {
+        let error = session_belongs_to_directory_with(
+            &PANIC_ADAPTER,
+            "project".to_string(),
+            "s".to_string(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.starts_with("claude 会话归属验证适配器异常："),
+            "{text}"
+        );
+        assert!(text.contains("panic"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn search_index_scan_panic_becomes_an_incomplete_source() {
+        let source = bounded_search_index_source(
+            ToolKey::Claude,
+            async {
+                if true {
+                    panic!("scan panic");
+                }
+                SessionSearchIndexSource {
+                    tool_key: ToolKey::Claude,
+                    documents: None,
+                    incomplete: false,
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(source.incomplete);
+        assert!(source.documents.is_none());
+        assert_eq!(source.tool_key, ToolKey::Claude);
     }
 }

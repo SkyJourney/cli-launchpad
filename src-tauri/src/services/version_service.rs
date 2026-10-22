@@ -95,14 +95,6 @@ pub(crate) fn fetch_release_text(url: &str) -> Result<String, String> {
     get_text(&agent, url)
 }
 
-pub(crate) fn first_output_line(bytes: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(|line| line.chars().take(200).collect())
-}
-
 fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
     let response = agent
         .get(url)

@@ -71,7 +71,10 @@ pub(crate) fn grok_update_plan_for(path: &str) -> InstallPlan {
         args: vec!["update".to_string()],
         fingerprint: String::new(),
         source: "Grok Build 官方原生更新器（任务启动后校验 CLI 来源）".to_string(),
-        preview: format!("{} update", quote_command_path(path)),
+        preview: format!(
+            "{} update",
+            crate::platform::command_path::quote_command_path(path)
+        ),
     }
 }
 
@@ -80,23 +83,15 @@ fn grok_install_preview(program: &str) -> String {
     {
         format!(
             "{} -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"$env:GROK_CHANNEL='stable'; irm https://x.ai/cli/install.ps1 | iex\"",
-            quote_command_path(program)
+            crate::platform::command_path::quote_command_path(program)
         )
     }
     #[cfg(not(windows))]
     {
         format!(
             "{} -c \"export GROK_CHANNEL=stable; curl -fsSL https://x.ai/cli/install.sh | bash\"",
-            quote_command_path(program)
+            crate::platform::command_path::quote_command_path(program)
         )
-    }
-}
-
-fn quote_command_path(path: &str) -> String {
-    if path.chars().any(char::is_whitespace) {
-        format!("\"{}\"", path.replace('"', "\\\""))
-    } else {
-        path.to_string()
     }
 }
 

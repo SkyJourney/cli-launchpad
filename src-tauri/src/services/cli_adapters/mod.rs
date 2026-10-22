@@ -321,11 +321,54 @@ pub(crate) fn blocking_latest(
     })
 }
 
-pub fn execution_preflight(plan: &InstallPlan) -> std::result::Result<ExecutionPreflight, String> {
-    catch_adapter(plan.tool_key, "执行前校验", || {
-        run_execution_preflight(get(plan.tool_key), plan)
-    })
-    .map_err(|error| error.to_string())
+pub(crate) const VERSION_PROBE_BUDGET: Duration = Duration::from_secs(15);
+pub(crate) const EXECUTION_PREFLIGHT_BUDGET: Duration = Duration::from_secs(30);
+
+pub async fn probe_version_bounded(
+    adapter: &'static dyn CliAdapter,
+    path: PathBuf,
+    budget: Duration,
+) -> Result<String, String> {
+    match crate::services::cli_runtime::run_with(
+        adapter,
+        "版本探测",
+        budget,
+        move |adapter| async move { adapter.probe_current_version(&path).await },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub async fn execution_preflight_bounded(
+    adapter: &'static dyn CliAdapter,
+    plan: InstallPlan,
+    budget: Duration,
+) -> std::result::Result<ExecutionPreflight, String> {
+    let tool_key = adapter.tool_key();
+    match crate::services::cli_runtime::run_blocking_with(
+        adapter,
+        "执行前校验",
+        budget,
+        move |adapter| {
+            catch_adapter(tool_key, "执行前校验", || {
+                run_execution_preflight(adapter, &plan)
+            })
+        },
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub async fn execution_preflight(
+    plan: InstallPlan,
+) -> std::result::Result<ExecutionPreflight, String> {
+    execution_preflight_bounded(get(plan.tool_key), plan, EXECUTION_PREFLIGHT_BUDGET).await
 }
 
 fn run_execution_preflight(
@@ -344,11 +387,12 @@ pub fn prepare_command(plan: &InstallPlan) -> Result<tokio::process::Command> {
 }
 
 pub async fn probe_plan_version(plan: &InstallPlan) -> Result<String, String> {
-    let tool_key = plan.tool_key;
-    let path = PathBuf::from(&plan.program);
-    tokio::spawn(async move { get(tool_key).probe_current_version(&path).await })
-        .await
-        .map_err(|error| format!("{} 版本探测适配器异常：{error}", tool_key.as_str()))?
+    probe_version_bounded(
+        get(plan.tool_key),
+        PathBuf::from(&plan.program),
+        VERSION_PROBE_BUDGET,
+    )
+    .await
 }
 
 pub fn resume_args(tool_key: ToolKey, session_id: &str) -> Result<Vec<String>> {
@@ -943,6 +987,262 @@ mod tests {
         assert_eq!(
             context.resolved_path,
             Some(PathBuf::from("custom-bin/claude"))
+        );
+    }
+
+    fn plain_descriptor(tool_key: ToolKey) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: false,
+                resume: false,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
+    }
+
+    enum ProbeMode {
+        Stalled,
+        Version,
+        Panic,
+    }
+
+    struct ProbeAdapter(ProbeMode);
+
+    impl CliAdapter for ProbeAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            plain_descriptor(ToolKey::Claude)
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn probe_current_version<'a>(
+            &'a self,
+            _path: &'a Path,
+        ) -> Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send + 'a>>
+        {
+            match self.0 {
+                ProbeMode::Stalled => Box::pin(async {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok("1.0.0".to_string())
+                }),
+                ProbeMode::Version => Box::pin(async { Ok("1.2.3".to_string()) }),
+                ProbeMode::Panic => Box::pin(async {
+                    if true {
+                        panic!("probe panic");
+                    }
+                    Ok(String::new())
+                }),
+            }
+        }
+    }
+
+    static STALLED_PROBE: ProbeAdapter = ProbeAdapter(ProbeMode::Stalled);
+    static VERSION_PROBE: ProbeAdapter = ProbeAdapter(ProbeMode::Version);
+    static PANIC_PROBE: ProbeAdapter = ProbeAdapter(ProbeMode::Panic);
+
+    #[tokio::test]
+    async fn probe_version_bounded_times_out_a_stalled_probe() {
+        let started = std::time::Instant::now();
+        let error = probe_version_bounded(
+            &STALLED_PROBE,
+            PathBuf::from("claude"),
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "claude 版本探测超时");
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_version_bounded_passes_results_and_reports_panics() {
+        let value = probe_version_bounded(
+            &VERSION_PROBE,
+            PathBuf::from("claude"),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(value, Ok("1.2.3".to_string()));
+
+        let error = probe_version_bounded(
+            &PANIC_PROBE,
+            PathBuf::from("claude"),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("claude 版本探测适配器异常："), "{error}");
+        assert!(error.contains("panic"), "{error}");
+    }
+
+    enum ValidateMode {
+        Slow,
+        Panic,
+    }
+
+    struct ValidateAdapter(ValidateMode);
+
+    impl CliAdapter for ValidateAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            plain_descriptor(ToolKey::Claude)
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn validate_execution(&self, _plan: &InstallPlan) -> std::result::Result<(), String> {
+            match self.0 {
+                ValidateMode::Slow => {
+                    std::thread::sleep(Duration::from_secs(3));
+                    Ok(())
+                }
+                ValidateMode::Panic => panic!("validate panic"),
+            }
+        }
+    }
+
+    static SLOW_VALIDATE: ValidateAdapter = ValidateAdapter(ValidateMode::Slow);
+    static PANIC_VALIDATE: ValidateAdapter = ValidateAdapter(ValidateMode::Panic);
+
+    fn preflight_plan() -> InstallPlan {
+        crate::services::install_service::resolved_plan(
+            ToolKey::Claude,
+            InstallKind::Update,
+            "claude".to_string(),
+            vec!["update".to_string()],
+            "test",
+            "claude update".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn execution_preflight_times_out_a_stalled_validation() {
+        let started = std::time::Instant::now();
+        let error = execution_preflight_bounded(
+            &SLOW_VALIDATE,
+            preflight_plan(),
+            Duration::from_millis(300),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "claude 执行前校验超时");
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_preflight_keeps_the_adapter_panic_message() {
+        let error =
+            execution_preflight_bounded(&PANIC_VALIDATE, preflight_plan(), Duration::from_secs(5))
+                .await
+                .unwrap_err();
+        assert_eq!(error, "claude 适配器在执行前校验时发生异常");
+    }
+
+    const REJECTION_MESSAGE: &str = "claude 更新前校验失败：固定的拒绝原因";
+
+    struct ValidateRejectsWithoutMessageAdapter {
+        reject: bool,
+    }
+
+    impl CliAdapter for ValidateRejectsWithoutMessageAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> ProviderDescriptor {
+            plain_descriptor(ToolKey::Claude)
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn validate_execution(&self, _plan: &InstallPlan) -> std::result::Result<(), String> {
+            if self.reject {
+                Err(REJECTION_MESSAGE.to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    static REJECTING_VALIDATE: ValidateRejectsWithoutMessageAdapter =
+        ValidateRejectsWithoutMessageAdapter { reject: true };
+    static ACCEPTING_VALIDATE: ValidateRejectsWithoutMessageAdapter =
+        ValidateRejectsWithoutMessageAdapter { reject: false };
+
+    #[tokio::test]
+    async fn execution_preflight_returns_the_validation_error_when_there_is_no_preflight_message() {
+        assert_eq!(
+            REJECTING_VALIDATE.execution_preflight_message(&preflight_plan()),
+            None
+        );
+
+        let error = run_execution_preflight(&REJECTING_VALIDATE, &preflight_plan()).unwrap_err();
+        assert_eq!(error.to_string(), REJECTION_MESSAGE);
+
+        let error = execution_preflight_bounded(
+            &REJECTING_VALIDATE,
+            preflight_plan(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, REJECTION_MESSAGE);
+        assert!(!error.contains("适配器在执行前校验时发生异常"), "{error}");
+        assert!(!error.contains("执行前校验超时"), "{error}");
+
+        let accepted = ExecutionPreflight {
+            message: None,
+            verify_update_result: false,
+        };
+        assert_eq!(
+            run_execution_preflight(&ACCEPTING_VALIDATE, &preflight_plan()).unwrap(),
+            accepted
+        );
+        assert_eq!(
+            execution_preflight_bounded(
+                &ACCEPTING_VALIDATE,
+                preflight_plan(),
+                Duration::from_secs(5),
+            )
+            .await,
+            Ok(accepted)
         );
     }
 }

@@ -5,6 +5,7 @@ pub mod cli_status;
 pub mod config_bundle;
 pub mod directory;
 pub mod execution;
+pub mod file_identity;
 pub mod install;
 pub mod launch_history;
 pub mod pty_session;
