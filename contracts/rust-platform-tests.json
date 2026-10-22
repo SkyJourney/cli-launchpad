@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 875,
-    "Linux": 881,
-    "macOS": 877
+    "Windows": 878,
+    "Linux": 884,
+    "macOS": 880
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -333,6 +333,9 @@
       "services::pty_session_service::tests::child_monitor_persists_exit_once_removes_the_session_and_delivers_exited",
       "services::pty_session_service::tests::child_monitor_reports_terminated_when_termination_was_requested",
       "services::pty_session_service::tests::child_monitor_survives_a_persistence_failure",
+      "services::pty_session_service::tests::child_monitor_waits_for_a_child_that_exits_after_the_monitor_started",
+      "services::pty_session_service::tests::child_monitor_handles_a_child_that_exited_before_the_monitor_started",
+      "services::pty_session_service::tests::child_monitor_reports_failed_when_waiting_for_the_child_fails",
       "services::pty_session_service::handoff::tests::begin_from_idle_pauses_the_flow_and_returns_a_fresh_token",
       "services::pty_session_service::handoff::tests::begin_while_a_live_handoff_exists_is_rejected_and_keeps_the_state",
       "services::pty_session_service::handoff::tests::begin_after_the_pause_lapsed_replaces_the_stale_handoff",

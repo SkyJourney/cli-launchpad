@@ -24,6 +24,83 @@ impl ChildKiller for FakeKiller {
     }
 }
 
+/// 测试用的 `Child`：`wait` 阻塞在通道上，直到测试通过 [`FakeChildExit`] 显式给出退出码；
+/// 发送端被丢弃时 `wait` 返回错误。不启动任何进程，也不依赖 ConPTY，
+/// 用来验证 monitor 的收尾逻辑，而不是外部进程“能否自己退出”。
+#[cfg(test)]
+#[derive(Debug)]
+struct FakeChild {
+    exit: Mutex<Receiver<u32>>,
+    kills: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+impl FakeChild {
+    fn status(received: Result<u32, mpsc::RecvError>) -> std::io::Result<portable_pty::ExitStatus> {
+        received
+            .map(portable_pty::ExitStatus::with_exit_code)
+            .map_err(|_| std::io::Error::other("fake child exit channel closed"))
+    }
+}
+
+#[cfg(test)]
+impl ChildKiller for FakeChild {
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.kills.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(FakeKiller(Arc::clone(&self.kills)))
+    }
+}
+
+#[cfg(test)]
+impl PtyChild for FakeChild {
+    fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+        match self.exit.get_mut().unwrap().try_recv() {
+            Ok(code) => Self::status(Ok(code)).map(Some),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Self::status(Err(mpsc::RecvError)).map(Some),
+        }
+    }
+
+    fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+        Self::status(self.exit.get_mut().unwrap().recv())
+    }
+
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
+
+    #[cfg(windows)]
+    fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        None
+    }
+}
+
+/// [`FakeChild`] 的退出句柄：`exit` 给出退出码；直接丢弃句柄表示等待子进程失败。
+#[cfg(test)]
+pub(crate) struct FakeChildExit(mpsc::Sender<u32>);
+
+#[cfg(test)]
+impl FakeChildExit {
+    pub(crate) fn exit(self, code: u32) {
+        let _ = self.0.send(code);
+    }
+}
+
+/// 创建一个由测试控制退出时机的假子进程。
+#[cfg(test)]
+pub(crate) fn fake_child() -> (Box<dyn PtyChild + Send + Sync>, FakeChildExit) {
+    let (sender, receiver) = mpsc::channel();
+    let child = FakeChild {
+        exit: Mutex::new(receiver),
+        kills: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    };
+    (Box::new(child), FakeChildExit(sender))
+}
+
 /// 把发往通道的 JSON 事件记录下来的通道替身。
 #[cfg(test)]
 pub(crate) fn recording_channel() -> (Channel<PtyEvent>, Arc<Mutex<Vec<serde_json::Value>>>) {
@@ -467,30 +544,6 @@ impl PtySessionStore for FakeStore {
             return Err(AppError::internal("injected persistence failure"));
         }
         Ok(())
-    }
-}
-
-/// 立即以给定退出码结束的真实子进程命令。
-#[cfg(test)]
-pub(crate) fn quick_exit_test_command(code: i32) -> CommandBuilder {
-    #[cfg(windows)]
-    {
-        let mut command = CommandBuilder::new(crate::platform::detect::system32(
-            "WindowsPowerShell\\v1.0\\powershell.exe",
-        ));
-        command.args([
-            "-NoProfile".to_string(),
-            "-NonInteractive".to_string(),
-            "-Command".to_string(),
-            format!("exit {code}"),
-        ]);
-        command
-    }
-    #[cfg(not(windows))]
-    {
-        let mut command = CommandBuilder::new("/bin/sh");
-        command.args(["-c".to_string(), format!("exit {code}")]);
-        command
     }
 }
 

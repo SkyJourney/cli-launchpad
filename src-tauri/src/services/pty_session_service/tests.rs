@@ -3,7 +3,7 @@ use super::input::*;
 use super::persistence::register_then_persist;
 use super::route::*;
 use super::test_support::{
-    blocking_channel, failing_channel_with, long_running_test_command, quick_exit_test_command,
+    blocking_channel, failing_channel_with, fake_child, long_running_test_command,
     run_with_timeout, spawn_test_child, wait_until, FakeSink, FakeStore,
 };
 use super::*;
@@ -1350,7 +1350,10 @@ fn child_monitor_persists_exit_once_removes_the_session_and_delivers_exited() {
     let (channel, events) = recording_channel();
     let inserted = manager.insert_test_session("main", Some(channel));
     let session = manager.get(&inserted.session_id).unwrap();
-    let (child, _master) = spawn_test_child(quick_exit_test_command(3));
+    // The monitor logic is under test, not whether a real shell can exit inside a ConPTY: the
+    // child exits exactly when the test says so, and there is no reader thread to wait for.
+    let (child, exit) = fake_child();
+    session.reader_done.store(true, Ordering::Release);
     let (store, finished) = FakeStore::new();
 
     spawn_child_monitor(
@@ -1360,6 +1363,7 @@ fn child_monitor_persists_exit_once_removes_the_session_and_delivers_exited() {
         manager.registry_handle(),
     )
     .expect("spawn monitor");
+    exit.exit(3);
 
     finished
         .recv_timeout(MONITOR_TIMEOUT)
@@ -1434,7 +1438,8 @@ fn child_monitor_survives_a_persistence_failure() {
     let (channel, events) = recording_channel();
     let inserted = manager.insert_test_session("main", Some(channel));
     let session = manager.get(&inserted.session_id).unwrap();
-    let (child, _master) = spawn_test_child(quick_exit_test_command(3));
+    let (child, exit) = fake_child();
+    session.reader_done.store(true, Ordering::Release);
     let (store, finished) = FakeStore::new();
     store.fail_finish.store(true, Ordering::SeqCst);
 
@@ -1445,6 +1450,7 @@ fn child_monitor_survives_a_persistence_failure() {
         manager.registry_handle(),
     )
     .expect("spawn monitor");
+    exit.exit(3);
 
     finished
         .recv_timeout(MONITOR_TIMEOUT)
@@ -1458,6 +1464,128 @@ fn child_monitor_survives_a_persistence_failure() {
 
     assert_eq!(store.finished.lock().unwrap().len(), 1);
     assert_eq!(manager.active_count(), 0);
+}
+
+#[test]
+fn child_monitor_waits_for_a_child_that_exits_after_the_monitor_started() {
+    let manager = PtySessionManager::default();
+    let (channel, _events) = recording_channel();
+    let inserted = manager.insert_test_session("main", Some(channel));
+    let session = manager.get(&inserted.session_id).unwrap();
+    let (child, exit) = fake_child();
+    session.reader_done.store(true, Ordering::Release);
+    let (store, finished) = FakeStore::new();
+
+    spawn_child_monitor(
+        Arc::clone(&session),
+        child,
+        store.clone(),
+        manager.registry_handle(),
+    )
+    .expect("spawn monitor");
+
+    // The child is still running: nothing may be persisted yet.
+    assert!(
+        finished
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "the monitor must not finish while the child is running"
+    );
+    assert!(store.finished.lock().unwrap().is_empty());
+    assert_eq!(manager.active_count(), 1);
+
+    exit.exit(0);
+    finished
+        .recv_timeout(MONITOR_TIMEOUT)
+        .expect("the monitor persists the exit once the child exits");
+    assert_eq!(
+        *store.finished.lock().unwrap(),
+        vec![(inserted.session_id.clone(), "exited".to_string(), Some(0))]
+    );
+}
+
+#[test]
+fn child_monitor_handles_a_child_that_exited_before_the_monitor_started() {
+    let manager = PtySessionManager::default();
+    let (channel, events) = recording_channel();
+    let inserted = manager.insert_test_session("main", Some(channel));
+    let session = manager.get(&inserted.session_id).unwrap();
+    let (child, exit) = fake_child();
+    session.reader_done.store(true, Ordering::Release);
+    let (store, finished) = FakeStore::new();
+    exit.exit(7);
+
+    spawn_child_monitor(
+        Arc::clone(&session),
+        child,
+        store.clone(),
+        manager.registry_handle(),
+    )
+    .expect("spawn monitor");
+
+    finished
+        .recv_timeout(MONITOR_TIMEOUT)
+        .expect("an exit that happened before the monitor started is not lost");
+    assert!(
+        wait_until(MONITOR_TIMEOUT, || {
+            event_types(&events).contains(&"exited".to_string()) && manager.active_count() == 0
+        }),
+        "the exited event must be delivered and the session removed"
+    );
+    assert_eq!(
+        *store.finished.lock().unwrap(),
+        vec![(inserted.session_id.clone(), "exited".to_string(), Some(7))]
+    );
+}
+
+#[test]
+fn child_monitor_reports_failed_when_waiting_for_the_child_fails() {
+    let manager = PtySessionManager::default();
+    let (channel, events) = recording_channel();
+    let inserted = manager.insert_test_session("main", Some(channel));
+    let session = manager.get(&inserted.session_id).unwrap();
+    let (child, exit) = fake_child();
+    session.reader_done.store(true, Ordering::Release);
+    let (store, finished) = FakeStore::new();
+
+    spawn_child_monitor(
+        Arc::clone(&session),
+        child,
+        store.clone(),
+        manager.registry_handle(),
+    )
+    .expect("spawn monitor");
+    // Dropping the exit handle makes `wait` fail instead of returning an exit status.
+    drop(exit);
+
+    finished
+        .recv_timeout(MONITOR_TIMEOUT)
+        .expect("a failed wait still ends the session");
+    assert!(
+        wait_until(MONITOR_TIMEOUT, || {
+            event_types(&events).contains(&"exited".to_string()) && manager.active_count() == 0
+        }),
+        "the exited event must be delivered and the session removed"
+    );
+    assert_eq!(
+        *store.finished.lock().unwrap(),
+        vec![(inserted.session_id.clone(), "failed".to_string(), None)]
+    );
+    let types = event_types(&events);
+    assert!(
+        types.contains(&"failed".to_string()),
+        "a failed wait is reported to the owner: {types:?}"
+    );
+    let exited: Vec<serde_json::Value> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event["type"] == "exited")
+        .cloned()
+        .collect();
+    assert_eq!(exited.len(), 1);
+    assert_eq!(exited[0]["state"], "failed");
+    assert!(exited[0]["exitCode"].is_null());
 }
 
 fn snapshot_with(data: &str) -> PtyTerminalSnapshot {
@@ -2562,11 +2690,14 @@ fn reader_receives_eof_after_the_child_exits_without_dropping_the_master() {
     let (channel, events) = recording_channel();
     // The session owns the real master, exactly like a production launch; the test never drops
     // it: the monitor must release the terminal for the reader to end.
+    // The child is ended by the test (not by a shell racing the ConPTY startup handshake), so
+    // the exit time is under the test's control while the terminal stays real.
     let (session_id, child, reader) = manager.insert_test_session_with_real_pty(
         "main",
         Some(channel),
-        quick_exit_test_command(0),
+        long_running_test_command(),
     );
+    let mut killer = child.clone_killer();
     let session = manager.get(&session_id).unwrap();
     let reader_thread = spawn_output_reader(Arc::clone(&session), reader).expect("spawn reader");
     let (store, finished) = FakeStore::new();
@@ -2577,6 +2708,9 @@ fn reader_receives_eof_after_the_child_exits_without_dropping_the_master() {
         manager.registry_handle(),
     )
     .expect("spawn monitor");
+    // portable-pty 0.9 on Windows returns the last OS error from `kill` even when
+    // `TerminateProcess` succeeded, so only the monitor's view counts.
+    let _ = killer.kill();
 
     finished
         .recv_timeout(MONITOR_TIMEOUT)
