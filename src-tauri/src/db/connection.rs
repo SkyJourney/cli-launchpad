@@ -998,6 +998,76 @@ mod tests {
     }
 
     #[test]
+    fn a_failing_migration_0015_leaves_the_schema_14_database_untouched() {
+        // PD-05: 0015 deletes data, so a failure half-way must not commit its first statements.
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("failing-0015.sqlite");
+        let (tool_args_before, shell_profiles_before, launch_target_before) = {
+            let connection = open_database(&path).expect("open database");
+            apply_migrations_through(&connection, 14).expect("apply schema 14");
+            connection
+                .execute(
+                    "insert into directories (id, name, path, pinned, note, last_used_at) values (7, 'Kept', 'C:\\Projects\\kept', 1, 'keep', '2026-10-01T00:00:00Z')",
+                    [],
+                )
+                .expect("seed project");
+            connection
+                .execute(
+                    "insert into directory_tool_args (directory_id, tool_key, args) values (7, 'claude', '--legacy')",
+                    [],
+                )
+                .expect("seed legacy tool args");
+            // 0015 drops this column after it has already dropped the legacy tables and deleted
+            // the launch_target setting, so removing it first makes the migration fail half-way.
+            connection
+                .execute("alter table tools drop column executable", [])
+                .expect("sabotage the schema");
+            (
+                count(&connection, "select count(*) from directory_tool_args"),
+                count(&connection, "select count(*) from shell_profiles"),
+                count(
+                    &connection,
+                    "select count(*) from application_settings where key = 'launch_target'",
+                ),
+            )
+        };
+        assert_eq!(tool_args_before, 1);
+        assert!(shell_profiles_before >= 1);
+        assert_eq!(launch_target_before, 1);
+
+        {
+            let connection = open_database(&path).expect("reopen the database");
+            assert!(
+                apply_migrations(&connection).is_err(),
+                "0015 must fail on the sabotaged schema"
+            );
+            // The failed migration must not be committed by closing the connection.
+        }
+
+        let connection = open_database(&path).expect("reopen after the failed upgrade");
+        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(
+            count(&connection, "select count(*) from directory_tool_args"),
+            tool_args_before
+        );
+        assert_eq!(
+            count(&connection, "select count(*) from shell_profiles"),
+            shell_profiles_before
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'launch_target'",
+            ),
+            launch_target_before
+        );
+        assert_eq!(
+            count(&connection, "select count(*) from directories where id = 7"),
+            1
+        );
+    }
+
+    #[test]
     fn upgrading_a_schema_14_database_removes_legacy_objects_and_keeps_project_data() {
         let connection = Connection::open_in_memory().expect("open schema 14 database");
         connection

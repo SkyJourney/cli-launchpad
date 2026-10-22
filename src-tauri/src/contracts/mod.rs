@@ -5741,6 +5741,45 @@ mod command_args_scan {
 }
 
 #[test]
+fn commands_do_not_accept_caller_reported_window_labels() {
+    // RS-T54: a command learns who called it from `CallerWindow`, never from a parameter the
+    // caller fills in itself. `target_label` (the window a grant is aimed at) is a different thing.
+    use command_args_scan::arg_keys;
+    const FORBIDDEN: [&str; 3] = ["windowLabel", "label", "sourceLabel"];
+
+    let definitions = command_definitions();
+    assert!(
+        definitions.len() >= 70,
+        "the scan must see every registered command, saw {}",
+        definitions.len()
+    );
+    let mut violations = Vec::new();
+    for definition in &definitions {
+        for argument in arg_keys(&definition.signature) {
+            if FORBIDDEN.contains(&argument.key.as_str()) {
+                violations.push(format!(
+                    "{}: parameter `{}` ({})",
+                    definition.name, argument.key, definition.file
+                ));
+            }
+        }
+    }
+    assert!(violations.is_empty(), "{violations:#?}");
+
+    // Reverse: the parser reports such parameters when they exist, so the rule cannot pass vacuously.
+    let keys: Vec<String> = arg_keys(
+        "(caller: CallerWindow, window_label: String, source_label: String, label: String, target_label: String)",
+    )
+    .into_iter()
+    .map(|argument| argument.key)
+    .collect();
+    assert_eq!(
+        keys,
+        vec!["windowLabel", "sourceLabel", "label", "targetLabel"]
+    );
+}
+
+#[test]
 fn command_arg_extraction_handles_injected_optional_and_channel_params() {
     use command_args_scan::{arg_keys, ArgKey};
 

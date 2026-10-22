@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 878,
-    "Linux": 884,
-    "macOS": 880
+    "Windows": 880,
+    "Linux": 886,
+    "macOS": 882
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -336,6 +336,8 @@
       "services::pty_session_service::tests::child_monitor_waits_for_a_child_that_exits_after_the_monitor_started",
       "services::pty_session_service::tests::child_monitor_handles_a_child_that_exited_before_the_monitor_started",
       "services::pty_session_service::tests::child_monitor_reports_failed_when_waiting_for_the_child_fails",
+      "db::connection::tests::a_failing_migration_0015_leaves_the_schema_14_database_untouched",
+      "contracts::commands_do_not_accept_caller_reported_window_labels",
       "services::pty_session_service::handoff::tests::begin_from_idle_pauses_the_flow_and_returns_a_fresh_token",
       "services::pty_session_service::handoff::tests::begin_while_a_live_handoff_exists_is_rejected_and_keeps_the_state",
       "services::pty_session_service::handoff::tests::begin_after_the_pause_lapsed_replaces_the_stale_handoff",
