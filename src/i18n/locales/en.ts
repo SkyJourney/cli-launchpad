@@ -1,11 +1,11 @@
 export const en = {
   errors: {
     exitReportInvalid:
-      "The exit impacts report was invalid. Try quitting again.",
+      "The exit confirmation data was invalid. Try quitting again.",
     exitImpactsNotReported:
-      "The exit impacts have not been reported yet. Try quitting again.",
+      "The app has not yet determined what quitting will affect. Try quitting again.",
     exitImpactsChanged:
-      "The exit impacts changed (new running work started). Please confirm again.",
+      "What quitting will affect has changed (new work started running). Please confirm again.",
     fileNotFound: "The file could not be found.",
     fileTooLarge: "The file exceeds the allowed size.",
     ptySessionNotFound: "The terminal session does not exist or has ended.",
@@ -61,7 +61,7 @@ export const en = {
       "A configuration import is in progress. Try again after it finishes.",
     projectNotFound: "The project folder could not be found.",
     layoutSaveRejected:
-      "The backend repeatedly rejected the workspace layout, so saving has stopped.",
+      "The workspace layout was rejected repeatedly, so saving has stopped.",
     layoutSchemaIncompatible:
       "The workspace layout was written by a newer version of the app and cannot be saved by this version.",
     appError: "An unexpected error occurred. Try again.",
@@ -429,7 +429,7 @@ export const en = {
     unknownRefresh: "Unknown; detect again from the top right",
     branchRefreshPrompt: "Refresh manually to check the upstream branch",
     branchUpToDate: "Up to date with the upstream branch",
-    branchUpdateBehind: "{{count}} commits behind the upstream branch",
+    branchUpdateBehind: "{{count}} commit(s) behind the upstream branch",
     branchUpdateBehindUnknown:
       "Updates on the upstream branch (commit count unavailable)",
     branchUpdateStatus: "Update status: ",

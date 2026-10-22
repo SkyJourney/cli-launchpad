@@ -7,11 +7,11 @@ type LocaleShape<T> = {
 export const pt = {
   errors: {
     exitReportInvalid:
-      "O relatório dos impactos da saída era inválido. Tente sair novamente.",
+      "Os dados de confirmação de saída são inválidos. Tente sair novamente.",
     exitImpactsNotReported:
-      "Os impactos da saída ainda não foram informados. Tente sair novamente.",
+      "O aplicativo ainda não determinou o que será afetado ao sair. Tente sair novamente.",
     exitImpactsChanged:
-      "Os impactos da saída mudaram (há novo trabalho em execução). Confirme novamente.",
+      "O que será afetado ao sair mudou (novas tarefas começaram a ser executadas). Confirme novamente.",
     fileNotFound: "O arquivo não foi encontrado.",
     fileTooLarge: "O arquivo excede o tamanho permitido.",
     ptySessionNotFound: "A sessão de terminal não existe ou já foi encerrada.",
@@ -24,7 +24,7 @@ export const pt = {
     filePermissionDenied:
       "Permissão negada. Verifique as permissões do arquivo ou da pasta.",
     backupIndexRefreshDiscarded:
-      "Os dados foram substituídos (um backup foi restaurado ou uma configuração foi importada), então a atualização do índice de sessões iniciada antes foi descartada.",
+      "Os dados foram substituídos (um backup foi restaurado ou uma configuração foi importada), então a atualização do índice de sessões iniciada antes disso foi descartada.",
     projectIdentityUnreadable:
       "Não foi possível ler a identidade do diretório do projeto.",
     fileConflict:
@@ -35,24 +35,24 @@ export const pt = {
       "Esta sessão de terminal não pertence mais a esta janela.",
     ptyHandoffExpired: "A transferência do terminal expirou. Tente novamente.",
     ptyHandoffTargetIsSource:
-      "A janela de destino é a janela de origem; o terminal não pode ser transferido.",
+      "A janela de destino é a mesma da janela de origem, então o terminal não pode ser transferido.",
     ptyInputBackpressure:
       "A fila de entrada do terminal está cheia. Tente novamente em instantes.",
     ptyInputUnavailable:
       "O canal de entrada do terminal está fechado. Reconecte a sessão.",
     ptySessionsActive:
-      "Restaurar uma cópia de segurança ou importar uma configuração está bloqueado enquanto houver {{count}} sessão(ões) de terminal em execução. Feche-as primeiro.",
+      "Restaurar um backup ou importar uma configuração está bloqueado enquanto houver {{count}} sessão(ões) de terminal em execução. Feche-as primeiro.",
     backupRestoreInProgress:
       "Uma restauração de backup está em andamento. Tente novamente quando terminar.",
     ptySessionStarting:
-      "{{count}} sessão(ões) de terminal ou tarefa(s) de execução ainda estão a iniciar. Tente novamente em breve.",
+      "{{count}} sessão(ões) de terminal ou tarefa(s) de execução ainda estão iniciando. Tente novamente em instantes.",
     execPlanChanged:
       "O plano de execução foi alterado. Revise e confirme novamente.",
     execBusy: "Já existe uma tarefa em execução para esta ferramenta.",
     exitNoPendingRequest:
-      "Não há nenhum pedido de saída pendente. Tente sair novamente.",
+      "Não há nenhuma solicitação de saída pendente. Tente sair novamente.",
     exitRequestMismatch:
-      "Este pedido de saída não é mais o atual. Tente sair novamente.",
+      "Esta solicitação de saída não é mais válida. Tente sair novamente.",
     layoutNeedsReset:
       "O layout do espaço de trabalho é inválido e precisa ser redefinido.",
     layoutCaseDuplicate:
@@ -62,16 +62,16 @@ export const pt = {
     appExiting:
       "O aplicativo está sendo encerrado. Tente novamente depois de reiniciá-lo.",
     appExitDeferred:
-      "Uma restauração ou importação ainda está em andamento, então o aplicativo ainda não pode ser encerrado.",
+      "Uma restauração ou importação ainda está em andamento, então o aplicativo não pode ser encerrado agora.",
     dataReplaceBlocked:
-      "Ainda há {{count}} tarefa(s) de instalação ou atualização em execução. Aguarde o término antes de restaurar ou importar.",
+      "Ainda há {{count}} tarefa(s) de instalação ou atualização em execução. Aguarde o término delas antes de restaurar ou importar.",
     dataReplaceInProgress:
       "Já há outra restauração ou importação em andamento.",
     configImportInProgress:
       "Uma importação de configuração está em andamento. Tente novamente quando terminar.",
     projectNotFound: "A pasta do projeto não foi encontrada.",
     layoutSaveRejected:
-      "O backend rejeitou repetidamente o layout do espaço de trabalho, então o salvamento foi interrompido.",
+      "O layout do espaço de trabalho foi rejeitado várias vezes seguidas, então o salvamento foi interrompido.",
     layoutSchemaIncompatible:
       "O layout do espaço de trabalho foi gravado por uma versão mais recente do aplicativo e esta versão não consegue salvá-lo.",
     appError: "Ocorreu um erro inesperado. Tente novamente.",
@@ -161,7 +161,7 @@ export const pt = {
     dismiss: "Fechar",
   },
   appCrash: {
-    title: "Ocorreu um erro inesperado",
+    title: "Algo deu errado",
     description:
       "O CLI Launchpad encontrou um erro inesperado nesta janela. Recarregar reinicia a janela; edições não salvas podem ser perdidas.",
     reload: "Recarregar janela",
@@ -449,7 +449,7 @@ export const pt = {
     branchRefreshPrompt:
       "Atualize manualmente para verificar a branch upstream",
     branchUpToDate: "Atualizado com a branch upstream",
-    branchUpdateBehind: "{{count}} commits atrás da branch upstream",
+    branchUpdateBehind: "{{count}} commit(s) atrás da branch upstream",
     branchUpdateBehindUnknown:
       "Há atualizações na branch upstream (quantidade de commits indisponível)",
     branchUpdateStatus: "Status da atualização: ",
@@ -711,7 +711,7 @@ export const pt = {
       "{{count}} arquivo(s) não puderam ser salvos; fechamento cancelado",
     confirmCloseTitle: "Confirmar fechamento",
     caseVariantsMerged:
-      "{{count}} documento(s) mesclado(s) cujos caminhos diferiam apenas em maiúsculas e minúsculas.",
+      "{{count}} documento(s) cujos caminhos diferiam apenas em maiúsculas e minúsculas foram mesclados.",
     rightPanelTabs: "Guias do painel direito",
     files: "Arquivos",
     git: "Git",

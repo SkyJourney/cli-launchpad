@@ -6,12 +6,11 @@ type LocaleShape<T> = {
 
 export const ja = {
   errors: {
-    exitReportInvalid:
-      "終了の影響の報告が不正でした。もう一度終了してください。",
+    exitReportInvalid: "終了確認の情報が無効でした。もう一度終了してください。",
     exitImpactsNotReported:
-      "終了の影響がまだ報告されていません。もう一度終了してください。",
+      "終了によって影響を受ける内容をアプリがまだ確認できていません。もう一度終了してください。",
     exitImpactsChanged:
-      "終了の影響が変わりました（新しく実行中の処理があります）。もう一度確認してください。",
+      "終了前に確認した内容が変わりました（新しく実行中の処理があります）。もう一度確認してください。",
     fileNotFound: "ファイルが見つかりません。",
     fileTooLarge: "ファイルサイズが上限を超えています。",
     ptySessionNotFound:
@@ -38,7 +37,7 @@ export const ja = {
     ptyHandoffExpired:
       "ターミナルの引き継ぎがタイムアウトしました。もう一度お試しください。",
     ptyHandoffTargetIsSource:
-      "移行先ウィンドウが移行元と同じため、ターミナルを引き継げません。",
+      "移動先のウィンドウが移動元と同じため、ターミナルを引き継げません。",
     ptyInputBackpressure:
       "ターミナル入力キューがいっぱいです。少し待ってから再試行してください。",
     ptyInputUnavailable:
@@ -48,7 +47,7 @@ export const ja = {
     backupRestoreInProgress:
       "バックアップを復元中です。完了してからもう一度お試しください。",
     ptySessionStarting:
-      "{{count}} 件のターミナルセッションまたは実行タスクを起動中です。しばらくしてから再試行してください。",
+      "ターミナルセッションまたは実行タスクが {{count}} 件まだ起動中です。しばらくしてからもう一度お試しください。",
     execPlanChanged:
       "実行計画が変更されました。内容を確認して再度承認してください。",
     execBusy: "このツールではすでにタスクが実行中です。",
@@ -59,7 +58,7 @@ export const ja = {
     layoutNeedsReset:
       "ワークスペースのレイアウトが無効です。リセットが必要です。",
     layoutCaseDuplicate:
-      "レイアウトに、大文字と小文字だけが異なるパスのドキュメントが含まれています。",
+      "レイアウトに、パスの大文字・小文字だけが異なる重複したドキュメントが含まれています。",
     internal:
       "内部エラーが発生しました。もう一度お試しください。問題が続く場合はアプリを再起動してください。",
     appExiting: "アプリを終了しています。再起動後にもう一度お試しください。",
@@ -72,7 +71,7 @@ export const ja = {
       "設定のインポートが進行中です。完了後にもう一度お試しください。",
     projectNotFound: "プロジェクトフォルダーが見つかりません。",
     layoutSaveRejected:
-      "バックエンドがワークスペースのレイアウトを繰り返し拒否したため、保存を停止しました。",
+      "ワークスペースのレイアウトの保存が繰り返し拒否されたため、保存を停止しました。",
     layoutSchemaIncompatible:
       "ワークスペースのレイアウトはより新しいバージョンのアプリで書き込まれたため、このバージョンでは保存できません。",
     appError: "予期しないエラーが発生しました。もう一度お試しください。",
@@ -161,7 +160,7 @@ export const ja = {
     dismiss: "閉じる",
   },
   appCrash: {
-    title: "予期しないエラーが発生しました",
+    title: "予期しない問題が発生しました",
     description:
       "このウィンドウで CLI Launchpad に予期しないエラーが発生しました。再読み込みするとウィンドウが再起動され、保存していない編集内容は失われる可能性があります。",
     reload: "ウィンドウを再読み込み",
@@ -443,10 +442,10 @@ export const ja = {
     unavailableWithError: "利用できません（{{error}}）",
     unknownRefresh: "不明です。右上から再検出してください",
     branchRefreshPrompt: "上流ブランチを確認するには手動で更新してください",
-    branchUpToDate: "上流ブランチの最新状態です",
+    branchUpToDate: "上流ブランチと同期済みです",
     branchUpdateBehind: "上流ブランチより {{count}} コミット遅れています",
     branchUpdateBehindUnknown:
-      "上流ブランチに更新があります（コミット数は不明）",
+      "上流ブランチに更新があります（遅れているコミット数は不明）",
     branchUpdateStatus: "更新状態: ",
     hermesInstallEffectsHeading: "公式インストーラーは次の操作を行います:",
     hermesInstallEffectRuntime:
@@ -692,12 +691,12 @@ export const ja = {
     discardAndClose: "変更を破棄して閉じる",
     saveAllInProgress: "保存中…",
     saveAllFailedQuit:
-      "{{count}} 個のファイルを保存できなかったため、終了を取り消しました",
+      "{{count}} 件のファイルを保存できなかったため、終了を取り消しました",
     saveAllFailedClose:
-      "{{count}} 個のファイルを保存できなかったため、閉じる操作を取り消しました",
-    confirmCloseTitle: "閉じることを確認",
+      "{{count}} 件のファイルを保存できなかったため、閉じる操作を取り消しました",
+    confirmCloseTitle: "閉じる操作の確認",
     caseVariantsMerged:
-      "大文字・小文字だけが異なる {{count}} 件のドキュメントを統合しました。",
+      "パスの大文字・小文字だけが異なっていた重複ドキュメントを {{count}} 件統合しました。",
     rightPanelTabs: "右側パネルのタブ",
     files: "ファイル",
     git: "Git",

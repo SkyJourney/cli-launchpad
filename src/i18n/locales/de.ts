@@ -7,29 +7,29 @@ type LocaleShape<T> = {
 export const de = {
   errors: {
     exitReportInvalid:
-      "Die Meldung der Beendigungsfolgen war ungültig. Versuche es erneut.",
+      "Die Bestätigungsdaten zum Beenden waren ungültig. Versuche erneut, die App zu beenden.",
     exitImpactsNotReported:
-      "Die Beendigungsfolgen wurden noch nicht gemeldet. Versuche es erneut.",
+      "Die App hat noch nicht ermittelt, was durch das Beenden betroffen ist. Versuche erneut, die App zu beenden.",
     exitImpactsChanged:
-      "Die Beendigungsfolgen haben sich geändert (neue laufende Arbeit). Bitte erneut bestätigen.",
+      "Was durch das Beenden betroffen ist, hat sich geändert (es laufen neue Aufgaben). Bitte bestätige erneut.",
     fileNotFound: "Die Datei wurde nicht gefunden.",
     fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
     ptySessionNotFound:
       "Die Terminalsitzung existiert nicht oder wurde beendet.",
     ptyHandoffInProgress:
-      "Dieses Terminal wird gerade in ein anderes Fenster verschoben. Versuchen Sie es gleich erneut.",
+      "Dieses Terminal wird gerade in ein anderes Fenster verschoben. Versuche es gleich erneut.",
     fileNotUtf8:
       "Nur UTF-8-Textdateien können bearbeitet und gespeichert werden.",
     fileNotRegular:
       "Nur reguläre Dateien können geöffnet oder gespeichert werden.",
     layoutNameExists:
-      "Ein Layout mit diesem Namen existiert bereits. Verwenden Sie einen anderen Namen.",
+      "Ein Layout mit diesem Namen existiert bereits. Verwende einen anderen Namen.",
     layoutPresetLimit:
       "Es werden höchstens {{max}} benannte Layouts unterstützt.",
     filePermissionDenied:
-      "Zugriff verweigert. Prüfen Sie die Berechtigungen der Datei oder des Ordners.",
+      "Zugriff verweigert. Prüfe die Berechtigungen der Datei oder des Ordners.",
     backupIndexRefreshDiscarded:
-      "Die Daten wurden ersetzt (Backup wiederhergestellt oder Konfiguration importiert); eine vorher gestartete Aktualisierung des Sitzungsindex wurde verworfen.",
+      "Die Daten wurden ersetzt (Backup wiederhergestellt oder Konfiguration importiert); daher wurde eine zuvor gestartete Aktualisierung des Sitzungsindex verworfen.",
     projectIdentityUnreadable:
       "Die Identität des Projektverzeichnisses konnte nicht gelesen werden.",
     fileConflict:
@@ -41,47 +41,45 @@ export const de = {
     ptyHandoffExpired:
       "Die Übergabe des Terminals ist abgelaufen. Versuche es erneut.",
     ptyHandoffTargetIsSource:
-      "Das Zielfenster ist das Quellfenster; das Terminal kann nicht übergeben werden.",
+      "Das Zielfenster ist das Quellfenster, daher kann das Terminal nicht übergeben werden.",
     ptyInputBackpressure:
       "Die Terminal-Eingabewarteschlange ist voll. Versuche es gleich erneut.",
     ptyInputUnavailable:
       "Der Terminal-Eingabekanal ist geschlossen. Verbinde die Sitzung erneut.",
     ptySessionsActive:
-      "Das Wiederherstellen eines Backups oder das Importieren einer Konfiguration ist blockiert, solange {{count}} Terminal-Sitzung(en) laufen. Schließen Sie sie zuerst.",
+      "Das Wiederherstellen eines Backups oder das Importieren einer Konfiguration ist blockiert, solange {{count}} Terminalsitzung(en) laufen. Schließe sie zuerst.",
     backupRestoreInProgress:
       "Eine Backup-Wiederherstellung läuft. Versuche es danach erneut.",
     ptySessionStarting:
-      "{{count}} Terminal-Sitzung(en) oder Ausführungsaufgabe(n) werden noch gestartet. Versuchen Sie es gleich erneut.",
+      "{{count}} Terminalsitzung(en) oder Ausführungsaufgabe(n) werden noch gestartet. Versuche es gleich erneut.",
     execPlanChanged:
       "Der Ausführungsplan hat sich geändert. Prüfe und bestätige ihn erneut.",
     execBusy: "Für dieses Tool läuft bereits eine Aufgabe.",
     exitNoPendingRequest:
-      "Es gibt keine ausstehende Beenden-Anfrage. Versuchen Sie es erneut.",
+      "Es gibt keine ausstehende Beenden-Anfrage. Versuche erneut, die App zu beenden.",
     exitRequestMismatch:
-      "Diese Beenden-Anfrage ist nicht mehr aktuell. Versuchen Sie es erneut.",
+      "Diese Beenden-Anfrage ist nicht mehr aktuell. Versuche erneut, die App zu beenden.",
     layoutNeedsReset:
       "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
     layoutCaseDuplicate:
       "Das Layout enthält Dokumente, deren Pfade sich nur in der Groß-/Kleinschreibung unterscheiden.",
     internal:
-      "Es ist ein interner Fehler aufgetreten. Versuchen Sie es erneut und starten Sie die App neu, falls das Problem bestehen bleibt.",
-    appExiting:
-      "Die App wird beendet. Versuchen Sie es nach dem Neustart erneut.",
+      "Es ist ein interner Fehler aufgetreten. Versuche es erneut und starte die App neu, falls das Problem bestehen bleibt.",
+    appExiting: "Die App wird beendet. Versuche es nach dem Neustart erneut.",
     appExitDeferred:
       "Eine Wiederherstellung oder ein Import läuft noch, daher kann die App noch nicht beendet werden.",
     dataReplaceBlocked:
-      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Warten Sie, bis sie beendet sind, bevor Sie wiederherstellen oder importieren.",
+      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Warte, bis sie beendet sind, bevor du wiederherstellst oder importierst.",
     dataReplaceInProgress:
       "Eine andere Wiederherstellung oder ein anderer Import läuft bereits.",
     configImportInProgress:
-      "Ein Konfigurationsimport läuft. Versuchen Sie es nach dem Abschluss erneut.",
+      "Ein Konfigurationsimport läuft. Versuche es nach dem Abschluss erneut.",
     projectNotFound: "Der Projektordner wurde nicht gefunden.",
     layoutSaveRejected:
-      "Das Backend hat das Workspace-Layout wiederholt abgelehnt, daher wurde das Speichern gestoppt.",
+      "Das Arbeitsbereich-Layout wurde wiederholt abgelehnt, daher wurde das Speichern gestoppt.",
     layoutSchemaIncompatible:
-      "Das Workspace-Layout wurde von einer neueren App-Version geschrieben und kann von dieser Version nicht gespeichert werden.",
-    appError:
-      "Ein unerwarteter Fehler ist aufgetreten. Versuchen Sie es erneut.",
+      "Das Arbeitsbereich-Layout wurde von einer neueren App-Version geschrieben und kann von dieser Version nicht gespeichert werden.",
+    appError: "Ein unerwarteter Fehler ist aufgetreten. Versuche es erneut.",
     generic: "Der Vorgang ist fehlgeschlagen.",
     directoryInUse: "Für dieses Projekt läuft noch eine Terminal-Sitzung.",
   },
@@ -281,9 +279,9 @@ export const de = {
     detachedStartFailed:
       "Separates Terminalfenster konnte nicht gestartet werden.",
     listenerSetupFailed:
-      "Einige Fensterkommunikationskanäle konnten nicht registriert werden ({{events}}). Separate Fenster reagieren möglicherweise nicht; starten Sie die App neu, falls das Problem bestehen bleibt.",
+      "Einige Kommunikationskanäle zwischen Fenstern konnten nicht registriert werden ({{events}}). Separate Fenster reagieren möglicherweise nicht; starte die App neu, falls das Problem bestehen bleibt.",
     ownerLostRecoveryFailed:
-      "Die Terminalsitzung konnte nach dem Schließen ihres Fensters nicht wieder verbunden werden. Schließen Sie dieses Terminal und starten Sie es neu.",
+      "Die Terminalsitzung konnte nach dem Schließen ihres Fensters nicht wieder verbunden werden. Schließe dieses Terminal und starte es neu.",
     detachedStateChanged:
       "Der Status des separaten Terminalfensters hat sich geändert. Bitte versuche es erneut.",
     detachedSessionMissing:
@@ -459,8 +457,8 @@ export const de = {
     unknownRefresh: "Unbekannt; oben rechts erneut erkennen",
     branchRefreshPrompt:
       "Manuell aktualisieren, um den Upstream-Branch zu prüfen",
-    branchUpToDate: "Auf dem neuesten Stand mit dem Upstream-Branch",
-    branchUpdateBehind: "{{count}} Commits hinter dem Upstream-Branch",
+    branchUpToDate: "Auf demselben Stand wie der Upstream-Branch",
+    branchUpdateBehind: "{{count}} Commit(s) hinter dem Upstream-Branch",
     branchUpdateBehindUnknown:
       "Updates auf dem Upstream-Branch (Anzahl der Commits nicht verfügbar)",
     branchUpdateStatus: "Update-Status: ",
@@ -608,7 +606,7 @@ export const de = {
       pre_restore: "Schutzsicherung vor der Wiederherstellung",
       pre_migration: "Automatische Sicherung vor dem Upgrade",
       pre_case_merge:
-        "Automatische Sicherung vor dem Zusammenführen von Dokumenten mit unterschiedlicher Groß-/Kleinschreibung",
+        "Automatische Sicherung vor dem Zusammenführen von Dokumenten, die sich nur in der Groß-/Kleinschreibung unterscheiden",
     },
     preservation: {
       exact: "Vollständig erhalten",

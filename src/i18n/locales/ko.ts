@@ -7,16 +7,16 @@ type LocaleShape<T> = {
 export const ko = {
   errors: {
     exitReportInvalid:
-      "종료 영향 보고가 올바르지 않습니다. 다시 종료해 보세요.",
+      "종료 확인 정보가 올바르지 않습니다. 다시 종료해 보세요.",
     exitImpactsNotReported:
-      "종료 영향이 아직 보고되지 않았습니다. 다시 종료해 보세요.",
+      "종료 시 영향을 받는 항목을 아직 확인하지 못했습니다. 다시 종료해 보세요.",
     exitImpactsChanged:
-      "종료 영향이 바뀌었습니다(새로 실행 중인 작업이 있습니다). 다시 확인해 주세요.",
+      "종료 시 영향을 받는 항목이 바뀌었습니다(새 작업이 실행되기 시작했습니다). 다시 확인해 주세요.",
     fileNotFound: "파일을 찾을 수 없습니다.",
     fileTooLarge: "파일 크기가 허용된 한도를 초과했습니다.",
     ptySessionNotFound: "터미널 세션이 없거나 이미 종료되었습니다.",
     ptyHandoffInProgress:
-      "이 터미널을 다른 창으로 이동하는 중입니다. 잠시 후 다시 시도하세요.",
+      "이 터미널이 다른 창으로 이동하는 중입니다. 잠시 후 다시 시도하세요.",
     fileNotUtf8: "UTF-8 텍스트 파일만 편집하고 저장할 수 있습니다.",
     fileNotRegular: "일반 파일만 열거나 저장할 수 있습니다.",
     layoutNameExists:
@@ -26,9 +26,9 @@ export const ko = {
     filePermissionDenied:
       "권한이 거부되었습니다. 파일 또는 폴더 권한을 확인하세요.",
     backupIndexRefreshDiscarded:
-      "데이터가 교체되어(백업 복원 또는 설정 가져오기), 교체 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
+      "데이터가 교체되어(백업 복원 또는 구성 가져오기), 교체 전에 시작된 세션 인덱스 새로 고침은 취소되었습니다.",
     projectIdentityUnreadable:
-      "프로젝트 디렉터리의 신원 정보를 읽을 수 없습니다.",
+      "프로젝트 디렉터리의 식별 정보를 읽을 수 없습니다.",
     fileConflict:
       "디스크의 파일이 변경되었습니다. 저장하기 전에 다시 불러오세요.",
     fileIdentityChanged:
@@ -42,10 +42,10 @@ export const ko = {
     ptyInputUnavailable:
       "터미널 입력 채널이 닫혔습니다. 세션을 다시 연결하세요.",
     ptySessionsActive:
-      "터미널 세션 {{count}}개가 실행 중이므로 백업 복원 또는 설정 가져오기를 할 수 없습니다. 먼저 세션을 닫으세요.",
+      "터미널 세션 {{count}}개가 실행 중이므로 백업 복원 또는 구성 가져오기를 할 수 없습니다. 먼저 세션을 닫으세요.",
     backupRestoreInProgress: "백업을 복원 중입니다. 완료된 후 다시 시도하세요.",
     ptySessionStarting:
-      "터미널 세션 또는 실행 작업 {{count}}개를 시작하는 중입니다. 잠시 후 다시 시도하세요.",
+      "터미널 세션 또는 실행 작업 {{count}}개가 아직 시작 중입니다. 잠시 후 다시 시도하세요.",
     execPlanChanged: "실행 계획이 변경되었습니다. 다시 검토하고 확인하세요.",
     execBusy: "이 도구에서 이미 작업이 실행 중입니다.",
     exitNoPendingRequest: "대기 중인 종료 요청이 없습니다. 다시 종료해 보세요.",
@@ -53,20 +53,20 @@ export const ko = {
       "이 종료 요청은 더 이상 유효하지 않습니다. 다시 종료해 보세요.",
     layoutNeedsReset: "작업 공간 레이아웃이 잘못되어 초기화해야 합니다.",
     layoutCaseDuplicate:
-      "레이아웃에 대소문자만 다른 경로의 문서가 포함되어 있습니다.",
+      "레이아웃에 경로가 대소문자만 다른 중복 문서가 있습니다.",
     internal:
       "내부 오류가 발생했습니다. 다시 시도하고, 문제가 계속되면 앱을 다시 시작하세요.",
-    appExiting: "앱을 종료하는 중입니다. 다시 시작한 후 다시 시도하세요.",
+    appExiting: "앱이 종료되는 중입니다. 다시 시작한 후 시도하세요.",
     appExitDeferred:
-      "복원 또는 가져오기가 아직 진행 중이므로 앱을 아직 종료할 수 없습니다.",
+      "복원 또는 가져오기가 아직 진행 중이어서 지금은 앱을 종료할 수 없습니다.",
     dataReplaceBlocked:
       "설치 또는 업데이트 작업 {{count}}개가 아직 실행 중입니다. 작업이 끝난 후 복원하거나 가져오세요.",
-    dataReplaceInProgress: "다른 복원 또는 가져오기가 이미 진행 중입니다.",
+    dataReplaceInProgress: "다른 복원 또는 가져오기 작업이 이미 진행 중입니다.",
     configImportInProgress:
       "구성 가져오기가 진행 중입니다. 완료된 후 다시 시도하세요.",
     projectNotFound: "프로젝트 폴더를 찾을 수 없습니다.",
     layoutSaveRejected:
-      "백엔드가 작업 공간 레이아웃을 반복해서 거부하여 저장을 중단했습니다.",
+      "작업 공간 레이아웃 저장이 반복해서 거부되어 저장을 중단했습니다.",
     layoutSchemaIncompatible:
       "작업 공간 레이아웃이 더 새로운 버전의 앱에서 기록되어 이 버전에서는 저장할 수 없습니다.",
     appError: "예기치 않은 오류가 발생했습니다. 다시 시도하세요.",
@@ -257,9 +257,9 @@ export const ko = {
     detachedCreateFailed: "별도 터미널 창을 만들지 못했습니다.",
     detachedStartFailed: "별도 터미널 창을 시작하지 못했습니다.",
     listenerSetupFailed:
-      "일부 창 간 통신 채널을 등록하지 못했습니다 ({{events}}). 별도 창이 응답하지 않을 수 있습니다. 문제가 계속되면 앱을 다시 시작하세요.",
+      "일부 창 간 통신 채널을 등록하지 못했습니다({{events}}). 별도 창이 응답하지 않을 수 있습니다. 문제가 계속되면 앱을 다시 시작하세요.",
     ownerLostRecoveryFailed:
-      "창이 닫힌 후 터미널 세션을 다시 연결하지 못했습니다. 이 터미널을 닫고 다시 시작하세요.",
+      "별도 창이 닫힌 후 터미널 세션을 다시 연결하지 못했습니다. 이 터미널을 닫고 다시 시작하세요.",
     detachedStateChanged: "별도 창 상태가 변경되었습니다. 다시 시도하세요.",
     detachedSessionMissing:
       "기본 작업 공간에서 터미널 세션을 찾을 수 없습니다.",
@@ -429,7 +429,7 @@ export const ko = {
     unknownRefresh: "알 수 없음. 오른쪽 위에서 다시 검색하세요",
     branchRefreshPrompt: "업스트림 브랜치를 확인하려면 수동으로 새로 고치세요",
     branchUpToDate: "업스트림 브랜치와 동기화됨",
-    branchUpdateBehind: "업스트림 브랜치보다 {{count}}개 커밋 뒤처짐",
+    branchUpdateBehind: "업스트림 브랜치보다 커밋 {{count}}개 뒤처짐",
     branchUpdateBehindUnknown:
       "업스트림 브랜치에 업데이트가 있습니다(커밋 수를 알 수 없음)",
     branchUpdateStatus: "업데이트 상태: ",
@@ -573,7 +573,7 @@ export const ko = {
       pre_import: "가져오기 전 자동 백업",
       pre_restore: "복원 전 보호 백업",
       pre_migration: "업그레이드 전 자동 백업",
-      pre_case_merge: "대소문자만 다른 문서를 병합하기 전 자동 백업",
+      pre_case_merge: "대소문자만 다른 중복 문서를 병합하기 전 자동 백업",
     },
     preservation: {
       exact: "완전히 보존됨",
@@ -669,12 +669,13 @@ export const ko = {
   },
   workspaceFiles: {
     saveAllAndClose: "모두 저장 후 닫기",
-    discardAndClose: "변경 사항 버리고 닫기",
+    discardAndClose: "변경 사항을 버리고 닫기",
     saveAllInProgress: "저장 중…",
-    saveAllFailedQuit: "{{count}}개 파일을 저장하지 못해 종료를 취소했습니다",
-    saveAllFailedClose: "{{count}}개 파일을 저장하지 못해 닫기를 취소했습니다",
+    saveAllFailedQuit: "파일 {{count}}개를 저장하지 못해 종료를 취소했습니다",
+    saveAllFailedClose: "파일 {{count}}개를 저장하지 못해 닫기를 취소했습니다",
     confirmCloseTitle: "닫기 확인",
-    caseVariantsMerged: "대소문자만 다른 문서 {{count}}개를 병합했습니다.",
+    caseVariantsMerged:
+      "경로가 대소문자만 다른 중복 문서 {{count}}개를 병합했습니다.",
     rightPanelTabs: "오른쪽 패널 탭",
     files: "파일",
     git: "Git",

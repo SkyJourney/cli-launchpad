@@ -6,11 +6,11 @@ type LocaleShape<T> = {
 
 export const ar = {
   errors: {
-    exitReportInvalid: "تقرير تأثيرات الخروج غير صالح. حاول الخروج مرة أخرى.",
+    exitReportInvalid: "بيانات تأكيد الخروج غير صالحة. حاول الخروج مرة أخرى.",
     exitImpactsNotReported:
-      "لم يتم الإبلاغ عن تأثيرات الخروج بعد. حاول الخروج مرة أخرى.",
+      "لم يحدّد التطبيق بعد ما سيتأثر عند الخروج. حاول الخروج مرة أخرى.",
     exitImpactsChanged:
-      "تغيّرت تأثيرات الخروج (بدأ عمل جارٍ جديد). يرجى التأكيد مرة أخرى.",
+      "تغيّر ما سيتأثر عند الخروج (بدأ تشغيل عمل جديد). يرجى التأكيد مرة أخرى.",
     fileNotFound: "تعذر العثور على الملف.",
     fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
     ptySessionNotFound: "جلسة الطرفية غير موجودة أو انتهت.",
@@ -22,7 +22,7 @@ export const ar = {
     layoutPresetLimit: "الحد الأقصى المدعوم هو {{max}} من التخطيطات المسماة.",
     filePermissionDenied: "تم رفض الإذن. تحقق من أذونات الملف أو المجلد.",
     backupIndexRefreshDiscarded:
-      "تم استبدال البيانات (استعادة نسخة احتياطية أو استيراد إعدادات)، لذا تم تجاهل تحديث فهرس الجلسات الذي بدأ قبله.",
+      "تم استبدال البيانات (استعادة نسخة احتياطية أو استيراد إعدادات)، لذا تم تجاهل تحديث فهرس الجلسات الذي بدأ قبل الاستبدال.",
     projectIdentityUnreadable: "تعذّرت قراءة هوية مجلد المشروع.",
     fileConflict: "تغير الملف على القرص. أعد تحميله قبل الحفظ.",
     fileIdentityChanged:
@@ -42,7 +42,7 @@ export const ar = {
     execPlanChanged: "تغيرت خطة التنفيذ. راجعها وأكدها مرة أخرى.",
     execBusy: "توجد مهمة قيد التشغيل لهذه الأداة بالفعل.",
     exitNoPendingRequest: "لا يوجد طلب خروج معلق. حاول الخروج مرة أخرى.",
-    exitRequestMismatch: "طلب الخروج هذا لم يعد حالياً. حاول الخروج مرة أخرى.",
+    exitRequestMismatch: "لم يعد طلب الخروج هذا صالحًا. حاول الخروج مرة أخرى.",
     layoutNeedsReset: "تخطيط مساحة العمل غير صالح ويجب إعادة تعيينه.",
     layoutCaseDuplicate:
       "يحتوي التخطيط على مستندات تختلف مساراتها في حالة الأحرف فقط.",
@@ -58,8 +58,7 @@ export const ar = {
     configImportInProgress:
       "استيراد الإعدادات قيد التنفيذ. حاول مرة أخرى بعد انتهائه.",
     projectNotFound: "تعذر العثور على مجلد المشروع.",
-    layoutSaveRejected:
-      "رفضت الواجهة الخلفية تخطيط مساحة العمل مرارًا، لذلك توقف الحفظ.",
+    layoutSaveRejected: "رُفض حفظ تخطيط مساحة العمل مرارًا، لذلك توقف الحفظ.",
     layoutSchemaIncompatible:
       "كُتب تخطيط مساحة العمل بواسطة إصدار أحدث من التطبيق ولا يمكن لهذا الإصدار حفظه.",
     appError: "حدث خطأ غير متوقع. حاول مرة أخرى.",
@@ -134,7 +133,7 @@ export const ar = {
     description:
       "لا تزال {{count}} جلسة طرفية مضمّنة قيد التشغيل. سيؤدي الإنهاء إلى إنهاء هذه الجلسات والعمليات التابعة لها.",
     executionTasks:
-      "لا تزال {{count}} مهمة تثبيت أو تحديث قيد التشغيل. ستؤدي مغادرة التطبيق إلى إيقافها.",
+      "ما زالت {{count}} من مهام التثبيت أو التحديث قيد التشغيل. ستؤدي مغادرة التطبيق إلى إيقافها.",
     unsavedDescription: "تحتوي {{count}} من الملفات على تغييرات غير محفوظة:",
     confirmDiscard: "تجاهل التغييرات والخروج",
     terminating: "جارٍ الخروج…",
@@ -418,9 +417,9 @@ export const ar = {
     unavailableWithError: "غير متاح ({{error}})",
     unknownRefresh: "غير معروف؛ أعد الاكتشاف من أعلى اليمين",
     branchRefreshPrompt: "حدّث يدويًا للتحقق من الفرع الأعلى (upstream)",
-    branchUpToDate: "محدّث إلى الفرع الأعلى (upstream)",
+    branchUpToDate: "متزامن مع الفرع الأعلى (upstream)",
     branchUpdateBehind:
-      "متأخر عن الفرع الأعلى (upstream) بمقدار {{count}} التزامات",
+      "متأخر عن الفرع الأعلى (upstream) بعدد {{count}} من الالتزامات",
     branchUpdateBehindUnknown:
       "تتوفر تحديثات على الفرع الأعلى (upstream) (عدد الالتزامات غير متاح)",
     branchUpdateStatus: "حالة التحديث: ",
@@ -662,8 +661,8 @@ export const ar = {
     saveAllAndClose: "حفظ الكل والإغلاق",
     discardAndClose: "تجاهل التغييرات والإغلاق",
     saveAllInProgress: "جارٍ الحفظ…",
-    saveAllFailedQuit: "تعذّر حفظ {{count}} ملف؛ أُلغي الخروج",
-    saveAllFailedClose: "تعذّر حفظ {{count}} ملف؛ أُلغي الإغلاق",
+    saveAllFailedQuit: "تعذّر حفظ {{count}} من الملفات؛ أُلغي الخروج",
+    saveAllFailedClose: "تعذّر حفظ {{count}} من الملفات؛ أُلغي الإغلاق",
     confirmCloseTitle: "تأكيد الإغلاق",
     caseVariantsMerged:
       "تم دمج {{count}} من المستندات التي كانت مساراتها تختلف في حالة الأحرف فقط.",

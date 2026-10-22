@@ -1,8 +1,9 @@
 export const zh = {
   errors: {
-    exitReportInvalid: "退出影响的上报内容不合法，请重新尝试退出。",
-    exitImpactsNotReported: "尚未上报退出影响，请重新尝试退出。",
-    exitImpactsChanged: "退出影响已经变化（有新的运行中工作），请重新确认。",
+    exitReportInvalid: "退出确认信息无效，请重新尝试退出。",
+    exitImpactsNotReported: "应用尚未确认退出会影响哪些内容，请重新尝试退出。",
+    exitImpactsChanged:
+      "退出前确认的内容已变化（有新的运行中任务），请重新确认。",
     fileNotFound: "找不到该文件。",
     fileTooLarge: "文件超过允许的大小。",
     ptySessionNotFound: "终端会话不存在或已结束。",
@@ -32,7 +33,7 @@ export const zh = {
     exitNoPendingRequest: "没有待处理的退出请求，请重新尝试退出。",
     exitRequestMismatch: "该退出请求已失效，请重新尝试退出。",
     layoutNeedsReset: "工作区布局无效，需要重置。",
-    layoutCaseDuplicate: "布局中存在仅大小写不同的重复文件。",
+    layoutCaseDuplicate: "布局中存在路径仅大小写不同的重复文档。",
     internal: "发生内部错误。请重试，若问题持续请重启应用。",
     appExiting: "应用正在退出，请在重新启动后再试。",
     appExitDeferred: "恢复或导入仍在进行，暂时无法退出应用。",
@@ -41,7 +42,7 @@ export const zh = {
     dataReplaceInProgress: "另一个恢复或导入操作正在进行。",
     configImportInProgress: "配置导入正在进行，请在完成后重试。",
     projectNotFound: "找不到该项目目录。",
-    layoutSaveRejected: "后端连续拒绝了工作区布局，已停止保存。",
+    layoutSaveRejected: "工作区布局被连续拒绝保存，已停止保存。",
     layoutSchemaIncompatible:
       "工作区布局由更高版本的应用写入，当前版本无法保存。",
     appError: "发生未知错误，请重试。",
