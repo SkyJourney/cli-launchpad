@@ -6,6 +6,7 @@ import type {
 } from "./tauri";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
 import { workspaceContentKey } from "./workspaceContentKey";
+import type { RegisteredContentKind } from "../generated/contentKinds";
 
 export interface WorkspacePaneOwner {
   kind: "pane";
@@ -22,7 +23,7 @@ export type WorkspaceContentOwner = WorkspacePaneOwner | WorkspaceWindowOwner;
 
 export type ManagedWorkspacePaneContentRef = Extract<
   WorkspacePaneContentRef,
-  { kind: "pty" | "file" }
+  { kind: RegisteredContentKind }
 >;
 
 /** One handoff (a detach or a return). Unique per handoff. */

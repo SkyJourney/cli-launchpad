@@ -24,6 +24,7 @@ import {
   type ManagedContentRef,
   ptyContentRef,
 } from "../../lib/workspaceContentKey";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export type HostCommand =
   | { type: "focus"; paneId: string }
@@ -112,7 +113,7 @@ export interface WorkspaceCommandExecutor {
 }
 
 const mainPane = (paneId: string) =>
-  ({ kind: "pane", windowLabel: "main", paneId }) as const;
+  ({ kind: "pane", windowLabel: MAIN_WINDOW_LABEL, paneId }) as const;
 
 export function createWorkspaceCommandExecutor(
   deps: WorkspaceCommandExecutorDeps,

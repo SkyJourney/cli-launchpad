@@ -46,6 +46,7 @@ import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegis
 import type { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
 import { beginWorkspaceSessionDrag } from "./viewHelpers";
 import { PaneContentStack } from "./PaneContentStack";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export type ResolvedPaneContent =
   | {
@@ -350,7 +351,7 @@ export function WorkspacePaneView({
           const payload = encodeWorkspaceContentDrag({
             key: fileContentKey(content.documentId),
             sourcePaneId: pane.id,
-            sourceWindowLabel: "main",
+            sourceWindowLabel: MAIN_WINDOW_LABEL,
           });
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
@@ -452,7 +453,7 @@ export function WorkspacePaneView({
           : null;
         if (!contentPayload || !draggedRef) return;
         if (
-          contentPayload.sourceWindowLabel === "main" &&
+          contentPayload.sourceWindowLabel === MAIN_WINDOW_LABEL &&
           "sourcePaneId" in contentPayload
         ) {
           if (draggedRef.kind === "file") {
@@ -472,7 +473,7 @@ export function WorkspacePaneView({
         }
         if (
           draggedRef.kind === "pty" &&
-          contentPayload.sourceWindowLabel !== "main" &&
+          contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
           isManagedDetachedDrag(
             draggedRef.slotId,
             contentPayload.sourceWindowLabel,
@@ -492,7 +493,7 @@ export function WorkspacePaneView({
         }
         if (
           draggedRef.kind === "file" &&
-          contentPayload.sourceWindowLabel !== "main" &&
+          contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
           isManagedDetachedFileDrag(
             draggedRef.documentId,
             contentPayload.sourceWindowLabel,

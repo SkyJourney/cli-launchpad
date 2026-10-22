@@ -3,6 +3,7 @@ pub mod backup;
 pub mod cache;
 pub mod cli_status;
 pub mod config_bundle;
+pub mod content_kind;
 pub mod directory;
 pub mod execution;
 pub mod file_identity;

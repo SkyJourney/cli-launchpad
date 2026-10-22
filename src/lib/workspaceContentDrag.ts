@@ -1,11 +1,12 @@
 import { isDetachedWindowLabel, isDraggableContentKind } from "./windowKinds";
 import { contentRefFromKey } from "./workspaceContentKey";
+import { MAIN_WINDOW_LABEL, type MainWindowLabel } from "./windowKinds";
 
 export const WORKSPACE_CONTENT_DRAG_TYPE =
   "application/x-cli-launchpad-workspace-content";
 
 export type WorkspaceContentDragPayload =
-  | { key: string; sourceWindowLabel: "main"; sourcePaneId: string }
+  | { key: string; sourceWindowLabel: MainWindowLabel; sourcePaneId: string }
   | { key: string; sourceWindowLabel: string };
 
 const DRAG_PREFIX = "cli-launchpad-content-v2:";
@@ -33,13 +34,13 @@ export function parseWorkspaceContentDrag(
     ) {
       return null;
     }
-    if (data.sourceWindowLabel === "main") {
+    if (data.sourceWindowLabel === MAIN_WINDOW_LABEL) {
       if (typeof data.sourcePaneId !== "string" || !data.sourcePaneId) {
         return null;
       }
       return {
         key: data.key,
-        sourceWindowLabel: "main",
+        sourceWindowLabel: MAIN_WINDOW_LABEL,
         sourcePaneId: data.sourcePaneId,
       };
     }

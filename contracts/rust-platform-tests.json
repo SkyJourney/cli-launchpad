@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 867,
-    "Linux": 873,
-    "macOS": 869
+    "Windows": 874,
+    "Linux": 880,
+    "macOS": 876
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -600,7 +600,14 @@
       "services::session_service::tests::ownership_check_keeps_the_adapter_panic_message",
       "services::session_service::tests::search_index_scan_panic_becomes_an_incomplete_source",
       "contracts::adapter_calls_are_budgeted_only_by_cli_runtime",
-      "services::cli_adapters::tests::execution_preflight_returns_the_validation_error_when_there_is_no_preflight_message"
+      "services::cli_adapters::tests::execution_preflight_returns_the_validation_error_when_there_is_no_preflight_message",
+      "contracts::command_arg_extraction_handles_injected_optional_and_channel_params",
+      "contracts::command_arg_contract_matches_the_rust_signatures",
+      "models::content_kind::tests::registered_content_kinds_are_well_formed",
+      "models::workspace_layout::tests::registered_content_kinds_match_the_content_ref_variants",
+      "models::workspace_layout::tests::reserved_content_kinds_cover_registered_kinds_and_unknown",
+      "contracts::content_kind_names_are_not_copied_into_production_code",
+      "contracts::main_window_label_literals_are_limited_to_the_allowlist"
     ],
     "Windows": [
       "commands::cli_status::tests::preserves_version_only_when_resolved_path_is_unchanged",

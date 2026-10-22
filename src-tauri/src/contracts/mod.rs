@@ -5631,3 +5631,313 @@ fn adapter_calls_are_budgeted_only_by_cli_runtime() {
     assert!(status.contains("probe_version_bounded("));
     assert!(!status.contains(".probe_current_version("));
 }
+
+mod command_args_scan {
+    /// Parameter types injected by Tauri; they are not sent from JavaScript.
+    const INJECTED_TYPES: [&str; 9] = [
+        "State",
+        "tauri::State",
+        "AppHandle",
+        "tauri::AppHandle",
+        "WebviewWindow",
+        "tauri::WebviewWindow",
+        "Window",
+        "tauri::Window",
+        "CallerWindow",
+    ];
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) struct ArgKey {
+        pub key: String,
+        pub optional: bool,
+    }
+
+    fn camel_case(name: &str) -> String {
+        let mut output = String::new();
+        let mut upper_next = false;
+        for character in name.chars() {
+            if character == '_' {
+                upper_next = true;
+            } else if upper_next {
+                output.extend(character.to_uppercase());
+                upper_next = false;
+            } else {
+                output.push(character);
+            }
+        }
+        output
+    }
+
+    /// Split a parameter list at top-level commas (commas inside `<>`, `()`, `[]` stay).
+    fn split_params(list: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0i32;
+        let mut previous = ' ';
+        for character in list.chars() {
+            match character {
+                '<' | '(' | '[' => depth += 1,
+                '>' if previous != '-' => depth -= 1,
+                ')' | ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(std::mem::take(&mut current));
+                    previous = character;
+                    continue;
+                }
+                _ => {}
+            }
+            current.push(character);
+            previous = character;
+        }
+        parts.push(current);
+        parts
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect()
+    }
+
+    /// `signature` is the parameter list text of a command, with or without the outer parentheses.
+    pub(super) fn arg_keys(signature: &str) -> Vec<ArgKey> {
+        let inner = signature.trim();
+        let inner = inner.strip_prefix('(').unwrap_or(inner);
+        let inner = inner.strip_suffix(')').unwrap_or(inner);
+        split_params(inner)
+            .into_iter()
+            .filter_map(|parameter| {
+                let (name, parameter_type) = parameter
+                    .split_once(':')
+                    .unwrap_or_else(|| panic!("无法解析命令参数：{parameter}"));
+                let name = name.trim().trim_start_matches("mut ").trim();
+                let parameter_type = parameter_type.trim();
+                let head = parameter_type.split('<').next().unwrap_or("").trim();
+                if INJECTED_TYPES.contains(&head) {
+                    return None;
+                }
+                Some(ArgKey {
+                    key: camel_case(name),
+                    optional: parameter_type.starts_with("Option<"),
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn app_command_names(manifest: &str) -> Vec<String> {
+        let value: serde_json::Value = serde_json::from_str(manifest).expect("parse app-commands");
+        let mut names: Vec<String> = value["items"]
+            .as_array()
+            .expect("app-commands items")
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .or_else(|| item["name"].as_str())
+                    .expect("command name")
+                    .to_string()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+}
+
+#[test]
+fn command_arg_extraction_handles_injected_optional_and_channel_params() {
+    use command_args_scan::{arg_keys, ArgKey};
+
+    let key = |key: &str, optional: bool| ArgKey {
+        key: key.to_string(),
+        optional,
+    };
+    let sample = "(\n    state: State<'_, Db>,\n    window: WebviewWindow,\n    caller: CallerWindow,\n    app: tauri::AppHandle,\n    directory_id: i64,\n    resume_session_id: Option<String>,\n    size: PtySizeUpdate,\n    on_event: Channel<PtyEvent>,\n)";
+    assert_eq!(
+        arg_keys(sample),
+        vec![
+            key("directoryId", false),
+            key("resumeSessionId", true),
+            key("size", false),
+            key("onEvent", false),
+        ]
+    );
+    assert_eq!(
+        arg_keys("map: HashMap<String, Vec<i64>>, name: String"),
+        vec![key("map", false), key("name", false)]
+    );
+    assert!(arg_keys("()").is_empty());
+    assert_eq!(
+        arg_keys("kind: WindowKind"),
+        vec![key("kind", false)],
+        "WindowKind 不是注入类型，必须保留"
+    );
+}
+
+#[test]
+fn command_arg_contract_matches_the_rust_signatures() {
+    use command_args_scan::{app_command_names, arg_keys};
+
+    let mut items: Vec<(String, Vec<command_args_scan::ArgKey>)> = command_definitions()
+        .into_iter()
+        .map(|definition| (definition.name.clone(), arg_keys(&definition.signature)))
+        .collect();
+    items.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let names: Vec<String> = items.iter().map(|(name, _)| name.clone()).collect();
+    assert_eq!(
+        names,
+        app_command_names(APP_COMMANDS_JSON),
+        "命令名集合必须等于 app-commands.json"
+    );
+    for (name, keys) in &items {
+        let mut seen = std::collections::HashSet::new();
+        for key in keys {
+            assert!(
+                seen.insert(key.key.clone()),
+                "{name} 的参数键 {} 重复",
+                key.key
+            );
+            let mut characters = key.key.chars();
+            let first_ok = characters.next().is_some_and(|c| c.is_ascii_lowercase());
+            assert!(
+                first_ok && key.key.chars().all(|c| c.is_ascii_alphanumeric()),
+                "{name} 的参数键 {} 不是 camelCase",
+                key.key
+            );
+        }
+    }
+
+    let value = serde_json::json!({
+        "formatVersion": 1,
+        "items": items
+            .iter()
+            .map(|(name, keys)| serde_json::json!({
+                "name": name,
+                "args": keys
+                    .iter()
+                    .map(|key| serde_json::json!({ "key": key.key, "optional": key.optional }))
+                    .collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>(),
+    });
+    let rendered = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&value).expect("render")
+    );
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../contracts/derived/command-args.json");
+    if std::env::var("UPDATE_CONTRACT_FIXTURES").as_deref() == Ok("1") {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create derived directory");
+        std::fs::write(&path, &rendered).expect("write command-args.json");
+        return;
+    }
+    let current = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| {
+            panic!("缺少 contracts/derived/command-args.json：UPDATE_CONTRACT_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --locked contracts::command_arg_contract")
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        current, rendered,
+        "与 Rust 签名不一致：UPDATE_CONTRACT_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml --locked contracts::command_arg_contract"
+    );
+}
+
+mod content_kind_scan {
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("read source directory") {
+            let path = entry.expect("read entry").path();
+            if path.is_dir() {
+                rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    pub(super) fn production_sources() -> Vec<(String, String)> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&root, &mut files);
+        // contracts/ is a #[cfg(test)] module (lib.rs), so its files are not production code.
+        files.retain(|file| !file.starts_with(root.join("contracts")));
+        files
+            .iter()
+            .map(|file| {
+                let source = std::fs::read_to_string(file)
+                    .expect("read source")
+                    .replace("\r\n", "\n");
+                let relative = file
+                    .strip_prefix(&root)
+                    .expect("under src")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let production = source
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap_or(&source)
+                    .to_string();
+                (relative, production)
+            })
+            .collect()
+    }
+
+    pub(super) fn kind_union_copies(source: &str) -> usize {
+        source.matches("\"pty\" | \"file\"").count() + source.matches("\"file\" | \"pty\"").count()
+    }
+
+    /// Violations of the per-file `"main"` allowlist: `(file, count, allowed)`.
+    pub(super) fn main_violations(
+        sources: &[(String, String)],
+        allowed: &[(&str, usize)],
+    ) -> Vec<(String, usize, usize)> {
+        sources
+            .iter()
+            .filter_map(|(path, source)| {
+                let count = source.matches("\"main\"").count();
+                let limit = allowed
+                    .iter()
+                    .find(|(file, _)| file == path)
+                    .map_or(0, |(_, limit)| *limit);
+                (count > limit).then(|| (path.clone(), count, limit))
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn content_kind_names_are_not_copied_into_production_code() {
+    use content_kind_scan::*;
+
+    assert_eq!(
+        kind_union_copies("matches!(k, \"pty\" | \"file\" | \"unknown\")"),
+        1
+    );
+    let sources = production_sources();
+    assert!(sources.len() >= 50, "扫描到的文件数异常：{}", sources.len());
+    let hits: Vec<_> = sources
+        .iter()
+        .filter(|(_, source)| kind_union_copies(source) > 0)
+        .map(|(path, _)| path.clone())
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "内容 kind 名字集合不得手写副本，改用 models::content_kind：{hits:?}"
+    );
+}
+
+#[test]
+fn main_window_label_literals_are_limited_to_the_allowlist() {
+    use content_kind_scan::*;
+
+    // 逐文件允许表：(相对 src 的路径, 次数)。预期为空；每项必须在完成报告里写明理由。
+    const ALLOWED: [(&str, usize); 0] = [];
+    let sample = vec![("services/x.rs".to_string(), "let a = \"main\";".to_string())];
+    assert_eq!(main_violations(&sample, &[]).len(), 1);
+
+    let sources = production_sources();
+    assert!(sources.len() >= 50, "扫描到的文件数异常：{}", sources.len());
+    let violations = main_violations(&sources, &ALLOWED);
+    assert!(
+        violations.is_empty(),
+        "生产代码里 \"main\" 字面量必须用 main_window_label() 或 is_main_label()：{violations:?}"
+    );
+}

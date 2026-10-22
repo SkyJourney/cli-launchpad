@@ -763,7 +763,7 @@ fn validate_unknown_content_ref(
     raw: &serde_json::Value,
 ) -> Result<(), WorkspaceLayoutError> {
     validate_text(original_kind, MAX_ID_CHARS, "未知内容类型")?;
-    if matches!(original_kind, "pty" | "file" | "unknown")
+    if crate::models::content_kind::is_reserved_content_kind(original_kind)
         || !raw.is_object()
         || raw.get("kind").and_then(serde_json::Value::as_str) != Some(original_kind)
     {
@@ -1717,5 +1717,63 @@ mod tests {
             WorkspaceLayoutDocument::from_json_degrading_invalid_files(&broken.to_string())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn registered_content_kinds_match_the_content_ref_variants() {
+        fn kind_name(content: &WorkspacePaneContentRef) -> &'static str {
+            match content {
+                WorkspacePaneContentRef::Pty { .. } => "pty",
+                WorkspacePaneContentRef::File { .. } => "file",
+                WorkspacePaneContentRef::Unknown { .. } => "unknown",
+            }
+        }
+        let samples = [
+            WorkspacePaneContentRef::Pty {
+                slot_id: "slot".to_string(),
+            },
+            WorkspacePaneContentRef::File {
+                document_id: "document".to_string(),
+            },
+        ];
+        let mut variant_kinds: Vec<&str> = samples.iter().map(kind_name).collect();
+        variant_kinds.sort_unstable();
+        let mut registered: Vec<&str> = crate::models::content_kind::registered_content_kinds()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        registered.sort_unstable();
+        assert_eq!(variant_kinds, registered);
+
+        for sample in &samples {
+            let json = serde_json::to_value(sample).expect("serialize content ref");
+            assert_eq!(json["kind"], kind_name(sample));
+            let back: WorkspacePaneContentRef =
+                serde_json::from_value(json).expect("deserialize content ref");
+            assert_eq!(&back, sample);
+        }
+    }
+
+    #[test]
+    fn reserved_content_kinds_cover_registered_kinds_and_unknown() {
+        let mut reserved: Vec<String> =
+            crate::models::content_kind::registered_content_kinds().to_vec();
+        reserved.push("unknown".to_string());
+        for kind in &reserved {
+            assert!(
+                validate_unknown_content_ref(kind, &serde_json::json!({ "kind": kind })).is_err(),
+                "{kind} 是保留字，不能作为未知内容的原始 kind"
+            );
+        }
+        assert!(validate_unknown_content_ref(
+            "markdownPreview",
+            &serde_json::json!({ "kind": "markdownPreview" })
+        )
+        .is_ok());
+        assert!(validate_unknown_content_ref(
+            "markdownPreview",
+            &serde_json::json!({ "kind": "other" })
+        )
+        .is_err());
     }
 }

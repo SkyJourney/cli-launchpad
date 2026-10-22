@@ -1,4 +1,5 @@
-export type PendingWindowKind = "pty" | "file";
+import type { RegisteredContentKind } from "../generated/contentKinds";
+export type PendingWindowKind = RegisteredContentKind;
 
 /**
  * creating：窗口已创建，尚未收到子窗口 ready（只有文件窗经过）。

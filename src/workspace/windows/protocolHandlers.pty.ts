@@ -44,6 +44,7 @@ import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceCo
 import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand";
 import { attachWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export interface PtyProtocolHandlers {
   /** 与宿主原 PTY 监听列表逐项对应（名称与顺序一致）。 */
@@ -299,7 +300,7 @@ export function createPtyProtocolHandlers(
           returningContent,
           {
             kind: "pane",
-            windowLabel: "main",
+            windowLabel: MAIN_WINDOW_LABEL,
             paneId: sourcePane.id,
           },
           { kind: "window", windowLabel: payload.windowLabel },
@@ -325,7 +326,12 @@ export function createPtyProtocolHandlers(
     }
     const returning = deps
       .getCoordinator()
-      .beginReturn(returningContent, payload.token, "main", returnTargetPaneId);
+      .beginReturn(
+        returningContent,
+        payload.token,
+        MAIN_WINDOW_LABEL,
+        returnTargetPaneId,
+      );
     if (returning?.outcome !== "changed") {
       fail(deps.translate("pty.detachedStateChanged"));
       return;
@@ -392,7 +398,11 @@ export function createPtyProtocolHandlers(
       returnDriverContext = {
         content: returningContent,
         source: { kind: "window", windowLabel: payload.windowLabel },
-        target: { kind: "pane", windowLabel: "main", paneId: targetPane.id },
+        target: {
+          kind: "pane",
+          windowLabel: MAIN_WINDOW_LABEL,
+          paneId: targetPane.id,
+        },
         transferId: payload.token,
         capabilities: {
           prepare: async () => ({ handoff: { token: payload.handoffToken } }),

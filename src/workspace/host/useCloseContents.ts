@@ -19,6 +19,7 @@ import {
 } from "../domains/workspaceDomainTable";
 import { collectWorkspaceImpacts } from "../impacts/workspaceImpacts";
 import type { WorkspaceRuntime } from "./useWorkspaceRuntime";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 /** 关闭内容的批量流程：确认影响、逐领域关闭并汇总 pending 与失败提示（逐字取自宿主）。 */
 export function useCloseContents({
@@ -80,7 +81,7 @@ export function useCloseContents({
         const adapter = tryGetWorkspaceContentAdapter(content.kind);
         contentCoordinatorRef.current.ensureAttached(content, {
           kind: "pane",
-          windowLabel: "main",
+          windowLabel: MAIN_WINDOW_LABEL,
           paneId: pane.id,
         });
         closeTargets.push({

@@ -35,10 +35,10 @@ const KIND_BRANCH_OUTSIDE_HOST_BASELINE = 54;
 const WORKSPACE_SOURCE_COUNT_FLOOR = 36;
 const HOST_MAX_LINES = 400;
 // m6-092 与 m6-097 的文档没有为 src/workspace/windows 设行数上限，三个文件在 B17
-// 结束时超过 500 行。上限取 B17 结束时的实测值（只减不增；拆分或瘦身后调低），
+// 结束时超过 500 行。上限取 B17 结束时的实测值（只减不增；拆分或瘦身后调低；m6-104 把类型拆到 contentWindowTypes.ts，调至 733），
 // 防止它们在后续目标中继续膨胀。
 const WINDOW_FILE_MAX_LINES = {
-  "../workspace/windows/contentWindowOrchestrator.ts": 773,
+  "../workspace/windows/contentWindowOrchestrator.ts": 733,
   "../workspace/windows/protocolHandlers.file.ts": 846,
   "../workspace/windows/protocolHandlers.pty.ts": 606,
 } as const;

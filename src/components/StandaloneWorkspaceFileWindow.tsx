@@ -41,6 +41,7 @@ import { completeDetachedWindowSetup } from "../lib/detachedWindowSetup";
 import { useDetachedContentWindow } from "../workspace/windows/useDetachedContentWindow";
 import { fileContentRef } from "../lib/workspaceContentKey";
 import { newTransferId } from "../lib/workspaceContentLifecycle";
+import { MAIN_WINDOW_LABEL } from "../lib/windowKinds";
 
 export function StandaloneWorkspaceFileWindow({
   documentId,
@@ -79,7 +80,7 @@ export function StandaloneWorkspaceFileWindow({
 
   if (bufferPublisherRef.current === null) {
     bufferPublisherRef.current = createWorkspaceFileBufferPublisher((payload) =>
-      sendContentHandoff("main", "file", "state-changed", payload),
+      sendContentHandoff(MAIN_WINDOW_LABEL, "file", "state-changed", payload),
     );
   }
 
@@ -139,7 +140,7 @@ export function StandaloneWorkspaceFileWindow({
           wrapKey: "pty.returnFailed",
         });
       });
-      await sendContentHandoff("main", "file", "return-requested", {
+      await sendContentHandoff(MAIN_WINDOW_LABEL, "file", "return-requested", {
         documentId,
         token,
         windowLabel: getCurrentWindow().label,
@@ -278,7 +279,7 @@ export function StandaloneWorkspaceFileWindow({
                   content: fileContentRef(documentId),
                   source: {
                     kind: "pane",
-                    windowLabel: "main",
+                    windowLabel: MAIN_WINDOW_LABEL,
                     paneId: sourcePaneId,
                   },
                   target: {
@@ -306,7 +307,7 @@ export function StandaloneWorkspaceFileWindow({
                 });
               } catch (reason) {
                 setError(toAppErrorState(reason));
-                await sendContentHandoff("main", "file", "failed", {
+                await sendContentHandoff(MAIN_WINDOW_LABEL, "file", "failed", {
                   documentId,
                   token,
                   windowLabel: currentWindow.label,
@@ -314,7 +315,7 @@ export function StandaloneWorkspaceFileWindow({
                 });
                 return;
               }
-              void sendContentHandoff("main", "file", "attached", {
+              void sendContentHandoff(MAIN_WINDOW_LABEL, "file", "attached", {
                 documentId,
                 token,
                 windowLabel: currentWindow.label,
@@ -343,14 +344,19 @@ export function StandaloneWorkspaceFileWindow({
               ) {
                 return;
               }
-              void sendContentHandoff("main", "file", "flush-complete", {
-                documentId,
-                token,
-                windowLabel: currentWindow.label,
-                requestId: request.requestId,
-                fileDocument: document,
-                fileBuffer: buffer,
-              });
+              void sendContentHandoff(
+                MAIN_WINDOW_LABEL,
+                "file",
+                "flush-complete",
+                {
+                  documentId,
+                  token,
+                  windowLabel: currentWindow.label,
+                  requestId: request.requestId,
+                  fileDocument: document,
+                  fileBuffer: buffer,
+                },
+              );
             }),
             onContentHandoff("file", "return-failed", (event) => {
               if (
@@ -379,7 +385,7 @@ export function StandaloneWorkspaceFileWindow({
         isDisposed: () => disposed,
         keepListeners: (registered) => stops.push(...registered),
         afterListeners: () =>
-          sendContentHandoff("main", "file", "ready", {
+          sendContentHandoff(MAIN_WINDOW_LABEL, "file", "ready", {
             documentId,
             token,
             windowLabel: currentWindow.label,
@@ -390,7 +396,7 @@ export function StandaloneWorkspaceFileWindow({
       if (disposed) return;
       const message = formatAppError(reason, tRef.current);
       setError(toAppErrorState(reason));
-      void sendContentHandoff("main", "file", "failed", {
+      void sendContentHandoff(MAIN_WINDOW_LABEL, "file", "failed", {
         documentId,
         token,
         windowLabel: getCurrentWindow().label,
@@ -415,7 +421,7 @@ export function StandaloneWorkspaceFileWindow({
       isReady={Boolean(fileDocument && fileBuffer)}
       onCloseBeforeReady={() => {
         const currentWindow = getCurrentWindow();
-        void sendContentHandoff("main", "file", "failed", {
+        void sendContentHandoff(MAIN_WINDOW_LABEL, "file", "failed", {
           documentId,
           token,
           windowLabel: currentWindow.label,

@@ -8,7 +8,7 @@ import type {
 } from "../host/workspaceCommandExecutor";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { createWindowLabel } from "../../lib/windowKinds";
+import { createWindowLabel, MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
@@ -27,12 +27,10 @@ import {
   registerPendingWorkspaceContentWindow,
   retainAsyncUnlisten,
   takePendingWorkspaceContentWindow,
-  type WorkspaceContentWindowRecord,
 } from "../../lib/workspaceContentWindowRegistry";
 import {
   advancePendingWindowStage,
   initialPendingStage,
-  type PendingWindowStage,
 } from "../../lib/workspaceContentPendingStage";
 import {
   getPtySessionWindowStatus,
@@ -53,8 +51,6 @@ import {
   ptyContentRef,
 } from "../../lib/workspaceContentKey";
 
-import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceContentLifecycle";
-
 import { writeWindowLaunchParams } from "./windowLaunchParams";
 
 import type { WorkspaceHostStore } from "../host/workspaceHostStore";
@@ -66,59 +62,21 @@ import {
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 import { rollbackHandoffOnce } from "./handoffRollback";
 
-export interface DetachedWindowRecord {
-  instanceId: string;
-  sessionId: string;
-  windowLabel: string;
-}
-
-export interface PendingContentWindow<
-  K extends "pty" | "file",
-> extends WorkspaceContentWindowRecord {
-  kind: K;
-  stage: PendingWindowStage;
-  transferId: string;
-  window: WebviewWindow;
-  resolve: () => void;
-  reject: (reason: Error) => void;
-  handoffContext?: WorkspaceContentHandoffHookContext<K>;
-  handoffPayload?: WorkspaceContentHandoffPayloadByKind[K];
-}
-
-export type PendingDetachedWindow = PendingContentWindow<"pty"> &
-  DetachedWindowRecord & {
-    handoffContext: WorkspaceContentHandoffHookContext<"pty">;
-    handoffPayload: WorkspaceContentHandoffPayloadByKind["pty"];
-    /** The Rust handoff token that attaches the PTY back. */
-    handoffToken: string;
-    windowToken: string;
-    /** 对账时 owner 查询已连续失败的次数；随 tracked 展开复制。 */
-    ownerQueryRetries?: number;
-  };
-
-export interface DetachedWindowReadyEvent extends DetachedWindowRecord {}
-
-export interface PtySessionOwnerLostEvent {
-  sessionId: string;
-}
-
-export interface PtyReturnRequestEvent extends DetachedWindowRecord {
-  token: string;
-  handoffToken: string;
-  targetPaneId?: string;
-}
-
-export interface PendingWorkspaceFileWindow extends PendingContentWindow<"file"> {
-  documentId: string;
-  /** The window session token; the child window echoes it back. */
-  windowToken: string;
-  sourcePaneId?: string;
-}
-export interface ManagedFileWindow {
-  documentId: string;
-  token: string;
-  windowLabel: string;
-}
+export type {
+  DetachedWindowRecord,
+  PendingContentWindow,
+  PendingDetachedWindow,
+  DetachedWindowReadyEvent,
+  PtySessionOwnerLostEvent,
+  PtyReturnRequestEvent,
+  PendingWorkspaceFileWindow,
+  ManagedFileWindow,
+} from "./contentWindowTypes";
+import type {
+  ManagedFileWindow,
+  PendingDetachedWindow,
+  PendingWorkspaceFileWindow,
+} from "./contentWindowTypes";
 
 export interface ContentWindowState {
   /** 已附着窗口的句柄，按内容键（ptyContentKey / fileContentKey）索引。 */
@@ -379,14 +337,16 @@ export function createContentWindowOrchestrator(
     let grantedWindowLabel: string | undefined;
     let lifecycleStarted = false;
     try {
-      const lifecycle = deps
-        .getCoordinator()
-        .beginDetach(
-          content,
-          { kind: "pane", windowLabel: "main", paneId: sourcePane.id },
-          { kind: "window", windowLabel },
-          transferId,
-        );
+      const lifecycle = deps.getCoordinator().beginDetach(
+        content,
+        {
+          kind: "pane",
+          windowLabel: MAIN_WINDOW_LABEL,
+          paneId: sourcePane.id,
+        },
+        { kind: "window", windowLabel },
+        transferId,
+      );
       if (lifecycle?.outcome !== "changed") {
         throw new Error(deps.translate("pty.detachedMoveUnavailable"));
       }
@@ -633,7 +593,7 @@ export function createContentWindowOrchestrator(
     const content = ptyContentRef(instanceId);
     const source = {
       kind: "pane",
-      windowLabel: "main",
+      windowLabel: MAIN_WINDOW_LABEL,
       paneId: sourcePane.id,
     } as const;
     const target = { kind: "window", windowLabel } as const;

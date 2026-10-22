@@ -1,0 +1,892 @@
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "sequence",
+          "optional": false
+        }
+      ],
+      "name": "acknowledge_pty_output"
+    },
+    {
+      "args": [
+        {
+          "key": "name",
+          "optional": false
+        },
+        {
+          "key": "path",
+          "optional": false
+        },
+        {
+          "key": "note",
+          "optional": true
+        }
+      ],
+      "name": "add_directory"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "targetWindowLabel",
+          "optional": false
+        }
+      ],
+      "name": "begin_pty_handoff"
+    },
+    {
+      "args": [
+        {
+          "key": "taskId",
+          "optional": false
+        }
+      ],
+      "name": "cancel_execution_task"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "token",
+          "optional": false
+        }
+      ],
+      "name": "cancel_pty_handoff"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "a",
+          "optional": false
+        },
+        {
+          "key": "b",
+          "optional": false
+        }
+      ],
+      "name": "check_project_files_same_identity"
+    },
+    {
+      "args": [],
+      "name": "clear_cache"
+    },
+    {
+      "args": [],
+      "name": "clear_execution_history"
+    },
+    {
+      "args": [
+        {
+          "key": "taskId",
+          "optional": false
+        }
+      ],
+      "name": "clear_execution_task"
+    },
+    {
+      "args": [],
+      "name": "clear_launch_history"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "token",
+          "optional": false
+        },
+        {
+          "key": "onEvent",
+          "optional": false
+        }
+      ],
+      "name": "complete_pty_handoff"
+    },
+    {
+      "args": [
+        {
+          "key": "requestId",
+          "optional": false
+        }
+      ],
+      "name": "confirm_app_exit"
+    },
+    {
+      "args": [],
+      "name": "create_backup"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "resumeSessionId",
+          "optional": true
+        },
+        {
+          "key": "size",
+          "optional": false
+        },
+        {
+          "key": "onEvent",
+          "optional": false
+        }
+      ],
+      "name": "create_pty_session"
+    },
+    {
+      "args": [
+        {
+          "key": "name",
+          "optional": false
+        },
+        {
+          "key": "layout",
+          "optional": false
+        }
+      ],
+      "name": "create_workspace_layout_preset"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "sessionId",
+          "optional": false
+        }
+      ],
+      "name": "delete_session_alias"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "name": "delete_workspace_layout_preset"
+    },
+    {
+      "args": [
+        {
+          "key": "force",
+          "optional": true
+        },
+        {
+          "key": "toolKey",
+          "optional": true
+        }
+      ],
+      "name": "detect_cli_status"
+    },
+    {
+      "args": [
+        {
+          "key": "path",
+          "optional": false
+        }
+      ],
+      "name": "export_config_to_path"
+    },
+    {
+      "args": [
+        {
+          "key": "path",
+          "optional": false
+        }
+      ],
+      "name": "export_diagnostics_to_path"
+    },
+    {
+      "args": [
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "force",
+          "optional": true
+        }
+      ],
+      "name": "fetch_latest_version"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "token",
+          "optional": false
+        },
+        {
+          "key": "size",
+          "optional": false
+        }
+      ],
+      "name": "finalize_pty_handoff"
+    },
+    {
+      "args": [],
+      "name": "get_cache_stats"
+    },
+    {
+      "args": [],
+      "name": "get_close_behavior"
+    },
+    {
+      "args": [
+        {
+          "key": "taskId",
+          "optional": false
+        }
+      ],
+      "name": "get_execution_task"
+    },
+    {
+      "args": [
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "kind",
+          "optional": false
+        }
+      ],
+      "name": "get_install_plan"
+    },
+    {
+      "args": [],
+      "name": "get_launch_history_limit"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        }
+      ],
+      "name": "get_project_path_semantics"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        }
+      ],
+      "name": "get_pty_session_window_status"
+    },
+    {
+      "args": [],
+      "name": "get_workspace_layout"
+    },
+    {
+      "args": [
+        {
+          "key": "targetLabel",
+          "optional": false
+        },
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "relativePath",
+          "optional": false
+        }
+      ],
+      "name": "grant_content_window_file"
+    },
+    {
+      "args": [
+        {
+          "key": "path",
+          "optional": false
+        }
+      ],
+      "name": "import_config_from_path"
+    },
+    {
+      "args": [],
+      "name": "list_backups"
+    },
+    {
+      "args": [],
+      "name": "list_directories"
+    },
+    {
+      "args": [],
+      "name": "list_execution_tasks"
+    },
+    {
+      "args": [],
+      "name": "list_launch_history"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        }
+      ],
+      "name": "list_project_file_cas_residues"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "relativePath",
+          "optional": false
+        }
+      ],
+      "name": "list_project_files"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "cursor",
+          "optional": true
+        },
+        {
+          "key": "limit",
+          "optional": true
+        }
+      ],
+      "name": "list_sessions"
+    },
+    {
+      "args": [],
+      "name": "list_workspace_layout_presets"
+    },
+    {
+      "args": [],
+      "name": "open_granted_file"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "name": "open_project_directory"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "relativePath",
+          "optional": false
+        }
+      ],
+      "name": "open_project_file"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        },
+        {
+          "key": "activeLayout",
+          "optional": false
+        }
+      ],
+      "name": "plan_apply_workspace_layout_preset"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "onEvent",
+          "optional": false
+        },
+        {
+          "key": "snapshot",
+          "optional": false
+        },
+        {
+          "key": "sequence",
+          "optional": false
+        },
+        {
+          "key": "size",
+          "optional": false
+        }
+      ],
+      "name": "reattach_pty_session"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        }
+      ],
+      "name": "refresh_session_search_index"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        }
+      ],
+      "name": "remove_directory"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "relativePath",
+          "optional": false
+        },
+        {
+          "key": "sizeBytes",
+          "optional": false
+        },
+        {
+          "key": "modifiedAtMs",
+          "optional": false
+        },
+        {
+          "key": "fileIdentity",
+          "optional": false
+        }
+      ],
+      "name": "remove_project_file_cas_residue"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        },
+        {
+          "key": "name",
+          "optional": false
+        }
+      ],
+      "name": "rename_workspace_layout_preset"
+    },
+    {
+      "args": [
+        {
+          "key": "orderedIds",
+          "optional": false
+        },
+        {
+          "key": "pinned",
+          "optional": false
+        }
+      ],
+      "name": "reorder_directories"
+    },
+    {
+      "args": [
+        {
+          "key": "requestId",
+          "optional": false
+        },
+        {
+          "key": "dirtyFiles",
+          "optional": false
+        }
+      ],
+      "name": "report_exit_impacts"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "stage",
+          "optional": false
+        }
+      ],
+      "name": "report_pty_frontend_stage"
+    },
+    {
+      "args": [
+        {
+          "key": "code",
+          "optional": false
+        },
+        {
+          "key": "message",
+          "optional": false
+        }
+      ],
+      "name": "report_window_sync_failure"
+    },
+    {
+      "args": [],
+      "name": "reset_workspace_layout"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "size",
+          "optional": false
+        }
+      ],
+      "name": "resize_pty_session"
+    },
+    {
+      "args": [
+        {
+          "key": "backupId",
+          "optional": false
+        }
+      ],
+      "name": "restore_backup"
+    },
+    {
+      "args": [
+        {
+          "key": "targetLabel",
+          "optional": false
+        }
+      ],
+      "name": "revoke_content_window_file"
+    },
+    {
+      "args": [
+        {
+          "key": "content",
+          "optional": false
+        },
+        {
+          "key": "expectedRevision",
+          "optional": false
+        }
+      ],
+      "name": "save_granted_text_file"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "directoryPath",
+          "optional": false
+        },
+        {
+          "key": "relativePath",
+          "optional": false
+        },
+        {
+          "key": "content",
+          "optional": false
+        },
+        {
+          "key": "expectedRevision",
+          "optional": false
+        }
+      ],
+      "name": "save_project_text_file"
+    },
+    {
+      "args": [
+        {
+          "key": "revision",
+          "optional": false
+        },
+        {
+          "key": "layout",
+          "optional": false
+        }
+      ],
+      "name": "save_workspace_layout"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "query",
+          "optional": false
+        }
+      ],
+      "name": "search_sessions"
+    },
+    {
+      "args": [
+        {
+          "key": "target",
+          "optional": false
+        },
+        {
+          "key": "messageType",
+          "optional": false
+        },
+        {
+          "key": "payload",
+          "optional": false
+        }
+      ],
+      "name": "send_window_message"
+    },
+    {
+      "args": [
+        {
+          "key": "closeBehavior",
+          "optional": false
+        }
+      ],
+      "name": "set_close_behavior"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        },
+        {
+          "key": "pinned",
+          "optional": false
+        }
+      ],
+      "name": "set_directory_pinned"
+    },
+    {
+      "args": [
+        {
+          "key": "limit",
+          "optional": false
+        }
+      ],
+      "name": "set_launch_history_limit"
+    },
+    {
+      "args": [
+        {
+          "key": "directoryId",
+          "optional": false
+        },
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "alias",
+          "optional": false
+        }
+      ],
+      "name": "set_session_alias"
+    },
+    {
+      "args": [
+        {
+          "key": "show",
+          "optional": false
+        },
+        {
+          "key": "quit",
+          "optional": false
+        }
+      ],
+      "name": "set_tray_menu_labels"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "token",
+          "optional": false
+        },
+        {
+          "key": "sequence",
+          "optional": false
+        },
+        {
+          "key": "snapshot",
+          "optional": false
+        }
+      ],
+      "name": "stage_pty_handoff_snapshot"
+    },
+    {
+      "args": [
+        {
+          "key": "toolKey",
+          "optional": false
+        },
+        {
+          "key": "kind",
+          "optional": false
+        },
+        {
+          "key": "expectedFingerprint",
+          "optional": false
+        }
+      ],
+      "name": "start_execution_task"
+    },
+    {
+      "args": [
+        {
+          "key": "onEvent",
+          "optional": false
+        }
+      ],
+      "name": "subscribe_window_inbox"
+    },
+    {
+      "args": [],
+      "name": "take_startup_notices"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        }
+      ],
+      "name": "terminate_pty_session"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        },
+        {
+          "key": "name",
+          "optional": false
+        },
+        {
+          "key": "note",
+          "optional": true
+        }
+      ],
+      "name": "update_directory"
+    },
+    {
+      "args": [
+        {
+          "key": "id",
+          "optional": false
+        },
+        {
+          "key": "layout",
+          "optional": false
+        }
+      ],
+      "name": "update_workspace_layout_preset"
+    },
+    {
+      "args": [
+        {
+          "key": "sessionId",
+          "optional": false
+        },
+        {
+          "key": "data",
+          "optional": false
+        }
+      ],
+      "name": "write_pty_session"
+    }
+  ]
+}

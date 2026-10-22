@@ -10,6 +10,7 @@ import {
   type AppPreferencesRequest,
 } from "./appPreferences";
 import { onWindowMessage, sendWindowMessage } from "./windowMessages";
+import { MAIN_WINDOW_LABEL } from "./windowKinds";
 
 /**
  * Preferences reach a child window two ways: the main window's public broadcast and the reply to
@@ -80,5 +81,9 @@ export async function requestInitialAppPreferences(windowLabel: string) {
     apiVersion: APP_PREFERENCES_API_VERSION,
     windowLabel,
   };
-  await sendWindowMessage("main", APP_PREFERENCES_REQUEST_MESSAGE, request);
+  await sendWindowMessage(
+    MAIN_WINDOW_LABEL,
+    APP_PREFERENCES_REQUEST_MESSAGE,
+    request,
+  );
 }

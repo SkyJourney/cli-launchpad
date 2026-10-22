@@ -22,6 +22,7 @@ import type {
   WorkspaceContentHandoffPayloadByKind,
   WorkspaceContentOwner,
 } from "../lib/workspaceContentLifecycle";
+import type { RegisteredContentKind } from "../generated/contentKinds";
 
 export interface WorkspaceContentRenderContext {
   content: WorkspacePaneContentRef;
@@ -47,7 +48,7 @@ export interface WorkspaceContentAdapterLabels {
   splitAndMoveDown: string;
 }
 
-export type RegisteredWorkspaceContentKind = "pty" | "file";
+export type RegisteredWorkspaceContentKind = RegisteredContentKind;
 
 export interface WorkspaceContentPresentationContext {
   directories: readonly { id: number; name: string }[];

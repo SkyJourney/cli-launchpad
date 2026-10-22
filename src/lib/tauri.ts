@@ -912,7 +912,10 @@ export function setCloseBehavior(closeBehavior: CloseBehavior) {
 }
 
 export function setTrayMenuLabels(labels: { show: string; quit: string }) {
-  return invokeApp<void>("set_tray_menu_labels", labels);
+  return invokeApp<void>("set_tray_menu_labels", {
+    show: labels.show,
+    quit: labels.quit,
+  });
 }
 
 // Sessions

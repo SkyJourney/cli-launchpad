@@ -33,6 +33,7 @@ import {
 import type { WorkspaceContentHandoffHookContext } from "./workspaceContentAdapterRegistry";
 import { ptyContentRef } from "../lib/workspaceContentKey";
 import { newTransferId } from "../lib/workspaceContentLifecycle";
+import { MAIN_WINDOW_LABEL } from "../lib/windowKinds";
 
 interface StandalonePtyWindowProps {
   sessionId: string;
@@ -154,13 +155,13 @@ export function StandalonePtyWindow({
           source: { kind: "window", windowLabel: currentWindow.label },
           target: {
             kind: "pane",
-            windowLabel: "main",
+            windowLabel: MAIN_WINDOW_LABEL,
             paneId: targetPaneId ?? sourcePaneId,
           },
           transferId: newTransferId(),
           capabilities: {
             prepare: async () => ({
-              handoff: await terminal.captureHandoff("main"),
+              handoff: await terminal.captureHandoff(MAIN_WINDOW_LABEL),
             }),
             attach: async (payload) => {
               await terminal.attachHandoff(sessionId, payload.handoff.token);
@@ -184,7 +185,7 @@ export function StandalonePtyWindow({
           ).catch(() => undefined);
           return;
         }
-        await sendContentHandoff("main", "pty", "return-requested", {
+        await sendContentHandoff(MAIN_WINDOW_LABEL, "pty", "return-requested", {
           instanceId,
           sessionId,
           windowLabel: currentWindow.label,
@@ -223,7 +224,7 @@ export function StandalonePtyWindow({
 
   const reportExited = useCallback(
     () =>
-      sendContentHandoff("main", "pty", "exited", {
+      sendContentHandoff(MAIN_WINDOW_LABEL, "pty", "exited", {
         instanceId,
         sessionId,
         windowLabel: getCurrentWindow().label,
@@ -285,7 +286,7 @@ export function StandalonePtyWindow({
           if (status.state === "ended") {
             closeAfterExitRef.current();
           } else if (status.state === "ownedByAnotherWindow") {
-            sendContentHandoff("main", "pty", "failed", {
+            sendContentHandoff(MAIN_WINDOW_LABEL, "pty", "failed", {
               instanceId,
               sessionId,
               windowLabel: currentWindow.label,
@@ -377,7 +378,7 @@ export function StandalonePtyWindow({
               content: ptyContentRef(instanceId),
               source: {
                 kind: "pane",
-                windowLabel: "main",
+                windowLabel: MAIN_WINDOW_LABEL,
                 paneId: sourcePaneId,
               },
               target: { kind: "window", windowLabel: currentWindow.label },
@@ -406,7 +407,7 @@ export function StandalonePtyWindow({
               closeAfterExitRef.current();
               return;
             }
-            await sendContentHandoff("main", "pty", "ready", {
+            await sendContentHandoff(MAIN_WINDOW_LABEL, "pty", "ready", {
               instanceId,
               sessionId,
               windowLabel: currentWindow.label,
@@ -439,7 +440,7 @@ export function StandalonePtyWindow({
             return;
           }
           setError(toAppErrorState(reason));
-          await sendContentHandoff("main", "pty", "failed", {
+          await sendContentHandoff(MAIN_WINDOW_LABEL, "pty", "failed", {
             instanceId,
             sessionId,
             windowLabel: currentWindow.label,

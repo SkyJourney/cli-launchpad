@@ -13,8 +13,9 @@ import {
 } from "../../lib/workspaceContentDrag";
 import { fileContentKey, ptyContentKey } from "../../lib/workspaceContentKey";
 import type { AppErrorState } from "../../lib/appErrors";
+import type { RegisteredContentKind } from "../../generated/contentKinds";
 
-export type DetachedContentKind = "pty" | "file";
+export type DetachedContentKind = RegisteredContentKind;
 
 export interface DetachedContentWindowKit {
   windowLabel: string;

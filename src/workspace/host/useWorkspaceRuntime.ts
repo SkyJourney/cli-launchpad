@@ -81,6 +81,7 @@ import {
   latestGuardDeps,
   type WorkspaceLifecycleGuardsDeps,
 } from "./workspaceLifecycleGuards";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export interface WorkspaceRuntimeOptions {
   /** 仅测试注入：宿主 harness 用它观察与断言内容归属状态。生产代码不传。 */
@@ -184,7 +185,7 @@ export function useWorkspaceRuntime({
         try {
           await dispose({
             content: fileContentRef(documentId),
-            owner: { kind: "window", windowLabel: "main" },
+            owner: { kind: "window", windowLabel: MAIN_WINDOW_LABEL },
             generation: 0,
             reason: "ownerEnded",
           });
@@ -254,7 +255,7 @@ export function useWorkspaceRuntime({
         ? () =>
             contentCoordinatorRef.current.resetFromPanes(
               listWorkspacePanes(next.tree),
-              "main",
+              MAIN_WINDOW_LABEL,
             )
         : () => contentCoordinatorRef.current.reset(),
   });

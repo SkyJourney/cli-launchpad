@@ -42,6 +42,7 @@ import {
   prepareWorkspaceContentHandoff,
 } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export interface WorkspaceContentWindowLostEvent {
   windowLabel: string;
@@ -147,7 +148,7 @@ export function createFileProtocolHandlers(
               content,
               source: {
                 kind: "pane",
-                windowLabel: "main",
+                windowLabel: MAIN_WINDOW_LABEL,
                 paneId:
                   pending.sourcePaneId ??
                   listWorkspacePanes(deps.store.getLive().tree)[0]?.id ??
@@ -471,7 +472,7 @@ export function createFileProtocolHandlers(
                   content,
                   {
                     kind: "pane",
-                    windowLabel: "main",
+                    windowLabel: MAIN_WINDOW_LABEL,
                     paneId: sourcePane.id,
                   },
                   {
@@ -546,7 +547,7 @@ export function createFileProtocolHandlers(
               .beginReturn(
                 content,
                 returnTransferId,
-                "main",
+                MAIN_WINDOW_LABEL,
                 returnTargetPaneId,
               );
             if (returning?.outcome !== "changed") {
@@ -589,7 +590,7 @@ export function createFileProtocolHandlers(
                 },
                 target: {
                   kind: "pane",
-                  windowLabel: "main",
+                  windowLabel: MAIN_WINDOW_LABEL,
                   paneId: targetPane.id,
                 },
                 transferId: returnTransferId,

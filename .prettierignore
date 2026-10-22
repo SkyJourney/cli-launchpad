@@ -7,3 +7,4 @@ src-tauri/target/
 src-tauri/gen/
 contracts/fixtures/
 src/generated/
+contracts/derived/

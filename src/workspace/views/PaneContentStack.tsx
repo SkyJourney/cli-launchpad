@@ -21,6 +21,7 @@ import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
 import { beginWorkspaceSessionDrag } from "./viewHelpers";
 import type { ResolvedPaneContent } from "./WorkspacePaneView";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export function PaneContentStack({
   side,
@@ -204,7 +205,7 @@ export function PaneContentStack({
                         const payload = encodeWorkspaceContentDrag({
                           key: fileContentKey(entry.file.id),
                           sourcePaneId,
-                          sourceWindowLabel: "main",
+                          sourceWindowLabel: MAIN_WINDOW_LABEL,
                         });
                         event.dataTransfer.effectAllowed = "move";
                         event.dataTransfer.setData(

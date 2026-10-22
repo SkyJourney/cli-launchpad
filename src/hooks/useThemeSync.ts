@@ -59,7 +59,7 @@ export function useThemeSync() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (currentWindowLabel === "main") {
+    if (currentWindowLabel === MAIN_WINDOW_LABEL) {
       let disposed = false;
       let unlistenRequest: (() => void) | undefined;
       void respondToAppPreferencesRequests(() =>

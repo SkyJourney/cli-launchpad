@@ -2,6 +2,8 @@ import contentKindManifest from "../../contracts/content-kinds.json";
 import manifest from "../../contracts/window-kinds.json";
 
 export type WindowKind = "main" | "terminal" | "workspaceContent";
+/** The primary window label type; the single definition of the main window label type. */
+export type MainWindowLabel = "main";
 /** Every registered window kind; windowKinds.test.ts compares it with the contract. */
 export const WINDOW_KINDS: readonly WindowKind[] = [
   "main",
@@ -51,7 +53,7 @@ export function createWindowLabel(kind: DetachedWindowKind): string {
 
 export function isDetachedWindowLabel(label: string): boolean {
   const kind = windowKindOf(label);
-  return kind !== null && kind !== "main";
+  return kind !== null && !windowRoleOf(kind).primary;
 }
 
 export function windowLabelPrefix(kind: DetachedWindowKind): string {
@@ -79,10 +81,10 @@ const contentDefinitions =
   contentKindManifest.items as unknown as ContentKindDefinition[];
 
 /** The label of the single primary (main) window, taken from the contract. */
-export const MAIN_WINDOW_LABEL: string = (() => {
+export const MAIN_WINDOW_LABEL: MainWindowLabel = (() => {
   const primary = definitions.find((definition) => definition.primary);
   if (!primary?.label) throw new Error("契约里没有 primary 窗口类别的 label");
-  return primary.label;
+  return primary.label as MainWindowLabel;
 })();
 
 export function windowRoleOf(kind: WindowKind) {

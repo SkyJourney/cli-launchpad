@@ -359,7 +359,7 @@ describe("native API permissions by window kind", () => {
       expect(workspaceContent).not.toContain(path);
     }
     expect(projectSources["src/hooks/useThemeSync.ts"]).toContain(
-      'currentWindowLabel === "main"',
+      "currentWindowLabel === MAIN_WINDOW_LABEL",
     );
     expect(projectSources["src/hooks/useThemeSync.ts"]).toContain(
       "appPreferencesMain",

@@ -8,6 +8,7 @@ import {
   windowRoleOf,
   type DetachedWindowKind,
 } from "./windowKinds";
+import type { RegisteredContentKind } from "../generated/contentKinds";
 
 /**
  * Payloads of the content handoff protocol, grouped by content kind and phase. The phase names
@@ -367,7 +368,7 @@ export function onContentHandoff<
     // (stamped) label. Messages from the main window address the receiver and are not checked.
     const claimed = decoded.windowLabel;
     if (
-      event.source.kind !== "main" &&
+      !windowRoleOf(event.source.kind).primary &&
       typeof claimed === "string" &&
       claimed !== event.source.label
     ) {
@@ -408,7 +409,7 @@ export function sendContentHandoff<
 }
 
 export function getWorkspaceContentWindowLabelPrefix(
-  kind: "pty" | "file",
+  kind: RegisteredContentKind,
 ): "terminal-" | "workspace-content-" {
   const windowKind = windowKindOfContent(kind);
   if (!windowKind || windowRoleOf(windowKind).primary) {
