@@ -34,7 +34,7 @@
 ### 3.2 前端窗口耦合
 
 - `getCurrentWindow()` 23 处，`destroy` 21 处，`new WebviewWindow` 1 处，集中在 `PtyWorkspace.tsx`（约 4900 行）、`StandalonePtyWindow.tsx`、`StandaloneWorkspaceFileWindow.tsx`。
-- 当前前端无 `isTauri` 判空，在浏览器中加载会于 `App.tsx:79` 直接抛错。需先建立 `src/lib/platform` 抽象，收口窗口、事件、对话框、剪贴板。
+- 当前前端无 `isTauri` 判空，在浏览器中加载会于 `App.tsx:79` 直接抛错。需先建立 src/lib/platform 抽象，收口窗口、事件、对话框、剪贴板。
 
 ### 3.3 身份与权限模型依赖 Tauri 窗口
 
@@ -121,7 +121,7 @@ PTY 本质上是远程 shell，通过认证即获得宿主机代码执行权，�
 | 基本不动 | 47 个 DTO 类型、xterm 输入输出与 ACK 流程、`appStore`、i18n、`localStorage`、HTML5 拖拽、契约测试体系 |
 | 集中重写 | `tauri.ts` 中的 `invoke` 与 `Channel`，改为 HTTP + WS |
 | 重写 | 事件总线（7 个文件、约 9 个事件名）改为 WS 订阅 |
-| 收口抽象 | 窗口 API，建立 `src/lib/platform` |
+| 收口抽象 | 窗口 API，建立 src/lib/platform |
 | 建议删减 | 跨窗口交接（18 种子协议 + 5 个 PTY 交接命令）；web v1 不做独立窗口，以页内面板 + 多客户端订阅替代 |
 | 去除 | 自定义标题栏、托盘、退出确认、窗口状态 |
 | 改造 | 目录选择改为服务端目录浏览器；配置导入导出改为上传下载；CSP 的 `connect-src` 增加 `wss:`（`csp.contract.test.ts` 须同步） |
@@ -160,7 +160,7 @@ PTY 本质上是远程 shell，通过认证即获得宿主机代码执行权，�
 - `Db::call` 统一执行器（R-RS-1 本就要求）。
 - 新增 `contracts/events.json` 事件契约，可兼作 web 协议 schema。
 
-## 9. 待产品确认的决策
+## 9. 产品决策尚未确认的事项
 
 1. 是否允许把“不提供远程后端”改写为“可选的、默认关闭的内置监听器”。这是 M11 的先决条件。
 2. 是否采用方案 B（core crate + 独立 daemon）。
