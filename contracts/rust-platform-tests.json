@@ -1,9 +1,9 @@
 {
   "version": 1,
   "minimumPassed": {
-    "Windows": 874,
-    "Linux": 880,
-    "macOS": 876
+    "Windows": 875,
+    "Linux": 881,
+    "macOS": 877
   },
   "allowedIgnored": [
     "platform::execution_process::tree_worker::process_tree_worker",
@@ -235,6 +235,7 @@
       "error::tests::internal_errors_serialize_as_app_internal",
       "error::tests::io_errors_map_by_kind",
       "error::tests::anyhow_errors_downcast_to_domain_codes",
+      "error::tests::cli_runtime_timeouts_become_blocking_timeout_and_failures_stay_internal",
       "domain_errors::tests::pty_error_codes_match_the_table",
       "domain_errors::tests::file_error_codes_match_the_table",
       "domain_errors::tests::lifecycle_error_codes_match_the_table",

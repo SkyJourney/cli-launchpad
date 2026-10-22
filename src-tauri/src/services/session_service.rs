@@ -314,7 +314,12 @@ pub(crate) async fn list_sessions_with(
     let (context, remaining) =
         crate::services::cli_adapters::context_within_budget(adapter, budget, home, resolver).await;
     if remaining.is_zero() {
-        return Err(anyhow!("{} 会话读取超时", tool_key.as_str()));
+        return Err(anyhow::Error::new(
+            crate::services::cli_runtime::CliRuntimeError::TimedOut {
+                tool_key,
+                operation: "会话读取",
+            },
+        ));
     }
     crate::services::cli_runtime::run_with(adapter, "会话读取", remaining, move |adapter| {
         adapter.list_sessions(directory_path, cursor, limit, context)
@@ -1091,6 +1096,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(format!("{error:#}").contains("超时"));
+        assert_eq!(AppError::from(error).code(), "blocking.timeout");
         assert!(!FAST_HISTORY_CALLED.load(Ordering::SeqCst));
         assert!(ticks.load(Ordering::SeqCst) >= 10);
     }
@@ -1187,6 +1193,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(format!("{error:#}").contains("超时"));
+        assert_eq!(AppError::from(error).code(), "blocking.timeout");
     }
 
     #[tokio::test]

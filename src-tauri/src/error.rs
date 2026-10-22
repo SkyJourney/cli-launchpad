@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::domain_errors::{FileError, LifecycleError, PtyError};
 use crate::error_codes::ErrorCode;
+use crate::services::cli_runtime::CliRuntimeError;
 
 /// Structured error returned across the Tauri IPC boundary. `message` remains
 /// available as a compatibility fallback while clients migrate to `code`.
@@ -70,8 +71,17 @@ impl From<anyhow::Error> for AppError {
             Ok(pty) => return AppError::from(pty),
             Err(other) => other,
         };
-        match error.downcast::<LifecycleError>() {
-            Ok(lifecycle) => AppError::from(lifecycle),
+        let error = match error.downcast::<LifecycleError>() {
+            Ok(lifecycle) => return AppError::from(lifecycle),
+            Err(other) => other,
+        };
+        match error.downcast::<CliRuntimeError>() {
+            // An adapter operation that ran past its central budget is a blocking timeout;
+            // an adapter failure or panic stays internal.
+            Ok(error @ CliRuntimeError::TimedOut { .. }) => {
+                AppError::coded(ErrorCode::BlockingTimeout, error.to_string())
+            }
+            Ok(error) => AppError::internal(error.to_string()),
             Err(other) => AppError::internal(other.to_string()),
         }
     }
@@ -148,6 +158,29 @@ mod tests {
         let chained = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound))
             .context("读取失败");
         assert_eq!(AppError::from(chained).code(), "app.internal");
+    }
+
+    #[test]
+    fn cli_runtime_timeouts_become_blocking_timeout_and_failures_stay_internal() {
+        use crate::models::tool::ToolKey;
+        use crate::services::cli_runtime::CliRuntimeError;
+
+        let timed_out = anyhow::Error::new(CliRuntimeError::TimedOut {
+            tool_key: ToolKey::Claude,
+            operation: "会话读取",
+        })
+        .context("读取失败");
+        let error = AppError::from(timed_out);
+        assert_eq!(error.code(), "blocking.timeout");
+        assert!(error.to_string().contains("会话读取超时"));
+
+        // Reverse: an adapter failure is not a timeout and keeps the internal code.
+        let failed = anyhow::Error::new(CliRuntimeError::Failed {
+            tool_key: ToolKey::Claude,
+            operation: "会话读取",
+            detail: "适配器异常".to_string(),
+        });
+        assert_eq!(AppError::from(failed).code(), "app.internal");
     }
 
     #[test]
