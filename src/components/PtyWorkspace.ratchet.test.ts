@@ -54,17 +54,33 @@ const KIND_BRANCH_PATTERN = /kind === "|"slot" in/g;
 const countKindBranches = (source: string): number =>
   (source.match(KIND_BRANCH_PATTERN) ?? []).length;
 
+// 句柄表的两代写法：宿主里的 detached*Ref（m6-019 之前），以及搬到
+// workspace/windows 之后的 state.handles.{pty,file}（m6-052 之后）。两者都不得作归属判据。
 const HANDLE_TABLE_PREDICATE =
-  /detached(?:Files|ByInstance)Ref\.current\.has\(/g;
+  /(?:detached(?:Files|ByInstance)Ref\.current|handles\.(?:pty|file))\.has\(/g;
 
 describe("PtyWorkspace ratchet", () => {
   it("never uses window handle tables as ownership predicates", () => {
     // 反向断言：正则本身必须能匹配两种写法，防止它被改坏后永远通过。
     const sample =
-      "detachedFilesRef.current.has(x) detachedByInstanceRef.current.has(y)";
-    expect(sample.match(HANDLE_TABLE_PREDICATE) ?? []).toHaveLength(2);
+      "detachedFilesRef.current.has(x) detachedByInstanceRef.current.has(y) " +
+      "state.handles.file.has(z) handles.pty.has(w)";
+    expect(sample.match(HANDLE_TABLE_PREDICATE) ?? []).toHaveLength(4);
 
-    expect(hostSource.match(HANDLE_TABLE_PREDICATE) ?? []).toHaveLength(0);
+    // 句柄表已搬离宿主文件：只扫宿主文件会让守护空转，所以同时扫 src/workspace 下全部非测试源码。
+    const scanned = [hostSource, ...Object.values(workspaceSources)];
+    expect(Object.keys(workspaceSources).length).toBeGreaterThanOrEqual(
+      WORKSPACE_SOURCE_COUNT_FLOOR,
+    );
+    expect(
+      Object.keys(workspaceSources).some((path) =>
+        path.endsWith("/contentWindowOrchestrator.ts"),
+      ),
+    ).toBe(true);
+    const offenders = scanned.flatMap(
+      (source) => source.match(HANDLE_TABLE_PREDICATE) ?? [],
+    );
+    expect(offenders).toHaveLength(0);
   });
 
   it("does not grow kind branches in the host", () => {

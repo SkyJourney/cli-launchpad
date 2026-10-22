@@ -3,7 +3,7 @@ import {
   toGenericMessage,
   type LegacyHandoffName,
 } from "../test/host/handoffVocabulary";
-import { act, cleanup } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -38,6 +38,10 @@ import {
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
 import { RUST_EVENTS } from "../lib/eventNames";
 import { WorkspaceContentCoordinator } from "../lib/workspaceContentCoordinator";
+import {
+  encodeWorkspaceContentDrag,
+  WORKSPACE_CONTENT_DRAG_TYPE,
+} from "../lib/workspaceContentDrag";
 import { getWorkspaceContentAdapter } from "./workspaceContentAdapterRegistry";
 import type { WorkspacePaneContentRef } from "../lib/tauri";
 
@@ -680,6 +684,156 @@ describe("untrusted window events", () => {
   const FOREIGN = "workspace-content-11111111-1111-4111-8111-111111111111";
   const FOREIGN_TERMINAL = "terminal-3b9f2c1e-6d4a-4f7b-8a21-5c0e9d7a1b34";
 
+  /** A detached file plus a buffer-changed payload that is accepted when sent as is. */
+  async function detachedFileWithBufferChange() {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const { token, windowLabel, initBuffer } = await detachFileToWindow(
+      host,
+      doc.id,
+    );
+    const changed = (overrides: {
+      token?: string;
+      windowLabel?: string;
+      epoch?: number;
+      version?: number;
+      content?: string;
+    }) => ({
+      documentId: doc.id,
+      token: overrides.token ?? token,
+      windowLabel: overrides.windowLabel ?? windowLabel,
+      fileDocument: doc,
+      fileBuffer: {
+        ...initBuffer,
+        content: overrides.content ?? "evil",
+        epoch: overrides.epoch ?? initBuffer.epoch,
+        version: overrides.version ?? initBuffer.version + 1,
+      },
+    });
+    return { doc, initBuffer, windowLabel, changed };
+  }
+
+  it("ignores buffer changes with a foreign token", async () => {
+    const { doc, initBuffer, changed } = await detachedFileWithBufferChange();
+
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({ token: "forged" }),
+    );
+    await flush();
+
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
+    // Reverse: the same change with the real window token is mirrored.
+    await emitToMain("workspace-file-window-buffer-changed", changed({}));
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("evil");
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("ignores buffer changes from another window label", async () => {
+    const { doc, initBuffer, changed } = await detachedFileWithBufferChange();
+
+    // The sender is stamped as the other window itself, so only the ownership check can refuse it.
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({ windowLabel: FOREIGN }),
+    );
+    await flush();
+
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
+    // Reverse: the owning window's change is mirrored.
+    await emitToMain("workspace-file-window-buffer-changed", changed({}));
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("evil");
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("ignores older buffer epochs and versions", async () => {
+    const { doc, initBuffer, changed } = await detachedFileWithBufferChange();
+    // Mirror a newer buffer first, so "older" is measured against something above the init buffer.
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({ content: "newest", version: initBuffer.version + 5 }),
+    );
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("newest");
+
+    // An older version of the same epoch.
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({ content: "stale-version", version: initBuffer.version + 4 }),
+    );
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("newest");
+    // The same version is not newer either.
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({ content: "same-version", version: initBuffer.version + 5 }),
+    );
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("newest");
+
+    // A higher epoch wins even with a lower version.
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({
+        content: "newer-epoch",
+        epoch: initBuffer.epoch + 1,
+        version: 0,
+      }),
+    );
+    await flush();
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("newer-epoch");
+    await emitToMain(
+      "workspace-file-window-buffer-changed",
+      changed({
+        content: "stale-epoch",
+        epoch: initBuffer.epoch,
+        version: initBuffer.version + 50,
+      }),
+    );
+    await flush();
+    // Reverse: the higher epoch stays, even against a much higher version of the older epoch.
+    expect(host!.ctx().fileBuffers[doc.id].content).toBe("newer-epoch");
+    expect(host!.errors).toEqual([]);
+  });
+
+  it("rejects a PTY return requested by a non-owner terminal", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const { slot } = await launchPty(host);
+    const { windowLabel } = await detachPtyToWindow(host, slot.instanceId);
+    const request = (label: string, token: string) => ({
+      instanceId: slot.instanceId,
+      sessionId: slot.sessionId,
+      windowLabel: label,
+      token,
+      handoffToken: `rust-${token}`,
+    });
+
+    // The terminal speaks for itself (stamped as itself), but it does not own this PTY.
+    await emitToMain(
+      "pty-return-requested",
+      request(FOREIGN_TERMINAL, "intruder-1"),
+    );
+    await flush();
+
+    const failed = eventsTo(FOREIGN_TERMINAL, "pty-return-failed");
+    expect(failed).toHaveLength(1);
+    expect(
+      String((failed[0].payload as { message?: string }).message),
+    ).toContain("pty.detachedSessionMissing");
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(eventsTo(windowLabel, "pty-return-complete")).toHaveLength(0);
+    expect(eventsTo(windowLabel, "pty-return-failed")).toHaveLength(0);
+    // Reverse: the owning terminal's request still returns the PTY.
+    await emitToMain("pty-return-requested", request(windowLabel, "owner-1"));
+    await flush();
+    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.errors).toEqual([]);
+  });
+
   it("ignores a file buffer change whose stamped sender is not the claimed window", async () => {
     const coordinator = new WorkspaceContentCoordinator();
     host = await mountWorkspace({ coordinator });
@@ -758,6 +912,266 @@ describe("untrusted window events", () => {
     expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
     expect(host.errors).toEqual([]);
     warn.mockRestore();
+  });
+
+  it("ignores a file return request whose stamped sender is not the claimed window", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const paneId = listWorkspacePanes(host.ctx().tree)[0].id;
+    const { token, windowLabel, initBuffer } = await detachFileToWindow(
+      host,
+      doc.id,
+    );
+    const request = {
+      documentId: doc.id,
+      token,
+      windowLabel,
+      targetPaneId: paneId,
+      fileDocument: doc,
+      fileBuffer: {
+        ...initBuffer,
+        content: "back",
+        version: initBuffer.version + 1,
+      },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await emitToMain("workspace-file-window-return-requested", request, {
+      source: FOREIGN,
+    });
+    await flush();
+
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(occurrences(host, content)).toBe(0);
+    expect(invokes("revoke_content_window_file")).toHaveLength(0);
+    // The forged request gets no answer at all: neither complete nor failed.
+    expect(
+      eventsTo(windowLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(0);
+    expect(
+      eventsTo(windowLabel, "workspace-file-window-return-failed"),
+    ).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      "workspace_content_event.source_mismatch",
+      "content-handoff-return-requested",
+    );
+    // Reverse: the same request from the window it claims is processed.
+    await emitToMain("workspace-file-window-return-requested", request);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(occurrences(host, content)).toBe(1);
+    expect(
+      eventsTo(windowLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(1);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+    warn.mockRestore();
+  });
+
+  /** Drives a file detach up to "window created", then lets the test speak for the child. */
+  async function beginFileDetach(coordinator: WorkspaceContentCoordinator) {
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const state = { settled: "pending" as "pending" | "resolved" | "rejected" };
+    await act(async () => {
+      void host!
+        .ctx()
+        .detachFile(doc.id)
+        .then(
+          () => {
+            state.settled = "resolved";
+          },
+          () => {
+            state.settled = "rejected";
+          },
+        );
+    });
+    await flush();
+    const { label: windowLabel, token } = lastCreatedWindow();
+    return {
+      doc,
+      state,
+      windowLabel,
+      payload: { documentId: doc.id, token, windowLabel },
+    };
+  }
+
+  it("ignores a file window ready whose stamped sender is not the claimed window", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, state, windowLabel, payload } =
+      await beginFileDetach(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await emitToMain("workspace-file-window-ready", payload, {
+      source: FOREIGN,
+    });
+    await flush();
+
+    // No init is sent to a window whose ready was forged.
+    expect(eventsTo(windowLabel, "workspace-file-window-init")).toHaveLength(0);
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+    expect(state.settled).toBe("pending");
+    expect(warn).toHaveBeenCalledWith(
+      "workspace_content_event.source_mismatch",
+      expect.any(String),
+    );
+    // Reverse: the genuine ready still starts the handoff.
+    await emitToMain("workspace-file-window-ready", payload);
+    await flush();
+    expect(eventsTo(windowLabel, "workspace-file-window-init")).toHaveLength(1);
+    expect(host!.errors).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it("ignores a file window attached whose stamped sender is not the claimed window", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    const { doc, state, windowLabel, payload } =
+      await beginFileDetach(coordinator);
+    const content = { kind: "file", documentId: doc.id } as const;
+    await emitToMain("workspace-file-window-ready", payload);
+    await flush();
+    expect(eventsTo(windowLabel, "workspace-file-window-init")).toHaveLength(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await emitToMain("workspace-file-window-attached", payload, {
+      source: FOREIGN,
+    });
+    await flush();
+
+    // The forged acknowledgement must not complete the detach.
+    expect(coordinator.get(content)?.phase).toBe("detaching");
+    expect(state.settled).toBe("pending");
+    expect(occurrences(host!, content)).toBe(1);
+    expect(warn).toHaveBeenCalledWith(
+      "workspace_content_event.source_mismatch",
+      expect.any(String),
+    );
+    // Reverse: the genuine acknowledgement completes it.
+    await emitToMain("workspace-file-window-attached", payload);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(state.settled).toBe("resolved");
+    expect(occurrences(host!, content)).toBe(0);
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host!.errors).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it("rejects a file return whose document identity changed", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const paneId = listWorkspacePanes(host.ctx().tree)[0].id;
+    const { token, windowLabel, initBuffer } = await detachFileToWindow(
+      host,
+      doc.id,
+    );
+    const request = {
+      documentId: doc.id,
+      token,
+      windowLabel,
+      targetPaneId: paneId,
+      fileDocument: doc,
+      fileBuffer: {
+        ...initBuffer,
+        content: "back",
+        version: initBuffer.version + 1,
+      },
+    };
+
+    await emitToMain("workspace-file-window-return-requested", {
+      ...request,
+      fileDocument: { ...doc, relativePath: "other.txt" },
+    });
+    await flush();
+
+    const failed = eventsTo(windowLabel, "workspace-file-window-return-failed");
+    expect(failed).toHaveLength(1);
+    expect(
+      String((failed[0].payload as { message?: string }).message),
+    ).toContain("pty.returnFailed");
+    // The file stays with its window: nothing was merged, revoked or attached.
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(occurrences(host, content)).toBe(0);
+    expect(host.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
+    expect(invokes("revoke_content_window_file")).toHaveLength(0);
+    expect(
+      eventsTo(windowLabel, "workspace-file-window-return-complete"),
+    ).toHaveLength(0);
+    // Reverse: the failure keeps the window token valid, so the genuine request still returns.
+    await emitToMain("workspace-file-window-return-requested", request);
+    await flush();
+    expect(coordinator.get(content)?.phase).toBe("attached");
+    expect(occurrences(host, content)).toBe(1);
+    expect(host.ctx().fileBuffers[doc.id].content).toBe("back");
+    expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
+    expect(host.errors).toEqual([]);
+  });
+
+  it("ignores drops claiming an unmanaged source window", async () => {
+    const coordinator = new WorkspaceContentCoordinator();
+    host = await mountWorkspace({ coordinator });
+    const doc = await openFile(host);
+    const content = { kind: "file", documentId: doc.id } as const;
+    const [onlyPane] = listWorkspacePanes(host.ctx().tree);
+    act(() => {
+      host!.ctx().splitPane(onlyPane.id, "horizontal");
+    });
+    await flush();
+    const paneB = listWorkspacePanes(host.ctx().tree).find(
+      (pane) => pane.id !== onlyPane.id,
+    )!;
+    const { windowLabel } = await detachFileToWindow(host, doc.id);
+    const dropOn = async (sourceWindowLabel: string) => {
+      const store = new Map<string, string>([
+        [
+          WORKSPACE_CONTENT_DRAG_TYPE,
+          encodeWorkspaceContentDrag({
+            key: `file:${doc.id}`,
+            sourceWindowLabel,
+          }),
+        ],
+      ]);
+      const dataTransfer = {
+        effectAllowed: "",
+        dropEffect: "",
+        get types() {
+          return [...store.keys()];
+        },
+        setData: (type: string, value: string) => store.set(type, value),
+        getData: (type: string) => store.get(type) ?? "",
+      };
+      await act(async () => {
+        fireEvent.drop(
+          screen.getByRole("region", {
+            name: `pty.paneNumber:${JSON.stringify({ number: paneB.paneNumber })}`,
+          }),
+          { dataTransfer },
+        );
+      });
+      await flush();
+    };
+    const returnDrops = () =>
+      relayedHandoffs().filter(
+        (event) =>
+          event.legacyType === "workspace-file-window-return-drop-requested",
+      );
+
+    await dropOn(FOREIGN);
+
+    expect(returnDrops()).toHaveLength(0);
+    expect(coordinator.get(content)?.phase).toBe("detached");
+    expect(occurrences(host, content)).toBe(0);
+    // Reverse: a drop naming the window that really owns the file asks it to return.
+    await dropOn(windowLabel);
+    expect(returnDrops()).toHaveLength(1);
+    expect(returnDrops()[0].target).toBe(windowLabel);
+    expect(host.errors).toEqual([]);
   });
 });
 

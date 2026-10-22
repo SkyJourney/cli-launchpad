@@ -236,4 +236,26 @@ describe("StandaloneWorkspaceFileWindow listener setup", () => {
     windowHandle = undefined;
     expect(tauriMock.state.eventListeners).toHaveLength(0);
   });
+
+  it("does not send ready when unmounted during listener registration", async () => {
+    const inboxBefore = tauriMock.inboxHandlerCount(LABEL, "window-message");
+    const release = tauriMock.holdNextInboxSubscribe();
+    windowHandle = await mountFileWindow();
+    await flush();
+    // 前提：订阅还停在 IPC 途中，窗口尚未就绪。
+    expect(emittedEnvelopes("workspace-file-window-ready")).toHaveLength(0);
+
+    windowHandle.dispose();
+    windowHandle = undefined;
+    release();
+    await flush(10);
+
+    expect(emittedEnvelopes("workspace-file-window-ready")).toHaveLength(0);
+    // 反向断言：卸载不是失败，不得向主窗口报告 attach-failed，也不得留下任何监听。
+    expect(emittedEnvelopes("workspace-file-window-attach-failed")).toEqual([]);
+    expect(tauriMock.inboxHandlerCount(LABEL, "window-message")).toBe(
+      inboxBefore,
+    );
+    expect(tauriMock.state.eventListeners).toHaveLength(0);
+  });
 });

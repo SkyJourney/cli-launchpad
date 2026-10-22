@@ -19,6 +19,7 @@ import { tauriMock } from "../test/tauriMock";
 import { resetFakeTerminals } from "../test/host/hostMocks";
 import { FakeResizeObserver, geometry } from "../test/host/domPolyfills";
 import {
+  createBackend,
   DIRECTORY,
   flush,
   launchPty,
@@ -276,6 +277,40 @@ describe("overflow stack", () => {
     });
     await flush();
     expect(screen.getByRole("menu").textContent).toContain(rightTitle);
+    expect(host.errors).toEqual([]);
+  });
+});
+
+describe("tab titles", () => {
+  function tabTitles() {
+    return [
+      ...document.querySelectorAll<HTMLElement>(".pty-pane-tab-title"),
+    ].map((element) => element.textContent);
+  }
+
+  it("shows the basename for backslash and slash relative paths", async () => {
+    const backend = createBackend();
+    backend.files.set("dir\\win.txt", { content: "w", revision: "r1" });
+    backend.files.set("dir/unix.txt", { content: "u", revision: "r1" });
+    host = await mountWorkspace({
+      backend,
+      coordinator: new WorkspaceContentCoordinator(),
+    });
+
+    await openFile(host, "dir\\win.txt");
+    expect(tabTitles()).toEqual(["win.txt"]);
+
+    await openFile(host, "dir/unix.txt");
+    // Tab order is not part of this contract.
+    expect([...tabTitles()].sort()).toEqual(["unix.txt", "win.txt"]);
+    // The full relative path stays reachable as the tooltip; only the visible text is shortened.
+    const tooltips = [
+      ...document.querySelectorAll<HTMLElement>(".pty-pane-tab-title"),
+    ].map((element) => element.getAttribute("title"));
+    expect(tooltips.map((text) => text ?? "")).toEqual([
+      expect.stringContaining("dir"),
+      expect.stringContaining("dir"),
+    ]);
     expect(host.errors).toEqual([]);
   });
 });
