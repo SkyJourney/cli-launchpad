@@ -7,11 +7,7 @@ import {
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../../lib/ptyWorkspaceLayout";
-import {
-  fileContentKey,
-  fileContentRef,
-  ptyContentRef,
-} from "../../lib/workspaceContentKey";
+import { fileContentKey, fileContentRef } from "../../lib/workspaceContentKey";
 import type {
   PtySession,
   ToolKey,
@@ -113,23 +109,14 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [executor, fileDomain],
   );
 
-  const activateFile = useCallback(
-    (paneId: string, documentId: string) => {
-      executor.execute({
-        type: "activate",
-        ref: fileContentRef(documentId),
-        paneId,
-      });
-    },
-    [executor],
-  );
-
-  const activateUnsupportedContent = useCallback(
-    (
-      paneId: string,
-      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-    ) => {
-      executor.execute({ type: "activate", ref: content, paneId });
+  // 内容级激活：任何已登记种类与未知内容都走同一条执行器路径（陈旧点击时静默忽略）。
+  const activateContent = useCallback(
+    (paneId: string, content: WorkspacePaneContentRef) => {
+      try {
+        executor.execute({ type: "activate", ref: content, paneId });
+      } catch {
+        return;
+      }
     },
     [executor],
   );
@@ -173,21 +160,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [directories, executor, ptyDomain, store],
   );
 
-  const activateSession = useCallback(
-    (paneId: string, instanceId: string) => {
-      try {
-        executor.execute({
-          type: "activate",
-          ref: ptyContentRef(instanceId),
-          paneId,
-        });
-      } catch {
-        return;
-      }
-    },
-    [executor],
-  );
-
   const splitPane = useCallback(
     (paneId: string, direction: SplitDirection) => {
       executor.execute({ type: "splitPane", paneId, direction });
@@ -211,18 +183,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [executor],
   );
 
-  const splitAndMoveSession = useCallback(
-    (paneId: string, instanceId: string, direction: SplitDirection) =>
-      splitAndMoveContent(paneId, ptyContentRef(instanceId), direction),
-    [splitAndMoveContent],
-  );
-
-  const splitAndMoveFile = useCallback(
-    (paneId: string, documentId: string, direction: SplitDirection) =>
-      splitAndMoveContent(paneId, fileContentRef(documentId), direction),
-    [splitAndMoveContent],
-  );
-
   const moveContent = useCallback(
     (
       sourcePaneId: string,
@@ -237,18 +197,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       });
     },
     [executor],
-  );
-
-  const moveSession = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, instanceId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, ptyContentRef(instanceId)),
-    [moveContent],
-  );
-
-  const moveFile = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, documentId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, fileContentRef(documentId)),
-    [moveContent],
   );
 
   const closeEmptyPane = useCallback(
@@ -314,19 +262,15 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       launchSession,
       openProjectFile,
       loadFile,
-      activateFile,
-      activateUnsupportedContent,
+      activateContent,
       editFile,
       saveFile,
       closeContents,
       detachFile: orchestrator.detachFile,
       focusPane,
-      activateSession,
       splitPane,
-      splitAndMoveSession,
-      splitAndMoveFile,
-      moveSession,
-      moveFile,
+      splitAndMoveContent,
+      moveContent,
       isManagedDetachedDrag: orchestrator.isManagedDetachedDrag,
       isManagedDetachedFileDrag: orchestrator.isManagedDetachedFileDrag,
       detachSession: orchestrator.detachSession,
@@ -350,18 +294,14 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       launchSession,
       openProjectFile,
       loadFile,
-      activateFile,
-      activateUnsupportedContent,
+      activateContent,
       editFile,
       saveFile,
       closeContents,
       focusPane,
-      activateSession,
       splitPane,
-      splitAndMoveSession,
-      splitAndMoveFile,
-      moveSession,
-      moveFile,
+      splitAndMoveContent,
+      moveContent,
       closeEmptyPane,
       updateSplitRatio,
       persistence,

@@ -61,7 +61,7 @@ describe("workspace commands context", () => {
       (key) => !Object.is(after[key], before[key]),
     );
     expect(unstable).toEqual([]);
-    expect(WORKSPACE_COMMAND_KEYS).toHaveLength(34);
+    expect(WORKSPACE_COMMAND_KEYS).toHaveLength(30);
     // 函数值键必须恰好等于命令清单：漏列或误列都会在这里失败。
     const ctx = host.ctx() as unknown as Record<string, unknown>;
     const functionKeys = Object.keys(ctx)

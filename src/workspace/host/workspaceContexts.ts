@@ -49,11 +49,7 @@ export interface PtyWorkspaceContextValue {
     relativePath: string,
   ) => Promise<void>;
   loadFile: (documentId: string) => Promise<void>;
-  activateFile: (paneId: string, documentId: string) => void;
-  activateUnsupportedContent: (
-    paneId: string,
-    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-  ) => void;
+  activateContent: (paneId: string, content: WorkspacePaneContentRef) => void;
   editFile: (documentId: string, content: string) => void;
   saveFile: (documentId: string) => Promise<void>;
   closeContents: (
@@ -63,27 +59,16 @@ export interface PtyWorkspaceContextValue {
   ) => Promise<void>;
   detachFile: (documentId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
-  activateSession: (paneId: string, instanceId: string) => void;
   splitPane: (paneId: string, direction: SplitDirection) => void;
-  splitAndMoveSession: (
+  splitAndMoveContent: (
     paneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
     direction: SplitDirection,
   ) => void;
-  splitAndMoveFile: (
-    paneId: string,
-    documentId: string,
-    direction: SplitDirection,
-  ) => void;
-  moveSession: (
+  moveContent: (
     sourcePaneId: string,
     destinationPaneId: string,
-    instanceId: string,
-  ) => void;
-  moveFile: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    documentId: string,
+    content: WorkspacePaneContentRef,
   ) => void;
   detachedInstanceIds: Set<string>;
   closingContentKeys: Set<string>;
@@ -141,19 +126,15 @@ export const WORKSPACE_COMMAND_KEYS = [
   "launchSession",
   "openProjectFile",
   "loadFile",
-  "activateFile",
-  "activateUnsupportedContent",
+  "activateContent",
   "editFile",
   "saveFile",
   "closeContents",
   "detachFile",
   "focusPane",
-  "activateSession",
   "splitPane",
-  "splitAndMoveSession",
-  "splitAndMoveFile",
-  "moveSession",
-  "moveFile",
+  "splitAndMoveContent",
+  "moveContent",
   "isManagedDetachedDrag",
   "isManagedDetachedFileDrag",
   "detachSession",

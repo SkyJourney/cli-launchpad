@@ -87,7 +87,7 @@ describe("workspace commands", () => {
       h.ctx().focusPane(paneB.id);
     });
     act(() => {
-      h.ctx().activateFile(paneA.id, doc.id);
+      h.ctx().activateContent(paneA.id, { kind: "file", documentId: doc.id });
     });
     await flush();
 
@@ -105,7 +105,7 @@ describe("workspace commands", () => {
     const { h, coordinator, doc, paneA, panes } = await setup();
 
     act(() => {
-      h.ctx().splitAndMoveFile(paneA.id, doc.id, "vertical");
+      h.ctx().splitAndMoveContent(paneA.id, { kind: "file", documentId: doc.id }, "vertical");
     });
     await flush();
 
@@ -135,7 +135,7 @@ describe("workspace commands", () => {
     const { h, coordinator, doc, paneA, paneB, panes } = await setup();
 
     act(() => {
-      h.ctx().moveFile(paneA.id, paneB.id, doc.id);
+      h.ctx().moveContent(paneA.id, paneB.id, { kind: "file", documentId: doc.id });
     });
     await flush();
 
@@ -165,7 +165,7 @@ describe("workspace commands", () => {
     const focusBefore = h.ctx().focusedPaneId;
 
     act(() => {
-      h.ctx().moveFile(paneA.id, paneA.id, doc.id);
+      h.ctx().moveContent(paneA.id, paneA.id, { kind: "file", documentId: doc.id });
     });
     await flush();
 
@@ -180,7 +180,7 @@ describe("workspace commands", () => {
     const { slot } = await launchPty(h);
 
     act(() => {
-      h.ctx().moveSession(paneB.id, paneA.id, slot.instanceId);
+      h.ctx().moveContent(paneB.id, paneA.id, { kind: "pty", slotId: slot.instanceId });
     });
     await flush();
 
@@ -236,7 +236,7 @@ describe("workspace commands", () => {
     const { h, doc, paneA, paneB, panes } = await setup();
 
     act(() => {
-      h.ctx().moveFile(paneA.id, paneB.id, doc.id);
+      h.ctx().moveContent(paneA.id, paneB.id, { kind: "file", documentId: doc.id });
     });
     await flush();
     await act(async () => {

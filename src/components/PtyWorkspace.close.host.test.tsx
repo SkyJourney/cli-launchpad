@@ -429,7 +429,7 @@ describe("mixed content close", () => {
     );
     await flush();
     await act(async () => {
-      host!.ctx().moveSession(paneA!.id, paneB!.id, slot.instanceId);
+      host!.ctx().moveContent(paneA!.id, paneB!.id, { kind: "pty", slotId: slot.instanceId });
     });
     await flush();
 

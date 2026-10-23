@@ -61,17 +61,17 @@ describe("PTY portal ownership", () => {
       (pane) => pane.id !== paneA.id,
     )!;
     await act(async () => {
-      host!.ctx().moveSession(paneA.id, paneB.id, slot.instanceId);
+      host!.ctx().moveContent(paneA.id, paneB.id, { kind: "pty", slotId: slot.instanceId });
     });
     await flush();
     const filePane = listWorkspacePanes(host.ctx().tree).find((pane) =>
       pane.contents.some((content) => content.kind === "file"),
     )!;
     await act(async () => {
-      host!.ctx().activateFile(filePane.id, doc.id);
+      host!.ctx().activateContent(filePane.id, { kind: "file", documentId: doc.id });
     });
     await act(async () => {
-      host!.ctx().activateSession(paneB.id, slot.instanceId);
+      host!.ctx().activateContent(paneB.id, { kind: "pty", slotId: slot.instanceId });
     });
     await flush();
 

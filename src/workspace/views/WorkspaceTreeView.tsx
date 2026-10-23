@@ -36,40 +36,25 @@ export interface WorkspaceTreeViewProps {
   ptySessionsById: Record<string, PtySession>;
   workspacePanes: WorkspacePane[];
   onFocusPane: (paneId: string) => void;
-  onActivateSession: (paneId: string, instanceId: string) => void;
-  onActivateFile: (paneId: string, documentId: string) => void;
-  onActivateUnsupportedContent: (
-    paneId: string,
-    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-  ) => void;
+  onActivateContent: (paneId: string, content: WorkspacePaneContentRef) => void;
   onCloseContents: (
     contents: WorkspacePaneContentRef[],
     origin: "tab" | "menu" | "stack" | "window",
     onApproved?: () => void,
   ) => Promise<void>;
   onDetachFile: (documentId: string) => void;
-  onMoveFile: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    documentId: string,
-  ) => void;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
   onSplitPane: (paneId: string, direction: SplitDirection) => void;
-  onSplitAndMoveSession: (
+  onSplitAndMoveContent: (
     paneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
     direction: SplitDirection,
   ) => void;
-  onSplitAndMoveFile: (
-    paneId: string,
-    documentId: string,
-    direction: SplitDirection,
-  ) => void;
-  onMoveSession: (
+  onMoveContent: (
     sourcePaneId: string,
     destinationPaneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
   ) => void;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;

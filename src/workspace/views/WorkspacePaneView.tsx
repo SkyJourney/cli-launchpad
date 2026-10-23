@@ -27,9 +27,7 @@ import { formatAppError } from "../../lib/appErrors";
 import {
   contentRefFromKey,
   fileContentKey,
-  fileContentRef,
   type ManagedContentRef,
-  ptyContentRef,
   workspaceContentKey,
 } from "../../lib/workspaceContentKey";
 import {
@@ -77,18 +75,14 @@ export function WorkspacePaneView({
   ptySessionsById,
   workspacePanes,
   onFocusPane,
-  onActivateSession,
-  onActivateFile,
-  onActivateUnsupportedContent,
+  onActivateContent,
   onCloseContents,
   onDetachFile,
-  onMoveFile,
   onEditFile,
   onSaveFile,
   onSplitPane,
-  onSplitAndMoveSession,
-  onSplitAndMoveFile,
-  onMoveSession,
+  onSplitAndMoveContent,
+  onMoveContent,
   hasDetachedSessions,
   isManagedDetachedDrag,
   isManagedDetachedFileDrag,
@@ -266,8 +260,11 @@ export function WorkspacePaneView({
     };
   }, []);
 
-  const requestSplit = (direction: SplitDirection, instanceId?: string) => {
-    if (instanceId) onActivateSession(pane.id, instanceId);
+  const requestSplit = (
+    direction: SplitDirection,
+    content?: WorkspacePaneContentRef,
+  ) => {
+    if (content) onActivateContent(pane.id, content);
     const bounds = contentRef.current?.parentElement?.getBoundingClientRect();
     if (
       !bounds ||
@@ -286,7 +283,7 @@ export function WorkspacePaneView({
 
   const requestSplitAndMove = (
     direction: SplitDirection,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
   ) => {
     const bounds = contentRef.current?.parentElement?.getBoundingClientRect();
     if (
@@ -301,7 +298,7 @@ export function WorkspacePaneView({
       );
       return;
     }
-    onSplitAndMoveSession(pane.id, instanceId, direction);
+    onSplitAndMoveContent(pane.id, content, direction);
   };
 
   const renderContentTab = (
@@ -357,13 +354,7 @@ export function WorkspacePaneView({
           event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
           event.dataTransfer.setData("text/plain", payload);
         }}
-        onActivate={() => {
-          if (content.kind === "pty")
-            onActivateSession(pane.id, content.slotId);
-          else if (content.kind === "file")
-            onActivateFile(pane.id, content.documentId);
-          else onActivateUnsupportedContent(pane.id, content);
-        }}
+        onActivate={() => onActivateContent(pane.id, content)}
         onRequestClose={() => void onCloseContents([content], "tab")}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -371,10 +362,7 @@ export function WorkspacePaneView({
           if (content.kind === "unknown" || isClosing) return;
           onFocusPane(pane.id);
           setContextMenu({
-            target:
-              content.kind === "pty"
-                ? ptyContentRef(content.slotId)
-                : fileContentRef(content.documentId),
+            target: content,
             x: event.clientX,
             y: event.clientY,
           });
@@ -456,19 +444,7 @@ export function WorkspacePaneView({
           contentPayload.sourceWindowLabel === MAIN_WINDOW_LABEL &&
           "sourcePaneId" in contentPayload
         ) {
-          if (draggedRef.kind === "file") {
-            onMoveFile(
-              contentPayload.sourcePaneId,
-              pane.id,
-              draggedRef.documentId,
-            );
-          } else {
-            onMoveSession(
-              contentPayload.sourcePaneId,
-              pane.id,
-              draggedRef.slotId,
-            );
-          }
+          onMoveContent(contentPayload.sourcePaneId, pane.id, draggedRef);
           return;
         }
         if (
@@ -540,13 +516,7 @@ export function WorkspacePaneView({
               fileBuffers={fileBuffers}
               selectedDirectoryId={selectedDirectoryId}
               closingContentKeys={closingContentKeys}
-              onActivate={(entry) => {
-                if (entry.content.kind === "pty")
-                  onActivateSession(pane.id, entry.content.slotId);
-                else if (entry.content.kind === "file")
-                  onActivateFile(pane.id, entry.content.documentId);
-                else onActivateUnsupportedContent(pane.id, entry.content);
-              }}
+              onActivate={(entry) => onActivateContent(pane.id, entry.content)}
               onCloseContent={(entry) =>
                 void onCloseContents([entry.content], "stack")
               }
@@ -554,10 +524,7 @@ export function WorkspacePaneView({
                 if (entry.content.kind === "unknown") return;
                 onFocusPane(pane.id);
                 setContextMenu({
-                  target:
-                    entry.content.kind === "pty"
-                      ? ptyContentRef(entry.content.slotId)
-                      : fileContentRef(entry.content.documentId),
+                  target: entry.content,
                   x,
                   y,
                 });
@@ -704,49 +671,16 @@ export function WorkspacePaneView({
               onClose={() => setContextMenu(null)}
               onSplit={(direction) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  onActivateSession(pane.id, targetSlot.instanceId);
-                requestSplit(direction);
+                // 会话在拆分前先成为激活内容（文件不需要）。
+                requestSplit(direction, targetSlot ? targetContent : undefined);
               }}
               onSplitAndMove={(direction) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  requestSplitAndMove(direction, targetSlot.instanceId);
-                else if (targetFile) {
-                  const bounds =
-                    contentRef.current?.parentElement?.getBoundingClientRect();
-                  if (
-                    !bounds ||
-                    !canSplitWorkspacePane(
-                      bounds.width,
-                      bounds.height,
-                      direction,
-                    )
-                  ) {
-                    toast.info(
-                      t("pty.splitTooSmall", {
-                        axis:
-                          direction === "horizontal"
-                            ? t("pty.width")
-                            : t("pty.height"),
-                        size: minimumWorkspacePaneExtent(direction),
-                      }),
-                    );
-                    return;
-                  }
-                  onSplitAndMoveFile(pane.id, targetFile.id, direction);
-                }
+                requestSplitAndMove(direction, targetContent);
               }}
               onMoveToPane={(destinationPaneId) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  onMoveSession(
-                    pane.id,
-                    destinationPaneId,
-                    targetSlot.instanceId,
-                  );
-                else if (targetFile)
-                  onMoveFile(pane.id, destinationPaneId, targetFile.id);
+                onMoveContent(pane.id, destinationPaneId, targetContent);
               }}
               onDetach={() => {
                 setContextMenu(null);
@@ -755,11 +689,9 @@ export function WorkspacePaneView({
               }}
               onCloseCurrent={() => requestCloseContents([targetContent])}
               onCloseOthers={() =>
-                requestCloseContents(otherContents, () => {
-                  if (targetSlot)
-                    onActivateSession(pane.id, targetSlot.instanceId);
-                  if (targetFile) onActivateFile(pane.id, targetFile.id);
-                })
+                requestCloseContents(otherContents, () =>
+                  onActivateContent(pane.id, targetContent),
+                )
               }
               onCloseAll={() => requestCloseContents(paneContentRefs)}
             />

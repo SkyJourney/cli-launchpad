@@ -46,12 +46,9 @@ export function WorkspaceRegion() {
     layoutResetPending,
     portalTargets,
     focusPane,
-    activateSession,
     splitPane,
-    splitAndMoveSession,
-    splitAndMoveFile,
-    moveSession,
-    moveFile,
+    splitAndMoveContent,
+    moveContent,
     hasDetachedSessions,
     isManagedDetachedDrag,
     isManagedDetachedFileDrag,
@@ -62,8 +59,7 @@ export function WorkspaceRegion() {
     updateSplitRatio,
     retryHydration,
     resetWorkspace,
-    activateFile,
-    activateUnsupportedContent,
+    activateContent,
     closeContents,
     editFile,
     saveFile,
@@ -171,22 +167,18 @@ export function WorkspaceRegion() {
           ptySessionsById={ptySessionsById}
           workspacePanes={workspacePanes}
           onFocusPane={focusPane}
-          onActivateSession={activateSession}
-          onActivateFile={activateFile}
-          onActivateUnsupportedContent={activateUnsupportedContent}
+          onActivateContent={activateContent}
           onCloseContents={closeContents}
           onDetachFile={(documentId) => {
             void detachFile(documentId).catch((reason) =>
               toast.error(formatAppError(reason, t)),
             );
           }}
-          onMoveFile={moveFile}
           onEditFile={editFile}
           onSaveFile={saveFile}
           onSplitPane={splitPane}
-          onSplitAndMoveSession={splitAndMoveSession}
-          onSplitAndMoveFile={splitAndMoveFile}
-          onMoveSession={moveSession}
+          onSplitAndMoveContent={splitAndMoveContent}
+          onMoveContent={moveContent}
           hasDetachedSessions={hasDetachedSessions}
           isManagedDetachedDrag={isManagedDetachedDrag}
           isManagedDetachedFileDrag={isManagedDetachedFileDrag}
