@@ -91,6 +91,16 @@ export function createFileProtocolHandlers(
   orchestrator: ContentWindowOrchestrator,
 ): FileProtocolHandlers {
   const { state, deps, ports } = orchestrator;
+  // 返回失败的统一应答：送达失败只能忽略（子窗口可能已经关闭）。
+  const reportReturnFailed = (
+    windowLabel: string,
+    documentId: string,
+    token: string,
+    message: string,
+  ) =>
+    ports
+      .emit(windowLabel, "file", "return-failed", { documentId, token, message })
+      .catch(() => undefined);
 
   const handleWorkspaceContentWindowLost = ({
     windowLabel,
@@ -292,15 +302,9 @@ export function createFileProtocolHandlers(
                 incomingDocument,
               )
             ) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
@@ -325,15 +329,9 @@ export function createFileProtocolHandlers(
               !managedWindow ||
               windowKindOf(event.payload.windowLabel) !== "workspaceContent"
             ) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             // 本次返回的 transferId 由主窗口生成；子窗口只携带窗口令牌。
@@ -352,15 +350,9 @@ export function createFileProtocolHandlers(
                   event.payload.windowLabel ||
                 currentOwnership.windowToken !== event.payload.token
               ) {
-                await ports
-                  .emit(event.payload.windowLabel, "file", "return-failed", {
-                    documentId: event.payload.documentId,
-                    token: event.payload.token,
-                    message: deps.translate("pty.returnFailed", {
+                await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                       error: deps.translate("pty.detachedStateChanged"),
-                    }),
-                  })
-                  .catch(() => undefined);
+                    }));
                 return;
               }
             } else if (
@@ -440,15 +432,9 @@ export function createFileProtocolHandlers(
               },
             );
             if (!returnTargetPaneId) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             const returning = deps
@@ -460,15 +446,9 @@ export function createFileProtocolHandlers(
                 returnTargetPaneId,
               );
             if (returning?.outcome !== "changed") {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.detachedStateChanged"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             let fileReturnDriverContext: WorkspaceContentHandoffHookContext<"file"> | null =
@@ -595,15 +575,9 @@ export function createFileProtocolHandlers(
                   "returnFailed",
                   returnTransferId,
                 );
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: formatAppError(reason, deps.translate),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
             }
           }),
       },

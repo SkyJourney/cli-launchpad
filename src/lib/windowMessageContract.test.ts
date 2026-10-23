@@ -267,8 +267,9 @@ describe("window message contract", () => {
     }
 
     expect(violations).toEqual([]);
-    // Guard against a scan that reads nothing: 28 send calls and 18 (kind, phase) pairs at m6-091.
-    expect(sites).toBe(28);
+    // Guard against a scan that reads nothing: 23 send call sites (six file return-failed sends share one
+    // helper) and 18 (kind, phase) pairs.
+    expect(sites).toBe(23);
     expect(combos.size).toBe(18);
     // The fixed pattern sees the single-line calls only.
     let fixed = 0;
