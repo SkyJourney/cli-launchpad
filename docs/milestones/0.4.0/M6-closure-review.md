@@ -4897,6 +4897,11 @@ A 层是 M6 标记整体验收通过的前提；B 层是 M7 任何实现工作�
   - 窗口类别：契约 JSON、capability 文件、外壳组件，不超过 3 处。
 - **演练方式**：在临时分支实际为 Markdown 预览新增内容 kind 的完整骨架，必须覆盖全部判别点：契约、Rust 校验与布局往返、TS 类型、注册、渲染、拖放、右键菜单、关闭、独立窗口入口、协议、capability、i18n；同时对另外三类扩展（Provider、主题、窗口类别）做同样的演练。
 - **记录**：每次演练记录实际改动文件数、判别点数、diff 统计，与基线和目标对比；达不到目标时，列出未能消除的触点和原因，并经产品确认后才能降低目标；演练结束后丢弃临时分支，记录写入追溯表。
+- **目标修正（2026-10-23，用户批准“修正目标，然后继续”）**：内容 kind 的“宿主文件改动 0 行”门禁保持不变，适用范围限定为宿主目录（`src/workspace/host`、`src/workspace/views`、`src/workspace/persistence`）：这些目录中不得出现按内容种类写死的分支、字面量或种类专用的 props。窗口协议层的种类相关代码不计入宿主，但必须逐处列明，允许的明确触点只有以下几处：
+  1. `src/workspace/windows/contentProtocolDescriptors.ts`：每种内容一项描述，新增一个种类计 1 处。
+  2. `src/workspace/windows/protocolHandlers.pty.ts`、`src/workspace/windows/protocolHandlers.file.ts`：种类相关的事件处理，新增一个种类计 1 处（不超过每个文件 1 段新增钩子）。
+  3. `src/workspace/windows/contentWindowTypes.ts`、`src/workspace/windows/windowLaunchParams.ts`、`src/workspace/windows/contentWindowOrchestrator.ts`、`src/workspace/windows/useDetachedContentWindow.ts`：负载类型、启动参数与编排中的种类分支，新增一个种类时每个文件计 1 处。
+  新增一个内容种类，窗口协议层的触点合计不超过 6 处；演练记录必须逐处列出文件与行号。本修正只针对内容 kind 一项，Provider、主题、窗口类别的目标不变（主题的译文上限按 2026-10-23 的裁定修正为 10 个 locale 文件）。
 
 #### 4.5.6 B 层残余项的 C 层重标（2026-10-22，用户裁定按风险分级）
 
