@@ -13,6 +13,7 @@ const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.js
 pub struct WindowKind(&'static str);
 
 impl WindowKind {
+    #[cfg(test)]
     pub const TERMINAL: WindowKind = WindowKind("terminal");
     pub const WORKSPACE_CONTENT: WindowKind = WindowKind("workspaceContent");
 
@@ -248,9 +249,10 @@ impl CallerWindow {
         &self.0
     }
 
-    /// Whether the calling window's contract entry grants `command` (W1: parallel to `require`).
-    pub fn require_command(&self, command: &str) -> Result<(), AppError> {
-        if self.0.kind().definition().grants_command(command) {
+    /// Whether the caller's kind is one of `allowed`. Message routing uses this with the sender
+    /// kinds that `contracts/window-messages.json` declares for each message type.
+    pub fn require_kind(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
+        if allowed.contains(&self.0.kind()) {
             Ok(())
         } else {
             Err(AppError::coded(
@@ -260,8 +262,9 @@ impl CallerWindow {
         }
     }
 
-    pub fn require(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
-        if allowed.contains(&self.0.kind()) {
+    /// Whether the calling window's contract entry grants `command`.
+    pub fn require_command(&self, command: &str) -> Result<(), AppError> {
+        if self.0.kind().definition().grants_command(command) {
             Ok(())
         } else {
             Err(AppError::coded(
@@ -488,24 +491,21 @@ mod tests {
     }
 
     #[test]
-    fn caller_window_require_allows_only_the_listed_kinds() {
+    fn caller_window_require_command_follows_the_contract() {
         use super::CallerWindow;
         let caller =
             CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
                 .unwrap();
-        assert!(caller
-            .require(&[WindowKind::WORKSPACE_CONTENT, WindowKind::main()])
-            .is_ok());
-        let error = caller
-            .require(&[WindowKind::main(), WindowKind::TERMINAL])
-            .unwrap_err();
+        assert!(caller.require_command("open_granted_file").is_ok());
+        assert!(caller.require_command("send_window_message").is_ok());
+        let error = caller.require_command("write_pty_session").unwrap_err();
         assert_eq!(
             serde_json::to_value(&error).unwrap()["code"],
             "window.not_allowed"
         );
         assert!(
-            caller.require(&[]).is_err(),
-            "an empty allow list admits nobody"
+            caller.require_command("no_such_command").is_err(),
+            "a command the contract does not grant is refused"
         );
         assert!(CallerWindow::from_label("settings").is_err());
     }
@@ -530,7 +530,7 @@ mod tests {
         let content =
             CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
                 .unwrap();
-        let denied = content.require(&[WindowKind::main()]).unwrap_err();
+        let denied = content.require_command("write_pty_session").unwrap_err();
         let InvokeError(value) = InvokeError::from(denied);
         assert_eq!(value["code"], "window.not_allowed");
         assert!(value["message"]

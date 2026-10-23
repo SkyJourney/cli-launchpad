@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::files::TauriContentWindowReclaimer;
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::config_service;
 use crate::services::content_window_grants::{
@@ -32,7 +32,7 @@ pub async fn import_config_from_path(
     generation: State<'_, RestoreGeneration>,
     path: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::main()])?;
+    caller.require_command("import_config_from_path")?;
     let db = state.inner().clone();
     let generation = generation.inner().clone();
     let storage = storage.inner().clone();

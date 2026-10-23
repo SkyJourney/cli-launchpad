@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::services::{diagnostics_service, storage_service::StoragePaths};
 use crate::{blocking_unbounded, AppError, Db};
 
@@ -28,11 +28,7 @@ pub fn report_window_sync_failure(
     code: String,
     message: String,
 ) -> Result<(), AppError> {
-    caller.require(&[
-        WindowKind::main(),
-        WindowKind::TERMINAL,
-        WindowKind::WORKSPACE_CONTENT,
-    ])?;
+    caller.require_command("report_window_sync_failure")?;
     diagnostics_service::log_window_sync_failure(caller.label(), &code, &message);
     Ok(())
 }

@@ -100,7 +100,7 @@ fn relay_within(
 ) -> Result<SendWindowMessageResult, AppError> {
     let rule = rule_for(message_type)
         .ok_or_else(|| AppError::coded(ErrorCode::WindowNotAllowed, "未登记的窗口消息类型"))?;
-    caller.require(&rule.from)?;
+    caller.require_kind(&rule.from)?;
     let target = WindowLabel::parse(target)?;
     if !rule.to.contains(&target.kind()) {
         return Err(AppError::coded(

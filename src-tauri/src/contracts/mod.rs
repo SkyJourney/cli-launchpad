@@ -3988,30 +3988,10 @@ fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds(
             }
             continue;
         }
-        let prefix = format!("{name}.require(&[");
-        let Some(list) = statement.strip_prefix(&prefix) else {
-            violations.push(format!(
-                "{}: the first statement is not `{prefix}…` ({})",
-                check.command, statement
-            ));
-            continue;
-        };
-        let Some((list, _)) = list.split_once("])?") else {
-            violations.push(format!("{}: `require` is not `…])?`", check.command));
-            continue;
-        };
-        let actual: BTreeSet<String> = list
-            .split(',')
-            .map(str::trim)
-            .filter(|variant| !variant.is_empty())
-            .map(|variant| kind_id(variant).to_string())
-            .collect();
-        if actual != check.kinds {
-            violations.push(format!(
-                "{}: requires {actual:?}, the contract declares {:?}",
-                check.command, check.kinds
-            ));
-        }
+        violations.push(format!(
+            "{}: uses the legacy `require` allowlist form; use `require_command`",
+            check.command
+        ));
     }
     assert!(violations.is_empty(), "{violations:#?}");
     assert_eq!(webview_in_require, 0);
@@ -5376,7 +5356,10 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("");
-    assert_eq!(first.trim(), "caller.require(&[WindowKind::main()])?;");
+    assert_eq!(
+        first.trim(),
+        "caller.require_command(\"report_exit_impacts\")?;"
+    );
     for forbidden in [".await", "with_connection", ".call(", "with_sync"] {
         assert!(
             !body.contains(forbidden),
@@ -5403,7 +5386,7 @@ fn confirm_app_exit_goes_through_confirm_with_impacts() {
         "confirm must check the reported impacts"
     );
     assert!(function.contains("Operation::Exit"));
-    assert!(function.contains("caller.require("));
+    assert!(function.contains("caller.require_command("));
     assert!(
         !function.contains("confirm_exit_with("),
         "the command must not bypass the impact check"

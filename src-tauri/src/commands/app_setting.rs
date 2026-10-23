@@ -3,7 +3,7 @@ use tauri::State;
 
 use crate::db::app_setting_repo;
 use crate::models::app_setting::CloseBehavior;
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::{update_close_behavior_state, AppError, CloseBehaviorState, Db, TrayMenuLabelsState};
 
 #[tauri::command]
@@ -22,7 +22,7 @@ pub async fn set_close_behavior(
     close_behavior_state: State<'_, CloseBehaviorState>,
     close_behavior: CloseBehavior,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::main()])?;
+    caller.require_command("set_close_behavior")?;
     state
         .call("app_setting.set_close_behavior", move |conn| {
             Ok(app_setting_repo::set_close_behavior(conn, close_behavior)?)
@@ -39,7 +39,7 @@ pub fn set_tray_menu_labels(
     show: String,
     quit: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::main()])?;
+    caller.require_command("set_tray_menu_labels")?;
     if show.trim().is_empty() || quit.trim().is_empty() || show.len() > 256 || quit.len() > 256 {
         return Err(AppError::internal("托盘菜单文案无效"));
     }

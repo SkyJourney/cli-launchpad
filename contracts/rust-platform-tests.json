@@ -204,7 +204,7 @@
       "services::backup_service::tests::restore_keeps_admission_closed_until_the_notification_is_sent",
       "models::window_kind::tests::window_label_parse_matches_the_shared_fixture_vectors",
       "models::window_kind::tests::window_label_exposes_kind_and_main_flag",
-      "models::window_kind::tests::caller_window_require_allows_only_the_listed_kinds",
+      "models::window_kind::tests::caller_window_require_command_follows_the_contract",
       "models::window_kind::tests::main_label_helpers_read_the_contract",
       "services::window_lifecycle::tests::destroyed_file_window_revokes_only_its_grant",
       "services::window_lifecycle::tests::destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions",
