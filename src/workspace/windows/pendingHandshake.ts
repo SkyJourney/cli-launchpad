@@ -12,6 +12,12 @@ import {
 import type { ContentWindowOrchestrator } from "./contentWindowOrchestrator";
 import { prepareWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import { rollbackHandoffOnce } from "./handoffRollback";
+import {
+  findWorkspacePane,
+  hasWorkspaceContent,
+  listWorkspacePanes,
+} from "../../lib/ptyWorkspaceLayout";
+import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 /** The fields the shared handshake reads from a pending record of any content kind. */
 export interface PendingHandshakeRecord<K extends RegisteredContentKind>
@@ -179,4 +185,30 @@ export async function acceptWindowReady<
     // init 没有送达：立即回滚并结束等待，不再依赖超时兜底。
     abandon(payload, reason);
   }
+}
+
+/**
+ * Reconciles a content that is not detached back into the ownership of the window that returns it:
+ * the source pane is the pane holding the content, else the focused pane, else the first pane. The
+ * caller decides whether reconciliation applies; `windowToken` is read only once a pane is found, so
+ * the order of id generation is unchanged.
+ */
+export function reconcileFromSourcePane(
+  orchestrator: ContentWindowOrchestrator,
+  args: { content: ManagedContentRef; windowLabel: string; windowToken: () => string },
+): void {
+  const { deps } = orchestrator;
+  const tree = deps.store.getLive().tree;
+  const sourcePane =
+    listWorkspacePanes(tree).find((pane) => hasWorkspaceContent(pane, args.content)) ??
+    findWorkspacePane(tree, deps.store.getLive().focusedPaneId) ??
+    listWorkspacePanes(tree)[0];
+  if (!sourcePane) return;
+  deps.getCoordinator().reconcileDetached(
+    args.content,
+    { kind: "pane", windowLabel: MAIN_WINDOW_LABEL, paneId: sourcePane.id },
+    { kind: "window", windowLabel: args.windowLabel },
+    deps.getCoordinator().newTransferId(),
+    args.windowToken(),
+  );
 }

@@ -18,8 +18,6 @@ import { onInboxEvent } from "../../lib/windowInbox";
 import { onContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   findWorkspacePane,
-  listWorkspacePanes,
-  hasWorkspaceContent,
 } from "../../lib/ptyWorkspaceLayout";
 import { matchesDetachedWindow } from "../../lib/ptySessionLifecycle";
 
@@ -43,7 +41,11 @@ import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand"
 import { attachWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
-import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
+import {
+  acceptPendingAttach,
+  failPendingHandoff,
+  reconcileFromSourcePane,
+} from "./pendingHandshake";
 
 export interface PtyProtocolHandlers {
   /** 与宿主原 PTY 监听列表逐项对应（名称与顺序一致）。 */
@@ -247,28 +249,11 @@ export function createPtyProtocolHandlers(
       return;
     }
     if (currentOwnership?.phase !== "detached") {
-      const sourcePane =
-        listWorkspacePanes(deps.store.getLive().tree).find((pane) =>
-          hasWorkspaceContent(pane, returningContent),
-        ) ??
-        findWorkspacePane(
-          deps.store.getLive().tree,
-          deps.store.getLive().focusedPaneId,
-        ) ??
-        listWorkspacePanes(deps.store.getLive().tree)[0];
-      if (sourcePane) {
-        deps.getCoordinator().reconcileDetached(
-          returningContent,
-          {
-            kind: "pane",
-            windowLabel: MAIN_WINDOW_LABEL,
-            paneId: sourcePane.id,
-          },
-          { kind: "window", windowLabel: payload.windowLabel },
-          deps.getCoordinator().newTransferId(),
-          deps.getCoordinator().newWindowToken(),
-        );
-      }
+      reconcileFromSourcePane(orchestrator, {
+        content: returningContent,
+        windowLabel: payload.windowLabel,
+        windowToken: () => deps.getCoordinator().newWindowToken(),
+      });
     }
     const returnTargetPaneId = resolveWorkspaceReturnPaneId(
       deps.store.getLive().tree,

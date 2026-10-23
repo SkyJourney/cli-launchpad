@@ -7,7 +7,7 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 import { rollbackHandoffOnce } from "./handoffRollback";
-import { acceptWindowReady } from "./pendingHandshake";
+import { acceptWindowReady, reconcileFromSourcePane } from "./pendingHandshake";
 import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
@@ -17,7 +17,6 @@ import { onContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   findWorkspacePane,
   listWorkspacePanes,
-  hasWorkspaceContent,
 } from "../../lib/ptyWorkspaceLayout";
 
 import { matchesWorkspaceFileWindow } from "../../lib/workspaceFileWindow";
@@ -359,32 +358,12 @@ export function createFileProtocolHandlers(
               !currentOwnership ||
               currentOwnership.phase === "attached"
             ) {
-              const sourcePane =
-                listWorkspacePanes(deps.store.getLive().tree).find((pane) =>
-                  hasWorkspaceContent(pane, content),
-                ) ??
-                findWorkspacePane(
-                  deps.store.getLive().tree,
-                  deps.store.getLive().focusedPaneId,
-                ) ??
-                listWorkspacePanes(deps.store.getLive().tree)[0];
-              if (sourcePane) {
-                deps.getCoordinator().reconcileDetached(
-                  content,
-                  {
-                    kind: "pane",
-                    windowLabel: MAIN_WINDOW_LABEL,
-                    paneId: sourcePane.id,
-                  },
-                  {
-                    kind: "window",
-                    windowLabel: event.payload.windowLabel,
-                  },
-                  deps.getCoordinator().newTransferId(),
-                  event.payload.token,
-                );
-                currentOwnership = deps.getCoordinator().get(content);
-              }
+              reconcileFromSourcePane(orchestrator, {
+                content,
+                windowLabel: event.payload.windowLabel,
+                windowToken: () => event.payload.token,
+              });
+              currentOwnership = deps.getCoordinator().get(content);
             }
             if (
               currentOwnership?.phase !== "detached" ||
