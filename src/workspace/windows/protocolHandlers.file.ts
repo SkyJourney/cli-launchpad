@@ -7,6 +7,7 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 import { rollbackHandoffOnce } from "./handoffRollback";
+import { acceptWindowReady } from "./pendingHandshake";
 import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
@@ -22,7 +23,6 @@ import {
 import { matchesWorkspaceFileWindow } from "../../lib/workspaceFileWindow";
 
 import {
-  takePendingWorkspaceContentWindow,
 } from "../../lib/workspaceContentWindowRegistry";
 import {
   isWorkspaceFileBufferNewer,
@@ -30,7 +30,6 @@ import {
 } from "../../lib/workspaceFileBuffer";
 import { formatAppError } from "../../lib/appErrors";
 
-import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStage";
 import { fileContentKey, fileContentRef } from "../../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../../lib/workspaceFileExitFlush";
 
@@ -39,7 +38,6 @@ import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceCo
 import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand";
 import {
   attachWorkspaceContentHandoff,
-  prepareWorkspaceContentHandoff,
 } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
@@ -137,12 +135,6 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            if (!advancePendingWindowStage(pending, "windowReady")) {
-              console.warn(
-                `Ignoring duplicate or late file:ready for ${pending.documentId} (stage ${pending.stage}).`,
-              );
-              return;
-            }
             const content = fileContentRef(pending.documentId);
             const driverContext: WorkspaceContentHandoffHookContext<"file"> = {
               content,
@@ -179,56 +171,23 @@ export function createFileProtocolHandlers(
                 rollback: async () => undefined,
               },
             };
-            let prepared: Awaited<
-              ReturnType<typeof prepareWorkspaceContentHandoff<"file">>
-            >;
-            try {
-              prepared = await prepareWorkspaceContentHandoff(driverContext);
-              pending.handoffContext = driverContext;
-              pending.handoffPayload = prepared.payload;
-            } catch (reason) {
-              void rollbackHandoffOnce(driverContext, undefined, reason).catch(
-                () => undefined,
-              );
-              deps
-                .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.transferId);
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(new Error(formatAppError(reason, deps.translate)));
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            if (!advancePendingWindowStage(pending, "initSent")) return;
-            try {
-              await ports.emit(pending.windowLabel, "file", "init", {
-                documentId: pending.documentId,
-                token: pending.windowToken,
-                windowLabel: pending.windowLabel,
-                fileDocument: prepared.payload.document,
-                fileBuffer: prepared.payload.buffer,
-              });
-            } catch (reason) {
-              // init 没有送达：立即回滚并结束等待，不再依赖 15 秒超时兜底。
-              void rollbackHandoffOnce(
-                driverContext,
-                prepared.payload,
-                reason,
-              ).catch(() => undefined);
-              deps
-                .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.transferId);
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(new Error(formatAppError(reason, deps.translate)));
-              void pending.window.destroy().catch(() => undefined);
-            }
+            await acceptWindowReady(orchestrator, {
+              pending,
+              pendingMap: state.pending.file,
+              key: fileContentKey(pending.documentId),
+              ref: content,
+              lateReadyMessage: `Ignoring duplicate or late file:ready for ${pending.documentId} (stage ${pending.stage}).`,
+              driverContext,
+              emitInit: (payload) =>
+                ports.emit(pending.windowLabel, "file", "init", {
+                  documentId: pending.documentId,
+                  token: pending.windowToken,
+                  windowLabel: pending.windowLabel,
+                  fileDocument: payload.document,
+                  fileBuffer: payload.buffer,
+                }),
+              reasonText: (reason) => formatAppError(reason, deps.translate),
+            });
           }),
       },
       {

@@ -10,6 +10,7 @@ import {
   type WorkspaceContentWindowRecord,
 } from "../../lib/workspaceContentWindowRegistry";
 import type { ContentWindowOrchestrator } from "./contentWindowOrchestrator";
+import { prepareWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import { rollbackHandoffOnce } from "./handoffRollback";
 
 /** The fields the shared handshake reads from a pending record of any content kind. */
@@ -123,4 +124,59 @@ export function failPendingHandoff<
   );
   pending.reject(new Error(args.message));
   void pending.window.destroy().catch(() => undefined);
+}
+
+/**
+ * Accepts a child window's `ready` for a content whose window needs an init payload. The handoff is
+ * prepared through the content's adapter and then the init message is sent; a failure at either
+ * step rolls the handoff back and rejects the pending promise. The caller has matched the identity.
+ */
+export async function acceptWindowReady<
+  K extends RegisteredContentKind,
+  P extends PendingHandshakeRecord<K>,
+>(
+  orchestrator: ContentWindowOrchestrator,
+  args: {
+    pending: P;
+    pendingMap: Map<string, P>;
+    key: string;
+    ref: Extract<ManagedContentRef, { kind: K }>;
+    lateReadyMessage: string;
+    driverContext: WorkspaceContentHandoffHookContext<K>;
+    emitInit: (payload: WorkspaceContentHandoffPayloadByKind[K]) => Promise<void>;
+    reasonText: (reason: unknown) => string;
+  },
+): Promise<void> {
+  const { deps } = orchestrator;
+  const { pending, driverContext } = args;
+  if (!advancePendingWindowStage(pending, "windowReady")) {
+    console.warn(args.lateReadyMessage);
+    return;
+  }
+  const abandon = (
+    payload: WorkspaceContentHandoffPayloadByKind[K] | undefined,
+    reason: unknown,
+  ) => {
+    void rollbackHandoffOnce(driverContext, payload, reason).catch(() => undefined);
+    deps.getCoordinator().failHandoff(args.ref, "detachFailed", pending.transferId);
+    takePendingWorkspaceContentWindow(args.pendingMap, args.key, pending.windowLabel);
+    pending.reject(new Error(args.reasonText(reason)));
+    void pending.window.destroy().catch(() => undefined);
+  };
+  let payload: WorkspaceContentHandoffPayloadByKind[K];
+  try {
+    payload = (await prepareWorkspaceContentHandoff(driverContext)).payload;
+  } catch (reason) {
+    abandon(undefined, reason);
+    return;
+  }
+  pending.handoffContext = driverContext;
+  pending.handoffPayload = payload;
+  if (!advancePendingWindowStage(pending, "initSent")) return;
+  try {
+    await args.emitInit(payload);
+  } catch (reason) {
+    // init 没有送达：立即回滚并结束等待，不再依赖超时兜底。
+    abandon(payload, reason);
+  }
 }
