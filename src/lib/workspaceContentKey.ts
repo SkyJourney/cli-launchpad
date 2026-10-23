@@ -5,6 +5,7 @@ import {
   type RegisteredContentRef,
 } from "../generated/contentKinds";
 import type { WorkspacePaneContentRef } from "./tauri";
+import { windowKindOfContent, windowRoleOf } from "./windowKinds";
 
 export type PtyContentRef = Extract<RegisteredContentRef, { kind: "pty" }>;
 export type FileContentRef = Extract<RegisteredContentRef, { kind: "file" }>;
@@ -40,6 +41,13 @@ export function contentIdsOfKind<K extends RegisteredContentKind>(
   return contents.flatMap((content) =>
     content.kind === kind ? [contentIdOf(content as ManagedContentRef)] : [],
   );
+}
+
+/** Whether the window that holds this content owns a PTY session, read from the window-kind contract. */
+export function contentOwnsPty(content: WorkspacePaneContentRef): boolean {
+  if (content.kind === "unknown") return false;
+  const windowKind = windowKindOfContent(content.kind);
+  return windowKind ? windowRoleOf(windowKind).ownsPty : false;
 }
 
 export function workspaceContentKey(content: WorkspacePaneContentRef): string {

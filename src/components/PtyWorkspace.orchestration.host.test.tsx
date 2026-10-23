@@ -87,7 +87,7 @@ describe("window orchestration", () => {
       expect.objectContaining({ windowLabel, action: "destroy" }),
     );
     expect(() => assertWorkspaceInvariants(h)).not.toThrow();
-    expect(h.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(h.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(h.errors).toEqual([]);
   });
 
@@ -142,7 +142,7 @@ describe("window orchestration", () => {
         ),
     ).toBe(true);
     expect(() => assertWorkspaceInvariants(h)).not.toThrow();
-    expect(h.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(h.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     expect(h.errors).toEqual([]);
   });
 

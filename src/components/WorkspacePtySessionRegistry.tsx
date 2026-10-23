@@ -1,3 +1,4 @@
+import type { WorkspacePaneContentRef } from "../lib/tauri";
 import {
   useCallback,
   useEffect,
@@ -49,7 +50,7 @@ export function WorkspacePtySessionRegistry({
   tree,
   focusedPaneId,
   active,
-  detachedInstanceIds,
+  isDetachedContent,
   terminalRefs,
   onSessionChange,
   onPortalTarget,
@@ -59,7 +60,7 @@ export function WorkspacePtySessionRegistry({
   tree: WorkspaceNode;
   focusedPaneId: string;
   active: boolean;
-  detachedInstanceIds: Set<string>;
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
   terminalRefs: MutableRefObject<Map<string, PtyTerminalHandle>>;
   onSessionChange: (instanceId: string, session: PtySession | null) => void;
   onPortalTarget: (instanceId: string, target: HTMLDivElement | null) => void;
@@ -90,13 +91,13 @@ export function WorkspacePtySessionRegistry({
             visible={
               active &&
               visibleSessionIds.has(slot.instanceId) &&
-              !detachedInstanceIds.has(slot.instanceId)
+              !isDetachedContent(ptyContentRef(slot.instanceId))
             }
             interactive={
               active &&
               pane?.id === focusedPaneId &&
               activeSessionId === slot.instanceId &&
-              !detachedInstanceIds.has(slot.instanceId)
+              !isDetachedContent(ptyContentRef(slot.instanceId))
             }
             terminalRefs={terminalRefs}
             onSessionChange={onSessionChange}

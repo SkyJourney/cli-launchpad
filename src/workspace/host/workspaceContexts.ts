@@ -26,8 +26,8 @@ export interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
-  handoffFileIds: Set<string>;
-  detachedFileIds: Set<string>;
+  isHandoffContent: (content: WorkspacePaneContentRef) => boolean;
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
   tree: WorkspaceNode;
   workspaceTreeRevision: number;
   focusedPaneId: string;
@@ -70,7 +70,7 @@ export interface PtyWorkspaceContextValue {
     destinationPaneId: string,
     content: WorkspacePaneContentRef,
   ) => void;
-  detachedInstanceIds: Set<string>;
+  detachedWindowContents: WorkspacePaneContentRef[];
   closingContentKeys: Set<string>;
   hasDetachedSessions: boolean;
   isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
@@ -153,6 +153,12 @@ export const WORKSPACE_COMMAND_KEYS = [
   "resumeAfterFailedRestore",
   "rehydrateWorkspace",
   "getDirectoryRemovalBlockers",
+] as const satisfies readonly (keyof PtyWorkspaceContextValue)[];
+
+/** 状态查询函数：随协调器投影变化而更换身份，不属于稳定命令清单，但同样是门面的函数字段。 */
+export const WORKSPACE_STATE_QUERY_KEYS = [
+  "isDetachedContent",
+  "isHandoffContent",
 ] as const satisfies readonly (keyof PtyWorkspaceContextValue)[];
 
 export type WorkspaceCommands = Pick<

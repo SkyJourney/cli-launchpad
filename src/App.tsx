@@ -1,3 +1,4 @@
+import { fileContentRef } from "./lib/workspaceContentKey";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   lazy,
@@ -152,11 +153,11 @@ function AppContent() {
     saveFiles,
     fileDocuments,
     fileBuffers,
-    detachedFileIds,
+    isDetachedContent,
     hydrationStatus,
   } = usePtyWorkspace();
-  const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
-  exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
+  const exitStateRef = useRef({ fileDocuments, fileBuffers, isDetachedContent });
+  exitStateRef.current = { fileDocuments, fileBuffers, isDetachedContent };
   const view = useAppStore((state) => state.view);
   const resolvedTheme = useResolvedTheme();
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
@@ -240,7 +241,11 @@ function AppContent() {
               ptyCount,
               documents: current.fileDocuments,
               buffers: current.fileBuffers,
-              uncertainDocumentIds: current.detachedFileIds,
+              uncertainDocumentIds: current.fileDocuments
+                .filter((document) =>
+                  current.isDetachedContent(fileContentRef(document.id)),
+                )
+                .map((document) => document.id),
             }),
             requestId,
             executionTaskCount,

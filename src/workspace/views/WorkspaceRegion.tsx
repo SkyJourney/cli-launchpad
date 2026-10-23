@@ -34,8 +34,8 @@ export function WorkspaceRegion() {
     slots,
     fileDocuments,
     fileBuffers,
-    handoffFileIds,
-    detachedFileIds,
+    isHandoffContent,
+    isDetachedContent,
     tree,
     workspaceTreeRevision,
     focusedPaneId,
@@ -156,8 +156,8 @@ export function WorkspaceRegion() {
           slots={slots}
           fileDocuments={fileDocuments}
           fileBuffers={fileBuffers}
-          handoffFileIds={handoffFileIds}
-          detachedFileIds={detachedFileIds}
+          isHandoffContent={isHandoffContent}
+          isDetachedContent={isDetachedContent}
           closingContentKeys={closingContentKeys}
           focusedPaneId={focusedPaneId}
           portalTargets={portalTargets}

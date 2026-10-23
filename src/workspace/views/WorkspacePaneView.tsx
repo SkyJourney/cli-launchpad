@@ -27,6 +27,7 @@ import { formatAppError } from "../../lib/appErrors";
 import {
   contentRefFromKey,
   fileContentKey,
+  fileContentRef,
   type ManagedContentRef,
   workspaceContentKey,
 } from "../../lib/workspaceContentKey";
@@ -64,8 +65,8 @@ export function WorkspacePaneView({
   slots,
   fileDocuments,
   fileBuffers,
-  handoffFileIds,
-  detachedFileIds,
+  isHandoffContent,
+  isDetachedContent,
   closingContentKeys,
   focusedPaneId,
   portalTargets,
@@ -128,7 +129,7 @@ export function WorkspacePaneView({
       const file = fileDocuments.find(
         (candidate) => candidate.id === content.documentId,
       );
-      return file && !detachedFileIds.has(file.id) ? [{ content, file }] : [];
+      return file && !isDetachedContent(fileContentRef(file.id)) ? [{ content, file }] : [];
     },
   );
   const contentSequence = splitWorkspaceContentSequence(
@@ -583,7 +584,7 @@ export function WorkspacePaneView({
           content={pane.activeContent}
           fileDocument={activeFile}
           fileBuffer={activeFileBuffer}
-          readOnly={Boolean(activeFileId && handoffFileIds.has(activeFileId))}
+          readOnly={Boolean(activeFileId && isHandoffContent(fileContentRef(activeFileId)))}
           ptyPortalTarget={
             activeSlot ? portalTargets[activeSlot.instanceId] : undefined
           }

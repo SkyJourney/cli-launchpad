@@ -67,7 +67,7 @@ describe("window commands host behaviour", () => {
       owner: { kind: "window", windowLabel },
     });
     expect(host.ctx().focusedPaneId).toBe(focusBefore);
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     const lastSaved = savedLayoutOf(host);
     expect(lastSaved?.layout.detachedContents).toContainEqual(ptyRef);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
@@ -92,7 +92,7 @@ describe("window commands host behaviour", () => {
       phase: "detached",
       owner: { kind: "window", windowLabel },
     });
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     const grants = invokes("grant_content_window_file");
     expect(grants).toHaveLength(1);
     expect(grants[0].args).toMatchObject({ targetLabel: windowLabel });
@@ -137,7 +137,7 @@ describe("window commands host behaviour", () => {
     );
     expect(holders).toHaveLength(1);
     expect(host.ctx().tree).toBe(treeBefore);
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(tauriMock.state.windowActions).toContainEqual(
       expect.objectContaining({ windowLabel, action: "destroy" }),
     );
@@ -179,7 +179,7 @@ describe("window commands host behaviour", () => {
       ),
     );
     expect(holders).toHaveLength(1);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     expect(tauriMock.state.windowActions).toContainEqual(
       expect.objectContaining({ windowLabel, action: "destroy" }),
     );
@@ -218,7 +218,7 @@ describe("window commands host behaviour", () => {
     expect(tauriMock.state.windowActions).toContainEqual(
       expect.objectContaining({ windowLabel, action: "destroy" }),
     );
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
   });
@@ -251,7 +251,7 @@ describe("window commands host behaviour", () => {
     );
     expect(holders).toHaveLength(1);
     expect(coordinator.get(fileRef)).toMatchObject({ phase: "attached" });
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     expect(host.errors).toEqual([]);
   });
 });

@@ -61,9 +61,10 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     layoutResetPending,
   } = persistenceStatus;
   const {
-    detachedFileIds,
-    detachedInstanceIds,
-    handoffFileIds,
+    detachedWindowContents,
+    isDetachedContent,
+    isHandoffContent,
+    hasDetachedSessions,
     closingContentKeys,
   } = projection;
   const {
@@ -321,8 +322,8 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       slots,
       fileDocuments,
       fileBuffers,
-      handoffFileIds,
-      detachedFileIds,
+      isHandoffContent,
+      isDetachedContent,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -333,17 +334,17 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       layoutResetPending,
       portalTargets,
       terminalRefs,
-      detachedInstanceIds,
+      detachedWindowContents,
       closingContentKeys,
-      hasDetachedSessions: detachedInstanceIds.size > 0,
+      hasDetachedSessions,
     }),
     [
       commands,
       slots,
       fileDocuments,
       fileBuffers,
-      handoffFileIds,
-      detachedFileIds,
+      isHandoffContent,
+      isDetachedContent,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -354,8 +355,9 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       layoutResetPending,
       portalTargets,
       terminalRefs,
-      detachedInstanceIds,
+      detachedWindowContents,
       closingContentKeys,
+      hasDetachedSessions,
     ],
   );
 

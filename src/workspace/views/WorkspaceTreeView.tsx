@@ -25,8 +25,8 @@ export interface WorkspaceTreeViewProps {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
-  handoffFileIds: Set<string>;
-  detachedFileIds: Set<string>;
+  isHandoffContent: (content: WorkspacePaneContentRef) => boolean;
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
   closingContentKeys: Set<string>;
   focusedPaneId: string;
   portalTargets: Record<string, HTMLDivElement>;

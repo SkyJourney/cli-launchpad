@@ -230,7 +230,7 @@ describe("named layouts with detached contents", () => {
     const panes = listWorkspacePanes(host.ctx().tree);
     expect(panes).toHaveLength(2);
     expect(panes.map((pane) => pane.contents)).toEqual([[], []]);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     const saved = savedLayouts(host);
     const lastLayout = saved[saved.length - 1].layout;
     expect(lastLayout.detachedContents).toEqual([

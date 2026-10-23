@@ -106,7 +106,7 @@ describe("host harness helpers", () => {
     expect(result.windowLabel).toMatch(/^workspace-content-/);
     expect(result.token).toBeTruthy();
     expect(typeof result.initBuffer.version).toBe("number");
-    expect(workspace.ctx().detachedFileIds.has(document.id)).toBe(true);
+    expect(workspace.ctx().isDetachedContent({ kind: "file", documentId: document.id })).toBe(true);
     expect(() => assertWorkspaceInvariants(workspace)).not.toThrow();
     expect(workspace.errors).toEqual([]);
   });
@@ -120,7 +120,7 @@ describe("host harness helpers", () => {
 
     await expect(result.detachPromise).resolves.not.toThrow();
     expect(result.windowLabel).toMatch(/^terminal-/);
-    expect(workspace.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(workspace.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(() => assertWorkspaceInvariants(workspace)).not.toThrow();
     expect(workspace.errors).toEqual([]);
   });

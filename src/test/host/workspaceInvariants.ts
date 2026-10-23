@@ -6,7 +6,10 @@ import {
   listWorkspacePanes,
   type WorkspaceNode,
 } from "../../lib/ptyWorkspaceLayout";
-import { workspaceContentKey } from "../../lib/workspaceContentKey";
+import {
+  contentIdsOfKind,
+  workspaceContentKey,
+} from "../../lib/workspaceContentKey";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import { validateWorkspaceLayoutDocument } from "../../lib/workspaceLayoutPersistence";
@@ -16,8 +19,7 @@ export interface InvariantContext {
   slots: ReadonlyArray<{ instanceId: string }>;
   fileDocuments: ReadonlyArray<{ id: string }>;
   fileBuffers: Record<string, Pick<WorkspaceFileBuffer, "saving">>;
-  detachedFileIds: ReadonlySet<string>;
-  detachedInstanceIds: ReadonlySet<string>;
+  detachedWindowContents: ReadonlyArray<WorkspacePaneContentRef>;
 }
 
 export interface InvariantHost {
@@ -29,6 +31,11 @@ export interface InvariantHost {
 
 export interface InvariantOptions {
   allowPendingSaves?: boolean;
+}
+
+/** Ids of the window-held contents of one kind; the checker compares them with the coordinator. */
+function detachedIdsOf(context: InvariantContext, kind: "file" | "pty"): ReadonlySet<string> {
+  return new Set(contentIdsOfKind(context.detachedWindowContents, kind));
 }
 
 function managed(content: WorkspacePaneContentRef) {
@@ -143,10 +150,10 @@ export function assertWorkspaceInvariants(
       .listWindowOwned()
       .forEach((content) => windowOwnedKeys.add(workspaceContentKey(content)));
   } else {
-    context.detachedFileIds.forEach((documentId) =>
+    detachedIdsOf(context, "file").forEach((documentId) =>
       windowOwnedKeys.add(workspaceContentKey({ kind: "file", documentId })),
     );
-    context.detachedInstanceIds.forEach((slotId) =>
+    detachedIdsOf(context, "pty").forEach((slotId) =>
       windowOwnedKeys.add(workspaceContentKey({ kind: "pty", slotId })),
     );
   }
@@ -181,16 +188,16 @@ export function assertWorkspaceInvariants(
     }
     const sameSet = (left: ReadonlySet<string>, right: ReadonlySet<string>) =>
       left.size === right.size && [...left].every((value) => right.has(value));
-    if (!sameSet(context.detachedFileIds, ownedFiles)) {
+    if (!sameSet(detachedIdsOf(context, "file"), ownedFiles)) {
       fail(
         "I7",
-        `detachedFileIds [${[...context.detachedFileIds]}] differs from coordinator [${[...ownedFiles]}]`,
+        `detachedFileIds [${[...detachedIdsOf(context, "file")]}] differs from coordinator [${[...ownedFiles]}]`,
       );
     }
-    if (!sameSet(context.detachedInstanceIds, ownedSlots)) {
+    if (!sameSet(detachedIdsOf(context, "pty"), ownedSlots)) {
       fail(
         "I7",
-        `detachedInstanceIds [${[...context.detachedInstanceIds]}] differs from coordinator [${[...ownedSlots]}]`,
+        `detachedInstanceIds [${[...detachedIdsOf(context, "pty")]}] differs from coordinator [${[...ownedSlots]}]`,
       );
     }
   }

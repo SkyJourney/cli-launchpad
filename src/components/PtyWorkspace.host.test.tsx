@@ -76,7 +76,7 @@ describe("PtyWorkspace host harness", () => {
       (event) => event.legacyType === "workspace-file-window-init",
     );
     expect(inits).toHaveLength(1);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(assertWorkspaceInvariants(host)).toEqual({ skipped: ["I4", "I7"] });
     expect(host.errors).toEqual([]);
   });

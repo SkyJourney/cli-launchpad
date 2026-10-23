@@ -101,7 +101,7 @@ describe("detached window loss", () => {
       kind: "file",
       documentId: doc.id,
     });
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     const buffer = host.ctx().fileBuffers[doc.id];
     expect(buffer.content).toBe("mirror");
     expect(buffer.content).not.toBe(buffer.savedContent);
@@ -199,7 +199,7 @@ describe("detached window loss", () => {
         owner: { kind: "window", windowLabel },
       },
     );
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(savedLayouts(host).length).toBe(savesBefore);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：回收是被动的，不会再销毁任何窗口。
@@ -276,7 +276,7 @@ describe("detached window loss", () => {
     expect((rejection as Error).message).toContain("pty.detachedStartTimedOut");
     expect(coordinator.get(content)?.phase).toBe("attached");
     expect(fileOccurrences(host, doc.id)).toBe(1);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
   });
@@ -385,7 +385,7 @@ describe("PTY detach timeout reconciliation", () => {
       phase: "detached",
       owner: { kind: "window", windowLabel: FOREIGN },
     });
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     // 反向断言：宿主没有报错。
     expect(host.errors).toEqual([]);
   });
@@ -409,7 +409,7 @@ describe("PTY detach timeout reconciliation", () => {
       await advance(15_000);
 
       if (reported === "ownedByAnotherWindow") {
-        expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+        expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
         expect(ptyOccurrences(host, slot.instanceId)).toBe(0);
         expect(outcome.settled).toBe("resolved");
       } else if (reported === "running") {
@@ -426,7 +426,7 @@ describe("PTY detach timeout reconciliation", () => {
           "pty.detachedStartTimedOut",
         );
         // 反向断言：不得出现“窗口被接受为 detached”。
-        expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+        expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
       } else {
         expect(host.ctx().slots).toEqual([]);
         expect(destroyedChild(child)).toBe(true);
@@ -619,7 +619,7 @@ describe("PTY owner-lost recovery", () => {
       kind: "pty",
       slotId: slot.instanceId,
     });
-    expect(host!.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host!.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(
       tauriMock.state.windowActions.some(
         (action) =>
@@ -762,7 +762,7 @@ describe("workspace listener isolation", () => {
     const { detachPromise } = await detachPtyToWindow(host, slot.instanceId);
     await detachPromise;
 
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(toastSpy.error).not.toHaveBeenCalled();
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     expect(host.errors).toEqual([]);
