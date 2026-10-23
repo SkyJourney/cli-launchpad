@@ -34,7 +34,7 @@ pub async fn create_pty_session(
     on_event: Channel<PtyEvent>,
     caller: CallerWindow,
 ) -> Result<PtySession, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     // One open: the directory row, the path check and the directory handle identity. `_root` must
     // stay bound until the command ends (it keeps the directory handle open); never rename it to `_`.
     let (_root, project) = ProjectDirectory::open_ref(&db, directory_id, None).await?;
@@ -102,7 +102,7 @@ pub fn write_pty_session(
     session_id: String,
     data: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.write(&session_id, caller.label(), data.as_bytes())
 }
 
@@ -113,7 +113,7 @@ pub async fn resize_pty_session(
     session_id: String,
     size: PtySizeUpdate,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     let manager = state.inner().clone();
     let label = caller.label().clone();
     blocking("pty.resize", budgets::PTY_CONTROL, move || {
@@ -130,7 +130,7 @@ pub fn acknowledge_pty_output(
     session_id: String,
     sequence: u64,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.acknowledge(&session_id, caller.label(), sequence)
 }
 
@@ -142,7 +142,7 @@ pub fn report_pty_frontend_stage(
     session_id: String,
     stage: PtyFrontendStage,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.report_frontend_stage(&session_id, caller.label(), stage)
 }
 
@@ -152,7 +152,7 @@ pub async fn terminate_pty_session(
     caller: CallerWindow,
     session_id: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     let manager = state.inner().clone();
     let label = caller.label().clone();
     blocking("pty.terminate", budgets::PTY_CONTROL, move || {
@@ -169,7 +169,7 @@ pub fn begin_pty_handoff(
     session_id: String,
     target_window_label: String,
 ) -> Result<PtyHandoff, AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     let target = WindowLabel::parse(&target_window_label)?;
     state.begin_handoff(&session_id, caller.label(), &target)
 }
@@ -184,7 +184,7 @@ pub fn stage_pty_handoff_snapshot(
     sequence: u64,
     snapshot: PtyTerminalSnapshot,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.stage_handoff_snapshot(&session_id, caller.label(), &token, sequence, snapshot)
 }
 
@@ -196,7 +196,7 @@ pub async fn complete_pty_handoff(
     token: String,
     on_event: Channel<PtyEvent>,
 ) -> Result<PtySession, AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     let manager = state.inner().clone();
     let label = caller.label().clone();
     blocking("pty.complete_handoff", budgets::PTY_CONTROL, move || {
@@ -213,7 +213,7 @@ pub async fn finalize_pty_handoff(
     token: String,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     let manager = state.inner().clone();
     let label = caller.label().clone();
     blocking("pty.finalize_handoff", budgets::PTY_CONTROL, move || {
@@ -230,7 +230,7 @@ pub fn cancel_pty_handoff(
     session_id: String,
     token: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.cancel_handoff(&session_id, caller.label(), &token)
 }
 
@@ -241,7 +241,7 @@ pub fn get_pty_session_window_status(
     caller: CallerWindow,
     session_id: String,
 ) -> Result<PtySessionWindowStatusReport, AppError> {
-    caller.require(&[WindowKind::Main, WindowKind::Terminal])?;
+    caller.require(&[WindowKind::main(), WindowKind::TERMINAL])?;
     state.window_status_report(&session_id, caller.label())
 }
 
@@ -255,7 +255,7 @@ pub async fn reattach_pty_session(
     sequence: u64,
     size: PtySizeUpdate,
 ) -> Result<PtySession, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     let manager = state.inner().clone();
     let label = caller.label().clone();
     blocking("pty.reattach", budgets::PTY_CONTROL, move || {
@@ -273,7 +273,7 @@ pub async fn report_exit_impacts(
     request_id: String,
     dirty_files: Vec<ReportedDirtyFile>,
 ) -> Result<ExitImpactsView, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     crate::services::exit_impacts::report(&exit_gate, &lifecycle, &request_id, dirty_files)
 }
 
@@ -285,7 +285,7 @@ pub async fn confirm_app_exit(
     app: tauri::AppHandle,
     request_id: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     // Held until the process exits: termination failure drops it and rolls the phase back.
     let exit_permit = lifecycle.admit(Operation::Exit)?;
     let starts_lifecycle = lifecycle.inner().clone();

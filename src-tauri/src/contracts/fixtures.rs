@@ -1540,7 +1540,7 @@ pub(crate) fn ipc_dto_samples() -> Vec<DtoSamples> {
             payload: json!({"apiVersion": 1, "type": "content-handoff-ready", "payload": {"content": {"kind": "pty", "id": "content-1"}, "transferId": null, "payload": {}}}),
             source: Some(InboxSource {
                 label: "terminal-8e783338-f464-4b10-b15e-b534748c6241".to_string(),
-                kind: WindowKind::Terminal,
+                kind: WindowKind::TERMINAL,
             }),
         },
     );

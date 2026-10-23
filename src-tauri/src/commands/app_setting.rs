@@ -22,7 +22,7 @@ pub async fn set_close_behavior(
     close_behavior_state: State<'_, CloseBehaviorState>,
     close_behavior: CloseBehavior,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     state
         .call("app_setting.set_close_behavior", move |conn| {
             Ok(app_setting_repo::set_close_behavior(conn, close_behavior)?)
@@ -39,7 +39,7 @@ pub fn set_tray_menu_labels(
     show: String,
     quit: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     if show.trim().is_empty() || quit.trim().is_empty() || show.len() > 256 || quit.len() > 256 {
         return Err(AppError::internal("托盘菜单文案无效"));
     }

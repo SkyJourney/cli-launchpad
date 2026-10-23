@@ -29,9 +29,9 @@ pub fn report_window_sync_failure(
     message: String,
 ) -> Result<(), AppError> {
     caller.require(&[
-        WindowKind::Main,
-        WindowKind::Terminal,
-        WindowKind::WorkspaceContent,
+        WindowKind::main(),
+        WindowKind::TERMINAL,
+        WindowKind::WORKSPACE_CONTENT,
     ])?;
     diagnostics_service::log_window_sync_failure(caller.label(), &code, &message);
     Ok(())

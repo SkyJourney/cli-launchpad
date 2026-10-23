@@ -13,6 +13,6 @@ pub fn take_startup_notices(
     caller: CallerWindow,
     notices: State<'_, StartupNotices>,
 ) -> Result<Vec<StartupNotice>, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     Ok(notices.take())
 }

@@ -489,9 +489,9 @@ fn window_kind_contract_matches_rust_registry() {
                 )
             });
         let expected = match id {
-            "main" => WindowKind::Main,
-            "terminal" => WindowKind::Terminal,
-            "workspaceContent" => WindowKind::WorkspaceContent,
+            "main" => WindowKind::main(),
+            "terminal" => WindowKind::TERMINAL,
+            "workspaceContent" => WindowKind::WORKSPACE_CONTENT,
             _ => panic!("unregistered Rust window kind: {id}"),
         };
         assert_eq!(window_kind_of(&label), Some(expected), "{id}");
@@ -3795,9 +3795,9 @@ fn first_statement(body: &str) -> String {
 
 fn kind_id(variant: &str) -> &'static str {
     match variant {
-        "WindowKind::Main" => "main",
-        "WindowKind::Terminal" => "terminal",
-        "WindowKind::WorkspaceContent" => "workspaceContent",
+        "WindowKind::main()" => "main",
+        "WindowKind::TERMINAL" => "terminal",
+        "WindowKind::WORKSPACE_CONTENT" => "workspaceContent",
         other => panic!("unknown window kind variant {other:?}"),
     }
 }
@@ -4421,7 +4421,7 @@ fn services_do_not_branch_on_window_kind_variants() {
 
     let mut offenders = Vec::new();
     for (path, production) in &files {
-        for pattern in ["WindowKind::Terminal", "WindowKind::WorkspaceContent"] {
+        for pattern in ["WindowKind::TERMINAL", "WindowKind::WORKSPACE_CONTENT"] {
             if production.contains(pattern) {
                 offenders.push(format!("{path} 含 {pattern}"));
             }
@@ -5321,7 +5321,7 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("");
-    assert_eq!(first.trim(), "caller.require(&[WindowKind::Main])?;");
+    assert_eq!(first.trim(), "caller.require(&[WindowKind::main()])?;");
     for forbidden in [".await", "with_connection", ".call(", "with_sync"] {
         assert!(
             !body.contains(forbidden),

@@ -17,9 +17,9 @@ pub async fn subscribe_window_inbox(
     on_event: Channel<InboxMessage>,
 ) -> Result<WindowInboxSubscription, AppError> {
     caller.require(&[
-        WindowKind::Main,
-        WindowKind::Terminal,
-        WindowKind::WorkspaceContent,
+        WindowKind::main(),
+        WindowKind::TERMINAL,
+        WindowKind::WORKSPACE_CONTENT,
     ])?;
     registry.subscribe(caller.label(), Arc::new(on_event))
 }
@@ -35,9 +35,9 @@ pub async fn send_window_message(
     payload: serde_json::Value,
 ) -> Result<SendWindowMessageResult, AppError> {
     caller.require(&[
-        WindowKind::Main,
-        WindowKind::Terminal,
-        WindowKind::WorkspaceContent,
+        WindowKind::main(),
+        WindowKind::TERMINAL,
+        WindowKind::WORKSPACE_CONTENT,
     ])?;
     window_relay::relay(&registry, &caller, &target, &message_type, payload)
 }

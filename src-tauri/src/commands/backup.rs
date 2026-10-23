@@ -69,7 +69,7 @@ pub async fn restore_backup(
     app: tauri::AppHandle,
     backup_id: String,
 ) -> Result<BackupManifest, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let lifecycle = lifecycle.inner().clone();

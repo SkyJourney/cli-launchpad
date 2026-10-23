@@ -32,7 +32,7 @@ pub async fn import_config_from_path(
     generation: State<'_, RestoreGeneration>,
     path: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     let db = state.inner().clone();
     let generation = generation.inner().clone();
     let storage = storage.inner().clone();

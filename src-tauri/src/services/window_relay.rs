@@ -138,7 +138,7 @@ fn relay_within(
         let child_kind = kinds.get(content_kind).ok_or_else(|| {
             AppError::coded(ErrorCode::WindowNotAllowed, "该消息类型不支持此内容类型")
         })?;
-        let child_side = if caller.label().kind() == WindowKind::Main {
+        let child_side = if caller.label().kind() == WindowKind::main() {
             target.kind()
         } else {
             caller.label().kind()
@@ -285,11 +285,13 @@ mod tests {
     #[test]
     fn the_window_message_table_matches_the_protocol_directions() {
         use std::collections::HashMap;
-        use WindowKind::{Main, Terminal, WorkspaceContent};
-        const CHILD: &[WindowKind] = &[Terminal, WorkspaceContent];
-        const BOTH: &[(&str, WindowKind)] = &[("pty", Terminal), ("file", WorkspaceContent)];
-        const FILE: &[(&str, WindowKind)] = &[("file", WorkspaceContent)];
-        const PTY: &[(&str, WindowKind)] = &[("pty", Terminal)];
+        const CHILD: &[WindowKind] = &[WindowKind::TERMINAL, WindowKind::WORKSPACE_CONTENT];
+        const BOTH: &[(&str, WindowKind)] = &[
+            ("pty", WindowKind::TERMINAL),
+            ("file", WindowKind::WORKSPACE_CONTENT),
+        ];
+        const FILE: &[(&str, WindowKind)] = &[("file", WindowKind::WORKSPACE_CONTENT)];
+        const PTY: &[(&str, WindowKind)] = &[("pty", WindowKind::TERMINAL)];
         // (type, from, to, contentKinds): the 14 rows of the m6-091 table.
         let expected: [(
             &str,
@@ -297,58 +299,83 @@ mod tests {
             &[WindowKind],
             Option<&[(&str, WindowKind)]>,
         ); 14] = [
-            ("app-preferences-reply", &[Main], CHILD, None),
-            ("app-preferences-requested", CHILD, &[Main], None),
+            ("app-preferences-reply", &[WindowKind::main()], CHILD, None),
+            (
+                "app-preferences-requested",
+                CHILD,
+                &[WindowKind::main()],
+                None,
+            ),
             (
                 "content-handoff-attached",
-                &[WorkspaceContent],
-                &[Main],
+                &[WindowKind::WORKSPACE_CONTENT],
+                &[WindowKind::main()],
                 Some(FILE),
             ),
-            ("content-handoff-exited", &[Terminal], &[Main], Some(PTY)),
-            ("content-handoff-failed", CHILD, &[Main], Some(BOTH)),
+            (
+                "content-handoff-exited",
+                &[WindowKind::TERMINAL],
+                &[WindowKind::main()],
+                Some(PTY),
+            ),
+            (
+                "content-handoff-failed",
+                CHILD,
+                &[WindowKind::main()],
+                Some(BOTH),
+            ),
             (
                 "content-handoff-flush-complete",
-                &[WorkspaceContent],
-                &[Main],
+                &[WindowKind::WORKSPACE_CONTENT],
+                &[WindowKind::main()],
                 Some(FILE),
             ),
             (
                 "content-handoff-flush-requested",
-                &[Main],
-                &[WorkspaceContent],
+                &[WindowKind::main()],
+                &[WindowKind::WORKSPACE_CONTENT],
                 Some(FILE),
             ),
             (
                 "content-handoff-init",
-                &[Main],
-                &[WorkspaceContent],
+                &[WindowKind::main()],
+                &[WindowKind::WORKSPACE_CONTENT],
                 Some(FILE),
             ),
-            ("content-handoff-ready", CHILD, &[Main], Some(BOTH)),
+            (
+                "content-handoff-ready",
+                CHILD,
+                &[WindowKind::main()],
+                Some(BOTH),
+            ),
             (
                 "content-handoff-return-complete",
-                &[Main],
+                &[WindowKind::main()],
                 CHILD,
                 Some(BOTH),
             ),
             (
                 "content-handoff-return-drop-requested",
-                &[Main],
+                &[WindowKind::main()],
                 CHILD,
                 Some(BOTH),
             ),
-            ("content-handoff-return-failed", &[Main], CHILD, Some(BOTH)),
+            (
+                "content-handoff-return-failed",
+                &[WindowKind::main()],
+                CHILD,
+                Some(BOTH),
+            ),
             (
                 "content-handoff-return-requested",
                 CHILD,
-                &[Main],
+                &[WindowKind::main()],
                 Some(BOTH),
             ),
             (
                 "content-handoff-state-changed",
-                &[WorkspaceContent],
-                &[Main],
+                &[WindowKind::WORKSPACE_CONTENT],
+                &[WindowKind::main()],
                 Some(FILE),
             ),
         ];
@@ -433,7 +460,7 @@ mod tests {
             sent[0].source,
             Some(InboxSource {
                 label: TERMINAL.to_string(),
-                kind: WindowKind::Terminal
+                kind: WindowKind::TERMINAL
             })
         );
         assert_eq!(sent[0].seq, 1);
@@ -668,7 +695,7 @@ mod tests {
             source,
             InboxSource {
                 label: TERMINAL.to_string(),
-                kind: WindowKind::Terminal
+                kind: WindowKind::TERMINAL
             }
         );
         assert_eq!(

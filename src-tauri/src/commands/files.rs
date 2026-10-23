@@ -147,7 +147,7 @@ pub async fn grant_content_window_file(
     directory_path: String,
     relative_path: String,
 ) -> Result<(), AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     let target = WindowLabel::parse(&target_label)?;
     if relative_path.is_empty() {
         return Err(AppError::internal("文件授权必须指向一个项目内文件"));
@@ -171,7 +171,7 @@ pub async fn open_granted_file(
     state: State<'_, Db>,
     grants: State<'_, ContentWindowGrantRegistry>,
 ) -> Result<ProjectFileOpenResult, AppError> {
-    caller.require(&[WindowKind::WorkspaceContent])?;
+    caller.require(&[WindowKind::WORKSPACE_CONTENT])?;
     let grant = grants.get(caller.label()).map_err(AppError::from)?;
     let root = open_project(&state, grant.directory_id, grant.directory_path.clone()).await?;
     blocking(
@@ -190,7 +190,7 @@ pub async fn save_granted_text_file(
     content: String,
     expected_revision: String,
 ) -> Result<ProjectTextFileSaveResult, AppError> {
-    caller.require(&[WindowKind::WorkspaceContent])?;
+    caller.require(&[WindowKind::WORKSPACE_CONTENT])?;
     let grant = grants.get(caller.label()).map_err(AppError::from)?;
     let root = open_project(&state, grant.directory_id, grant.directory_path.clone()).await?;
     // Writes are unbounded: a timed-out save may still land, see `blocking_unbounded`.
@@ -209,9 +209,9 @@ pub fn revoke_content_window_file(
     grants: State<'_, ContentWindowGrantRegistry>,
     target_label: String,
 ) -> Result<bool, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require(&[WindowKind::main()])?;
     let target = WindowLabel::parse(&target_label)?;
-    if target.kind() != WindowKind::WorkspaceContent {
+    if target.kind() != WindowKind::WORKSPACE_CONTENT {
         return Err(AppError::internal("撤销目标不是已登记的内容窗口"));
     }
     grants.revoke(&target).map_err(AppError::from)
