@@ -32,7 +32,7 @@ export function ImpactConfirmDialog({
             <p>{t("pty.confirmCloseMany", { count: runningCount })}</p>
             <ImpactTitleList
               items={summary.runningPtys.titles.map((title) => ({
-                key: `pty:${title}`,
+                key: `running:${title}`,
                 title,
               }))}
             />

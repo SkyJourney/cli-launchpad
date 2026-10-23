@@ -7,7 +7,8 @@ import {
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../../lib/ptyWorkspaceLayout";
-import { fileContentKey, fileContentRef } from "../../lib/workspaceContentKey";
+import { fileContentRef } from "../../lib/workspaceContentKey";
+import { detachedWindowOf } from "../windows/contentProtocolDescriptors";
 import type {
   PtySession,
   ToolKey,
@@ -84,10 +85,10 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       fileDomain.open(
         { directoryId, directoryPath, relativePath },
         async (document) => {
-          const detachedWindow =
-            orchestrator.state.handles.file.get(fileContentKey(document.id)) ??
-            orchestrator.state.pending.file.get(fileContentKey(document.id))
-              ?.window;
+          const detachedWindow = detachedWindowOf(
+            orchestrator.state,
+            fileContentRef(document.id),
+          );
           if (detachedWindow) {
             await detachedWindow
               .setFocus()

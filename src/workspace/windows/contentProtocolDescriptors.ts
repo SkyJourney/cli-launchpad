@@ -46,6 +46,25 @@ export type ContentProtocolTable = {
   [K in RegisteredContentKind]: ContentProtocolDescriptor<K>;
 };
 
+import { createContentWindowProtocol } from "./useContentWindowProtocol";
+import { createPtyProtocolHandlers } from "./protocolHandlers.pty";
+import { createFileProtocolHandlers } from "./protocolHandlers.file";
+import type { ContentWindowOrchestrator } from "./contentWindowOrchestrator";
+import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { workspaceContentKey } from "../../lib/workspaceContentKey";
+
+/** The detached-window protocol of every registered kind, assembled from the kinds' handlers. */
+export function createDetachedContentProtocol(
+  orchestrator: ContentWindowOrchestrator,
+  shell: Parameters<typeof createContentWindowProtocol>[0]["shell"],
+) {
+  return createContentWindowProtocol({
+    pty: createPtyProtocolHandlers(orchestrator),
+    file: createFileProtocolHandlers(orchestrator),
+    shell,
+  });
+}
+
 export const CONTENT_PROTOCOLS = {
   pty: PTY_PROTOCOL,
   file: FILE_PROTOCOL,
@@ -84,4 +103,23 @@ export function returnDropFailureMessage(
 ): string {
   const detail = formatAppError(reason, t);
   return content.kind === "pty" ? t("pty.returnFailed", { error: detail }) : detail;
+}
+
+/** The window that holds a content, detached or still being detached; found by content reference. */
+export function detachedWindowOf(
+  state: ContentWindowOrchestrator["state"],
+  content: ManagedContentRef,
+): WebviewWindow | undefined {
+  const key = workspaceContentKey(content);
+  const handle = (state.handles[content.kind] as Map<string, WebviewWindow>).get(key);
+  if (handle) return handle;
+  return (state.pending[content.kind] as Map<string, { window: WebviewWindow }>).get(key)?.window;
+}
+
+/** Forgets the window handle of a content, found by content reference. */
+export function forgetDetachedHandle(
+  state: ContentWindowOrchestrator["state"],
+  content: ManagedContentRef,
+): void {
+  (state.handles[content.kind] as Map<string, unknown>).delete(workspaceContentKey(content));
 }
