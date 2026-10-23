@@ -23,6 +23,8 @@ export interface ContentProtocolDescriptor<K extends RegisteredContentKind> {
    * content-reference name and is checked by the descriptor test.
    */
   readonly wireIdField: "instanceId" | "documentId";
+  /** Translation key that wraps a failed return drop for this kind; null when the reason is shown as is. */
+  readonly returnFailedKey: "pty.returnFailed" | null;
   refOf(id: string): Extract<ManagedContentRef, { kind: K }>;
   keyOf(id: string): string;
 }
@@ -30,6 +32,7 @@ export interface ContentProtocolDescriptor<K extends RegisteredContentKind> {
 export const PTY_PROTOCOL: ContentProtocolDescriptor<"pty"> = {
   kind: "pty",
   wireIdField: "instanceId",
+  returnFailedKey: "pty.returnFailed",
   refOf: ptyContentRef,
   keyOf: ptyContentKey,
 };
@@ -37,6 +40,7 @@ export const PTY_PROTOCOL: ContentProtocolDescriptor<"pty"> = {
 export const FILE_PROTOCOL: ContentProtocolDescriptor<"file"> = {
   kind: "file",
   wireIdField: "documentId",
+  returnFailedKey: null,
   refOf: fileContentRef,
   keyOf: fileContentKey,
 };
@@ -102,7 +106,8 @@ export function returnDropFailureMessage(
   t: TFunction,
 ): string {
   const detail = formatAppError(reason, t);
-  return content.kind === "pty" ? t("pty.returnFailed", { error: detail }) : detail;
+  const key = contentProtocolOf(content.kind).returnFailedKey;
+  return key ? t(key, { error: detail }) : detail;
 }
 
 /** The window that holds a content, detached or still being detached; found by content reference. */
