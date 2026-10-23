@@ -56,7 +56,38 @@ if (new Set(toolKeyIds).size !== toolKeyIds.length) {
   throw new Error("contracts/tool-keys.json 含重复工具键");
 }
 
+const toolKeyFixtures = JSON.parse(
+  fs.readFileSync("src/test/fixtures/tool-keys.json", "utf8"),
+).items;
+if (
+  toolKeyFixtures.some(
+    (id) => typeof id !== "string" || !/^[a-z][a-z0-9]*$/.test(id),
+  )
+) {
+  throw new Error("src/test/fixtures/tool-keys.json 含非法夹具工具键");
+}
+if (toolKeyFixtures.some((id) => toolKeyIds.includes(id))) {
+  throw new Error("测试夹具与产品清单重复");
+}
+if (new Set(toolKeyFixtures).size !== toolKeyFixtures.length) {
+  throw new Error("src/test/fixtures/tool-keys.json 含重复夹具工具键");
+}
+
 const outputs = [
+  {
+    target: "src/generated/toolKeys.testbuild.ts",
+    count: toolKeyIds.length + toolKeyFixtures.length,
+    content: [
+      "// 测试构建变体：产品清单加测试夹具。仅由 vitest 别名引用，产品构建不引用。",
+      "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/tool-keys.json 与 src/test/fixtures/tool-keys.json",
+      "export const REGISTERED_TOOL_KEYS = [",
+      ...[...toolKeyIds, ...toolKeyFixtures].map((id) => `  "${id}",`),
+      "] as const;",
+      "",
+      "export type RegisteredToolKey = (typeof REGISTERED_TOOL_KEYS)[number];",
+      "",
+    ].join("\n"),
+  },
   {
     target: "src/generated/toolKeys.ts",
     count: toolKeyIds.length,

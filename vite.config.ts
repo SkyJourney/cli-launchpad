@@ -6,6 +6,13 @@ export default defineConfig({
   clearScreen: false,
   test: {
     setupFiles: ["./src/test/tauriMock.ts"],
+    // 测试构建合并夹具：工具键清单使用产品清单加测试夹具的变体（见 scripts/gen-contracts.mjs）。
+    alias: [
+      {
+        find: /^(.*\/generated\/)toolKeys$/,
+        replacement: "$1toolKeys.testbuild",
+      },
+    ],
   },
   build: {
     rollupOptions: {
