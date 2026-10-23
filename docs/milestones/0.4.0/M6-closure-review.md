@@ -4903,6 +4903,7 @@ A 层是 M6 标记整体验收通过的前提；B 层是 M7 任何实现工作�
   3. `src/workspace/windows/contentWindowTypes.ts`、`src/workspace/windows/windowLaunchParams.ts`、`src/workspace/windows/contentWindowOrchestrator.ts`、`src/workspace/windows/useDetachedContentWindow.ts`：负载类型、启动参数与编排中的种类分支，新增一个种类时每个文件计 1 处。
   新增一个内容种类，窗口协议层的触点合计不超过 6 处；演练记录必须逐处列出文件与行号。本修正只针对内容 kind 一项，Provider、主题、窗口类别的目标不变（主题的译文上限按 2026-10-23 的裁定修正为 10 个 locale 文件）。
   视图层的渲染分派也计入门禁（用户 2026-10-23 裁定）：`views` 目录中的种类分支与种类字面量同样必须清零，不再把渲染分派列为例外。通过内容适配器与契约派生的通用形式完成，不改动已登记的 Provider、主题与窗口类别口径。
+  演练的 Provider 项只能使用测试夹具（用户 2026-10-23 裁定，选项 1）：产品清单（AGENTS.md 的 claude、codex、agy、grok、hermes）不变，产品范围守卫区分“产品清单”与“测试清单”，演练的第六个 Provider 只存在于测试夹具中，不进入产品检测、安装或启动范围。
 
 #### 4.5.6 B 层残余项的 C 层重标（2026-10-22，用户裁定按风险分级）
 
