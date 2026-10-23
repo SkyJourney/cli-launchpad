@@ -1,3 +1,4 @@
+import type { ManagedContentRef } from "../../lib/workspaceContentKey";
 import { Allotment, type AllotmentHandle } from "allotment";
 import { useEffect, useRef } from "react";
 import {
@@ -57,11 +58,7 @@ export interface WorkspaceTreeViewProps {
     content: WorkspacePaneContentRef,
   ) => void;
   hasDetachedSessions: boolean;
-  isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
-  isManagedDetachedFileDrag: (
-    documentId: string,
-    windowLabel: string,
-  ) => boolean;
+  isManagedDetachedContent: (content: ManagedContentRef, windowLabel: string) => boolean;
   onDetachSession: (instanceId: string) => void;
   onCloseEmptyPane: (paneId: string) => void;
   onSplitResize: (

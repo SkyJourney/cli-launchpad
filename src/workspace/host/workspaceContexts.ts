@@ -1,3 +1,4 @@
+import type { ManagedContentRef } from "../../lib/workspaceContentKey";
 import type { AppErrorState } from "../../lib/appErrors";
 import { createContext, useContext, type MutableRefObject } from "react";
 import type { PtyTerminalHandle } from "../../components/PtyTerminal";
@@ -73,11 +74,7 @@ export interface PtyWorkspaceContextValue {
   detachedWindowContents: WorkspacePaneContentRef[];
   closingContentKeys: Set<string>;
   hasDetachedSessions: boolean;
-  isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
-  isManagedDetachedFileDrag: (
-    documentId: string,
-    windowLabel: string,
-  ) => boolean;
+  isManagedDetachedContent: (content: ManagedContentRef, windowLabel: string) => boolean;
   detachSession: (instanceId: string) => Promise<void>;
   closeEmptyPane: (paneId: string) => void;
   updateSplitRatio: (
@@ -135,8 +132,7 @@ export const WORKSPACE_COMMAND_KEYS = [
   "splitPane",
   "splitAndMoveContent",
   "moveContent",
-  "isManagedDetachedDrag",
-  "isManagedDetachedFileDrag",
+  "isManagedDetachedContent",
   "detachSession",
   "closeEmptyPane",
   "updateSplitRatio",

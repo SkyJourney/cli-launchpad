@@ -3,7 +3,6 @@ import { Columns2, Rows2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
   canSplitWorkspacePane,
@@ -22,7 +21,10 @@ import {
   type WorkspaceFileDocument,
   type WorkspacePaneContentRef,
 } from "../../lib/tauri";
-import { formatAppError } from "../../lib/appErrors";
+import {
+  requestReturnDrop,
+  returnDropFailureMessage,
+} from "../windows/contentProtocolDescriptors";
 import {
   contentRefFromKey,
   fileContentRef,
@@ -83,8 +85,7 @@ export function WorkspacePaneView({
   onSplitAndMoveContent,
   onMoveContent,
   hasDetachedSessions,
-  isManagedDetachedDrag,
-  isManagedDetachedFileDrag,
+  isManagedDetachedContent,
   onDetachSession,
   onCloseEmptyPane,
 }: WorkspaceTreeViewProps & {
@@ -435,39 +436,16 @@ export function WorkspacePaneView({
           return;
         }
         if (
-          draggedRef.kind === "pty" &&
           contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
-          isManagedDetachedDrag(
-            draggedRef.slotId,
-            contentPayload.sourceWindowLabel,
-          )
+          isManagedDetachedContent(draggedRef, contentPayload.sourceWindowLabel)
         ) {
-          void sendContentHandoff(
+          void requestReturnDrop(
             contentPayload.sourceWindowLabel,
-            "pty",
-            "return-drop-requested",
-            { instanceId: draggedRef.slotId, targetPaneId: pane.id },
+            draggedRef,
+            pane.id,
           ).catch((reason) =>
-            toast.error(
-              t("pty.returnFailed", { error: formatAppError(reason, t) }),
-            ),
+            toast.error(returnDropFailureMessage(draggedRef, reason, t)),
           );
-          return;
-        }
-        if (
-          draggedRef.kind === "file" &&
-          contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
-          isManagedDetachedFileDrag(
-            draggedRef.documentId,
-            contentPayload.sourceWindowLabel,
-          )
-        ) {
-          void sendContentHandoff(
-            contentPayload.sourceWindowLabel,
-            "file",
-            "return-drop-requested",
-            { documentId: draggedRef.documentId, targetPaneId: pane.id },
-          ).catch((reason) => toast.error(formatAppError(reason, t)));
         }
       }}
     >

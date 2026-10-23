@@ -50,8 +50,7 @@ export function WorkspaceRegion() {
     splitAndMoveContent,
     moveContent,
     hasDetachedSessions,
-    isManagedDetachedDrag,
-    isManagedDetachedFileDrag,
+    isManagedDetachedContent,
     closingContentKeys,
     detachSession,
     detachFile,
@@ -180,8 +179,7 @@ export function WorkspaceRegion() {
           onSplitAndMoveContent={splitAndMoveContent}
           onMoveContent={moveContent}
           hasDetachedSessions={hasDetachedSessions}
-          isManagedDetachedDrag={isManagedDetachedDrag}
-          isManagedDetachedFileDrag={isManagedDetachedFileDrag}
+          isManagedDetachedContent={isManagedDetachedContent}
           onDetachSession={(instanceId) => {
             void detachSession(instanceId).catch((reason) =>
               toast.error(formatAppError(reason, t)),

@@ -130,37 +130,37 @@ function makeDetached(
 }
 
 describe("contentWindowOrchestrator", () => {
-  it("isManagedDetachedDrag follows the detached phase and the owner window label", () => {
+  it("isManagedDetachedContent follows (pty) the detached phase and the owner window label", () => {
     const f = makeFixture();
     makeDetached(f, { kind: "pty", slotId: "s1" }, LABEL, "tok-1");
 
-    expect(f.orchestrator.isManagedDetachedDrag("s1", LABEL)).toBe(true);
-    expect(f.orchestrator.isManagedDetachedDrag("s1", OTHER_LABEL)).toBe(false);
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "pty", slotId: "s1" }, LABEL)).toBe(true);
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "pty", slotId: "s1" }, OTHER_LABEL)).toBe(false);
     // 与 HEAD 语义一致：句柄表的内容不参与判定（见 m6-092 偏离记录）。
     f.orchestrator.state.handles.pty.set(
       ptyContentKey("s1"),
       fakeWindow() as never,
     );
-    expect(f.orchestrator.isManagedDetachedDrag("s1", LABEL)).toBe(true);
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "pty", slotId: "s1" }, LABEL)).toBe(true);
     f.orchestrator.state.handles.pty.delete(ptyContentKey("s1"));
-    expect(f.orchestrator.isManagedDetachedDrag("s1", LABEL)).toBe(true);
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "pty", slotId: "s1" }, LABEL)).toBe(true);
 
     f.coordinator.ensureAttached({ kind: "pty", slotId: "s2" }, SOURCE);
-    expect(f.orchestrator.isManagedDetachedDrag("s2", LABEL)).toBe(false);
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "pty", slotId: "s2" }, LABEL)).toBe(false);
   });
 
-  it("isManagedDetachedFileDrag follows the detached phase and the owner window label", () => {
+  it("isManagedDetachedContent follows (file) the detached phase and the owner window label", () => {
     const f = makeFixture({ withFile: true });
     makeDetached(f, { kind: "file", documentId: "doc-1" }, FILE_LABEL, "tok-2");
 
-    expect(f.orchestrator.isManagedDetachedFileDrag("doc-1", FILE_LABEL)).toBe(
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "file", documentId: "doc-1" }, FILE_LABEL)).toBe(
       true,
     );
-    expect(f.orchestrator.isManagedDetachedFileDrag("doc-1", OTHER_LABEL)).toBe(
+    expect(f.orchestrator.isManagedDetachedContent({ kind: "file", documentId: "doc-1" }, OTHER_LABEL)).toBe(
       false,
     );
     expect(
-      f.orchestrator.isManagedDetachedFileDrag("doc-other", FILE_LABEL),
+      f.orchestrator.isManagedDetachedContent({ kind: "file", documentId: "doc-other" }, FILE_LABEL),
     ).toBe(false);
   });
 

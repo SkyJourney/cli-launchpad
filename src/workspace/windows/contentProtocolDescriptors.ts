@@ -1,3 +1,6 @@
+import type { TFunction } from "i18next";
+import { formatAppError } from "../../lib/appErrors";
+import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import type { RegisteredContentKind } from "../../generated/contentKinds";
 import {
   fileContentKey,
@@ -53,4 +56,32 @@ export function contentProtocolOf<K extends RegisteredContentKind>(
   kind: K,
 ): (typeof CONTENT_PROTOCOLS)[K] {
   return CONTENT_PROTOCOLS[kind];
+}
+
+/** Asks the detached window that holds a content to hand it back to the pane it was dropped on. */
+export function requestReturnDrop(
+  windowLabel: string,
+  content: ManagedContentRef,
+  targetPaneId: string,
+): Promise<void> {
+  if (content.kind === "pty") {
+    return sendContentHandoff(windowLabel, "pty", "return-drop-requested", {
+      instanceId: content.slotId,
+      targetPaneId,
+    });
+  }
+  return sendContentHandoff(windowLabel, "file", "return-drop-requested", {
+    documentId: content.documentId,
+    targetPaneId,
+  });
+}
+
+/** The user-facing text for a failed return drop; the terminal's wording wraps the reason. */
+export function returnDropFailureMessage(
+  content: ManagedContentRef,
+  reason: unknown,
+  t: TFunction,
+): string {
+  const detail = formatAppError(reason, t);
+  return content.kind === "pty" ? t("pty.returnFailed", { error: detail }) : detail;
 }
