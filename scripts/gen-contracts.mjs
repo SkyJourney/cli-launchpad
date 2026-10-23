@@ -35,8 +35,41 @@ if (
 if (new Set(kindIds).size !== kindIds.length) {
   throw new Error("contracts/content-kinds.json 含重复内容 kind");
 }
+if (
+  contentKinds.items.some(
+    (item) =>
+      typeof item.idField !== "string" || !/^[a-z][A-Za-z0-9]*$/.test(item.idField),
+  )
+) {
+  throw new Error("contracts/content-kinds.json 含非法 idField");
+}
+
+const toolKeys = JSON.parse(fs.readFileSync("contracts/tool-keys.json", "utf8"));
+const toolKeyIds = toolKeys.items;
+if (
+  toolKeyIds.length === 0 ||
+  toolKeyIds.some((id) => typeof id !== "string" || !/^[a-z][a-z0-9]*$/.test(id))
+) {
+  throw new Error("contracts/tool-keys.json 含非法工具键");
+}
+if (new Set(toolKeyIds).size !== toolKeyIds.length) {
+  throw new Error("contracts/tool-keys.json 含重复工具键");
+}
 
 const outputs = [
+  {
+    target: "src/generated/toolKeys.ts",
+    count: toolKeyIds.length,
+    content: [
+      "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/tool-keys.json",
+      "export const REGISTERED_TOOL_KEYS = [",
+      ...toolKeyIds.map((id) => `  "${id}",`),
+      "] as const;",
+      "",
+      "export type RegisteredToolKey = (typeof REGISTERED_TOOL_KEYS)[number];",
+      "",
+    ].join("\n"),
+  },
   {
     target: "src/generated/appCommands.ts",
     count: sortedNames.length,
@@ -60,6 +93,19 @@ const outputs = [
       "] as const;",
       "",
       "export type RegisteredContentKind = (typeof REGISTERED_CONTENT_KINDS)[number];",
+      "",
+      "/** 每种内容引用里承载身份的字段名（JSON 布局中的字段）。 */",
+      "export const CONTENT_KIND_ID_FIELD = {",
+      ...contentKinds.items.map((item) => `  ${item.id}: "${item.idField}",`),
+      "} as const satisfies Record<RegisteredContentKind, string>;",
+      "",
+      "/** 所有已登记内容的引用形状：`{ kind, <idField>: string }`，由契约派生。 */",
+      "export type RegisteredContentRef = {",
+      "  [Kind in RegisteredContentKind]: { kind: Kind } & Record<",
+      "    (typeof CONTENT_KIND_ID_FIELD)[Kind],",
+      "    string",
+      "  >;",
+      "}[RegisteredContentKind];",
       "",
     ].join("\n"),
   },

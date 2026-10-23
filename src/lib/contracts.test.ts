@@ -9,8 +9,9 @@ import {
   getWorkspaceContentAdapter,
   registerWorkspaceContentAdapter,
 } from "../components/workspaceContentAdapterRegistry";
+import { REGISTERED_TOOL_KEYS } from "../generated/toolKeys";
 import { TOOLS } from "./tools";
-import type { ToolKey, WorkspacePaneContentRef } from "./tauri";
+import type { WorkspacePaneContentRef } from "./tauri";
 import {
   encodeWorkspaceContentDrag,
   parseWorkspaceContentDrag,
@@ -26,14 +27,6 @@ const contentKindIds = contentKinds.items.map((item) => item.id);
 const contentAdapterVersion = apiVersions.items.find(
   (item) => item.id === "workspaceContentAdapter",
 )?.version as number;
-
-const toolKeyTypeCoverage: Record<ToolKey, true> = {
-  claude: true,
-  codex: true,
-  antigravity: true,
-  grok: true,
-  hermes: true,
-};
 
 const contentKindTypeCoverage: Record<WorkspacePaneContentRef["kind"], true> = {
   pty: true,
@@ -53,7 +46,8 @@ describe("shared contracts", () => {
 
   it("matches the TypeScript CLI registry and union", () => {
     expect(TOOLS.map((tool) => tool.key)).toEqual(toolKeys.items);
-    expect(Object.keys(toolKeyTypeCoverage)).toEqual(toolKeys.items);
+    // ToolKey 由生成的 REGISTERED_TOOL_KEYS 派生，这里只校验生成结果与契约一致。
+    expect([...REGISTERED_TOOL_KEYS]).toEqual(toolKeys.items);
   });
 
   it("matches the TypeScript workspace content kinds", () => {

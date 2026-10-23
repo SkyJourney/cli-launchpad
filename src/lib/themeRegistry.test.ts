@@ -15,6 +15,7 @@ import {
   getThemeDefinition,
   registerBuiltinThemes,
   resolveThemeMode,
+  THEME_IDS,
   THEMES,
   type ThemeDefinition,
   type ThemeMode,
@@ -49,7 +50,9 @@ afterEach(() => {
 
 describe("theme registry", () => {
   it("registers both built-in themes at module load with apiVersion 1", () => {
-    expect(listThemes().map((theme) => theme.id)).toEqual(["light", "dark"]);
+    // 内置主题集合以 THEMES 为准，不在测试里重复写死清单。
+    expect(listThemes().map((theme) => theme.id)).toEqual(THEME_IDS);
+    expect(THEME_IDS).toEqual(expect.arrayContaining(["light", "dark"]));
     for (const theme of listThemes()) {
       expect(theme.apiVersion).toBe(1);
     }
@@ -65,7 +68,7 @@ describe("theme registry", () => {
       }),
     ).toThrow("不支持主题 API 版本: 2");
 
-    expect(listThemes()).toHaveLength(2);
+    expect(listThemes()).toHaveLength(THEME_IDS.length);
     // Reverse: the rejected theme left nothing behind.
     expect(listThemes().map((theme) => theme.id)).not.toContain("test.old");
   });
@@ -76,7 +79,7 @@ describe("theme registry", () => {
     cleanup();
 
     // Reverse: the cleanup did not remove the built-ins.
-    expect(listThemes().map((theme) => theme.id)).toEqual(["light", "dark"]);
+    expect(listThemes().map((theme) => theme.id)).toEqual(THEME_IDS);
   });
 
   it("resolves registered third-party themes through the registry", () => {

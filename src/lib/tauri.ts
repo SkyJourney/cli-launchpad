@@ -1,5 +1,7 @@
 import { Channel } from "@tauri-apps/api/core";
 import { invokeApp } from "./invokeApp";
+import type { RegisteredToolKey } from "../generated/toolKeys";
+import type { RegisteredContentRef } from "../generated/contentKinds";
 import type { PathSemantics } from "./pathKey";
 import {
   parseExitImpactsView,
@@ -9,7 +11,7 @@ import {
 
 export type { PathSemantics };
 
-export type ToolKey = "antigravity" | "codex" | "claude" | "grok" | "hermes";
+export type ToolKey = RegisteredToolKey;
 
 export type WorkspaceLayoutNode =
   | {
@@ -54,8 +56,7 @@ export interface WorkspaceLayoutDocument {
 }
 
 export type WorkspacePaneContentRef =
-  | { kind: "pty"; slotId: string }
-  | { kind: "file"; documentId: string }
+  | RegisteredContentRef
   | { kind: "unknown"; originalKind: string; raw: Record<string, unknown> };
 
 export interface WorkspaceFileDocument {

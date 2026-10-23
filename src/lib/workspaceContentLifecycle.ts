@@ -5,7 +5,7 @@ import type {
   WorkspacePaneContentRef,
 } from "./tauri";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
-import { workspaceContentKey } from "./workspaceContentKey";
+import { contentIdOf, workspaceContentKey } from "./workspaceContentKey";
 import type { RegisteredContentKind } from "../generated/contentKinds";
 
 export interface WorkspacePaneOwner {
@@ -198,8 +198,7 @@ export function createWorkspaceContentLifecycle(
   content: ManagedWorkspacePaneContentRef,
   owner: WorkspacePaneOwner,
 ): WorkspaceContentLifecycleState {
-  const contentId =
-    content.kind === "pty" ? content.slotId : content.documentId;
+  const contentId = contentIdOf(content);
   if (
     !hasText(contentId) ||
     !hasText(owner.windowLabel) ||

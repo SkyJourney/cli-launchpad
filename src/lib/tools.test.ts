@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import managedUpdateFixture from "../../contracts/fixtures/managed-update-status.json";
+import { REGISTERED_TOOL_KEYS } from "../generated/toolKeys";
 import {
   getCliAdapter,
   getTerminalTitleLabel,
@@ -10,13 +11,7 @@ import {
 
 describe("CLI adapter registry", () => {
   it("keeps each built-in adapter registered once in product display order", () => {
-    expect(TOOLS.map((tool) => tool.key)).toEqual([
-      "claude",
-      "codex",
-      "antigravity",
-      "grok",
-      "hermes",
-    ]);
+    expect(TOOLS.map((tool) => tool.key)).toEqual([...REGISTERED_TOOL_KEYS]);
     for (const tool of TOOLS) {
       expect(getCliAdapter(tool.key)).toBe(tool);
       expect(tool.label).toBeTruthy();

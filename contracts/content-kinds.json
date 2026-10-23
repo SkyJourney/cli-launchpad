@@ -4,12 +4,14 @@
     {
       "id": "pty",
       "windowKind": "terminal",
-      "dragAllowed": true
+      "dragAllowed": true,
+      "idField": "slotId"
     },
     {
       "id": "file",
       "windowKind": "workspaceContent",
-      "dragAllowed": true
+      "dragAllowed": true,
+      "idField": "documentId"
     }
   ]
 }

@@ -1,8 +1,14 @@
+import {
+  CONTENT_KIND_ID_FIELD,
+  REGISTERED_CONTENT_KINDS,
+  type RegisteredContentKind,
+  type RegisteredContentRef,
+} from "../generated/contentKinds";
 import type { WorkspacePaneContentRef } from "./tauri";
 
-export type PtyContentRef = { kind: "pty"; slotId: string };
-export type FileContentRef = { kind: "file"; documentId: string };
-export type ManagedContentRef = PtyContentRef | FileContentRef;
+export type PtyContentRef = Extract<RegisteredContentRef, { kind: "pty" }>;
+export type FileContentRef = Extract<RegisteredContentRef, { kind: "file" }>;
+export type ManagedContentRef = RegisteredContentRef;
 
 /** The only place that spells out the shape of a PTY content reference. */
 export function ptyContentRef(slotId: string): PtyContentRef {
@@ -14,10 +20,23 @@ export function fileContentRef(documentId: string): FileContentRef {
   return { kind: "file", documentId };
 }
 
+export function isRegisteredContentKind(
+  kind: string,
+): kind is RegisteredContentKind {
+  return (REGISTERED_CONTENT_KINDS as readonly string[]).includes(kind);
+}
+
+/** The identity of a managed content reference, read through the contract's id field. */
+export function contentIdOf(content: ManagedContentRef): string {
+  const field: string = CONTENT_KIND_ID_FIELD[content.kind];
+  return (content as unknown as Record<string, string>)[field];
+}
+
 export function workspaceContentKey(content: WorkspacePaneContentRef): string {
-  if (content.kind === "pty") return `pty:${content.slotId}`;
-  if (content.kind === "file") return `file:${content.documentId}`;
-  return `unknown:${content.originalKind}:${stableJson(content.raw)}`;
+  if (content.kind === "unknown") {
+    return `unknown:${content.originalKind}:${stableJson(content.raw)}`;
+  }
+  return `${content.kind}:${contentIdOf(content)}`;
 }
 
 export function ptyContentKey(slotId: string): string {
@@ -30,11 +49,14 @@ export function fileContentKey(documentId: string): string {
 
 /** Inverse of workspaceContentKey for draggable content; unknown content has no inverse. */
 export function contentRefFromKey(key: string): ManagedContentRef | null {
-  const match = /^(pty|file):(.+)$/.exec(key);
+  const match = /^([a-z][A-Za-z0-9]*):(.+)$/.exec(key);
   if (!match || match[2].length > 200) return null;
-  return match[1] === "pty"
-    ? ptyContentRef(match[2])
-    : fileContentRef(match[2]);
+  const kind = match[1];
+  if (!isRegisteredContentKind(kind)) return null;
+  return {
+    kind,
+    [CONTENT_KIND_ID_FIELD[kind]]: match[2],
+  } as ManagedContentRef;
 }
 
 function stableJson(value: unknown): string {
