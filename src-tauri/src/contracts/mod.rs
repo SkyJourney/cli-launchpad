@@ -3638,7 +3638,13 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
         .iter()
         .find(|kind| kind["id"] == "main")
         .unwrap();
-    assert_eq!(main_kind["appCommands"], "all");
+    let main_commands = main_kind["appCommands"]
+        .as_array()
+        .expect("main appCommands is an explicit list");
+    assert!(!main_commands
+        .iter()
+        .any(|name| name == "open_granted_file" || name == "save_granted_text_file"));
+    assert_eq!(main_commands.len(), app_command_names().len() - 2);
 }
 
 #[test]
@@ -4094,7 +4100,6 @@ fn capability_window_globs_match_the_label_rules() {
 fn caller_check_contract_matches_the_window_kind_acl() {
     let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
     let mut violations = Vec::new();
-    let mut proper_subset = 0;
     for check in caller_checks() {
         let acl = acl_kinds(&check.command, &manifest);
         let children: BTreeSet<String> =
@@ -4106,16 +4111,20 @@ fn caller_check_contract_matches_the_window_kind_acl() {
                     check.command, check.kinds
                 ));
             }
-            if check.kinds.is_subset(&acl) && check.kinds != acl {
-                proper_subset += 1;
-            }
         } else if acl != BTreeSet::from(["main".to_string()]) {
             violations.push(format!("{}: acl-only but ACL is {acl:?}", check.command));
         }
     }
     assert!(violations.is_empty(), "{violations:#?}");
-    // Reverse: the rule is not an identity (the granted-file commands exclude `main` on purpose).
-    assert!(proper_subset >= 2, "{proper_subset}");
+    // Reverse: the granted-file commands are granted to the workspace-content kind only; the main
+    // window's explicit list excludes them on purpose.
+    for command in ["open_granted_file", "save_granted_text_file"] {
+        assert_eq!(
+            acl_kinds(command, &manifest),
+            BTreeSet::from(["workspaceContent".to_string()]),
+            "{command}"
+        );
+    }
 }
 
 #[test]

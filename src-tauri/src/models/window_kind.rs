@@ -313,7 +313,8 @@ mod tests {
 
         let main = CallerWindow::from_label("main").expect("main label");
         assert!(main.require_command("terminate_pty_session").is_ok());
-        assert!(main.require_command("no_such_command").is_ok());
+        assert!(main.require_command("no_such_command").is_err());
+        assert!(main.require_command("open_granted_file").is_err());
     }
 
     #[test]
