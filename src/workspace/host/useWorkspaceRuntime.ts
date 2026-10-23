@@ -10,7 +10,6 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   presentWorkspaceContent,
-  tryGetWorkspaceContentAdapter,
   workspaceContentProjectContext,
   type WorkspaceContentPresentationContext,
 } from "../../components/WorkspaceContentView";
@@ -22,6 +21,10 @@ import {
 } from "../../lib/ptyWorkspaceLayout";
 import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import { disposeWorkspaceContent } from "../../lib/workspaceContentClose";
+import {
+  ptyContentDisposer,
+  releaseFileDocuments as releaseFileDocumentsInDomain,
+} from "../domains/contentDisposers";
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import {
   fileContentRef,
@@ -177,23 +180,7 @@ export function useWorkspaceRuntime({
   const activeView = useAppStore((state) => state.view);
 
   const releaseFileDocuments = useCallback((documentIds: readonly string[]) => {
-    if (documentIds.length === 0) return;
-    const dispose = tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose;
-    if (!dispose) return;
-    for (const documentId of documentIds) {
-      void (async () => {
-        try {
-          await dispose({
-            content: fileContentRef(documentId),
-            owner: { kind: "window", windowLabel: MAIN_WINDOW_LABEL },
-            generation: 0,
-            reason: "ownerEnded",
-          });
-        } catch (error) {
-          console.error("Workspace file document release failed", error);
-        }
-      })();
-    }
+    releaseFileDocumentsInDomain(documentIds);
   }, []);
   releaseFileDocumentsRef.current = releaseFileDocuments;
 
@@ -418,7 +405,7 @@ export function useWorkspaceRuntime({
           coordinator: contentCoordinatorRef.current,
           content,
           reason: "ownerEnded",
-          dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
+          dispose: ptyContentDisposer(),
         });
       }
       orchestrator.state.handles.pty.delete(ptyContentKey(instanceId));
