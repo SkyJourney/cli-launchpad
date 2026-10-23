@@ -3,17 +3,16 @@ import {
   encodeWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
-import { ptyContentKey } from "../../lib/workspaceContentKey";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
-export function beginWorkspaceSessionDrag(
+export function beginWorkspaceContentDrag(
   event: ReactDragEvent<HTMLElement>,
   sourcePaneId: string,
-  instanceId: string,
+  key: string,
 ) {
   event.dataTransfer.effectAllowed = "move";
   const payload = encodeWorkspaceContentDrag({
-    key: ptyContentKey(instanceId),
+    key,
     sourcePaneId,
     sourceWindowLabel: MAIN_WINDOW_LABEL,
   });

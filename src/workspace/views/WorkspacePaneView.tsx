@@ -15,7 +15,6 @@ import {
   type WorkspacePane,
 } from "../../lib/ptyWorkspaceLayout";
 import {
-  encodeWorkspaceContentDrag,
   parseWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
@@ -26,7 +25,6 @@ import {
 import { formatAppError } from "../../lib/appErrors";
 import {
   contentRefFromKey,
-  fileContentKey,
   fileContentRef,
   type ManagedContentRef,
   workspaceContentKey,
@@ -43,7 +41,7 @@ import { WorkspaceContentContextMenu } from "../../components/WorkspaceContentCo
 import { partitionVisibleTabs } from "../../lib/workspaceTabLayout";
 import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
 import type { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
-import { beginWorkspaceSessionDrag } from "./viewHelpers";
+import { beginWorkspaceContentDrag } from "./viewHelpers";
 import { PaneContentStack } from "./PaneContentStack";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
@@ -340,20 +338,8 @@ export function WorkspacePaneView({
         }
         draggable={content.kind !== "unknown" && !isClosing && !!adapter}
         onDragStart={(event) => {
-          if (isClosing) return;
-          if (content.kind === "pty") {
-            beginWorkspaceSessionDrag(event, pane.id, content.slotId);
-            return;
-          }
           if (content.kind === "unknown" || isClosing || !adapter) return;
-          const payload = encodeWorkspaceContentDrag({
-            key: fileContentKey(content.documentId),
-            sourcePaneId: pane.id,
-            sourceWindowLabel: MAIN_WINDOW_LABEL,
-          });
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
-          event.dataTransfer.setData("text/plain", payload);
+          beginWorkspaceContentDrag(event, pane.id, workspaceContentKey(content));
         }}
         onActivate={() => onActivateContent(pane.id, content)}
         onRequestClose={() => void onCloseContents([content], "tab")}
