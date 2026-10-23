@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "name": "abnormalExitWithStart",
+      "value": {
+        "kind": "abnormal_exit_detected",
+        "startedAtMs": 1700000000000
+      }
+    },
+    {
+      "name": "abnormalExitWithoutStart",
+      "value": {
+        "kind": "abnormal_exit_detected",
+        "startedAtMs": null
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "StartupNotice"
+}

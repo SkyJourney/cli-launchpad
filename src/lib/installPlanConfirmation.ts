@@ -1,3 +1,4 @@
+import { normalizeAppErrorCode } from "./appErrors";
 import type { InstallKind, InstallPlan, ToolKey } from "./tauri";
 
 export interface InstallPlanConfirmation {
@@ -13,7 +14,9 @@ export function isInstallPlanChangedError(error: unknown): boolean {
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    error.code === "plan_changed"
+    normalizeAppErrorCode(
+      typeof error.code === "string" ? error.code : undefined,
+    ) === "exec.plan_changed"
   );
 }
 

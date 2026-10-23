@@ -7,8 +7,19 @@ fn main() {
 
     let manifest =
         fs::read_to_string(&manifest_path).expect("failed to read contracts/app-commands.json");
-    let commands: Vec<String> =
+    let manifest: serde_json::Value =
         serde_json::from_str(&manifest).expect("invalid contracts/app-commands.json");
+    let commands: Vec<String> = manifest["items"]
+        .as_array()
+        .expect("contracts/app-commands.json must have an items array")
+        .iter()
+        .map(|item| {
+            item["name"]
+                .as_str()
+                .expect("every item in contracts/app-commands.json must have a name")
+                .to_string()
+        })
+        .collect();
     let commands: Vec<&'static str> = commands
         .into_iter()
         .map(|command| Box::leak(command.into_boxed_str()) as &'static str)

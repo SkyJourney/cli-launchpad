@@ -1,520 +1,89 @@
+use crate::domain_errors::PtyError;
+use crate::error_codes::ErrorCode;
+use crate::models::pty_session::PtySessionState;
+use crate::util::time::now_ms;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    io::{Read, Write},
+    collections::VecDeque,
+    io::Read,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender, TrySendError},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     thread,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use portable_pty::{
-    native_pty_system, Child as PtyChild, ChildKiller, CommandBuilder, MasterPty, PtySize,
-};
-use tauri::{ipc::Channel, AppHandle, Manager};
+use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, PtySize};
+use tauri::ipc::Channel;
 use uuid::Uuid;
 
+mod flow;
+mod handoff;
+mod input;
+mod persistence;
+mod ports;
+mod process;
+mod registry;
+mod route;
+mod session;
+mod window;
+
+use flow::OutputFlow;
+use handoff::{deliver_snapshot, validate_handoff_target, HandoffState};
+use input::{enqueue_pty_input, pty_input_channel, start_pty_input_writer};
+use persistence::{
+    register_then_persist, FlushReport, LogObserver, PendingFinishQueue, PersistenceObserver,
+    RetryingStore,
+};
+use ports::{
+    DbLaunchHistorySink, DbPtySessionStore, LaunchHistorySink, LaunchRecord, PtyEventSink,
+    PtySessionStore,
+};
+use process::{stop_spawned_child, Terminator, TreeTerminateError};
+use registry::SessionRegistry;
+use route::EventRoute;
+use session::{ManagedSession, RouteAndHandoff, TerminalState};
+
+use crate::models::window_kind::WindowLabel;
+use crate::services::window_lifecycle::{AppEvent, WindowScopedResource};
+
 use crate::{
-    db::{directory_repo, launch_history_repo, pty_session_repo},
     models::{
         launch_history::LaunchAction,
         pty_session::{
-            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySessionWindowStatus,
-            PtySizeUpdate, PtyTerminalSnapshot,
+            PtyEvent, PtyFrontendStage, PtyHandoff, PtySession, PtySizeUpdate, PtyTerminalSnapshot,
         },
         tool::ToolKey,
     },
     platform::execution_process::{attach_pty_or_terminate, ProcessTree},
-    services::{directory_service, launch_service},
+    platform::path_identity::ProjectPathKey,
+    services::{launch_service, project_directory::ProjectRef},
     AppError, Db,
 };
 
 const READ_CHUNK_BYTES: usize = 16 * 1024;
-const OUTPUT_HIGH_WATERMARK: usize = 192 * 1024;
-const OUTPUT_LOW_WATERMARK: usize = 64 * 1024;
-const HANDOFF_PAUSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_HANDOFF_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
-const MAX_OWNER_LOST_BUFFER_BYTES: usize = 256 * 1024;
-const PTY_INPUT_QUEUE_CAPACITY: usize = 32;
-const MAX_PTY_INPUT_BYTES: usize = 64 * 1024;
-
-fn enqueue_pty_input(sender: &SyncSender<Vec<u8>>, data: &[u8]) -> Result<(), AppError> {
-    if data.len() > MAX_PTY_INPUT_BYTES {
-        return Err(AppError::coded(
-            "pty_input_backpressure",
-            "终端输入片段超过安全上限，请分段粘贴",
-        ));
-    }
-    match sender.try_send(data.to_vec()) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(_)) => Err(AppError::coded(
-            "pty_input_backpressure",
-            "终端输入队列已满，请稍后重试",
-        )),
-        Err(TrySendError::Disconnected(_)) => Err(AppError::coded(
-            "pty_input_unavailable",
-            "终端输入通道已关闭，请重新连接会话",
-        )),
-    }
-}
-
-fn start_pty_input_writer(
-    mut writer: Box<dyn Write + Send>,
-    receiver: Receiver<Vec<u8>>,
-    session_id: String,
-) -> std::io::Result<thread::JoinHandle<()>> {
-    thread::Builder::new()
-        .name(format!("pty-input-{session_id}"))
-        .spawn(move || {
-            while let Ok(data) = receiver.recv() {
-                if let Err(error) = writer.write_all(&data).and_then(|()| writer.flush()) {
-                    log::error!("PTY input write failed session_id={session_id} error={error}");
-                    break;
-                }
-            }
-        })
-}
-
-fn ensure_no_active_sessions(active_count: usize) -> Result<(), AppError> {
-    if active_count > 0 {
-        return Err(AppError::coded_with_params(
-            "pty_sessions_active",
-            format!("请先关闭所有运行中的终端会话（当前 {active_count} 个）再恢复备份"),
-            serde_json::json!({ "count": active_count }),
-        ));
-    }
-    Ok(())
-}
 
 #[derive(Clone)]
 pub struct PtySessionManager {
-    sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
-    lifecycle_gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-#[derive(Default)]
-struct PtyLifecycleGate {
-    restore_in_progress: bool,
-    session_starts: usize,
-}
-
-pub struct PtySessionStartGuard {
-    gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-impl Drop for PtySessionStartGuard {
-    fn drop(&mut self) {
-        match self.gate.lock() {
-            Ok(mut gate) => gate.session_starts = gate.session_starts.saturating_sub(1),
-            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing session start"),
-        }
-    }
-}
-
-pub struct PtyBackupRestoreGuard {
-    gate: Arc<Mutex<PtyLifecycleGate>>,
-}
-
-impl Drop for PtyBackupRestoreGuard {
-    fn drop(&mut self) {
-        match self.gate.lock() {
-            Ok(mut gate) => gate.restore_in_progress = false,
-            Err(_) => log::error!("PTY lifecycle gate poisoned while releasing backup restore"),
-        }
-    }
+    registry: Arc<SessionRegistry>,
+    persist_queue: Arc<PendingFinishQueue>,
+    observer: Arc<dyn PersistenceObserver>,
 }
 
 impl Default for PtySessionManager {
     fn default() -> Self {
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            lifecycle_gate: Arc::new(Mutex::new(PtyLifecycleGate::default())),
+            registry: Arc::new(SessionRegistry::new()),
+            persist_queue: Arc::new(PendingFinishQueue::new()),
+            observer: Arc::new(LogObserver),
         }
     }
 }
 
-struct ManagedSession {
-    session_id: String,
-    directory_id: i64,
-    tool_key: ToolKey,
-    working_directory: String,
-    started_at_ms: i64,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    last_size: Mutex<(u16, u16)>,
-    writer: SyncSender<Vec<u8>>,
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    process_tree: Mutex<Option<ProcessTree>>,
-    flow: Arc<OutputFlow>,
-    event_route: Mutex<EventRoute>,
-    pending_handoff: Mutex<Option<PendingHandoff>>,
-    first_output_logged: AtomicBool,
-    output_chunks: AtomicU64,
-    output_bytes: AtomicU64,
-    acknowledgement_calls: AtomicU64,
-    last_acknowledged_sequence: AtomicU64,
-    termination_requested: std::sync::atomic::AtomicBool,
-}
-
-struct EventRoute {
-    window_label: String,
-    channel: Option<Channel<PtyEvent>>,
-    mirror: Option<(String, Channel<PtyEvent>)>,
-    owner_lost: bool,
-    buffered_events: VecDeque<PtyEvent>,
-    buffered_bytes: usize,
-}
-
-struct PendingHandoff {
-    token: String,
-    source_window_label: String,
-    sequence: u64,
-    snapshot: Option<PtyTerminalSnapshot>,
-    target_window_label: Option<String>,
-    target_channel: Option<Channel<PtyEvent>>,
-}
-
-struct OutputFlow {
-    state: Mutex<OutputFlowState>,
-    changed: Condvar,
-}
-
-#[derive(Default)]
-struct OutputFlowState {
-    pending_bytes: usize,
-    sent: BTreeMap<u64, usize>,
-    next_sequence: u64,
-    paused: bool,
-    pause_deadline: Option<std::time::Instant>,
-    closed: bool,
-}
-
-impl OutputFlow {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(OutputFlowState::default()),
-            changed: Condvar::new(),
-        }
-    }
-
-    fn reserve(&self, bytes: usize) -> Option<u64> {
-        let mut state = self.state.lock().ok()?;
-        while state.paused && !state.closed {
-            state = self.wait_for_resume(state).ok()?;
-        }
-        if state.closed {
-            return None;
-        }
-        state.next_sequence = state.next_sequence.checked_add(1)?;
-        let sequence = state.next_sequence;
-        state.pending_bytes = state.pending_bytes.saturating_add(bytes);
-        state.sent.insert(sequence, bytes);
-        Some(sequence)
-    }
-
-    fn wait_for_capacity(&self) -> bool {
-        let Ok(mut state) = self.state.lock() else {
-            return false;
-        };
-        loop {
-            if state.closed {
-                return false;
-            }
-            if state.paused {
-                state = match self.wait_for_resume(state) {
-                    Ok(state) => state,
-                    Err(_) => return false,
-                };
-                continue;
-            }
-            if state.pending_bytes < OUTPUT_HIGH_WATERMARK {
-                return true;
-            }
-            let Ok(next) = self.changed.wait(state) else {
-                return false;
-            };
-            state = next;
-            if state.pending_bytes > OUTPUT_LOW_WATERMARK {
-                continue;
-            }
-        }
-    }
-
-    fn pause(&self) -> Result<u64> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
-        if state.closed {
-            return Err(anyhow!("PTY 会话已经结束"));
-        }
-        if state.paused {
-            return Err(anyhow!("PTY 会话正在进行其他窗口交接"));
-        }
-        state.paused = true;
-        state.pause_deadline = Some(std::time::Instant::now() + HANDOFF_PAUSE_TIMEOUT);
-        Ok(state.next_sequence)
-    }
-
-    fn pause_indefinitely(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            if state.closed {
-                return;
-            }
-            state.paused = true;
-            state.pause_deadline = None;
-            self.changed.notify_all();
-        }
-    }
-
-    fn is_paused_at(&self, sequence: u64) -> bool {
-        self.state
-            .lock()
-            .map(|state| {
-                state.paused
-                    && !state.closed
-                    && state.next_sequence == sequence
-                    && state
-                        .pause_deadline
-                        .is_some_and(|deadline| std::time::Instant::now() < deadline)
-            })
-            .unwrap_or(false)
-    }
-
-    fn resume(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.paused = false;
-            state.pause_deadline = None;
-            self.changed.notify_all();
-        }
-    }
-
-    fn wait_for_resume<'a>(
-        &self,
-        mut state: std::sync::MutexGuard<'a, OutputFlowState>,
-    ) -> Result<std::sync::MutexGuard<'a, OutputFlowState>> {
-        while state.paused && !state.closed {
-            let Some(deadline) = state.pause_deadline else {
-                state = self
-                    .changed
-                    .wait(state)
-                    .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
-                continue;
-            };
-            let now = std::time::Instant::now();
-            if now >= deadline {
-                state.paused = false;
-                state.pause_deadline = None;
-                self.changed.notify_all();
-                break;
-            }
-            let (next, _) = self
-                .changed
-                .wait_timeout(state, deadline - now)
-                .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
-            state = next;
-        }
-        Ok(state)
-    }
-
-    fn acknowledge(&self, sequence: u64) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("PTY 输出回压状态锁中毒"))?;
-        if sequence > state.next_sequence {
-            return Err(anyhow!("PTY 输出确认序号超出已发送范围"));
-        }
-        let acknowledged: Vec<u64> = state.sent.range(..=sequence).map(|(key, _)| *key).collect();
-        for key in acknowledged {
-            if let Some(bytes) = state.sent.remove(&key) {
-                state.pending_bytes = state.pending_bytes.saturating_sub(bytes);
-            }
-        }
-        if state.pending_bytes <= OUTPUT_LOW_WATERMARK {
-            self.changed.notify_all();
-        }
-        Ok(())
-    }
-
-    fn close(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.closed = true;
-            self.changed.notify_all();
-        }
-    }
-
-    fn pending_bytes(&self) -> usize {
-        self.state
-            .lock()
-            .map(|state| state.pending_bytes)
-            .unwrap_or(0)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.state.lock().map(|state| state.closed).unwrap_or(true)
-    }
-}
-
-impl ManagedSession {
-    fn send_event(&self, event: PtyEvent) -> Result<(), String> {
-        let buffer_size = pty_event_buffer_size(&event);
-        let mut mirror_after_owner_loss = false;
-        let mirror_to_main;
-        {
-            let mut route = self
-                .event_route
-                .lock()
-                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
-            if let Some(channel) = route.channel.as_ref() {
-                if let Err(error) = channel.send(event.clone()) {
-                    if route.window_label.starts_with("terminal-") {
-                        route.channel = None;
-                        route.owner_lost = true;
-                        if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
-                            return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
-                        }
-                        mirror_after_owner_loss = true;
-                        self.flow.pause_indefinitely();
-                    } else {
-                        return Err(format!("PTY 输出通道不可用：{error}"));
-                    }
-                }
-            } else if route.owner_lost {
-                if !buffer_owner_lost_event(&mut route, event.clone(), buffer_size) {
-                    return Err("PTY 所有者窗口销毁后输出缓冲区已满".to_string());
-                }
-                mirror_after_owner_loss = true;
-            } else {
-                return Err("PTY 输出通道不可用：当前没有所有者通道".to_string());
-            }
-            mirror_to_main = mirror_after_owner_loss
-                || route
-                    .mirror
-                    .as_ref()
-                    .is_some_and(|(label, _)| label == "main");
-        }
-
-        if mirror_to_main {
-            let mut route = self
-                .event_route
-                .lock()
-                .map_err(|_| "PTY 事件路由锁中毒".to_string())?;
-            let mirror_allowed = mirror_after_owner_loss
-                || route
-                    .mirror
-                    .as_ref()
-                    .is_some_and(|(label, _)| label == "main");
-            if mirror_allowed {
-                if let Some((_, mirror)) = route.mirror.as_ref() {
-                    if mirror.send(event).is_err() {
-                        route.mirror = None;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn is_output_observer(&self, window_label: &str) -> Result<bool, AppError> {
-        let route = self
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        Ok(route.window_label == window_label
-            || route
-                .mirror
-                .as_ref()
-                .is_some_and(|(label, _)| label == window_label)
-            || (route.owner_lost && window_label == "main"))
-    }
-
-    fn ensure_owner(&self, window_label: &str) -> Result<(), AppError> {
-        let route = self
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        ensure_route_owner(&route, window_label)
-    }
-
-    fn metadata(&self) -> PtySession {
-        PtySession {
-            session_id: self.session_id.clone(),
-            directory_id: self.directory_id,
-            tool_key: self.tool_key,
-            working_directory: self.working_directory.clone(),
-            state: "running".to_string(),
-            started_at_ms: self.started_at_ms,
-            ended_at_ms: None,
-            exit_code: None,
-        }
-    }
-}
-
-fn pty_event_buffer_size(event: &PtyEvent) -> usize {
-    match event {
-        PtyEvent::Output { data_base64, .. } => data_base64.len(),
-        PtyEvent::Snapshot { data, .. } => data.len(),
-        PtyEvent::Failed { message, .. } => message.len(),
-        PtyEvent::Exited { .. } => std::mem::size_of::<PtyEvent>(),
-    }
-}
-
-fn pty_event_sequence(event: &PtyEvent) -> Option<u64> {
-    match event {
-        PtyEvent::Output { sequence, .. } | PtyEvent::Snapshot { sequence, .. } => Some(*sequence),
-        PtyEvent::Exited { .. } | PtyEvent::Failed { .. } => None,
-    }
-}
-
-fn ensure_route_owner(route: &EventRoute, window_label: &str) -> Result<(), AppError> {
-    if route.window_label != window_label {
-        return Err(AppError::msg("该终端当前由另一个窗口控制"));
-    }
-    Ok(())
-}
-
-fn buffer_owner_lost_event(route: &mut EventRoute, event: PtyEvent, size: usize) -> bool {
-    if route.buffered_bytes.saturating_add(size) > MAX_OWNER_LOST_BUFFER_BYTES
-        && matches!(event, PtyEvent::Output { .. })
-    {
-        return false;
-    }
-    route.buffered_bytes = route.buffered_bytes.saturating_add(size);
-    route.buffered_events.push_back(event);
-    true
-}
-
-fn reclaim_event_route(route: &mut EventRoute, window_label: &str) -> bool {
-    route.mirror = route
-        .mirror
-        .take()
-        .filter(|(label, _)| label != window_label);
-    if route.window_label == window_label {
-        route.window_label = "main".to_string();
-        route.channel = None;
-        route.owner_lost = true;
-        true
-    } else {
-        false
-    }
-}
-
-fn handoff_references_window(transfer: &PendingHandoff, window_label: &str) -> bool {
-    transfer.source_window_label == window_label
-        || transfer.target_window_label.as_deref() == Some(window_label)
-}
-
-fn is_supported_workspace_window(window_label: &str) -> bool {
-    matches!(
-        crate::models::window_kind::window_kind_of(window_label),
-        Some(
-            crate::models::window_kind::WindowKind::Main
-                | crate::models::window_kind::WindowKind::Terminal
-        )
-    )
+fn is_supported_workspace_window(window_label: &WindowLabel) -> bool {
+    window_label.kind().is_pty_host()
 }
 
 fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppError> {
@@ -525,40 +94,105 @@ fn validate_handoff_snapshot(snapshot: &PtyTerminalSnapshot) -> Result<(), AppEr
         pixel_height: 0,
     })?;
     if snapshot.data.len() > MAX_HANDOFF_SNAPSHOT_BYTES {
-        return Err(AppError::msg("终端画面过大，暂时无法移动到独立窗口"));
+        return Err(AppError::internal("终端画面过大，暂时无法移动到独立窗口"));
     }
     Ok(())
 }
 
 impl PtySessionManager {
+    /// Test constructor: production code only uses `Default` (the log observer).
+    #[cfg(test)]
+    pub(crate) fn with_observer(observer: Arc<dyn PersistenceObserver>) -> Self {
+        Self {
+            registry: Arc::new(SessionRegistry::new()),
+            persist_queue: Arc::new(PendingFinishQueue::new()),
+            observer,
+        }
+    }
+
+    /// The database store wrapped in the manager's shared retry queue.
+    fn retrying_store(&self, db: &Db) -> RetryingStore {
+        RetryingStore::new(
+            Arc::new(DbPtySessionStore::new(db.clone())),
+            Arc::clone(&self.persist_queue),
+            Arc::clone(&self.observer),
+        )
+    }
+
+    /// Retries the `finish` writes that failed earlier so the rows catch up with memory.
+    /// Failures are reported to the observer; the caller only needs the counts.
+    pub fn flush_pending_persistence(&self, db: &Db) -> FlushReport {
+        self.retrying_store(db).flush_pending()
+    }
+
+    fn open_sessions(&self) -> Vec<Arc<ManagedSession>> {
+        match self.registry.snapshot() {
+            Ok(sessions) => sessions
+                .into_iter()
+                .filter(|session| !session.flow.is_closed())
+                .collect(),
+            Err(_) => {
+                log::error!("PTY session table lock poisoned while listing running sessions");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Session ids registered for `directory_id` whose output flow is still open.
+    /// Lock note (m6-056 D1): `remove_directory` calls this while holding the database lock;
+    /// it takes only the registry lock and each session's flow lock, neither of which is ever
+    /// held while acquiring the database lock.
+    pub fn running_in(&self, directory_id: i64) -> Vec<String> {
+        self.open_sessions()
+            .into_iter()
+            .filter(|session| session.directory_id == directory_id)
+            .map(|session| session.session_id.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn is_running(&self, session_id: &str) -> bool {
+        self.registry
+            .find(session_id)
+            .ok()
+            .flatten()
+            .is_some_and(|session| !session.flow.is_closed())
+    }
+
+    /// A snapshot of the ids of every open session.
+    pub fn running_session_ids(&self) -> std::collections::HashSet<String> {
+        self.open_sessions()
+            .into_iter()
+            .map(|session| session.session_id.clone())
+            .collect()
+    }
+
     pub fn create(
         &self,
         db: &Db,
-        app: &AppHandle,
-        directory_id: i64,
+        project: &ProjectRef,
         tool_key: ToolKey,
         payload: &launch_service::CliLaunchPayload,
         resume_session_id: Option<&str>,
         size: PtySizeUpdate,
-        window_label: &str,
+        window_label: &WindowLabel,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
-        let _start_guard = self.begin_session_start()?;
-        let directory = crate::with_connection(db, |connection| {
-            directory_repo::get(connection, directory_id)?
-                .ok_or_else(|| AppError::msg(format!("directory {directory_id} not found")))
-        })?;
-        if !crate::platform::path_identity::paths_equal(&directory.path, &payload.directory) {
+        // The project was opened and checked once by `ProjectDirectory::open_ref`; here only the
+        // payload is compared (lexically) and the directory handle identity is re-verified. The
+        // spawn below still resolves its working directory by path (a narrow, inherent window).
+        if ProjectPathKey::of(&payload.directory) != project.key {
             return Err(AppError::coded(
-                "project_identity_changed",
+                ErrorCode::ProjectIdentityChanged,
                 "项目目录在启动准备期间发生变化，请重试",
             ));
         }
-        let directory_path = directory.path;
+        project.verify_unchanged()?;
+        let store: Arc<dyn PtySessionStore> = Arc::new(self.retrying_store(db));
+        let history = DbLaunchHistorySink::new(db.clone());
         let result = self.create_inner(
-            db,
-            app,
-            directory_id,
+            &store,
+            project,
             tool_key,
             payload,
             size,
@@ -575,18 +209,14 @@ impl PtySessionManager {
             .ok()
             .map(|session| session.session_id.as_str());
         let error_category = result.as_ref().err().map(|_| "launch_failed");
-        if let Err(error) = crate::with_connection(db, |connection| {
-            launch_history_repo::record(
-                connection,
-                directory_id,
-                Some(&directory_path),
-                tool_key,
-                action,
-                result.is_ok(),
-                error_category,
-                session_id,
-            )?;
-            Ok(())
+        if let Err(error) = history.record(LaunchRecord {
+            directory_id: project.id,
+            directory_path: Some(&project.path),
+            tool_key,
+            action,
+            success: result.is_ok(),
+            error_category,
+            session_id,
         }) {
             log::warn!("unable to record embedded PTY launch history: {error}");
         }
@@ -595,18 +225,17 @@ impl PtySessionManager {
 
     fn create_inner(
         &self,
-        db: &Db,
-        app: &AppHandle,
-        directory_id: i64,
+        store: &Arc<dyn PtySessionStore>,
+        project: &ProjectRef,
         tool_key: ToolKey,
         payload: &launch_service::CliLaunchPayload,
         size: PtySizeUpdate,
-        window_label: &str,
+        window_label: &WindowLabel,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         validate_size(size)?;
         let payload = payload.clone();
-        directory_service::validate_path(&payload.directory)?;
+        let directory_id = project.id;
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -616,7 +245,10 @@ impl PtySessionManager {
         let mut command = CommandBuilder::new(&payload.tool_executable);
         command.args(&payload.tool_args);
         command.cwd(&payload.directory);
-        configure_cli_environment(&mut command);
+        configure_cli_environment(
+            &mut command,
+            &crate::platform::launch_environment::LaunchEnvironment::capture(),
+        );
 
         let mut child = pair
             .slave
@@ -647,7 +279,7 @@ impl PtySessionManager {
             }
         };
         let session_id = Uuid::new_v4().to_string();
-        let (writer_sender, writer_receiver) = mpsc::sync_channel(PTY_INPUT_QUEUE_CAPACITY);
+        let (writer_sender, writer_receiver) = pty_input_channel();
         if let Err(error) = start_pty_input_writer(writer, writer_receiver, session_id.clone()) {
             stop_spawned_child(&process_tree, &mut child);
             return Err(error)
@@ -655,20 +287,6 @@ impl PtySessionManager {
                 .map_err(Into::into);
         }
         let now = now_ms();
-        if let Err(error) = crate::with_connection(db, |connection| {
-            pty_session_repo::insert_running(
-                connection,
-                &session_id,
-                directory_id,
-                tool_key,
-                &payload.directory,
-                now,
-            )?;
-            Ok(())
-        }) {
-            stop_spawned_child(&process_tree, &mut child);
-            return Err(error);
-        }
         let killer = child.clone_killer();
         let session = Arc::new(ManagedSession {
             session_id: session_id.clone(),
@@ -676,50 +294,61 @@ impl PtySessionManager {
             tool_key,
             working_directory: payload.directory.clone(),
             started_at_ms: now,
-            master: Mutex::new(pair.master),
-            last_size: Mutex::new((size.cols, size.rows)),
+            terminal: Mutex::new(TerminalState {
+                master: Some(pair.master),
+                last_size: (size.cols, size.rows),
+            }),
             writer: writer_sender,
             killer: Mutex::new(killer),
             process_tree: Mutex::new(Some(process_tree)),
             flow: Arc::new(OutputFlow::new()),
-            event_route: Mutex::new(EventRoute {
-                window_label: window_label.to_string(),
-                channel: Some(on_event),
-                mirror: None,
-                owner_lost: false,
-                buffered_events: VecDeque::new(),
-                buffered_bytes: 0,
+            route_and_handoff: Mutex::new(RouteAndHandoff {
+                route: EventRoute {
+                    window_label: window_label.clone(),
+                    channel: Some(Arc::new(on_event) as Arc<dyn PtyEventSink>),
+                    mirror: None,
+                    owner_lost: false,
+                    buffered_events: VecDeque::new(),
+                    buffered_bytes: 0,
+                    epoch: 0,
+                    reattaching: false,
+                },
+                handoff: HandoffState::Idle,
             }),
-            pending_handoff: Mutex::new(None),
             first_output_logged: AtomicBool::new(false),
             output_chunks: AtomicU64::new(0),
             output_bytes: AtomicU64::new(0),
             acknowledgement_calls: AtomicU64::new(0),
             last_acknowledged_sequence: AtomicU64::new(0),
             termination_requested: std::sync::atomic::AtomicBool::new(false),
+            reader_done: AtomicBool::new(false),
         });
-        match self.sessions.lock() {
-            Ok(mut sessions) => {
-                sessions.insert(session_id.clone(), Arc::clone(&session));
-            }
-            Err(_) => {
-                self.fail_session_start(db, &session, "PTY 会话表锁中毒".to_string());
-                return Err(AppError::msg("PTY 会话表锁中毒"));
-            }
+        // Register first, then write the row: if the row cannot be written the registration is
+        // undone, so "the row says running but memory does not know it" can only come from a
+        // later failed `finish`.
+        if let Err(error) = register_then_persist(&self.registry, store.as_ref(), &session) {
+            session.flow.close();
+            session.force_terminate();
+            let _ = child.wait();
+            return Err(error);
         }
 
         if let Err(error) = spawn_output_reader(Arc::clone(&session), reader) {
-            self.fail_session_start(db, &session, error.to_string());
-            return Err(AppError::msg(format!("创建 PTY 输出线程失败：{error}")));
+            self.fail_session_start(store, &session, error.to_string());
+            return Err(AppError::internal(format!(
+                "创建 PTY 输出线程失败：{error}"
+            )));
         }
         if let Err(error) = spawn_child_monitor(
             Arc::clone(&session),
             child,
-            app.clone(),
-            self.session_map_handle(),
+            Arc::clone(store),
+            self.registry_handle(),
         ) {
-            self.fail_session_start(db, &session, error.to_string());
-            return Err(AppError::msg(format!("创建 PTY 监控线程失败：{error}")));
+            self.fail_session_start(store, &session, error.to_string());
+            return Err(AppError::internal(format!(
+                "创建 PTY 监控线程失败：{error}"
+            )));
         }
 
         log::info!(
@@ -739,76 +368,45 @@ impl PtySessionManager {
             directory_id,
             tool_key,
             working_directory: payload.directory,
-            state: "running".to_string(),
+            state: PtySessionState::Running,
             started_at_ms: now,
             ended_at_ms: None,
             exit_code: None,
         })
     }
 
-    fn session_map_handle(&self) -> Arc<Mutex<HashMap<String, Arc<ManagedSession>>>> {
-        Arc::clone(&self.sessions)
+    fn registry_handle(&self) -> Arc<SessionRegistry> {
+        Arc::clone(&self.registry)
     }
 
-    fn fail_session_start(&self, db: &Db, session: &ManagedSession, reason: String) {
+    fn fail_session_start(
+        &self,
+        store: &Arc<dyn PtySessionStore>,
+        session: &ManagedSession,
+        reason: String,
+    ) {
         session.flow.close();
-        if let Ok(tree) = session.process_tree.lock() {
-            if let Some(tree) = tree.as_ref() {
-                let _ = tree.terminate();
-                let _ = tree.force_kill();
-            }
-        }
-        if let Ok(mut killer) = session.killer.lock() {
-            let _ = killer.kill();
-        }
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.remove(&session.session_id);
-        }
-        if let Err(error) = crate::with_connection(db, |connection| {
-            pty_session_repo::finish(connection, &session.session_id, "failed", now_ms(), None)?;
-            Ok(())
-        }) {
+        let _ = session.tree_terminate();
+        session.force_terminate();
+        self.registry.remove(&session.session_id);
+        if let Err(error) =
+            store.finish(&session.session_id, PtySessionState::Failed, now_ms(), None)
+        {
             log::error!("failed to persist PTY start failure: {error}");
         }
         log::error!("failed to start PTY reader or monitor: {reason}");
     }
 
     fn get(&self, session_id: &str) -> Result<Arc<ManagedSession>, AppError> {
-        self.sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| AppError::msg("PTY 会话不存在或已结束"))
+        self.registry.get(session_id)
     }
 
-    pub fn window_status(
+    pub fn write(
         &self,
         session_id: &str,
-        window_label: &str,
-    ) -> Result<PtySessionWindowStatus, AppError> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?;
-        let Some(session) = sessions.get(session_id) else {
-            return Ok(session_window_status(None, window_label, true));
-        };
-        if session.flow.is_closed() {
-            return Ok(PtySessionWindowStatus::Ended);
-        }
-        let route = session
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        Ok(session_window_status(
-            Some(&route.window_label),
-            window_label,
-            false,
-        ))
-    }
-
-    pub fn write(&self, session_id: &str, window_label: &str, data: &[u8]) -> Result<(), AppError> {
+        window_label: &WindowLabel,
+        data: &[u8],
+    ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
         enqueue_pty_input(&session.writer, data)
@@ -817,47 +415,30 @@ impl PtySessionManager {
     pub fn resize(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         size: PtySizeUpdate,
     ) -> Result<(), AppError> {
         validate_size(size)?;
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size == (size.cols, size.rows) {
-            return Ok(());
+        if session.apply_size(size)? {
+            log::info!(
+                "PTY resized session_id={} cols={} rows={}",
+                session.session_id,
+                size.cols,
+                size.rows
+            );
         }
-        session
-            .master
-            .lock()
-            .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-            .resize(to_pty_size(size))
-            .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-        *last_size = (size.cols, size.rows);
-        log::info!(
-            "PTY resized session_id={} cols={} rows={}",
-            session.session_id,
-            size.cols,
-            size.rows
-        );
         Ok(())
     }
 
     pub fn acknowledge(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         sequence: u64,
     ) -> Result<(), AppError> {
-        let session = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
-            .get(session_id)
-            .cloned();
+        let session = self.registry.find(session_id)?;
         let Some(session) = session else {
             // The monitor removes completed sessions after delivering their
             // final event. A late frontend acknowledgement then has nothing
@@ -865,7 +446,7 @@ impl PtySessionManager {
             return Ok(());
         };
         if !session.is_output_observer(window_label)? {
-            return Err(AppError::msg("该窗口当前不允许确认终端输出"));
+            return Err(AppError::from(PtyError::OwnerMismatch));
         }
         if let Err(error) = session.flow.acknowledge(sequence) {
             log::warn!(
@@ -887,7 +468,7 @@ impl PtySessionManager {
     pub fn report_frontend_stage(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         stage: PtyFrontendStage,
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
@@ -900,197 +481,55 @@ impl PtySessionManager {
         Ok(())
     }
 
-    pub fn terminate(&self, session_id: &str, window_label: &str) -> Result<(), AppError> {
+    pub fn terminate(&self, session_id: &str, window_label: &WindowLabel) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
         session
             .termination_requested
             .store(true, std::sync::atomic::Ordering::Release);
-        let termination = match session.process_tree.lock() {
-            Ok(tree) => tree
-                .as_ref()
-                .map(ProcessTree::terminate)
-                .transpose()
-                .map_err(|error| AppError::msg(format!("终止 PTY 进程树失败：{error}"))),
-            Err(_) => Err(AppError::msg("PTY 进程树锁中毒")),
-        };
+        let termination = session.tree_terminate().map_err(|error| match error {
+            TreeTerminateError::Poisoned => AppError::from(PtyError::LockPoisoned("PTY 进程树")),
+            TreeTerminateError::Failed(message) => {
+                AppError::internal(format!("终止 PTY 进程树失败：{message}"))
+            }
+        });
         session.flow.close();
         if let Err(error) = termination {
-            if let Ok(tree) = session.process_tree.lock() {
-                if let Some(tree) = tree.as_ref() {
-                    let _ = tree.force_kill();
-                }
-            }
-            if let Ok(mut killer) = session.killer.lock() {
-                let _ = killer.kill();
-            }
+            session.force_terminate();
             return Err(error);
         }
-        let force_session = Arc::clone(&session);
-        let force_after = thread::Builder::new()
-            .name(format!("pty-force-{}", session.session_id))
-            .spawn(move || {
-                thread::sleep(std::time::Duration::from_millis(750));
-                if let Ok(tree) = force_session.process_tree.lock() {
-                    if let Some(tree) = tree.as_ref() {
-                        let _ = tree.force_kill();
-                    }
-                }
-                if let Ok(mut killer) = force_session.killer.lock() {
-                    let _ = killer.kill();
-                }
-            });
-        if force_after.is_err() {
-            if let Ok(tree) = session.process_tree.lock() {
-                if let Some(tree) = tree.as_ref() {
-                    let _ = tree.force_kill();
-                }
-            }
-            if let Ok(mut killer) = session.killer.lock() {
-                let _ = killer.kill();
-            }
+        if Terminator::USER
+            .escalate_later(Arc::clone(&session))
+            .is_err()
+        {
+            session.force_terminate();
         }
         Ok(())
-    }
-
-    pub fn reclaim_window(&self, window_label: &str) -> Vec<String> {
-        if window_label == "main" {
-            return Vec::new();
-        }
-        let Ok(sessions) = self.sessions.lock() else {
-            log::error!("PTY session table lock poisoned while reclaiming window={window_label}");
-            return Vec::new();
-        };
-        let mut reclaimed = Vec::new();
-        for session in sessions.values() {
-            let mut pending_cleared = false;
-            if let Ok(mut pending) = session.pending_handoff.lock() {
-                if pending
-                    .as_ref()
-                    .is_some_and(|transfer| handoff_references_window(transfer, window_label))
-                {
-                    *pending = None;
-                    pending_cleared = true;
-                }
-            }
-
-            let Ok(mut route) = session.event_route.lock() else {
-                log::error!(
-                    "PTY event route lock poisoned while reclaiming session_id={}",
-                    session.session_id
-                );
-                continue;
-            };
-            if reclaim_event_route(&mut route, window_label) {
-                if !session.flow.is_closed() {
-                    session.flow.pause_indefinitely();
-                }
-                reclaimed.push(session.session_id.clone());
-            } else if pending_cleared {
-                session.flow.resume();
-            }
-        }
-        reclaimed
-    }
-
-    pub fn reattach(
-        &self,
-        session_id: &str,
-        window_label: &str,
-        channel: Channel<PtyEvent>,
-        snapshot: PtyTerminalSnapshot,
-        sequence: u64,
-        size: PtySizeUpdate,
-    ) -> Result<PtySession, AppError> {
-        if window_label != "main" {
-            return Err(AppError::msg("只有主窗口可以重新接管终端"));
-        }
-        validate_handoff_snapshot(&snapshot)?;
-        validate_size(size)?;
-        let session = self.get(session_id)?;
-        let mut route = session
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if !route.owner_lost || route.window_label != "main" || route.channel.is_some() {
-            return Err(AppError::msg("终端当前不处于可重新接管状态"));
-        }
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size != (size.cols, size.rows) {
-            session
-                .master
-                .lock()
-                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-                .resize(to_pty_size(size))
-                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-            *last_size = (size.cols, size.rows);
-        }
-        drop(last_size);
-        session.flow.acknowledge(sequence)?;
-        channel
-            .send(PtyEvent::Snapshot {
-                session_id: session_id.to_string(),
-                sequence,
-                data: snapshot.data,
-                cols: snapshot.cols,
-                rows: snapshot.rows,
-            })
-            .map_err(|error| AppError::msg(format!("发送终端画面快照失败：{error}")))?;
-        for event in route.buffered_events.iter().filter(|event| {
-            pty_event_sequence(event).map_or(true, |event_sequence| event_sequence > sequence)
-        }) {
-            channel
-                .send(event.clone())
-                .map_err(|error| AppError::msg(format!("恢复终端输出失败：{error}")))?;
-        }
-        route.buffered_events.clear();
-        route.buffered_bytes = 0;
-        route.channel = Some(channel);
-        route.mirror = None;
-        route.owner_lost = false;
-        drop(route);
-        session.flow.resume();
-        Ok(session.metadata())
     }
 
     pub fn begin_handoff(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
+        target_window_label: &WindowLabel,
     ) -> Result<PtyHandoff, AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        // Before the lock and before the pause: a rejected target leaves the session untouched.
+        validate_handoff_target(window_label, target_window_label)?;
+        let mut guard = session
+            .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        if let Some(transfer) = pending.as_ref() {
-            if session.flow.is_paused_at(transfer.sequence) {
-                return Err(AppError::msg("该终端正在进行窗口交接"));
-            }
-            *pending = None;
-            session.flow.resume();
-        }
-        let sequence = session.flow.pause()?;
-        let token = Uuid::new_v4().to_string();
-        *pending = Some(PendingHandoff {
-            token: token.clone(),
-            source_window_label: window_label.to_string(),
-            sequence,
-            snapshot: None,
-            target_window_label: None,
-            target_channel: None,
-        });
-        Ok(PtyHandoff { token, sequence })
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+        guard
+            .handoff
+            .begin(&session.flow, window_label, target_window_label)
     }
 
     pub fn stage_handoff_snapshot(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         token: &str,
         sequence: u64,
         snapshot: PtyTerminalSnapshot,
@@ -1098,139 +537,107 @@ impl PtySessionManager {
         validate_handoff_snapshot(&snapshot)?;
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| {
-                transfer.token == token
-                    && transfer.source_window_label == window_label
-                    && transfer.sequence == sequence
-            })
-            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
-        if !session.flow.is_paused_at(sequence) {
-            return Err(AppError::msg("终端输出已恢复，请重新发起窗口交接"));
-        }
-        transfer.snapshot = Some(snapshot);
-        Ok(())
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+        guard
+            .handoff
+            .stage(&session.flow, window_label, token, sequence, snapshot)
     }
 
     pub fn complete_handoff(
         &self,
         session_id: &str,
-        target_window_label: &str,
+        target_window_label: &WindowLabel,
         token: &str,
         on_event: Channel<PtyEvent>,
     ) -> Result<PtySession, AppError> {
         if !is_supported_workspace_window(target_window_label) {
-            return Err(AppError::msg("目标窗口不允许接管终端"));
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "目标窗口不允许接管终端",
+            ));
         }
+        let sink: Arc<dyn PtyEventSink> = Arc::new(on_event);
         let session = self.get(session_id)?;
-        let mut pending = session
-            .pending_handoff
-            .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| transfer.token == token)
-            .ok_or_else(|| AppError::msg("终端窗口交接已过期"))?;
-        if !session.flow.is_paused_at(transfer.sequence) {
-            return Err(AppError::msg("终端窗口交接超时，请重试"));
-        }
-        let snapshot = transfer
-            .snapshot
-            .clone()
-            .ok_or_else(|| AppError::msg("终端画面尚未准备好"))?;
-        if transfer.target_channel.is_some() {
-            return Err(AppError::msg("目标窗口已经准备接管此终端"));
-        }
-        let sequence = transfer.sequence;
-        let event = PtyEvent::Snapshot {
-            session_id: session_id.to_string(),
-            sequence,
-            data: snapshot.data,
-            cols: snapshot.cols,
-            rows: snapshot.rows,
+        let plan = {
+            let mut guard = session
+                .route_and_handoff
+                .lock()
+                .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+            guard
+                .handoff
+                .check_complete(&session.flow, session_id, target_window_label, token)?
         };
-        on_event
-            .send(event)
-            .map_err(|error| AppError::msg(format!("新窗口终端尚未就绪：{error}")))?;
-        transfer.target_window_label = Some(target_window_label.to_string());
-        transfer.target_channel = Some(on_event);
+        // The snapshot goes out with no lock held; `bind` re-validates the token and liveness,
+        // so a cancel, an expiry or a reclaim in between is reported as such.
+        deliver_snapshot(&plan, sink.as_ref())?;
+        {
+            let mut guard = session
+                .route_and_handoff
+                .lock()
+                .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+            guard
+                .handoff
+                .bind(&session.flow, target_window_label, token, sink)?;
+        }
         Ok(session.metadata())
     }
 
     pub fn finalize_handoff(
         &self,
         session_id: &str,
-        target_window_label: &str,
+        target_window_label: &WindowLabel,
         token: &str,
         size: PtySizeUpdate,
     ) -> Result<PtySession, AppError> {
         if !is_supported_workspace_window(target_window_label) {
-            return Err(AppError::msg("目标窗口不允许接管终端"));
+            return Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "目标窗口不允许接管终端",
+            ));
         }
         validate_size(size)?;
         let session = self.get(session_id)?;
-        let mut pending = session
-            .pending_handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let transfer = pending
-            .as_mut()
-            .filter(|transfer| {
-                transfer.token == token
-                    && transfer.target_window_label.as_deref() == Some(target_window_label)
-            })
-            .ok_or_else(|| AppError::msg("目标窗口交接状态已失效"))?;
-        if !session.flow.is_paused_at(transfer.sequence) {
-            return Err(AppError::msg("终端窗口交接超时，请重试"));
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+        guard
+            .handoff
+            .check_finalize(&session.flow, target_window_label, token)?;
+        session.apply_size(size)?;
+        let source_window_label = guard
+            .handoff
+            .bound_source()
+            .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?
+            .clone();
+        // Nothing has been taken yet: a lost control transfer leaves the handoff Bound, so
+        // `cancel` or `reclaim_window` can still clean it up.
+        if guard.route.window_label != source_window_label {
+            return Err(AppError::from(PtyError::OwnerMismatch));
         }
-        if transfer.target_channel.is_none() {
-            return Err(AppError::msg("目标窗口尚未准备好"));
-        }
-        let mut last_size = session
-            .last_size
-            .lock()
-            .map_err(|_| AppError::msg("PTY 尺寸状态锁中毒"))?;
-        if *last_size != (size.cols, size.rows) {
-            session
-                .master
-                .lock()
-                .map_err(|_| AppError::msg("PTY 终端锁中毒"))?
-                .resize(to_pty_size(size))
-                .map_err(|error| AppError::msg(format!("调整 PTY 尺寸失败：{error}")))?;
-            *last_size = (size.cols, size.rows);
-        }
-        drop(last_size);
-        let channel = transfer
-            .target_channel
-            .take()
-            .ok_or_else(|| AppError::msg("目标窗口尚未准备好"))?;
-        let mut route = session
-            .event_route
-            .lock()
-            .map_err(|_| AppError::msg("PTY 事件路由锁中毒"))?;
-        if route.window_label != transfer.source_window_label {
-            return Err(AppError::msg("终端控制权已经转移"));
-        }
-        route.window_label = target_window_label.to_string();
-        route.mirror = if target_window_label == "main" {
+        let bound = guard
+            .handoff
+            .commit_finalize()
+            .ok_or_else(|| AppError::from(PtyError::HandoffExpired))?;
+        let route = &mut guard.route;
+        route.window_label = target_window_label.clone();
+        route.mirror = if target_window_label.is_main() {
             None
-        } else if transfer.source_window_label == "main" {
+        } else if source_window_label.is_main() {
             route
                 .channel
                 .take()
-                .map(|source_channel| ("main".to_string(), source_channel))
+                .map(|source_channel| (WindowLabel::main(), source_channel))
         } else {
-            route.mirror.take().filter(|(label, _)| label == "main")
+            route.mirror.take().filter(|(label, _)| label.is_main())
         };
-        route.channel = Some(channel);
+        route.channel = Some(bound.sink);
         route.owner_lost = false;
-        drop(route);
-        *pending = None;
+        route.epoch += 1;
+        drop(guard);
         session.flow.resume();
         Ok(session.metadata())
     }
@@ -1238,139 +645,89 @@ impl PtySessionManager {
     pub fn cancel_handoff(
         &self,
         session_id: &str,
-        window_label: &str,
+        window_label: &WindowLabel,
         token: &str,
     ) -> Result<(), AppError> {
         let session = self.get(session_id)?;
         session.ensure_owner(window_label)?;
-        let mut pending = session
-            .pending_handoff
+        let mut guard = session
+            .route_and_handoff
             .lock()
-            .map_err(|_| AppError::msg("PTY 窗口交接状态锁中毒"))?;
-        let Some(transfer) = pending.as_ref() else {
-            return Ok(());
-        };
-        if transfer.token != token || transfer.source_window_label != window_label {
-            return Err(AppError::msg("终端窗口交接令牌无效"));
-        }
-        *pending = None;
-        session.flow.resume();
-        Ok(())
+            .map_err(|_| AppError::from(PtyError::LockPoisoned("PTY 窗口交接状态")))?;
+        guard.handoff.cancel(&session.flow, window_label, token)
     }
 
     pub fn active_count(&self) -> usize {
-        self.sessions
-            .lock()
-            .map(|sessions| sessions.len())
-            .unwrap_or(0)
-    }
-
-    pub fn begin_session_start(&self) -> Result<PtySessionStartGuard, AppError> {
-        let mut gate = self
-            .lifecycle_gate
-            .lock()
-            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
-        if gate.restore_in_progress {
-            return Err(AppError::coded(
-                "backup_restore_in_progress",
-                "备份恢复正在进行，暂时不能启动终端会话",
-            ));
-        }
-        gate.session_starts = gate.session_starts.saturating_add(1);
-        drop(gate);
-        Ok(PtySessionStartGuard {
-            gate: Arc::clone(&self.lifecycle_gate),
-        })
-    }
-
-    pub fn begin_backup_restore(&self) -> Result<PtyBackupRestoreGuard, AppError> {
-        let mut gate = self
-            .lifecycle_gate
-            .lock()
-            .map_err(|_| AppError::msg("PTY 生命周期门禁锁中毒"))?;
-        if gate.restore_in_progress {
-            return Err(AppError::coded(
-                "backup_restore_in_progress",
-                "另一个备份恢复操作正在进行",
-            ));
-        }
-        if gate.session_starts > 0 {
-            return Err(AppError::coded_with_params(
-                "pty_session_starting",
-                format!(
-                    "有 {} 个终端会话正在启动，请稍后重试恢复备份",
-                    gate.session_starts
-                ),
-                serde_json::json!({ "count": gate.session_starts }),
-            ));
-        }
-        let active_count = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
-            .len();
-        ensure_no_active_sessions(active_count)?;
-        gate.restore_in_progress = true;
-        drop(gate);
-        Ok(PtyBackupRestoreGuard {
-            gate: Arc::clone(&self.lifecycle_gate),
-        })
+        self.registry.len()
     }
 
     pub fn terminate_all(&self) -> Result<(), AppError> {
-        let sessions: Vec<Arc<ManagedSession>> = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("PTY 会话表锁中毒"))?
-            .values()
-            .cloned()
-            .collect();
+        self.terminate_all_within(
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_millis(750),
+        )
+    }
+
+    /// `terminate_all` with explicit bounds: sessions get `total` to exit, and are force-killed
+    /// after `force_after`.
+    pub(crate) fn terminate_all_within(
+        &self,
+        total: std::time::Duration,
+        force_after: std::time::Duration,
+    ) -> Result<(), AppError> {
+        let sessions: Vec<Arc<ManagedSession>> = self.registry.snapshot()?;
         let mut termination_errors = Vec::new();
         for session in &sessions {
             session
                 .termination_requested
                 .store(true, std::sync::atomic::Ordering::Release);
-            if let Ok(tree) = session.process_tree.lock() {
-                if let Some(tree) = tree.as_ref() {
-                    if let Err(error) = tree.terminate() {
-                        termination_errors.push(error.to_string());
-                        if let Ok(mut killer) = session.killer.lock() {
-                            let _ = killer.kill();
-                        }
-                    }
+            match session.tree_terminate() {
+                Ok(()) => {}
+                Err(TreeTerminateError::Poisoned) => {
+                    termination_errors.push("PTY 进程树锁中毒".to_string());
                 }
-            } else {
-                termination_errors.push("PTY 进程树锁中毒".to_string());
+                Err(TreeTerminateError::Failed(message)) => {
+                    termination_errors.push(message);
+                    session.leader_kill();
+                }
             }
-            session.flow.close();
+            // Lift back-pressure for a reader that is blocked on it, but keep the flow open:
+            // a session that does not exit in time must keep working (m6-060b, S1C-L01).
+            session.flow.begin_exit();
         }
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let force_deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+        let deadline = std::time::Instant::now() + total;
+        let force_deadline = std::time::Instant::now() + force_after;
         let mut forced = false;
         while self.active_count() > 0 && std::time::Instant::now() < deadline {
             if !forced && std::time::Instant::now() >= force_deadline {
                 forced = true;
                 for session in &sessions {
-                    if let Ok(tree) = session.process_tree.lock() {
-                        if let Some(tree) = tree.as_ref() {
-                            let _ = tree.force_kill();
-                        }
-                    }
-                    if let Ok(mut killer) = session.killer.lock() {
-                        let _ = killer.kill();
-                    }
+                    session.force_terminate();
                 }
             }
             thread::sleep(std::time::Duration::from_millis(25));
         }
         if self.active_count() > 0 {
-            return Err(AppError::msg(
+            // The application keeps running with the survivors: back-pressure applies again,
+            // and a survivor that exits on its own later is an ordinary exit, not a termination
+            // (m6-b1920-09).
+            for session in &sessions {
+                session.flow.cancel_exit();
+            }
+            if let Ok(survivors) = self.registry.snapshot() {
+                for survivor in survivors {
+                    survivor
+                        .termination_requested
+                        .store(false, std::sync::atomic::Ordering::Release);
+                }
+            }
+            return Err(AppError::internal(
                 "部分 PTY 会话未能在限定时间内退出，应用继续保持运行",
             ));
         }
         if !termination_errors.is_empty() {
-            return Err(AppError::msg(format!(
+            return Err(AppError::internal(format!(
                 "PTY 进程树清理报告错误：{}",
                 termination_errors.join("；")
             )));
@@ -1379,20 +736,21 @@ impl PtySessionManager {
     }
 }
 
-fn stop_spawned_child(process_tree: &ProcessTree, child: &mut Box<dyn PtyChild + Send + Sync>) {
-    let _ = process_tree.terminate();
-    let _ = process_tree.force_kill();
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
 fn spawn_output_reader(
     session: Arc<ManagedSession>,
     mut reader: Box<dyn Read + Send>,
-) -> std::io::Result<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
     thread::Builder::new()
         .name(format!("pty-output-{}", session.session_id))
         .spawn(move || {
+            /// Marks the reader as finished on every exit path, including a panic.
+            struct ReaderDone(Arc<ManagedSession>);
+            impl Drop for ReaderDone {
+                fn drop(&mut self) {
+                    self.0.reader_done.store(true, Ordering::Release);
+                }
+            }
+            let _done = ReaderDone(Arc::clone(&session));
             let mut buffer = vec![0_u8; READ_CHUNK_BYTES];
             loop {
                 if !session.flow.wait_for_capacity() {
@@ -1421,14 +779,8 @@ fn spawn_output_reader(
                                 session.session_id,
                             );
                             session.flow.close();
-                            if let Ok(tree) = session.process_tree.lock() {
-                                if let Some(tree) = tree.as_ref() {
-                                    let _ = tree.terminate();
-                                }
-                            }
-                            if let Ok(mut killer) = session.killer.lock() {
-                                let _ = killer.kill();
-                            }
+                            let _ = session.tree_terminate();
+                            session.leader_kill();
                             break;
                         } else if !session
                             .first_output_logged
@@ -1456,7 +808,6 @@ fn spawn_output_reader(
                 }
             }
         })
-        .map(|_| ())
 }
 
 fn spawn_session_diagnostics(session: Arc<ManagedSession>) -> std::io::Result<()> {
@@ -1465,7 +816,7 @@ fn spawn_session_diagnostics(session: Arc<ManagedSession>) -> std::io::Result<()
         .spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(5));
             let pending_bytes = session.flow.pending_bytes();
-            log::info!(
+            log::debug!(
                 "PTY output snapshot session_id={} chunks={} bytes={} acknowledgement_calls={} last_acknowledged_sequence={} pending_bytes={}",
                 session.session_id,
                 session.output_chunks.load(Ordering::Relaxed),
@@ -1484,8 +835,8 @@ fn spawn_session_diagnostics(session: Arc<ManagedSession>) -> std::io::Result<()
 fn spawn_child_monitor(
     session: Arc<ManagedSession>,
     mut child: Box<dyn PtyChild + Send + Sync>,
-    app: AppHandle,
-    sessions: Arc<Mutex<HashMap<String, Arc<ManagedSession>>>>,
+    store: Arc<dyn PtySessionStore>,
+    registry: Arc<SessionRegistry>,
 ) -> std::io::Result<()> {
     thread::Builder::new()
         .name(format!("pty-monitor-{}", session.session_id))
@@ -1498,7 +849,7 @@ fn spawn_child_monitor(
                         .termination_requested
                         .load(std::sync::atomic::Ordering::Acquire);
                     (
-                        if requested { "terminated" } else { "exited" },
+                        if requested { PtySessionState::Terminated } else { PtySessionState::Exited },
                         Some(exit_code),
                     )
                 }
@@ -1507,40 +858,36 @@ fn spawn_child_monitor(
                         session_id: session.session_id.clone(),
                         message: format!("等待 PTY 退出失败：{error}"),
                     });
-                    ("failed", None)
+                    (PtySessionState::Failed, None)
                 }
             };
 
             // A CLI may exit while a child keeps the PTY open. Terminating its
             // process group/job prevents descendants from outliving the owner.
-            if let Ok(tree) = session.process_tree.lock() {
-                if let Some(tree) = tree.as_ref() {
-                    let _ = tree.terminate();
-                    thread::sleep(std::time::Duration::from_millis(100));
-                    let _ = tree.force_kill();
-                }
-            }
+            Terminator::MONITOR.stop_tree(&session, &thread::sleep);
             session.flow.close();
+            // The reader normally ends by itself once the pipe closes. Where the pipe stays open
+            // until the terminal is released (Windows ConPTY), give it a short moment and then
+            // release the master so the reader thread, which holds the session, can end.
+            let reader_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while !session.reader_done.load(Ordering::Acquire)
+                && std::time::Instant::now() < reader_deadline
+            {
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if !session.reader_done.load(Ordering::Acquire) {
+                session.release_terminal();
+            }
 
-            if let Some(db) = app.try_state::<Db>() {
-                if let Ok(connection) = db.0.lock() {
-                    if let Err(error) = pty_session_repo::finish(
-                        &connection,
-                        &session.session_id,
-                        state,
-                        now_ms(),
-                        exit_code,
-                    ) {
-                        log::error!(
-                            "failed to persist PTY exit session_id={} error={error}",
-                            session.session_id
-                        );
-                    }
-                }
+            if let Err(error) = store.finish(&session.session_id, state, now_ms(), exit_code) {
+                log::error!(
+                    "failed to persist PTY exit session_id={} error={error}",
+                    session.session_id
+                );
             }
             if let Err(error) = session.send_event(PtyEvent::Exited {
                 session_id: session.session_id.clone(),
-                state: state.to_string(),
+                state,
                 exit_code,
             }) {
                 log::warn!(
@@ -1559,30 +906,16 @@ fn spawn_child_monitor(
                 session.last_acknowledged_sequence.load(Ordering::Relaxed),
                 session.flow.pending_bytes()
             );
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&session.session_id);
-            }
+            registry.remove(&session.session_id);
             drop(session);
         })
         .map(|_| ())
 }
 
-fn session_window_status(
-    owner_window_label: Option<&str>,
-    queried_window_label: &str,
-    ended: bool,
-) -> PtySessionWindowStatus {
-    if ended {
-        return PtySessionWindowStatus::Ended;
-    }
-    match owner_window_label {
-        None => PtySessionWindowStatus::Ended,
-        Some(owner) if owner == queried_window_label => PtySessionWindowStatus::Running,
-        Some(_) => PtySessionWindowStatus::OwnedByAnotherWindow,
-    }
-}
-
-fn configure_cli_environment(command: &mut CommandBuilder) {
+fn configure_cli_environment(
+    command: &mut CommandBuilder,
+    environment: &crate::platform::launch_environment::LaunchEnvironment,
+) {
     for key in [
         "NO_COLOR",
         "TERM",
@@ -1596,20 +929,15 @@ fn configure_cli_environment(command: &mut CommandBuilder) {
     }
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    #[cfg(windows)]
-    if let Some(path) = crate::platform::windows_environment::merged_registered_path(
-        std::env::var_os("PATH").as_deref(),
-    ) {
-        command.env("PATH", path);
-    }
+    environment.apply_to_pty(command);
 }
 
 fn validate_size(size: PtySizeUpdate) -> Result<(), AppError> {
     if size.cols == 0 || size.rows == 0 {
-        return Err(AppError::msg("PTY 尺寸必须至少为 1 列和 1 行"));
+        return Err(AppError::internal("PTY 尺寸必须至少为 1 列和 1 行"));
     }
     if size.cols > 500 || size.rows > 300 {
-        return Err(AppError::msg(format!(
+        return Err(AppError::internal(format!(
             "PTY 尺寸超出安全范围（当前 {} 列 × {} 行，上限 500 列 × 300 行）",
             size.cols, size.rows
         )));
@@ -1626,333 +954,36 @@ fn to_pty_size(size: PtySizeUpdate) -> PtySize {
     }
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or_default()
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::{failing_channel, recording_channel, TestRoute, TestSession};
+
+impl WindowScopedResource for PtySessionManager {
+    fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
+        if !window.kind().owns_pty() {
+            return Vec::new();
+        }
+        self.reclaim_window(window)
+            .into_iter()
+            .map(|session_id| AppEvent::PtySessionOwnerLost { session_id })
+            .collect()
+    }
+}
+
+impl crate::services::exit_cleanup::ExitCleanupTarget for PtySessionManager {
+    fn name(&self) -> &'static str {
+        "pty_sessions"
+    }
+
+    fn terminate_all(&self, _budget: std::time::Duration) -> Result<usize, AppError> {
+        // The inherent `PtySessionManager::terminate_all` bounds itself (about three
+        // seconds); the budget is enforced by `run_exit_cleanup`'s timeout.
+        let count = self.active_count();
+        PtySessionManager::terminate_all(self)?;
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backup_restore_is_blocked_while_pty_sessions_are_registered() {
-        assert!(ensure_no_active_sessions(0).is_ok());
-        let error = ensure_no_active_sessions(1).unwrap_err();
-        assert_eq!(
-            serde_json::to_value(&error).unwrap()["code"],
-            "pty_sessions_active"
-        );
-        assert!(error.to_string().contains("1 个"));
-    }
-
-    #[test]
-    fn backup_restore_serializes_against_session_startup() {
-        let manager = PtySessionManager::default();
-        let starting = manager.begin_session_start().unwrap();
-        let starting_error = match manager.begin_backup_restore() {
-            Ok(_) => panic!("restore must wait for a session startup"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            serde_json::to_value(&starting_error).unwrap()["code"],
-            "pty_session_starting"
-        );
-
-        drop(starting);
-        let restoring = manager.begin_backup_restore().unwrap();
-        let start_error = match manager.begin_session_start() {
-            Ok(_) => panic!("session startup must be blocked during restore"),
-            Err(error) => error,
-        };
-        assert_eq!(
-            serde_json::to_value(&start_error).unwrap()["code"],
-            "backup_restore_in_progress"
-        );
-
-        drop(restoring);
-        assert!(manager.begin_session_start().is_ok());
-    }
-    use std::sync::mpsc;
-
-    #[test]
-    fn window_status_distinguishes_ended_owned_and_transferred_sessions() {
-        assert_eq!(
-            session_window_status(None, "terminal-a", false),
-            PtySessionWindowStatus::Ended
-        );
-        assert_eq!(
-            session_window_status(Some("terminal-a"), "terminal-a", false),
-            PtySessionWindowStatus::Running
-        );
-        assert_eq!(
-            session_window_status(Some("main"), "terminal-a", false),
-            PtySessionWindowStatus::OwnedByAnotherWindow
-        );
-        assert_eq!(
-            session_window_status(Some("terminal-a"), "terminal-a", true),
-            PtySessionWindowStatus::Ended
-        );
-    }
-
-    #[test]
-    fn finalized_handoff_rejects_source_cancel_and_reports_child_owner() {
-        let route = EventRoute {
-            window_label: "terminal-child".to_string(),
-            channel: None,
-            mirror: None,
-            owner_lost: false,
-            buffered_events: VecDeque::new(),
-            buffered_bytes: 0,
-        };
-
-        assert!(ensure_route_owner(&route, "main").is_err());
-        assert_eq!(
-            session_window_status(Some(&route.window_label), "main", false),
-            PtySessionWindowStatus::OwnedByAnotherWindow
-        );
-    }
-
-    #[test]
-    fn destroying_the_current_owner_reclaims_an_open_session_for_main() {
-        let mut route = EventRoute {
-            window_label: "terminal-child".to_string(),
-            channel: None,
-            mirror: None,
-            owner_lost: false,
-            buffered_events: VecDeque::new(),
-            buffered_bytes: 0,
-        };
-
-        assert!(reclaim_event_route(&mut route, "terminal-child"));
-        assert_eq!(route.window_label, "main");
-        assert!(route.owner_lost);
-        assert!(route.channel.is_none());
-    }
-
-    #[test]
-    fn destroying_a_non_owner_does_not_reclaim_the_session() {
-        let mut route = EventRoute {
-            window_label: "terminal-owner".to_string(),
-            channel: None,
-            mirror: None,
-            owner_lost: false,
-            buffered_events: VecDeque::new(),
-            buffered_bytes: 0,
-        };
-
-        assert!(!reclaim_event_route(&mut route, "terminal-mirror"));
-        assert_eq!(route.window_label, "terminal-owner");
-        assert!(!route.owner_lost);
-    }
-
-    #[test]
-    fn owner_lost_output_buffer_rejects_data_over_the_limit() {
-        let mut route = EventRoute {
-            window_label: "main".to_string(),
-            channel: None,
-            mirror: None,
-            owner_lost: true,
-            buffered_events: VecDeque::new(),
-            buffered_bytes: 0,
-        };
-        let event = PtyEvent::Output {
-            session_id: "session-1".to_string(),
-            sequence: 1,
-            data_base64: "x".repeat(MAX_OWNER_LOST_BUFFER_BYTES + 1),
-        };
-
-        assert!(!buffer_owner_lost_event(
-            &mut route,
-            event,
-            MAX_OWNER_LOST_BUFFER_BYTES + 1
-        ));
-        assert!(route.buffered_events.is_empty());
-        assert_eq!(route.buffered_bytes, 0);
-    }
-
-    #[test]
-    fn destroying_a_window_clears_handoffs_that_use_it_as_source_or_target() {
-        let transfer = PendingHandoff {
-            token: "token".to_string(),
-            source_window_label: "main".to_string(),
-            sequence: 1,
-            snapshot: None,
-            target_window_label: Some("terminal-child".to_string()),
-            target_channel: None,
-        };
-
-        assert!(handoff_references_window(&transfer, "main"));
-        assert!(handoff_references_window(&transfer, "terminal-child"));
-        assert!(!handoff_references_window(&transfer, "terminal-other"));
-    }
-
-    #[test]
-    fn output_acknowledgement_releases_pending_capacity() {
-        let flow = OutputFlow::new();
-        let first = flow.reserve(64 * 1024).unwrap();
-        let second = flow.reserve(64 * 1024).unwrap();
-        assert_eq!(first, 1);
-        assert_eq!(second, 2);
-        assert!(flow.acknowledge(2).is_ok());
-        assert_eq!(flow.state.lock().unwrap().pending_bytes, 0);
-    }
-
-    #[test]
-    fn output_acknowledgement_rejects_future_sequence() {
-        let flow = OutputFlow::new();
-        flow.reserve(10).unwrap();
-        assert!(flow.acknowledge(2).is_err());
-    }
-
-    #[test]
-    fn handoff_pauses_new_output_after_a_stable_sequence_watermark() {
-        let flow = Arc::new(OutputFlow::new());
-        assert_eq!(flow.reserve(10), Some(1));
-        let watermark = flow.pause().unwrap();
-        assert_eq!(watermark, 1);
-
-        let (sender, receiver) = mpsc::channel();
-        let reader_flow = Arc::clone(&flow);
-        let reader = thread::spawn(move || sender.send(reader_flow.reserve(20)).unwrap());
-        assert!(receiver
-            .recv_timeout(std::time::Duration::from_millis(25))
-            .is_err());
-
-        flow.resume();
-        assert_eq!(
-            receiver.recv_timeout(std::time::Duration::from_secs(1)),
-            Ok(Some(2))
-        );
-        reader.join().unwrap();
-    }
-
-    #[test]
-    fn handoff_pause_expires_to_prevent_a_stalled_terminal() {
-        let flow = OutputFlow::new();
-        let watermark = flow.pause().unwrap();
-        {
-            let mut state = flow.state.lock().unwrap();
-            state.pause_deadline = Some(std::time::Instant::now());
-        }
-        assert!(!flow.is_paused_at(watermark));
-        assert_eq!(flow.reserve(5), Some(1));
-    }
-
-    #[test]
-    fn handoff_window_labels_are_restricted_to_workspace_windows() {
-        assert!(is_supported_workspace_window("main"));
-        assert!(is_supported_workspace_window(
-            "terminal-8e783338-f464-4b10-b15e-b534748c6241"
-        ));
-        assert!(!is_supported_workspace_window("settings"));
-        assert!(!is_supported_workspace_window("terminal-invalid"));
-    }
-
-    #[test]
-    fn handoff_snapshot_is_bounded_and_requires_safe_dimensions() {
-        let valid = PtyTerminalSnapshot {
-            data: "screen".to_string(),
-            cols: 120,
-            rows: 40,
-        };
-        assert!(validate_handoff_snapshot(&valid).is_ok());
-
-        let oversized = PtyTerminalSnapshot {
-            data: "x".repeat(MAX_HANDOFF_SNAPSHOT_BYTES + 1),
-            ..valid.clone()
-        };
-        assert!(validate_handoff_snapshot(&oversized).is_err());
-
-        let invalid_dimensions = PtyTerminalSnapshot { cols: 0, ..valid };
-        assert!(validate_handoff_snapshot(&invalid_dimensions).is_err());
-    }
-
-    #[test]
-    fn pty_size_is_bounded() {
-        assert!(validate_size(PtySizeUpdate {
-            cols: 500,
-            rows: 300,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_ok());
-        assert!(validate_size(PtySizeUpdate {
-            cols: 0,
-            rows: 24,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_err());
-        assert!(validate_size(PtySizeUpdate {
-            cols: 80,
-            rows: 301,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_err());
-        assert!(validate_size(PtySizeUpdate {
-            cols: 501,
-            rows: 24,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_err());
-    }
-
-    struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for RecordingWriter {
-        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(data);
-            Ok(data.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn queued_pty_input_is_written_in_submission_order() {
-        let written = Arc::new(Mutex::new(Vec::new()));
-        let (sender, receiver) = mpsc::sync_channel(3);
-        let worker = start_pty_input_writer(
-            Box::new(RecordingWriter(Arc::clone(&written))),
-            receiver,
-            "test-session".to_string(),
-        )
-        .unwrap();
-
-        enqueue_pty_input(&sender, b"first").unwrap();
-        enqueue_pty_input(&sender, b"second").unwrap();
-        enqueue_pty_input(&sender, b"third").unwrap();
-        drop(sender);
-        worker.join().unwrap();
-
-        assert_eq!(*written.lock().unwrap(), b"firstsecondthird");
-    }
-
-    #[test]
-    fn full_pty_input_queue_returns_a_typed_backpressure_error() {
-        let (sender, _receiver) = mpsc::sync_channel(1);
-        enqueue_pty_input(&sender, b"first").unwrap();
-
-        let error = enqueue_pty_input(&sender, b"second").unwrap_err();
-        let value = serde_json::to_value(error).unwrap();
-
-        assert_eq!(value["code"], "pty_input_backpressure");
-    }
-
-    #[test]
-    fn oversized_pty_input_is_rejected_before_queueing() {
-        let (sender, _receiver) = mpsc::sync_channel(1);
-
-        let error = enqueue_pty_input(&sender, &vec![b'x'; MAX_PTY_INPUT_BYTES + 1]).unwrap_err();
-        let value = serde_json::to_value(error).unwrap();
-
-        assert_eq!(value["code"], "pty_input_backpressure");
-    }
-}
+mod tests;

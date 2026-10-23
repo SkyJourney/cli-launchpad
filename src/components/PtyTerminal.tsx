@@ -15,7 +15,6 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import {
   beginPtyHandoff,
   cancelPtyHandoff,
@@ -46,10 +45,19 @@ import {
   isClipboardTextUnavailable,
 } from "../lib/ptyTerminalRuntime";
 import { getCliAdapter } from "../lib/tools";
-import { formatAppError, getAppErrorCode } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
+import {
+  createPtyInputWriter,
+  isPtyInputBackpressure,
+  type PtyInputWriter,
+} from "../lib/ptyInputWriter";
 import { getTerminalKeyIntent } from "../lib/windowChrome";
-import { getThemeDefinition, type ThemeId } from "../lib/themes";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { getThemeDefinition, TERMINAL_RUNTIME_THEME_ID } from "../lib/themes";
 import "@xterm/xterm/css/xterm.css";
 
 export interface PtyTerminalHandle {
@@ -59,7 +67,7 @@ export interface PtyTerminalHandle {
     resumeSessionId?: string,
   ): Promise<void>;
   closeSession(confirm?: boolean): Promise<PtySessionCloseResult>;
-  captureHandoff(): Promise<PtyHandoff>;
+  captureHandoff(targetWindowLabel: string): Promise<PtyHandoff>;
   cancelHandoff(token: string): Promise<void>;
   attachHandoff(sessionId: string, token: string): Promise<PtySession>;
   reattachLostSession(sessionId: string): Promise<PtySession>;
@@ -72,14 +80,13 @@ export type PtySessionCloseResult =
   | "cancelled"
   | "pending";
 
-function ptyInputErrorMessage(
+function ptyInputErrorState(
   reason: unknown,
   backpressureMessage: string,
-  t: TFunction,
-) {
-  return getAppErrorCode(reason) === "pty_input_backpressure"
-    ? backpressureMessage
-    : formatAppError(reason, t);
+): AppErrorState {
+  return isPtyInputBackpressure(reason)
+    ? { message: backpressureMessage }
+    : toAppErrorState(reason);
 }
 
 interface PtyTerminalProps {
@@ -102,12 +109,13 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     ref,
   ) {
     const { t } = useTranslation();
-    const resolvedTheme = useResolvedTheme();
     const hostRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitRef = useRef<FitAddon | null>(null);
     const serializeRef = useRef<SerializeAddon | null>(null);
     const sessionRef = useRef<PtySession | null>(null);
+    const tRef = useRef(t);
+    const inputWriterRef = useRef<PtyInputWriter | null>(null);
     const interactiveRef = useRef(interactive);
     const paneInteractiveRef = useRef(interactive);
     const visibleRef = useRef(visible);
@@ -139,13 +147,14 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
     const closingSessionRef = useRef<string | null>(null);
     const [session, setSession] = useState<PtySession | null>(null);
     const [starting, setStarting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<AppErrorState | null>(null);
     const [handoffInProgress, setHandoffInProgress] = useState(false);
 
     interactiveRef.current = interactive && !handoffInProgressRef.current;
     paneInteractiveRef.current = interactive;
     visibleRef.current = visible;
     onFocusRef.current = onFocus;
+    tRef.current = t;
 
     onSessionChangeRef.current = onSessionChange;
 
@@ -195,7 +204,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         fontFamily: '"Maple Mono NF CN", monospace',
         fontSize: 13,
         scrollback: 5000,
-        theme: getTerminalTheme(resolvedTheme.id),
+        theme: getTerminalTheme(),
       });
       const fit = new FitAddon();
       const serialize = new SerializeAddon();
@@ -230,12 +239,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
                 rows: nextSize.rows,
               });
               void resizePtySession(active.sessionId, nextSize).catch(
-                (reason) => setError(formatAppError(reason, t)),
+                (reason) => setError(toAppErrorState(reason)),
               );
             }
           }
         } catch (reason) {
-          setError(formatAppError(reason, t));
+          setError(toAppErrorState(reason));
         }
       };
       let resizeFrame = 0;
@@ -250,14 +259,20 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
       observer.observe(host);
       sendSize();
 
+      const inputWriter = createPtyInputWriter({
+        getSessionId: () => sessionRef.current?.sessionId ?? null,
+        write: writePtySession,
+        onError: (reason) =>
+          setError(
+            ptyInputErrorState(reason, tRef.current("pty.inputBackpressure")),
+          ),
+      });
+      inputWriterRef.current = inputWriter;
+
       const input = terminal.onData((data) => {
         const active = sessionRef.current;
         if (interactiveRef.current && active?.state === "running") {
-          void writePtySession(active.sessionId, data).catch((reason) =>
-            setError(
-              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-            ),
-          );
+          void inputWriter.push(data);
         } else if (startingRef.current) {
           // ConPTY can ask xterm for its cursor position before create_pty_session
           // resolves. Preserve xterm's reply until the new session id is known.
@@ -277,7 +292,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           const selectedText = terminal.getSelection();
           if (selectedText) {
             void writeClipboardText(selectedText).catch((reason) =>
-              setError(formatAppError(reason, t)),
+              setError(toAppErrorState(reason)),
             );
           }
           return false;
@@ -292,7 +307,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               })
               .catch((reason) => {
                 if (!isClipboardTextUnavailable(reason)) {
-                  setError(formatAppError(reason, t));
+                  setError(toAppErrorState(reason));
                 }
               });
           }
@@ -308,20 +323,12 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             keyIntent.windowsAltV
           ) {
             event.preventDefault();
-            void writePtySession(active.sessionId, "\u001bv").catch((reason) =>
-              setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-              ),
-            );
+            void inputWriter.push("\u001bv");
             return false;
           }
           if (pasteBehavior.controlV === "control-v" && keyIntent.controlV) {
             event.preventDefault();
-            void writePtySession(active.sessionId, "\u0016").catch((reason) =>
-              setError(
-                ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-              ),
-            );
+            void inputWriter.push("\u0016");
             return false;
           }
           if (pasteBehavior.controlV === "clipboard" && keyIntent.controlV) {
@@ -337,6 +344,8 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         scheduleSendSizeRef.current = null;
         observer.disconnect();
         input.dispose();
+        inputWriter.dispose();
+        inputWriterRef.current = null;
         terminal.dispose();
         terminalRef.current = null;
         fitRef.current = null;
@@ -348,13 +357,6 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         sequenceWaitersRef.current = [];
       };
     }, []);
-
-    useEffect(() => {
-      const terminal = terminalRef.current;
-      if (!terminal) return;
-
-      terminal.options.theme = getTerminalTheme(resolvedTheme.id);
-    }, [resolvedTheme.id]);
 
     useEffect(() => {
       if (!visible) return;
@@ -457,7 +459,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           return "terminating";
         } catch (reason) {
           closingSessionRef.current = null;
-          setError(formatAppError(reason, t));
+          setError(toAppErrorState(reason));
           return "cancelled";
         }
       },
@@ -474,7 +476,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
         async startSession(directoryId, toolKey, resumeSessionId) {
           const terminal = terminalRef.current;
           if (!terminal) {
-            setError(t("pty.terminalNotReady"));
+            setError({ message: t("pty.terminalNotReady") });
             return;
           }
           if (sessionRef.current?.state === "running" || startingRef.current)
@@ -508,21 +510,24 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             const resolvedSession = applyPendingPtyExit(created, earlyExit);
             updateSession(resolvedSession);
             if (startupInput && !earlyExit && created.state === "running") {
-              await writePtySession(created.sessionId, startupInput);
-              reportFrontendStageOnce(created.sessionId, "startupInputFlushed");
+              const flushed = await inputWriterRef.current?.push(startupInput);
+              if (flushed) {
+                reportFrontendStageOnce(
+                  created.sessionId,
+                  "startupInputFlushed",
+                );
+              }
             }
           } catch (reason) {
             pendingInputRef.current = [];
             lastSentSizeRef.current = null;
-            setError(
-              ptyInputErrorMessage(reason, t("pty.inputBackpressure"), t),
-            );
+            setError(ptyInputErrorState(reason, t("pty.inputBackpressure")));
           } finally {
             startingRef.current = false;
             setStarting(false);
           }
         },
-        async captureHandoff() {
+        async captureHandoff(targetWindowLabel) {
           const currentSession = sessionRef.current;
           const terminal = terminalRef.current;
           const serialize = serializeRef.current;
@@ -542,7 +547,10 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
           setHandoffBusy(true);
           let handoff: PtyHandoff | null = null;
           try {
-            handoff = await beginPtyHandoff(currentSession.sessionId);
+            handoff = await beginPtyHandoff(
+              currentSession.sessionId,
+              targetWindowLabel,
+            );
             await waitForWrittenSequence(handoff.sequence);
             const snapshot: PtyTerminalSnapshot = {
               data: serialize.serialize(),
@@ -564,7 +572,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               ).catch(() => undefined);
             }
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -633,7 +641,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               new Error(formatAppError(reason, t)),
             );
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -697,7 +705,7 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
               new Error(formatAppError(reason, t)),
             );
             setHandoffBusy(false);
-            setError(formatAppError(reason, t));
+            setError(toAppErrorState(reason));
             throw reason;
           }
         },
@@ -718,7 +726,9 @@ export const PtyTerminal = forwardRef<PtyTerminalHandle, PtyTerminalProps>(
             onPointerDown={() => onFocusRef.current?.()}
           />
         </div>
-        {error && <p className="error pty-error">{error}</p>}
+        {error && (
+          <p className="error pty-error">{formatAppErrorState(error, t)}</p>
+        )}
       </section>
     );
   },
@@ -733,9 +743,7 @@ function sizeOf(terminal: Terminal): PtySizeUpdate {
   };
 }
 
-function getTerminalTheme(
-  themeId: ThemeId,
-): NonNullable<Terminal["options"]["theme"]> {
+function getTerminalTheme(): NonNullable<Terminal["options"]["theme"]> {
   const styles = getComputedStyle(document.documentElement);
   const color = (token: string) =>
     styles.getPropertyValue(token).trim() || undefined;
@@ -746,6 +754,6 @@ function getTerminalTheme(
     foreground,
     cursor: foreground,
     selectionBackground: color("--color-terminal-selection"),
-    ...getThemeDefinition(themeId).terminal.ansi,
+    ...getThemeDefinition(TERMINAL_RUNTIME_THEME_ID).terminal.ansi,
   };
 }

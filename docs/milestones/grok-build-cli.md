@@ -68,7 +68,7 @@ Grok Build 终端标题使用 `项目名-GB-序号`，其他界面显示官方�
 - Windows 安装计划固定来自 `https://x.ai/cli/install.ps1`，以 PowerShell 程序和固定参数生成，并显式设为 stable 通道；macOS/Linux 计划对应官方 `https://x.ai/cli/install.sh`，不开放脚本输入。
 - 安装确认界面展示完整程序调用，并说明安装目录、替换文件、`config.toml`、PowerShell 补全、用户 PATH、网络下载与可选部署密钥副作用。
 - 安装和更新复用现有持久化任务管理器、并发隔离、日志、取消及历史；任务结束后重新读取 CLI 状态和版本/来源。
-- Grok 更新计划根据已解析的可执行文件路径生成结构化命令；计划阶段不运行更新检查或复核安装路径。后台任务启动前运行 Grok 检查 JSON，并要求 `installer` 精确为 `internal` 且当前可执行文件位于官方 `.grok/bin` 或 `GROK_BIN_DIR`；来源未知、缺失标记或路径不符时不执行更新并显示手动更新说明。代码位置：`src-tauri/src/services/cli_adapters/grok/platform.rs`、`grok/version.rs`；任务前置校验：`grok/common.rs`。
+- Grok 更新计划根据已解析的可执行文件路径生成结构化命令；计划阶段不运行更新检查或复核安装路径。后台任务启动前运行 Grok 检查 JSON，并要求 `installer` 精确为 `internal`，不校验可执行文件所在目录（与上文第 28 行及代码一致：`grok/common.rs` 的 `validate_execution` 只检查 `installer`，`grok/version.rs` 注释明确不看安装路径）；来源未知或缺失标记时不执行更新并显示手动更新说明。**文档修订说明（2026-10-06）：** 此处原写“且当前可执行文件位于官方 `.grok/bin` 或 `GROK_BIN_DIR`”，与同文档第 28 行、`architecture.md`、`tooling-and-installation.md` 以及代码互相矛盾，已按代码事实改正；是否重新引入路径校验属产品决策 PD-04，已于 2026-10-06 确认：保留现行代码行为（以官方更新检查的 `installer=internal` 为准，不限制可执行文件所在目录），文档统一到代码事实（见 `docs/milestones/0.4.0/M6-closure-review.md` 4.7.1）。代码位置：`src-tauri/src/services/cli_adapters/grok/platform.rs`、`grok/version.rs`；任务前置校验：`grok/common.rs`。
 - 版本刷新只运行 `grok update --check --json` 并读取 `latestVersion` 与 `installer`；此检查不执行更新。
 
 **验收：** 安装计划来源不可被输入覆盖；完成/失败/取消都能回读并刷新状态；更新不会误操作 npm 或未知来源安装。

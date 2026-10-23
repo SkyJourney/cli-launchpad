@@ -1,3 +1,4 @@
+use crate::platform::home::home_dir;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
@@ -10,9 +11,9 @@ use serde_json::{json, Value};
 
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
-use crate::services::session_service::{
-    epoch_to_ms, extract_text_content, home_dir, index_source, mtime_ms, non_empty_field,
-    page_local, paths_match, safe_session_id, truncate_chars, SearchDocument, SearchSource,
+use crate::services::cli_adapters::support::{
+    epoch_to_ms, extract_text_content, index_source, mtime_ms, non_empty_field, page_local,
+    paths_match, safe_session_id, truncate_chars, SearchDocument, SearchSource,
     MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_METADATA_LINE_BYTES, MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
     MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
 };
@@ -98,7 +99,7 @@ async fn search_codex_documents(
     Ok(source)
 }
 
-pub(crate) fn codex_search_document(thread: &Value) -> Option<SearchDocument> {
+fn codex_search_document(thread: &Value) -> Option<SearchDocument> {
     let session_id = thread.get("id")?.as_str()?;
     if !safe_session_id(session_id) {
         return None;
@@ -177,14 +178,14 @@ async fn list_codex_app_page(
     Ok(SessionPage { items, next_cursor })
 }
 
-pub(crate) fn encode_codex_cursor(cursor: &str) -> String {
+fn encode_codex_cursor(cursor: &str) -> String {
     format!(
         "{CODEX_CURSOR_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(cursor.as_bytes())
     )
 }
 
-pub(crate) fn decode_codex_cursor(cursor: Option<&str>) -> Result<Option<String>> {
+fn decode_codex_cursor(cursor: Option<&str>) -> Result<Option<String>> {
     let Some(cursor) = cursor else {
         return Ok(None);
     };
@@ -337,10 +338,7 @@ fn collect_rollout_files_bounded(
 }
 
 #[cfg(test)]
-pub(crate) fn parse_codex_rollout_metadata(
-    path: &Path,
-    directory_path: &str,
-) -> Result<Option<SessionInfo>> {
+fn parse_codex_rollout_metadata(path: &Path, directory_path: &str) -> Result<Option<SessionInfo>> {
     const MAX_METADATA_LINES: usize = 200;
     const MAX_METADATA_LINE_BYTES: u64 = 64 * 1024;
 
@@ -479,7 +477,7 @@ fn parse_codex_rollout(path: &Path, directory_path: &str) -> Option<SessionInfo>
     })
 }
 
-pub(crate) fn parse_codex_rollout_search(
+fn parse_codex_rollout_search(
     path: &Path,
     directory_path: &str,
     max_bytes: u64,
@@ -583,7 +581,7 @@ fn codex_user_text(value: &Value) -> Option<String> {
     extract_text_content(candidate.get("content")?)
 }
 
-pub(crate) fn uuid_from_filename(path: &Path) -> Option<String> {
+fn uuid_from_filename(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_str()?;
     let parts: Vec<&str> = stem.split('-').collect();
     parts
@@ -608,7 +606,7 @@ fn json_number_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_f64().map(|value| value as i64))
 }
 
-pub(crate) async fn list_sessions_page(
+pub(super) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
@@ -617,7 +615,7 @@ pub(crate) async fn list_sessions_page(
     list_codex_page(&directory_path, cursor.as_deref(), limit, &context).await
 }
 
-pub(crate) async fn search_index_source(
+pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
@@ -632,7 +630,7 @@ pub(crate) async fn search_index_source(
             log::warn!("Codex 会话搜索失败，改用本地会话 metadata：{error}");
             let path = directory_path.clone();
             let home = context.home.clone();
-            crate::services::session_service::spawn_search_index_blocking(move || {
+            crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
                 search_codex_rollout_metadata_in(&path, &home)
             })
             .await
@@ -640,7 +638,7 @@ pub(crate) async fn search_index_source(
         Err(_) => {
             log::warn!("Codex 会话搜索超时，改用本地会话 metadata");
             let home = context.home.clone();
-            crate::services::session_service::spawn_search_index_blocking(move || {
+            crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
                 search_codex_rollout_metadata_in(&directory_path, &home)
             })
             .await
@@ -649,7 +647,7 @@ pub(crate) async fn search_index_source(
     index_source(ToolKey::Codex, result)
 }
 
-pub(crate) async fn session_belongs_to_directory(
+pub(super) async fn session_belongs_to_directory(
     directory_path: String,
     session_id: String,
 ) -> Result<bool> {
@@ -660,4 +658,132 @@ pub(crate) async fn session_belongs_to_directory(
     })
     .await
     .map_err(|error| anyhow!(error.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_search_uses_thread_name_and_preview_metadata() {
+        let thread: Value = serde_json::from_str(
+            r#"{"id":"session-1","name":"safe thread name","preview":"private preview phrase","updatedAt":1000}"#,
+        )
+        .unwrap();
+
+        let document = codex_search_document(&thread).unwrap();
+
+        assert_eq!(
+            document.fields,
+            vec!["safe thread name", "private preview phrase"]
+        );
+        assert_eq!(document.session.title, "safe thread name");
+        assert!(document
+            .fields
+            .iter()
+            .any(|field| field == "private preview phrase"));
+    }
+
+    #[test]
+    fn codex_rollout_fallback_only_accepts_project_session_metadata() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let other_project = temporary.path().join("other-project");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&other_project).unwrap();
+        let project_path = project.to_string_lossy().to_string();
+        let other_project_path = other_project.to_string_lossy().to_string();
+        let rollout = temporary
+            .path()
+            .join("rollout-2026-01-01T00-00-00-7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345.jsonl");
+        let metadata_line = serde_json::json!({
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "session-1", "cwd": project_path}
+        });
+        let body_line = serde_json::json!({
+            "type": "response_item",
+            "payload": {"role": "user", "content": "private body phrase"}
+        });
+        fs::write(&rollout, format!("{metadata_line}\n{body_line}\n")).unwrap();
+
+        let session = parse_codex_rollout_metadata(&rollout, &project_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.session_id, "session-1");
+        assert_eq!(session.title, "(Codex 会话)");
+        assert!(parse_codex_rollout_metadata(&rollout, &other_project_path)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn codex_search_fallback_indexes_the_bounded_first_user_message() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project = temporary.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let project_path = project.to_string_lossy().to_string();
+        let rollout = temporary.path().join("rollout-session.jsonl");
+        let metadata = serde_json::json!({
+            "type": "session_meta",
+            "payload": {"id": "session-1", "cwd": project_path}
+        });
+        let user = serde_json::json!({
+            "type": "response_item",
+            "payload": {"role": "user", "content": "first codex prompt"}
+        });
+        fs::write(&rollout, format!("{metadata}\n{user}\n")).unwrap();
+
+        let (document, bytes_read) = parse_codex_rollout_search(
+            &rollout,
+            &project_path,
+            MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
+        )
+        .unwrap();
+        let document = document.unwrap();
+
+        assert!(bytes_read > 0);
+        assert_eq!(document.session.title, "first codex prompt");
+        assert_eq!(document.fields, vec!["first codex prompt"]);
+    }
+
+    #[test]
+    fn codex_search_fallback_rejects_oversized_lines() {
+        let temporary = tempfile::tempdir().unwrap();
+        let rollout = temporary.path().join("rollout-large.jsonl");
+        fs::write(
+            &rollout,
+            format!(
+                "{}\n",
+                "x".repeat(MAX_SEARCH_METADATA_LINE_BYTES as usize + 1)
+            ),
+        )
+        .unwrap();
+
+        assert!(parse_codex_rollout_search(
+            &rollout,
+            "C:\\Projects\\example",
+            MAX_SEARCH_PREVIEW_BYTES_PER_SESSION
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn codex_cursor_round_trips_as_opaque_value() {
+        let encoded = encode_codex_cursor("cursor/with + symbols=");
+        assert_eq!(
+            decode_codex_cursor(Some(&encoded)).unwrap().as_deref(),
+            Some("cursor/with + symbols=")
+        );
+    }
+
+    #[test]
+    fn uuid_extracted_from_rollout_name() {
+        let path =
+            Path::new("rollout-2025-06-01T12-00-00-7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345.jsonl");
+        assert_eq!(
+            uuid_from_filename(path).as_deref(),
+            Some("7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345")
+        );
+    }
 }

@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { i18n } from "../i18n";
 import { qk } from "../lib/queryKeys";
+import { RUST_EVENTS } from "../lib/eventNames";
+import { onInboxEvent, type Unlisten } from "../lib/windowInbox";
 import { refreshCliStatusForTool } from "./useCliStatus";
 import { getCliAdapter, TOOLS } from "../lib/tools";
 import {
@@ -66,13 +67,33 @@ export function useExecutionTaskEvents() {
 
   useEffect(() => {
     let disposed = false;
-    const unlisten: UnlistenFn[] = [];
+    const unlisten: Unlisten[] = [];
 
     const register = async () => {
-      const taskUnlisten = await listen<ExecutionTask>(
-        "execution-task-updated",
+      const taskUnlisten = await onInboxEvent<ExecutionTask>(
+        RUST_EVENTS.executionTaskUpdated,
         (event) => {
+          // 订阅返回前冲刷的缓冲消息不交给已卸载的 effect。
+          if (disposed) return;
           const task = event.payload;
+          // list 与 detail 两份缓存各自可能滞后（list 会被轮询刷新），任一方为终态即视为已结束。
+          const knownStatuses = [
+            queryClient
+              .getQueryData<ExecutionTask[]>(qk.executionTasks())
+              ?.find((entry) => entry.id === task.id)?.status,
+            queryClient.getQueryData<ExecutionTaskDetail>(
+              qk.executionTask(task.id),
+            )?.task.status,
+          ];
+          if (
+            isExecutionActive(task.status) &&
+            knownStatuses.some(
+              (status) => status !== undefined && !isExecutionActive(status),
+            )
+          ) {
+            // A late "running" update must not bring a finished task back to life.
+            return;
+          }
           if (isExecutionActive(task.status)) {
             void queryClient.cancelQueries({
               queryKey: qk.latestVersion(task.toolKey),
@@ -135,9 +156,10 @@ export function useExecutionTaskEvents() {
         unlisten.push(taskUnlisten);
       }
 
-      const logUnlisten = await listen<ExecutionLogChunk>(
-        "execution-task-log",
+      const logUnlisten = await onInboxEvent<ExecutionLogChunk>(
+        RUST_EVENTS.executionTaskLog,
         (event) => {
+          if (disposed) return;
           const chunk = event.payload;
           queryClient.setQueryData<ExecutionTaskDetail>(
             qk.executionTask(chunk.taskId),

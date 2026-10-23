@@ -1,10 +1,14 @@
 import type { WorkspacePaneContentRef } from "./tauri";
 import { workspaceContentKey } from "./workspaceContentKey";
+import { isWindowOwned } from "./workspaceOwnershipProjection";
 import {
   createWorkspaceContentLifecycle,
+  newTransferId as createTransferId,
+  newWindowToken as createWindowToken,
   transitionWorkspaceContentLifecycle,
   type WorkspaceContentLifecycleEvent,
   type WorkspaceContentLifecycleState,
+  type WorkspaceContentLifecycleTransition,
   type WorkspaceContentOwner,
   type WorkspacePaneOwner,
 } from "./workspaceContentLifecycle";
@@ -13,6 +17,8 @@ import {
 export class WorkspaceContentCoordinator {
   private readonly states = new Map<string, WorkspaceContentLifecycleState>();
   private readonly completedReturnIds = new Set<string>();
+  // Window tokens of windows whose return completed; file returns carry no per-return id.
+  private readonly completedWindowTokens = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private revision = 0;
 
@@ -23,6 +29,16 @@ export class WorkspaceContentCoordinator {
 
   getRevision = () => this.revision;
 
+  /** One handoff (a detach or a return). Unique per handoff. */
+  newTransferId(): string {
+    return createTransferId();
+  }
+
+  /** One window session, from window creation to window destruction. */
+  newWindowToken(): string {
+    return createWindowToken();
+  }
+
   private notifyChanged() {
     this.revision += 1;
     this.listeners.forEach((listener) => listener());
@@ -31,6 +47,7 @@ export class WorkspaceContentCoordinator {
   reset() {
     this.states.clear();
     this.completedReturnIds.clear();
+    this.completedWindowTokens.clear();
     this.notifyChanged();
   }
 
@@ -40,6 +57,7 @@ export class WorkspaceContentCoordinator {
   ) {
     this.states.clear();
     this.completedReturnIds.clear();
+    this.completedWindowTokens.clear();
     for (const pane of panes) {
       for (const content of pane.contents) {
         if (content.kind === "unknown") continue;
@@ -72,15 +90,7 @@ export class WorkspaceContentCoordinator {
 
   listWindowOwned(): WorkspacePaneContentRef[] {
     return [...this.states.values()]
-      .filter((state) => {
-        if (state.phase === "detaching" || state.phase === "returning") {
-          return true;
-        }
-        return (
-          (state.phase === "detached" || state.phase === "closing") &&
-          state.owner.kind === "window"
-        );
-      })
+      .filter((state) => isWindowOwned(state))
       .map((state) => ({ ...state.content }));
   }
 
@@ -145,6 +155,7 @@ export class WorkspaceContentCoordinator {
     source: WorkspacePaneOwner,
     target: Extract<WorkspaceContentOwner, { kind: "window" }>,
     transferId: string,
+    windowToken: string,
   ) {
     const current = this.get(content);
     if (
@@ -156,8 +167,19 @@ export class WorkspaceContentCoordinator {
     const begin = this.beginDetach(content, source, target, transferId);
     if (begin?.outcome !== "changed") return begin?.state ?? null;
     return (
-      this.completeHandoff(content, "detachReady", transferId)?.state ?? null
+      this.completeHandoff(content, "detachReady", transferId, windowToken)
+        ?.state ?? null
     );
+  }
+
+  /** True once a return with this transfer id finished; used to ignore late duplicates. */
+  isReturnCompleted(transferId: string) {
+    return this.completedReturnIds.has(transferId);
+  }
+
+  /** True once a return of the window with this token finished; file returns use it to ignore late duplicates. */
+  isWindowReturnCompleted(windowToken: string) {
+    return this.completedWindowTokens.has(windowToken);
   }
 
   beginReturn(
@@ -177,18 +199,76 @@ export class WorkspaceContentCoordinator {
 
   completeHandoff(
     content: WorkspacePaneContentRef,
+    type: "detachReady",
+    transferId: string,
+    windowToken: string,
+  ): WorkspaceContentLifecycleTransition | null;
+  completeHandoff(
+    content: WorkspacePaneContentRef,
+    type: "returnReady",
+    transferId: string,
+  ): WorkspaceContentLifecycleTransition | null;
+  completeHandoff(
+    content: WorkspacePaneContentRef,
     type: "detachReady" | "returnReady",
     transferId: string,
+    windowToken?: string,
   ) {
+    if (type === "detachReady") {
+      return this.dispatchHandoff(content, type, transferId, windowToken);
+    }
+    const before = this.get(content);
     const transition = this.dispatchHandoff(content, type, transferId);
-    if (type === "returnReady" && transition?.outcome === "changed") {
+    if (transition?.outcome === "changed") {
       this.completedReturnIds.add(transferId);
       if (this.completedReturnIds.size > 256) {
         const oldest = this.completedReturnIds.values().next().value;
         if (oldest) this.completedReturnIds.delete(oldest);
       }
+      if (before?.phase === "returning" && before.content.kind === "file") {
+        this.completedWindowTokens.add(before.windowToken);
+        if (this.completedWindowTokens.size > 256) {
+          const oldest = this.completedWindowTokens.values().next().value;
+          if (oldest) this.completedWindowTokens.delete(oldest);
+        }
+      }
     }
     return transition;
+  }
+
+  /** 超时对账时 Rust 报告会话归外来窗口：分离握手转为归该窗口的分离内容（m6-096 F1）。 */
+  recognizeForeignOwner(
+    content: WorkspacePaneContentRef,
+    transferId: string,
+    ownerWindowLabel: string,
+  ) {
+    const state = this.states.get(workspaceContentKey(content));
+    if (!state || state.phase !== "detaching") return null;
+    return this.dispatch(content, {
+      type: "foreignOwnerRecognized",
+      transferId,
+      ownerWindowLabel,
+      generation: state.generation,
+      content: state.content,
+      source: state.source,
+      target: state.target,
+    } as WorkspaceContentLifecycleEvent);
+  }
+
+  /** 已分离内容的会话被另一窗口持有：归属改为该窗口，窗口句柄与树都不变（m6-096 F1）。 */
+  adoptForeignOwner(
+    content: WorkspacePaneContentRef,
+    ownerWindowLabel: string,
+  ) {
+    const state = this.states.get(workspaceContentKey(content));
+    if (!state || state.phase !== "detached") return null;
+    return this.dispatch(content, {
+      type: "foreignOwnerAdopted",
+      ownerWindowLabel,
+      content: state.content,
+      owner: state.owner,
+      generation: state.generation,
+    });
   }
 
   failHandoff(
@@ -329,6 +409,7 @@ export class WorkspaceContentCoordinator {
       | "returnFailed"
       | "returnCancelled",
     transferId: string,
+    windowToken?: string,
   ) {
     const state = this.states.get(workspaceContentKey(content));
     if (
@@ -340,6 +421,8 @@ export class WorkspaceContentCoordinator {
     return this.dispatch(content, {
       type,
       transferId,
+      // A missing window token is an empty string, which the lifecycle ignores.
+      ...(type === "detachReady" ? { windowToken: windowToken ?? "" } : {}),
       generation: state.generation,
       content: state.content,
       source: state.source,

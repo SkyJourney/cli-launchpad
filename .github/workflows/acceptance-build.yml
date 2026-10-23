@@ -1,0 +1,107 @@
+name: Acceptance build
+
+on:
+  workflow_dispatch:
+  # 临时触发器（用户在 B05 Q1 中授权）：新工作流在合并到默认分支前无法用 gh workflow run
+  # 触发，所以推送该文件时自动运行。目标 081 统一删除。
+  push:
+    branches:
+      - m6-closure
+    paths:
+      - .github/workflows/acceptance-build.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Acceptance build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundle_args: --bundles nsis
+          - os: macos-latest
+            bundle_args: --bundles dmg
+          - os: ubuntu-24.04
+            bundle_args: --bundles deb,rpm,appimage
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.21.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev xdg-utils
+          # linuxdeploy's downloaded AppImage tooling needs libfuse2 to run;
+          # Ubuntu renamed the package to libfuse2t64 on newer releases.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build with acceptance hooks
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          # 与 ci.yml 的 Build frontend 一致：beforeBuildCommand 的 vite build 在
+          # macOS runner 上默认堆会溢出（实测两次 exit 134）。
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm tauri build --features acceptance-hooks ${{ matrix.bundle_args }}
+
+      # 用 release.yml 里的守卫脚本原文扫这个带验收标记的二进制，必须被拦下（退出码 1
+      # 且输出标记提示）。这既自检守卫文字，也在三个平台上验证守卫依赖的 find/grep 可用。
+      - name: Self-test the release guard against the acceptance binary
+        run: |
+          awk '/- name: Assert release binary has no acceptance marker/{f=1;next} f&&/run: \|/{g=1;next} g&&/^          /{sub(/^          /,"");print;next} g{exit}' .github/workflows/release.yml > "$RUNNER_TEMP/release-guard.sh"
+          test -s "$RUNNER_TEMP/release-guard.sh"
+          set +e
+          bash "$RUNNER_TEMP/release-guard.sh" 2> "$RUNNER_TEMP/release-guard.err"
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/release-guard.err"
+          test "$code" -eq 1
+          grep -q "release binary contains the acceptance marker" "$RUNNER_TEMP/release-guard.err"
+
+      - name: Upload acceptance artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: acceptance-${{ matrix.os }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 7

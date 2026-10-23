@@ -15,7 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import clsx from "clsx";
-import { createRef, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { AnchoredPopover } from "../components/AnchoredPopover";
@@ -35,7 +35,12 @@ import { formatUtcDateTime } from "../lib/format";
 import { qk } from "../lib/queryKeys";
 import { refreshInstallPlanConfirmation } from "../lib/installPlanConfirmation";
 import { shouldQueryLatestVersion } from "../lib/versionQueryPolicy";
-import { formatAppError } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppError,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import { getWindowChromePolicy } from "../lib/windowChrome";
 import { useDirectories } from "../hooks/queries";
 import {
@@ -43,11 +48,13 @@ import {
   type WorkspaceDataRestoreBlockers,
 } from "../lib/workspaceRestorePolicy";
 import {
+  createToolAnchorRefs,
   getLatestUpdateAvailability,
   isManagedUpdateAllowed,
   getCliAdapter,
   TOOLS,
 } from "../lib/tools";
+import { getProviderDescriptor } from "../lib/toolCapabilities";
 import {
   clearCache,
   clearLaunchHistory,
@@ -94,7 +101,11 @@ interface PendingAction {
 
 export function SettingsView() {
   const { t, i18n } = useTranslation();
-  const { getBackupRestoreBlockers, cancelBackupRestore } = usePtyWorkspace();
+  const {
+    getBackupRestoreBlockers,
+    cancelBackupRestore,
+    resumeAfterFailedRestore,
+  } = usePtyWorkspace();
   const queryClient = useQueryClient();
   const directories = useDirectories();
   const windowChrome = getWindowChromePolicy(navigator.userAgent);
@@ -152,26 +163,17 @@ export function SettingsView() {
     ReadonlySet<ToolKey>
   >(new Set());
   const [actionErrors, setActionErrors] = useState<
-    Partial<Record<ToolKey, string>>
+    Partial<Record<ToolKey, AppErrorState>>
   >({});
-  const popoverAnchorRefs = useRef<
-    Record<ToolKey, ReturnType<typeof createRef<HTMLDivElement>>>
-  >({
-    claude: createRef<HTMLDivElement>(),
-    codex: createRef<HTMLDivElement>(),
-    antigravity: createRef<HTMLDivElement>(),
-    grok: createRef<HTMLDivElement>(),
-    hermes: createRef<HTMLDivElement>(),
-  }).current;
+  const popoverAnchorRefs = useRef(createToolAnchorRefs()).current;
   const [pendingRestore, setPendingRestore] = useState<BackupManifest | null>(
     null,
   );
   const [restoreChecking, setRestoreChecking] = useState(false);
   const [restoreBlockers, setRestoreBlockers] =
     useState<WorkspaceDataRestoreBlockers | null>(null);
-  const [restoreCheckError, setRestoreCheckError] = useState<string | null>(
-    null,
-  );
+  const [restoreCheckError, setRestoreCheckError] =
+    useState<AppErrorState | null>(null);
 
   const backups = useQuery({
     queryKey: qk.backups(),
@@ -189,7 +191,9 @@ export function SettingsView() {
       queryClient.removeQueries({ queryKey: ["sessions"] });
       await queryClient.invalidateQueries();
     },
-    onError: () => cancelBackupRestore(),
+    onError: () => {
+      resumeAfterFailedRestore();
+    },
   });
   const confirmBackupRestore = async () => {
     if (!pendingRestore || restoreChecking || restoreBackupMutation.isPending) {
@@ -206,7 +210,7 @@ export function SettingsView() {
       restoreBackupMutation.mutate(pendingRestore.id);
     } catch (reason) {
       cancelBackupRestore();
-      setRestoreCheckError(formatAppError(reason, t));
+      setRestoreCheckError(toAppErrorState(reason));
     } finally {
       setRestoreChecking(false);
     }
@@ -299,6 +303,8 @@ export function SettingsView() {
       }
       queryClient.invalidateQueries({ queryKey: qk.directories() });
       queryClient.removeQueries({ queryKey: ["sessions"] });
+      // An index refresh that was in flight during the import is discarded; run it again.
+      queryClient.invalidateQueries({ queryKey: qk.sessionSearchIndexes() });
       queryClient.invalidateQueries({ queryKey: qk.closeBehavior() });
       queryClient.invalidateQueries({ queryKey: qk.backups() });
     },
@@ -367,7 +373,7 @@ export function SettingsView() {
     } catch (error) {
       setActionErrors((current) => ({
         ...current,
-        [toolKey]: formatAppError(error, t),
+        [toolKey]: toAppErrorState(error),
       }));
     } finally {
       planningToolKeysRef.current.delete(toolKey);
@@ -426,7 +432,7 @@ export function SettingsView() {
       }
       setActionErrors((current) => ({
         ...current,
-        [action.toolKey]: formatAppError(error, t),
+        [action.toolKey]: toAppErrorState(error),
       }));
     } finally {
       creatingToolKeysRef.current.delete(action.toolKey);
@@ -497,7 +503,9 @@ export function SettingsView() {
           const busyKind = activeTask?.kind ?? reconciliationKind;
           const actionKind = isMissing ? "install" : "update";
           const pendingAction = pendingByTool[tool.key];
-          const branchUpdateStatus = tool.latestStatusKind === "branch-update";
+          const branchUpdateStatus =
+            getProviderDescriptor(tool.key).capabilities.updateSemantics ===
+            "branch";
           const isCreatingTask = creatingToolKeys.has(tool.key);
           const isPlanning = planningToolKeys.has(tool.key);
           const actionError = actionErrors[tool.key];
@@ -632,7 +640,7 @@ export function SettingsView() {
                         {actionError && (
                           <p className="error">
                             {t("settings.executeFailed", {
-                              error: actionError,
+                              error: formatAppErrorState(actionError, t),
                             })}
                           </p>
                         )}
@@ -661,7 +669,7 @@ export function SettingsView() {
                 </span>
                 <span>
                   {branchUpdateStatus
-                    ? t("settings.hermesUpdateStatus")
+                    ? t("settings.branchUpdateStatus")
                     : t("settings.latest")}
                   {activeTask
                     ? t(
@@ -676,19 +684,19 @@ export function SettingsView() {
                         : branchUpdateStatus
                           ? latestEntry?.updateAvailability === "available"
                             ? latestEntry.commitsBehind == null
-                              ? `${t("settings.hermesUpdateBehindUnknown")}${latestStatusAnnotation}`
-                              : `${t("settings.hermesUpdateBehind", {
+                              ? `${t("settings.branchUpdateBehindUnknown")}${latestStatusAnnotation}`
+                              : `${t("settings.branchUpdateBehind", {
                                   count: latestEntry.commitsBehind,
                                 })}${latestStatusAnnotation}`
                             : latestEntry?.updateAvailability === "upToDate"
-                              ? `${t("settings.hermesUpToDate")}${latestStatusAnnotation}`
+                              ? `${t("settings.branchUpToDate")}${latestStatusAnnotation}`
                               : availability === "missing"
                                 ? "—"
                                 : latestRefreshError
                                   ? t("settings.unavailableWithError", {
                                       error: latestRefreshError,
                                     })
-                                  : t("settings.hermesRefreshPrompt")
+                                  : t("settings.branchRefreshPrompt")
                           : latestVersion
                             ? `${latestVersion}${latestStatusAnnotation}`
                             : latestRefreshError
@@ -712,7 +720,7 @@ export function SettingsView() {
               {actionError && !pendingAction && (
                 <p className="error cli-action-message">
                   {t("settings.prepareFailed", {
-                    error: actionError,
+                    error: formatAppErrorState(actionError, t),
                   })}
                 </p>
               )}
@@ -1160,7 +1168,11 @@ export function SettingsView() {
                   )}
                 </ul>
               )}
-            {restoreCheckError && <p className="error">{restoreCheckError}</p>}
+            {restoreCheckError && (
+              <p className="error">
+                {formatAppErrorState(restoreCheckError, t)}
+              </p>
+            )}
             <div className="edit-actions">
               <button
                 className="ghost-button"

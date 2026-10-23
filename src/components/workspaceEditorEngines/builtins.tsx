@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceEditorEngine } from "../workspaceEditorEngineRegistry";
 import { registerWorkspaceEditorEngine } from "../workspaceEditorEngineRegistry";
+import { registerContributionSafely } from "../../lib/registerContribution";
 
 const LazyMonacoWorkspaceEditor = lazy(() =>
   import("../workspaceEditor/MonacoWorkspaceEditor").then((module) => ({
@@ -34,5 +35,9 @@ const monacoEngine: WorkspaceEditorEngine = {
 };
 
 export function registerBuiltinWorkspaceEditorEngines(): () => void {
-  return registerWorkspaceEditorEngine(monacoEngine);
+  return registerContributionSafely(
+    "workspaceEditorEngine",
+    monacoEngine.id,
+    () => registerWorkspaceEditorEngine(monacoEngine),
+  );
 }

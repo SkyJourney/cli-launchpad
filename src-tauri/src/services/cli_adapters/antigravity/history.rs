@@ -1,3 +1,4 @@
+use crate::platform::home::home_dir;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -8,10 +9,10 @@ use serde_json::Value;
 
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
-use crate::services::session_service::{
-    epoch_to_ms, home_dir, index_source, non_empty_field, non_empty_string, page_local,
-    paths_match, percent_decode, read_search_metadata_file, truncate_chars, SearchDocument,
-    SearchSource, MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
+use crate::services::cli_adapters::support::{
+    epoch_to_ms, index_source, non_empty_field, non_empty_string, page_local, paths_match,
+    percent_decode, read_search_metadata_file, truncate_chars, SearchDocument, SearchSource,
+    MAX_SEARCH_FIELD_CHARS, MAX_SEARCH_SESSIONS_PER_TOOL, TITLE_MAX_CHARS,
 };
 fn list_antigravity_sessions(directory_path: &str) -> Result<Vec<SessionInfo>> {
     let home = home_dir()?;
@@ -70,7 +71,7 @@ fn list_antigravity_sessions_in(directory_path: &str, home: &Path) -> Result<Vec
     Ok(sessions)
 }
 
-pub(crate) fn search_antigravity_rows(
+fn search_antigravity_rows(
     connection: &Connection,
     directory_path: &str,
     summaries: &HashMap<String, String>,
@@ -209,7 +210,7 @@ fn antigravity_metadata_summaries(home: &Path) -> HashMap<String, String> {
         .collect()
 }
 
-pub(crate) fn workspace_matches(workspace_uris: &str, directory_path: &str) -> bool {
+fn workspace_matches(workspace_uris: &str, directory_path: &str) -> bool {
     let Ok(uris) = serde_json::from_str::<Vec<String>>(workspace_uris) else {
         return false;
     };
@@ -235,7 +236,7 @@ fn file_uri_to_path(uri: &str) -> Option<String> {
     Some(decoded)
 }
 
-pub(crate) async fn list_sessions_page(
+pub(super) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
@@ -252,18 +253,18 @@ pub(crate) async fn list_sessions_page(
     .map_err(|error| anyhow!(error.to_string()))?
 }
 
-pub(crate) async fn search_index_source(
+pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
-    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+    let result = crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
         search_antigravity_documents_in(&directory_path, &context.home)
     })
     .await;
     index_source(ToolKey::Antigravity, result)
 }
 
-pub(crate) async fn session_belongs_to_directory(
+pub(super) async fn session_belongs_to_directory(
     directory_path: String,
     session_id: String,
 ) -> Result<bool> {
@@ -272,4 +273,89 @@ pub(crate) async fn session_belongs_to_directory(
     })
     .await
     .map_err(|error| anyhow!(error.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn antigravity_search_indexes_title_summary_and_preview_for_current_project() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project_path = temporary.path().join("project");
+        let other_path = temporary.path().join("other");
+        fs::create_dir_all(&project_path).unwrap();
+        fs::create_dir_all(&other_path).unwrap();
+        let project_path = project_path.to_string_lossy().replace('\\', "/");
+        let other_path = other_path.to_string_lossy().replace('\\', "/");
+        let project_uri = if cfg!(windows) {
+            format!("file:///{project_path}")
+        } else {
+            format!("file://{project_path}")
+        };
+        let other_uri = if cfg!(windows) {
+            format!("file:///{other_path}")
+        } else {
+            format!("file://{other_path}")
+        };
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table conversation_summaries (
+                    conversation_id text, title text, preview text,
+                    last_modified_time integer, workspace_uris text
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into conversation_summaries values (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "current",
+                    "visible title",
+                    "private preview",
+                    10,
+                    serde_json::json!([project_uri]).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into conversation_summaries values (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "other",
+                    "other title",
+                    "private preview",
+                    20,
+                    serde_json::json!([other_uri]).to_string()
+                ],
+            )
+            .unwrap();
+        let summaries = HashMap::from([("current".to_string(), "visible summary".to_string())]);
+
+        let source =
+            search_antigravity_rows(&connection, &project_path, &summaries, false).unwrap();
+
+        assert_eq!(source.documents.len(), 1);
+        assert_eq!(
+            source.documents[0].fields,
+            vec!["visible title", "visible summary", "private preview"]
+        );
+        assert_eq!(source.documents[0].session.title, "visible title");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn file_uri_matches_windows_path_and_decodes_spaces() {
+        let uris = r#"["file:///C:/Projects/My%20App"]"#;
+        assert!(workspace_matches(uris, "c:\\projects\\my app\\"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn file_uri_matches_unix_path_and_preserves_case() {
+        let uris = r#"["file:///Users/me/Projects/My%20App"]"#;
+        assert!(workspace_matches(uris, "/Users/me/Projects/My App/"));
+        assert!(!workspace_matches(uris, "/Users/me/projects/My App/"));
+    }
 }

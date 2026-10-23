@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "name": "sensitiveNo",
+      "value": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      }
+    },
+    {
+      "name": "insensitiveYes",
+      "value": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      }
+    },
+    {
+      "name": "unknown",
+      "value": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "PathSemantics"
+}

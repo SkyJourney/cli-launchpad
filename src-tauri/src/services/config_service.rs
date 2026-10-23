@@ -1,8 +1,23 @@
+use crate::db::tx::with_tx;
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use anyhow::Result;
 use rusqlite::Connection;
+use rusqlite::TransactionBehavior;
 
 use crate::db::{app_setting_repo, directory_repo};
+use crate::models::app_setting::CloseBehavior;
+use crate::models::backup::BackupReason;
 use crate::models::config_bundle::{ConfigBundle, ExportedDirectory, CONFIG_BUNDLE_VERSION};
+use crate::services::app_data_service::{
+    run_data_replacement, DataReplacementContext, ReplacementFlavour,
+};
+use crate::services::app_lifecycle::AppLifecycle;
+use crate::services::backup_service;
+use crate::services::content_window_grants::ContentWindowRevoker;
+use crate::services::session_service::RestoreGeneration;
+use crate::services::storage_service::StoragePaths;
+use crate::{AppError, Db};
 
 /// Snapshot project configuration into a bundle.
 pub fn export(conn: &Connection) -> Result<ConfigBundle> {
@@ -26,9 +41,63 @@ pub fn export_json(conn: &Connection) -> Result<String> {
     Ok(serde_json::to_string_pretty(&export(conn)?)?)
 }
 
-/// Export the config bundle as JSON to a file path.
-pub fn export_to_path(conn: &Connection, path: &str) -> Result<()> {
-    super::file_service::replace_file(std::path::Path::new(path), export_json(conn)?.as_bytes())
+/// Exports the configuration through the business connection. Runs on a blocking thread
+/// (the command wraps it in `blocking_unbounded`).
+pub fn export_with(db: &Db, path: &str) -> Result<(), AppError> {
+    // The bundle is built under the connection lock; the file is written after it is released.
+    let json = db.with_sync("config.export", |conn| {
+        export_json(conn).map_err(|error| {
+            log::error!("configuration export failed");
+            AppError::from(error)
+        })
+    })?;
+    match super::file_service::replace_file(std::path::Path::new(path), json.as_bytes()) {
+        Ok(()) => {
+            log::info!("configuration export completed");
+            Ok(())
+        }
+        Err(error) => {
+            log::error!("configuration export failed");
+            Err(error.into())
+        }
+    }
+}
+
+/// Imports a configuration file: a pre-import backup and the import, under a data-replace permit.
+/// Returns the imported close behavior. Runs on a blocking thread (the command wraps it in `blocking_unbounded`).
+pub fn import_with(
+    db: &Db,
+    storage: &StoragePaths,
+    lifecycle: &AppLifecycle,
+    generation: &RestoreGeneration,
+    revoker: &ContentWindowRevoker<'_>,
+    path: &str,
+) -> Result<CloseBehavior, AppError> {
+    let bundle = read_bundle_from_path(path)?;
+    let ctx = DataReplacementContext {
+        flavour: ReplacementFlavour::ImportConfig,
+        lifecycle,
+        db,
+        revoker,
+    };
+    // The hook entry point takes the DataReplace permit and runs the replacement under the lock.
+    let replaced = run_data_replacement(&ctx, |conn| {
+        backup_service::create(conn, storage, BackupReason::PreImport)?;
+        match import(conn, &bundle) {
+            Ok(()) => {
+                log::info!("configuration import completed");
+                // The directory set changed: an index refresh that captured the previous
+                // generation must not write to the cache any more (m6-b1920 D2).
+                generation.advance();
+                Ok(app_setting_repo::get_close_behavior(conn)?)
+            }
+            Err(error) => {
+                log::error!("configuration import failed");
+                Err(error.into())
+            }
+        }
+    })?;
+    Ok(replaced.value)
 }
 
 /// Import a config bundle from a JSON file path.
@@ -47,17 +116,9 @@ pub fn import(conn: &Connection, bundle: &ConfigBundle) -> Result<()> {
     if bundle.version > CONFIG_BUNDLE_VERSION {
         anyhow::bail!("配置文件来自更新版本的应用，当前版本无法安全导入");
     }
-    conn.execute_batch("BEGIN")?;
-    match import_inner(conn, bundle) {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")?;
-            Ok(())
-        }
-        Err(error) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(error)
-        }
-    }
+    with_tx(conn, TransactionBehavior::Deferred, |transaction| {
+        import_inner(transaction, bundle)
+    })
 }
 
 /// Add any missing directories (matched by path), and refresh pinned/note
@@ -103,6 +164,58 @@ mod tests {
     use crate::db::connection;
     use crate::models::app_setting::CloseBehavior;
 
+    #[test]
+    fn import_that_only_adds_projects_keeps_every_content_window_grant() {
+        use crate::services::content_window_grants::{
+            test_support::RecordingReclaimer, ContentWindowFileGrant, ContentWindowGrantRegistry,
+            ContentWindowRevoker, RevocationReason,
+        };
+        let conn = seeded_db();
+        let path = absolute_test_path("demo");
+        let demo = directory_repo::add(&conn, "demo", &path, None).unwrap();
+        let mut bundle = export(&conn).unwrap();
+        bundle.directories[0].note = Some("changed".to_string());
+        bundle.directories.push(ExportedDirectory {
+            name: "extra".to_string(),
+            path: absolute_test_path("extra"),
+            pinned: false,
+            note: None,
+        });
+        import(&conn, &bundle).unwrap();
+        let db = Db::new(conn);
+        let grants = ContentWindowGrantRegistry::default();
+        grants
+            .grant(
+                &test_label("workspace-content-8e783338-f464-4b10-b15e-b534748c6241"),
+                ContentWindowFileGrant {
+                    directory_id: demo.id,
+                    directory_path: path.clone(),
+                    relative_path: "a.txt".to_string(),
+                },
+            )
+            .unwrap();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::ImportConfig);
+
+        let report = revoker.revoke_stale_for_database(&db).unwrap();
+
+        assert!(report.revoked.is_empty());
+        assert!(reclaimer.reclaimed().is_empty());
+        assert_eq!(grants.snapshot().unwrap().len(), 1);
+        // 反向基线：导入确实生效，测试不是空转。
+        let conn = db.lock_for_test();
+        assert_eq!(directory_repo::list(&conn).unwrap().len(), 2);
+        assert_eq!(
+            directory_repo::get(&conn, demo.id)
+                .unwrap()
+                .unwrap()
+                .note
+                .as_deref(),
+            Some("changed")
+        );
+    }
+
     fn seeded_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
@@ -119,6 +232,108 @@ mod tests {
         {
             format!("/cli-launchpad-tests/{name}")
         }
+    }
+
+    /// A storage root and a business database holding one directory.
+    fn import_scenario() -> (tempfile::TempDir, StoragePaths, Db, AppLifecycle) {
+        let root = tempfile::tempdir().unwrap();
+        let storage = StoragePaths::from_root(root.path().join(".cli-launchpad"));
+        storage.create_directories().unwrap();
+        let connection = connection::init_database(&storage.database_path).unwrap();
+        directory_repo::add(
+            &connection,
+            "existing",
+            &absolute_test_path("existing"),
+            None,
+        )
+        .unwrap();
+        let lifecycle = AppLifecycle::with_counters(
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        );
+        (root, storage, Db::new(connection), lifecycle)
+    }
+
+    fn write_bundle(root: &tempfile::TempDir, directory_path: &str) -> String {
+        let source = seeded_db();
+        directory_repo::add(&source, "imported", directory_path, None).unwrap();
+        let path = root.path().join("bundle.json");
+        std::fs::write(&path, export_json(&source).unwrap()).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn import_advances_the_generation_and_discards_an_in_flight_index_refresh() {
+        use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+        let (root, storage, db, lifecycle) = import_scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let bundle = write_bundle(&root, &absolute_test_path("imported"));
+
+        let registry =
+            crate::services::content_window_grants::ContentWindowGrantRegistry::default();
+        let reclaimer =
+            crate::services::content_window_grants::test_support::RecordingReclaimer::default();
+        let revoker = crate::services::content_window_grants::ContentWindowRevoker::new(
+            &registry,
+            &reclaimer,
+            crate::services::content_window_grants::RevocationReason::ImportConfig,
+        );
+        import_with(&db, &storage, &lifecycle, &generation, &revoker, &bundle).unwrap();
+
+        assert_eq!(generation.current(), g0 + 1);
+        let cache = crate::CacheDb::new(
+            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
+        );
+        let connection = cache.lock_for_test();
+        let stale = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
+        assert!(matches!(stale, IndexWriteOutcome::Discarded));
+        // Reverse: a refresh that starts after the import carries the new generation.
+        let fresh =
+            write_search_index_if_current(&connection, &generation, generation.current(), 1, &[])
+                .unwrap();
+        assert!(matches!(fresh, IndexWriteOutcome::Written(_)));
+    }
+
+    #[test]
+    fn a_failed_import_keeps_the_generation_and_an_in_flight_refresh_valid() {
+        use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+        let (root, storage, db, lifecycle) = import_scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        // A relative directory identity makes the import fail and roll back.
+        let bundle = write_bundle(&root, "relative/path");
+
+        let registry =
+            crate::services::content_window_grants::ContentWindowGrantRegistry::default();
+        let reclaimer =
+            crate::services::content_window_grants::test_support::RecordingReclaimer::default();
+        let revoker = crate::services::content_window_grants::ContentWindowRevoker::new(
+            &registry,
+            &reclaimer,
+            crate::services::content_window_grants::RevocationReason::ImportConfig,
+        );
+        let error = import_with(&db, &storage, &lifecycle, &generation, &revoker, &bundle)
+            .expect_err("a relative directory identity must be rejected");
+
+        // The pre-import backup was taken, so the failure came from the import itself.
+        assert_eq!(backup_service::list(&storage).unwrap().len(), 1, "{error}");
+        // Rolled back: the database still holds only the directory it started with.
+        let names: Vec<String> = directory_repo::list(&db.lock_for_test())
+            .unwrap()
+            .into_iter()
+            .map(|directory| directory.name)
+            .collect();
+        assert_eq!(names, vec!["existing".to_string()]);
+        assert_eq!(generation.current(), g0);
+        let cache = crate::CacheDb::new(
+            crate::db::cache_connection::init_cache(&root.path().join("cache.db")).unwrap(),
+        );
+        let connection = cache.lock_for_test();
+        let outcome = write_search_index_if_current(&connection, &generation, g0, 1, &[]).unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
     }
 
     #[test]
@@ -215,7 +430,7 @@ mod tests {
         let json = r#"{"version":2,"directories":[],"tools":[],"shellProfiles":[{"name":"bad","terminalExe":"evil.exe","shellExe":"evil.exe","shellArgs":"-Command bad","initScript":"Start-Process calc","isDefault":true,"kind":"cmd"}]}"#;
         import_json(&db, json).unwrap();
         let exported = export_json(&db).unwrap();
-        assert!(exported.contains("\"shellProfiles\": []"));
+        assert!(!exported.contains("shellProfiles"));
     }
 
     #[test]
@@ -238,15 +453,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_parameter_fields_are_ignored_without_deleting_saved_values() {
+    fn legacy_parameter_fields_in_old_bundles_are_ignored() {
         let db = seeded_db();
         let path = absolute_test_path("legacy");
-        let directory = directory_repo::add(&db, "legacy", &path, None).unwrap();
-        db.execute(
-            "insert into directory_tool_args (directory_id, tool_key, args) values (?1, 'claude', ?2)",
-            rusqlite::params![directory.id, "--existing-project"],
-        )
-        .unwrap();
+        directory_repo::add(&db, "legacy", &path, None).unwrap();
 
         let legacy = format!(
             r#"{{"version":3,"directories":[{{"name":"renamed","path":"{}","pinned":false,"note":null,"toolArgs":[{{"toolKey":"claude","args":"--ignored-project"}}]}}],"tools":[{{"key":"codex","globalArgs":"--ignored-global"}}],"shellProfiles":[]}}"#,
@@ -254,16 +464,102 @@ mod tests {
         );
         import_json(&db, &legacy).unwrap();
 
-        let project_args: String = db
+        // The import matches the existing project by path and does not add a second one.
+        let projects: i64 = db
             .query_row(
-                "select args from directory_tool_args where directory_id = ?1 and tool_key = 'claude'",
-                [directory.id],
+                "select count(*) from directories where path = ?1",
+                [&path],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(project_args, "--existing-project");
+        assert_eq!(projects, 1);
         let exported = export_json(&db).unwrap();
         assert!(!exported.contains("--ignored-global"));
-        assert!(!exported.contains("--existing-project"));
+        assert!(!exported.contains("--ignored-project"));
+        // Reverse: the legacy table is not recreated by the import.
+        let legacy_tables: i64 = db
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tables, 0);
+    }
+
+    #[test]
+    fn version_one_to_three_bundles_with_legacy_fields_remain_importable() {
+        let db = seeded_db();
+        let v1 = serde_json::json!({ "version": 1, "directories": [], "tools": [] }).to_string();
+        let v2 = serde_json::json!({
+            "version": 2,
+            "directories": [],
+            "tools": [],
+            "shellProfiles": [{
+                "name": "old",
+                "terminalExe": "wt.exe",
+                "shellExe": "pwsh.exe",
+                "shellArgs": "-NoLogo",
+                "initScript": "",
+                "isDefault": true,
+                "kind": "wt-pwsh"
+            }]
+        })
+        .to_string();
+        let v3 = serde_json::json!({
+            "version": 3,
+            "directories": [{
+                "name": "d",
+                "path": absolute_test_path("legacy-v3"),
+                "pinned": false,
+                "note": null,
+                "toolArgs": [{ "toolKey": "claude", "args": "--ignored" }]
+            }],
+            "tools": [{ "key": "codex", "globalArgs": "--ignored-global" }],
+            "shellProfiles": []
+        })
+        .to_string();
+        for json in [&v1, &v2, &v3] {
+            import_json(&db, json).unwrap();
+        }
+        assert!(crate::db::directory_repo::list(&db)
+            .unwrap()
+            .iter()
+            .any(|directory| directory.name == "d"));
+        let exported = export_json(&db).unwrap();
+        assert!(!exported.contains("--ignored"));
+        assert!(!exported.contains("--ignored-global"));
+        // Reverse: the import neither recreates nor writes the legacy table.
+        let legacy_tables: i64 = db
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_tables, 0);
+    }
+
+    #[test]
+    fn exported_bundles_do_not_contain_shell_profiles() {
+        let db = seeded_db();
+        db.execute(
+            "insert into directories (id, name, path) values (50, 'Exported', ?1)",
+            [absolute_test_path("exported")],
+        )
+        .unwrap();
+        let exported = export_json(&db).unwrap();
+        assert!(!exported.contains("shellProfiles"));
+        let value: serde_json::Value = serde_json::from_str(&exported).unwrap();
+        let object = value.as_object().expect("bundle is an object");
+        for key in object.keys() {
+            assert!(
+                ["closeBehavior", "directories", "version"].contains(&key.as_str()),
+                "unexpected key {key}"
+            );
+        }
+        assert_eq!(value["version"], 4);
+        // Reverse: the exported bundle imports back.
+        import_json(&db, &exported).unwrap();
     }
 }

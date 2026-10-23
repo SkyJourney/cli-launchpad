@@ -1,0 +1,24 @@
+{
+  "accept": {
+    "main": ["main"],
+    "terminal": [
+      "terminal-8e783338-f464-4b10-b15e-b534748c6241",
+      "terminal-8E783338-F464-4B10-B15E-B534748C6241"
+    ],
+    "workspaceContent": [
+      "workspace-content-11111111-2222-4333-8444-555555555555"
+    ]
+  },
+  "reject": [
+    "Main",
+    "terminal-",
+    "terminal-invalid!",
+    "terminal-8e783338f4644b10b15eb534748c6241",
+    "terminal-8e783338-f464-0b10-b15e-b534748c6241",
+    "terminal-8e783338-f464-4b10-c15e-b534748c6241",
+    "terminal-8e783338-f464-4b10-b15e-b534748c6241 ",
+    "terminal-{8e783338-f464-4b10-b15e-b534748c6241}",
+    "settings",
+    "workspace-content-"
+  ]
+}

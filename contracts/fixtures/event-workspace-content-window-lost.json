@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "name": "lost",
+      "value": {
+        "windowLabel": "workspace-content-8e783338-f464-4b10-b15e-b534748c6241"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "WorkspaceContentWindowLostPayload"
+}

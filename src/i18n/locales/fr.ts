@@ -6,8 +6,31 @@ type LocaleShape<T> = {
 
 export const fr = {
   errors: {
+    exitReportInvalid:
+      "Les informations de confirmation de fermeture sont invalides. Réessayez de quitter.",
+    exitImpactsNotReported:
+      "L’application n’a pas encore déterminé ce que la fermeture va affecter. Réessayez de quitter.",
+    exitImpactsChanged:
+      "Ce que la fermeture va affecter a changé (de nouvelles tâches ont démarré). Confirmez à nouveau.",
     fileNotFound: "Fichier introuvable.",
     fileTooLarge: "Le fichier dépasse la taille autorisée.",
+    ptySessionNotFound: "La session de terminal n’existe pas ou est terminée.",
+    ptyHandoffInProgress:
+      "Ce terminal est en cours de déplacement vers une autre fenêtre. Réessayez dans un instant.",
+    fileNotUtf8:
+      "Seuls les fichiers texte UTF-8 peuvent être modifiés et enregistrés.",
+    fileNotRegular:
+      "Seuls les fichiers ordinaires peuvent être ouverts ou enregistrés.",
+    layoutNameExists:
+      "Une disposition portant ce nom existe déjà. Utilisez un autre nom.",
+    layoutPresetLimit:
+      "{{max}} dispositions nommées au maximum sont prises en charge.",
+    filePermissionDenied:
+      "Autorisation refusée. Vérifiez les autorisations du fichier ou du dossier.",
+    backupIndexRefreshDiscarded:
+      "Les données ont été remplacées (restauration d’une sauvegarde ou importation d’une configuration) ; l’actualisation de l’index des sessions lancée avant ce remplacement a été abandonnée.",
+    projectIdentityUnreadable:
+      "Impossible de lire l’identité du dossier du projet.",
     fileConflict:
       "Le fichier sur le disque a changé. Rechargez-le avant de l’enregistrer.",
     fileIdentityChanged:
@@ -15,21 +38,47 @@ export const fr = {
     ptyOwnerMismatch:
       "Cette session de terminal n’appartient plus à cette fenêtre.",
     ptyHandoffExpired: "Le transfert du terminal a expiré. Réessayez.",
+    ptyHandoffTargetIsSource:
+      "La fenêtre cible est la fenêtre source ; le terminal ne peut pas être transféré.",
     ptyInputBackpressure:
       "La file d’entrée du terminal est pleine. Réessayez dans un instant.",
     ptyInputUnavailable:
       "Le canal d’entrée du terminal est fermé. Reconnectez la session.",
     ptySessionsActive:
-      "{{count}} session(s) de terminal sont encore actives. Fermez-les avant de restaurer une sauvegarde.",
+      "La restauration d’une sauvegarde ou l’importation d’une configuration est impossible tant qu’il reste {{count}} session(s) de terminal en cours. Fermez-les d’abord.",
     backupRestoreInProgress:
       "Une restauration de sauvegarde est en cours. Réessayez lorsqu’elle sera terminée.",
     ptySessionStarting:
-      "{{count}} session(s) de terminal démarrent. Réessayez la restauration dans un instant.",
+      "Il reste {{count}} session(s) de terminal ou tâche(s) d’exécution en cours de démarrage. Réessayez dans un instant.",
     execPlanChanged:
       "Le plan d’exécution a changé. Vérifiez-le et confirmez-le à nouveau.",
     execBusy: "Une tâche est déjà en cours pour cet outil.",
+    exitNoPendingRequest:
+      "Aucune demande de fermeture en attente. Réessayez de quitter.",
+    exitRequestMismatch:
+      "Cette demande de fermeture n’est plus valide. Réessayez de quitter.",
     layoutNeedsReset:
       "La disposition de l’espace de travail est invalide et doit être réinitialisée.",
+    layoutCaseDuplicate:
+      "La disposition comporte des documents en double dont les chemins ne diffèrent que par la casse.",
+    internal:
+      "Une erreur interne s’est produite. Réessayez et redémarrez l’application si le problème persiste.",
+    appExiting:
+      "L’application est en cours de fermeture. Réessayez après son redémarrage.",
+    appExitDeferred:
+      "Une restauration ou une importation est encore en cours ; l’application ne peut pas encore se fermer.",
+    dataReplaceBlocked:
+      "Il reste {{count}} tâche(s) d’installation ou de mise à jour en cours. Attendez leur fin avant de restaurer ou d’importer.",
+    dataReplaceInProgress:
+      "Une autre restauration ou importation est déjà en cours.",
+    configImportInProgress:
+      "Une importation de configuration est en cours. Réessayez une fois l’importation terminée.",
+    projectNotFound: "Le dossier du projet est introuvable.",
+    layoutSaveRejected:
+      "La disposition de l’espace de travail a été rejetée à plusieurs reprises ; l’enregistrement a donc été arrêté.",
+    layoutSchemaIncompatible:
+      "La disposition de l’espace de travail a été écrite par une version plus récente de l’application et ne peut pas être enregistrée par cette version.",
+    appError: "Une erreur inattendue s’est produite. Réessayez.",
     generic: "L’opération a échoué.",
     directoryInUse: "Une session de terminal est encore active pour ce projet.",
   },
@@ -97,14 +146,29 @@ export const fr = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Tout enregistrer et quitter",
     title: "Quitter CLI Launchpad ?",
     description:
       "{{count}} session(s) de terminal intégrées sont toujours en cours. Quitter mettra fin à ces sessions et à leurs processus enfants.",
-    confirm: "Terminer les sessions et quitter",
+    executionTasks:
+      "Il reste {{count}} tâche(s) d’installation ou de mise à jour en cours. Quitter les interrompra.",
     unsavedDescription:
       "{{count}} fichier(s) contiennent des modifications non enregistrées :",
     confirmDiscard: "Abandonner les modifications et quitter",
     terminating: "Fermeture en cours…",
+  },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad ne s’est pas fermé normalement la dernière fois. Les modifications non enregistrées ont peut-être été perdues.",
+    abnormalExitWithTime:
+      "CLI Launchpad ne s’est pas fermé normalement la dernière fois (démarré {{time}}). Les modifications non enregistrées ont peut-être été perdues.",
+    dismiss: "Fermer",
+  },
+  appCrash: {
+    title: "Une erreur inattendue s’est produite",
+    description:
+      "CLI Launchpad a rencontré une erreur inattendue dans cette fenêtre. Le rechargement redémarre la fenêtre ; les modifications non enregistrées peuvent être perdues.",
+    reload: "Recharger la fenêtre",
   },
   windowChrome: {
     titlebar: "Barre de titre de la fenêtre de l’application",
@@ -197,6 +261,9 @@ export const fr = {
     returningToWorkspace: "Retour à l’espace de travail…",
     returnFailed: "Impossible de revenir à l’espace de travail : {{error}}",
     returnTimedOut: "L’espace de travail principal n’a pas répondu à temps.",
+    returnUnknownError: "Erreur inconnue",
+    returnExpired: "La demande de retour a expiré.",
+    returnRequestFailed: "La demande de retour a échoué.",
     detachedDefaultTitle: "Terminal CLI",
     detachedMoveUnavailable:
       "Ce terminal ne peut pas être déplacé dans une fenêtre séparée.",
@@ -207,6 +274,10 @@ export const fr = {
     detachedCreateFailed: "Impossible de créer la fenêtre de terminal séparée.",
     detachedStartFailed:
       "Impossible de démarrer la fenêtre de terminal séparée.",
+    listenerSetupFailed:
+      "Certains canaux de communication entre fenêtres n’ont pas pu être enregistrés ({{events}}). Les fenêtres séparées risquent de ne pas répondre ; redémarrez l’application si le problème persiste.",
+    ownerLostRecoveryFailed:
+      "Impossible de reconnecter la session de terminal après la fermeture de sa fenêtre. Fermez ce terminal et relancez-le.",
     detachedStateChanged:
       "L’état de la fenêtre séparée a changé. Veuillez réessayer.",
     detachedSessionMissing:
@@ -380,13 +451,13 @@ export const fr = {
     latest: "Dernière : ",
     unavailableWithError: "Indisponible ({{error}})",
     unknownRefresh: "Inconnu ; relancez la détection en haut à droite",
-    hermesRefreshPrompt:
-      "Actualisez manuellement pour vérifier la branche main",
-    hermesUpToDate: "À jour avec main",
-    hermesUpdateBehind: "{{count}} commits de retard sur main",
-    hermesUpdateBehindUnknown:
-      "Mises à jour sur main (nombre de commits indisponible)",
-    hermesUpdateStatus: "État de la mise à jour : ",
+    branchRefreshPrompt:
+      "Actualisez manuellement pour vérifier la branche amont",
+    branchUpToDate: "À jour avec la branche amont",
+    branchUpdateBehind: "{{count}} commit(s) de retard sur la branche amont",
+    branchUpdateBehindUnknown:
+      "Mises à jour sur la branche amont (nombre de commits indisponible)",
+    branchUpdateStatus: "État de la mise à jour : ",
     hermesInstallEffectsHeading: "Le programme d’installation officiel va :",
     hermesInstallEffectRuntime:
       "Installer Hermes CLI, ses environnements Python/Node gérés et les dépendances pour l’utilisateur actuel.",
@@ -533,6 +604,8 @@ export const fr = {
       pre_import: "Sauvegarde automatique avant importation",
       pre_restore: "Sauvegarde de protection avant restauration",
       pre_migration: "Sauvegarde automatique avant mise à niveau",
+      pre_case_merge:
+        "Sauvegarde automatique avant la fusion de documents ne différant que par la casse",
     },
     preservation: {
       exact: "Conservé intégralement",
@@ -635,6 +708,16 @@ export const fr = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Tout enregistrer et fermer",
+    discardAndClose: "Abandonner les modifications et fermer",
+    saveAllInProgress: "Enregistrement…",
+    saveAllFailedQuit:
+      "Échec de l’enregistrement de {{count}} fichier(s) ; fermeture de l’application annulée",
+    saveAllFailedClose:
+      "Échec de l’enregistrement de {{count}} fichier(s) ; fermeture annulée",
+    confirmCloseTitle: "Confirmer la fermeture",
+    caseVariantsMerged:
+      "{{count}} document(s) fusionné(s) dont les chemins ne différaient que par la casse.",
     rightPanelTabs: "Onglets du panneau droit",
     files: "Fichiers",
     git: "Git",

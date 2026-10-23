@@ -3646,6 +3646,26 @@ h1 {
   margin-top: 4px;
 }
 
+.startup-notice {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  bottom: 16px;
+  box-shadow: 0 8px 28px var(--color-dialog-shadow);
+  display: flex;
+  gap: 12px;
+  inset-inline-end: 16px;
+  max-width: 420px;
+  padding: 10px 14px;
+  position: fixed;
+  z-index: 900;
+}
+
+.startup-notice p {
+  margin: 0;
+}
+
 .project-dialog-backdrop {
   align-items: center;
   background: var(--color-dialog-backdrop);
@@ -4560,4 +4580,36 @@ h1 {
     grid-column: 2;
     justify-content: flex-start;
   }
+}
+
+.app-crash-shell {
+  background: var(--color-canvas);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-crash {
+  align-items: center;
+  background: var(--color-canvas);
+  color: var(--text-body-color);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px;
+  text-align: center;
+}
+
+.app-crash h1 {
+  font-size: var(--font-size-body);
+  margin: 0;
+}
+
+.app-crash p {
+  color: var(--text-secondary-color);
+  margin: 0;
+  max-width: 480px;
 }

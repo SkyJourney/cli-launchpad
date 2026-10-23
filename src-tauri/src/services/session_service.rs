@@ -1,87 +1,28 @@
+use crate::error_codes::ErrorCode;
+use crate::platform::home::home_dir;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-use std::time::{Duration, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
-use serde_json::Value;
 
 use crate::db::directory_repo;
 use crate::models::session::{
-    SessionInfo, SessionPage, SessionSearchIndexDocument, SessionSearchIndexSource,
-    SessionSearchResults,
+    SessionPage, SessionSearchIndexRefresh, SessionSearchIndexSource, SessionSearchResults,
 };
 use crate::models::tool::ToolKey;
-use crate::platform::path_identity;
+use crate::services::cli_adapters::support::TITLE_MAX_CHARS;
+use crate::services::cli_adapters::CliAdapter;
+use crate::AppError;
 
-pub(crate) const TITLE_MAX_CHARS: usize = 100;
 const MAX_PAGE_SIZE: usize = 50;
-const OFFSET_CURSOR_PREFIX: &str = "offset:";
 const MAX_SEARCH_QUERY_CHARS: usize = 200;
 const SEARCH_INDEX_ADAPTER_BUDGET: Duration = Duration::from_secs(10);
-const MAX_CONCURRENT_SEARCH_INDEX_SCANS: usize = 2;
-static SEARCH_INDEX_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-pub(crate) const MAX_SEARCH_FIELD_CHARS: usize = 4_000;
-pub(crate) const MAX_SEARCH_SESSIONS_PER_TOOL: usize = 5_000;
-pub(crate) const MAX_SEARCH_DIRECTORY_ENTRIES: usize = 20_000;
-pub(crate) const MAX_SEARCH_METADATA_LINE_BYTES: u64 = 64 * 1024;
-pub(crate) const MAX_SEARCH_PREVIEW_BYTES_PER_SESSION: u64 = 64 * 1024;
-pub(crate) const MAX_CLAUDE_PREVIEW_SCAN_BYTES: u64 = 64 * 1024 * 1024;
-
-pub(crate) async fn acquire_search_index_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
-    SEARCH_INDEX_SEMAPHORE
-        .get_or_init(|| {
-            Arc::new(tokio::sync::Semaphore::new(
-                MAX_CONCURRENT_SEARCH_INDEX_SCANS,
-            ))
-        })
-        .clone()
-        .acquire_owned()
-        .await
-        .ok()
-}
-
-pub(crate) async fn spawn_search_index_blocking<T, F>(operation: F) -> Result<T>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T> + Send + 'static,
-{
-    let permit = acquire_search_index_permit()
-        .await
-        .ok_or_else(|| anyhow!("会话搜索索引并发限流器不可用"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let _permit = permit;
-        operation()
-    })
-    .await
-    .map_err(|error| anyhow!("会话搜索索引阻塞任务异常：{error}"))?
-}
-
-#[cfg(test)]
-use crate::services::cli_adapters::claude::history::{
-    claude_slug, index_titles as claude_index_titles, message_text,
-    search_documents_in as search_claude_documents_in,
-};
-
-#[cfg(test)]
-use crate::services::cli_adapters::codex::history::{
-    codex_search_document, decode_codex_cursor, encode_codex_cursor, parse_codex_rollout_metadata,
-    parse_codex_rollout_search, uuid_from_filename,
-};
-
-#[cfg(test)]
-use crate::services::cli_adapters::antigravity::history::{
-    search_antigravity_rows, workspace_matches,
-};
-
-#[cfg(test)]
-use crate::services::cli_adapters::grok::history::{
-    encode_grok_cwd_group, grok_search_document_from_summary, grok_session_belongs_in,
-    list_grok_sessions_in, search_grok_documents_in, MAX_GROK_SUMMARY_BYTES,
-};
+const LIST_SESSIONS_BUDGET: Duration = Duration::from_secs(30);
+const SESSION_OWNERSHIP_BUDGET: Duration = Duration::from_secs(30);
 
 /// Resolve a directory id to its filesystem path (the input to session reading).
 pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
@@ -90,67 +31,157 @@ pub fn directory_path(conn: &Connection, directory_id: i64) -> Result<String> {
         .ok_or_else(|| anyhow!("directory {directory_id} not found"))
 }
 
+/// Bumped once per backup restore, while the business database lock is held,
+/// after the database file content has been replaced.
+#[derive(Clone, Debug, Default)]
+pub struct RestoreGeneration(Arc<AtomicU64>);
+
+impl RestoreGeneration {
+    pub fn current(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Returns the new generation.
+    pub fn advance(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+}
+
+#[derive(Debug)]
+pub enum IndexWriteOutcome {
+    Written(SessionSearchIndexRefresh),
+    Discarded,
+}
+
+impl IndexWriteOutcome {
+    pub fn into_result(self) -> Result<SessionSearchIndexRefresh, AppError> {
+        match self {
+            IndexWriteOutcome::Written(refresh) => Ok(refresh),
+            IndexWriteOutcome::Discarded => Err(AppError::coded(
+                ErrorCode::BackupIndexRefreshDiscarded,
+                "数据已替换（恢复备份或导入配置），已丢弃替换前开始的会话索引刷新",
+            )),
+        }
+    }
+}
+
+/// The caller must hold the cache connection lock for the whole call, so that the
+/// comparison and the write cannot interleave with the restore's cache cleanup.
+pub fn write_search_index_if_current(
+    connection: &Connection,
+    generation: &RestoreGeneration,
+    expected: u64,
+    directory_id: i64,
+    sources: &[SessionSearchIndexSource],
+) -> Result<IndexWriteOutcome> {
+    if generation.current() != expected {
+        return Ok(IndexWriteOutcome::Discarded);
+    }
+    let refresh = crate::db::session_search_repo::refresh(connection, directory_id, sources)?;
+    Ok(IndexWriteOutcome::Written(refresh))
+}
+
 pub async fn list_sessions(
     tool_key: ToolKey,
     directory_path: &str,
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<SessionPage> {
-    let limit = limit.clamp(1, MAX_PAGE_SIZE);
-    let adapter = crate::services::cli_adapters::get(tool_key);
-    let directory_path = directory_path.to_string();
-    let cursor = cursor.map(str::to_string);
-    let context = crate::services::cli_adapters::context_for_tool(
-        tool_key,
-        std::time::Duration::from_secs(30),
-    )?;
-    let budget = context.budget;
-    tokio::spawn(async move {
-        tokio::time::timeout(
-            budget,
-            adapter.list_sessions(directory_path, cursor, limit, context),
-        )
-        .await
-        .map_err(|_| anyhow!("{} 会话读取超时", tool_key.as_str()))?
-    })
+    list_sessions_with(
+        crate::services::cli_adapters::get(tool_key),
+        directory_path.to_string(),
+        cursor.map(str::to_string),
+        limit,
+        Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+        home_dir()?,
+        LIST_SESSIONS_BUDGET,
+    )
     .await
-    .map_err(|error| anyhow!("{} 会话适配器异常：{error}", tool_key.as_str()))?
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SearchDocument {
-    pub(crate) session: SessionInfo,
-    pub(crate) fields: Vec<String>,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct SearchSource {
-    pub(crate) documents: Vec<SearchDocument>,
-    pub(crate) incomplete: bool,
+/// Every adapter reported as incomplete with no documents, in product order. Used when the
+/// refresh cannot run at all (for example the user directory is unknown).
+fn incomplete_sources(adapters: &[&'static dyn CliAdapter]) -> Vec<SessionSearchIndexSource> {
+    let mut sources: Vec<_> = adapters
+        .iter()
+        .map(|adapter| SessionSearchIndexSource {
+            tool_key: adapter.tool_key(),
+            documents: None,
+            incomplete: true,
+        })
+        .collect();
+    sources.sort_by_key(|source| {
+        ToolKey::ALL
+            .iter()
+            .position(|tool_key| *tool_key == source.tool_key)
+            .unwrap_or(usize::MAX)
+    });
+    sources
 }
 
 pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSearchIndexSource>> {
+    let adapters: Vec<&'static dyn CliAdapter> = crate::services::cli_adapters::all().collect();
+    match home_dir() {
+        Ok(home) => Ok(refresh_search_index_with(
+            directory_path,
+            adapters,
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            home,
+            SEARCH_INDEX_ADAPTER_BUDGET,
+        )
+        .await),
+        Err(error) => {
+            log::warn!("会话索引刷新无法确定用户目录，所有来源降级为不完整：{error}");
+            Ok(incomplete_sources(&adapters))
+        }
+    }
+}
+
+async fn refresh_search_index_with(
+    directory_path: &str,
+    adapters: Vec<&'static dyn CliAdapter>,
+    resolver: Arc<dyn crate::services::cli_adapters::ExecutableResolver>,
+    home: PathBuf,
+    budget: Duration,
+) -> Vec<SessionSearchIndexSource> {
     let mut tasks = tokio::task::JoinSet::new();
     let mut task_tools = HashMap::new();
-    for adapter in crate::services::cli_adapters::all() {
+    // A tool whose context cannot be built keeps its last usable index; it must not
+    // fail the refresh for the other tools.
+    let mut sources = Vec::with_capacity(ToolKey::ALL.len());
+    for adapter in adapters {
         let tool_key = adapter.tool_key();
         let path = directory_path.to_string();
-        let context =
-            crate::services::cli_adapters::context_for_tool(tool_key, SEARCH_INDEX_ADAPTER_BUDGET)?;
-        let budget = context.budget;
+        let home = home.clone();
+        let resolver = resolver.clone();
         let task = tasks.spawn(async move {
-            let source = bounded_search_index_source(
-                tool_key,
-                adapter.search_index_source(path, context),
-                budget,
+            let (context, remaining) = crate::services::cli_adapters::context_within_budget(
+                adapter, budget, home, resolver,
             )
             .await;
+            let source = if remaining.is_zero() {
+                log::warn!(
+                    "{} 会话索引解析可执行文件超过预算，保留上次可用索引",
+                    tool_key.as_str()
+                );
+                SessionSearchIndexSource {
+                    tool_key,
+                    documents: None,
+                    incomplete: true,
+                }
+            } else {
+                bounded_search_index_source(
+                    tool_key,
+                    adapter.search_index_source(path, context),
+                    remaining,
+                )
+                .await
+            };
             (tool_key, source)
         });
         task_tools.insert(task.id(), tool_key);
     }
 
-    let mut sources = Vec::with_capacity(ToolKey::ALL.len());
     while let Some(result) = tasks.join_next_with_id().await {
         match result {
             Ok((id, (expected_tool, source))) => {
@@ -191,7 +222,7 @@ pub async fn refresh_search_index(directory_path: &str) -> Result<Vec<SessionSea
             .position(|tool_key| *tool_key == source.tool_key)
             .unwrap_or(usize::MAX)
     });
-    Ok(sources)
+    sources
 }
 
 async fn bounded_search_index_source<F>(
@@ -200,9 +231,11 @@ async fn bounded_search_index_source<F>(
     budget: Duration,
 ) -> SessionSearchIndexSource
 where
-    F: std::future::Future<Output = SessionSearchIndexSource>,
+    F: std::future::Future<Output = SessionSearchIndexSource> + Send + 'static,
 {
-    match tokio::time::timeout(budget, source_future).await {
+    match crate::services::cli_runtime::run_future(tool_key, "会话索引扫描", budget, source_future)
+        .await
+    {
         Ok(source) if source.tool_key == tool_key => source,
         Ok(source) => {
             log::warn!(
@@ -216,11 +249,8 @@ where
                 incomplete: true,
             }
         }
-        Err(_) => {
-            log::warn!(
-                "{} 会话索引扫描超过预算，保留上次可用索引",
-                tool_key.as_str()
-            );
+        Err(error) => {
+            log::warn!("{error}，保留上次可用索引");
             SessionSearchIndexSource {
                 tool_key,
                 documents: None,
@@ -238,39 +268,6 @@ pub fn search_indexed_sessions(
 ) -> Result<SessionSearchResults> {
     let query = normalize_search_query(query)?;
     crate::db::session_search_repo::search(connection, directory_id, &query, aliases)
-}
-
-pub(crate) fn index_source(
-    tool_key: ToolKey,
-    source: Result<SearchSource>,
-) -> SessionSearchIndexSource {
-    match source {
-        Ok(source) => SessionSearchIndexSource {
-            tool_key,
-            documents: Some(
-                source
-                    .documents
-                    .into_iter()
-                    .map(|document| SessionSearchIndexDocument {
-                        tool_key: document.session.tool_key,
-                        session_id: document.session.session_id,
-                        title: document.session.title,
-                        last_active_ms: document.session.last_active_ms,
-                        fields: document.fields,
-                    })
-                    .collect(),
-            ),
-            incomplete: source.incomplete,
-        },
-        Err(_error) => {
-            log::warn!("{} 会话搜索索引刷新失败", tool_key.as_str());
-            SessionSearchIndexSource {
-                tool_key,
-                documents: None,
-                incomplete: true,
-            }
-        }
-    }
 }
 
 fn normalize_search_query(query: &str) -> Result<String> {
@@ -303,6 +300,47 @@ pub fn normalize_alias(alias: &str) -> Result<String> {
     Ok(alias.to_string())
 }
 
+pub(crate) async fn list_sessions_with(
+    adapter: &'static dyn CliAdapter,
+    directory_path: String,
+    cursor: Option<String>,
+    limit: usize,
+    resolver: Arc<dyn crate::services::cli_adapters::ExecutableResolver>,
+    home: PathBuf,
+    budget: Duration,
+) -> Result<SessionPage> {
+    let limit = limit.clamp(1, MAX_PAGE_SIZE);
+    let tool_key = adapter.tool_key();
+    let (context, remaining) =
+        crate::services::cli_adapters::context_within_budget(adapter, budget, home, resolver).await;
+    if remaining.is_zero() {
+        return Err(anyhow::Error::new(
+            crate::services::cli_runtime::CliRuntimeError::TimedOut {
+                tool_key,
+                operation: "会话读取",
+            },
+        ));
+    }
+    crate::services::cli_runtime::run_with(adapter, "会话读取", remaining, move |adapter| {
+        adapter.list_sessions(directory_path, cursor, limit, context)
+    })
+    .await
+    .map_err(anyhow::Error::from)?
+}
+
+pub(crate) async fn session_belongs_to_directory_with(
+    adapter: &'static dyn CliAdapter,
+    directory_path: String,
+    session_id: String,
+    budget: Duration,
+) -> Result<bool> {
+    crate::services::cli_runtime::run_with(adapter, "会话归属验证", budget, move |adapter| {
+        adapter.session_belongs_to_directory(directory_path, session_id)
+    })
+    .await
+    .map_err(anyhow::Error::from)?
+}
+
 pub async fn session_belongs_to_directory(
     tool_key: ToolKey,
     directory_path: &str,
@@ -311,175 +349,51 @@ pub async fn session_belongs_to_directory(
     if !crate::services::cli_adapters::valid_session_id(tool_key, session_id) {
         return Ok(false);
     }
-    let adapter = crate::services::cli_adapters::get(tool_key);
-    let directory_path = directory_path.to_string();
-    let session_id = session_id.to_string();
-    tokio::spawn(async move {
-        adapter
-            .session_belongs_to_directory(directory_path, session_id)
-            .await
-    })
+    session_belongs_to_directory_with(
+        crate::services::cli_adapters::get(tool_key),
+        directory_path.to_string(),
+        session_id.to_string(),
+        SESSION_OWNERSHIP_BUDGET,
+    )
     .await
-    .map_err(|error| anyhow!("{} 会话归属验证适配器异常：{error}", tool_key.as_str()))?
-}
-
-pub(crate) fn home_dir() -> Result<PathBuf> {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .map_err(|_| anyhow!("无法确定用户主目录，不能读取会话历史"))
-}
-
-pub(crate) fn read_search_metadata_file(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !metadata.file_type().is_file() || metadata.len() > max_bytes {
-        return Err(anyhow!("会话 metadata 文件类型或大小超出安全范围"));
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    File::open(path)?
-        .take(max_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(anyhow!("会话 metadata 文件大小超出安全范围"));
-    }
-    Ok(Some(bytes))
-}
-
-pub(crate) fn page_local(
-    mut sessions: Vec<SessionInfo>,
-    cursor: Option<&str>,
-    limit: usize,
-) -> Result<SessionPage> {
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.last_active_ms));
-    let offset = parse_offset_cursor(cursor)?;
-    let total = sessions.len();
-    let items: Vec<_> = sessions.into_iter().skip(offset).take(limit).collect();
-    let consumed = offset.saturating_add(items.len());
-    let next_cursor = (consumed < total).then(|| format!("{OFFSET_CURSOR_PREFIX}{consumed}"));
-    Ok(SessionPage { items, next_cursor })
-}
-
-fn parse_offset_cursor(cursor: Option<&str>) -> Result<usize> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-    cursor
-        .strip_prefix(OFFSET_CURSOR_PREFIX)
-        .ok_or_else(|| anyhow!("无效的会话分页游标"))?
-        .parse::<usize>()
-        .map_err(|_| anyhow!("无效的会话分页游标"))
-}
-
-pub(crate) fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let high = hex_value(*bytes.get(index + 1)?)?;
-            let low = hex_value(*bytes.get(index + 2)?)?;
-            decoded.push(high * 16 + low);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(decoded).ok()
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-pub(crate) fn extract_text_content(content: &Value) -> Option<String> {
-    if let Some(text) = content.as_str() {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    if let Some(items) = content.as_array() {
-        for item in items {
-            if let Some(text) = item.get("text").and_then(Value::as_str) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
-pub(crate) fn safe_session_id(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('-')
-        && value.len() <= 200
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-pub(crate) fn paths_match(a: &str, b: &str) -> bool {
-    path_identity::paths_equal(a, b)
-}
-
-pub(crate) fn mtime_ms(path: &Path) -> Option<i64> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
-    i64::try_from(duration.as_millis()).ok()
-}
-
-pub(crate) fn epoch_to_ms(value: i64) -> i64 {
-    if value.unsigned_abs() < 100_000_000_000 {
-        value.saturating_mul(1_000)
-    } else {
-        value
-    }
-}
-
-pub(crate) fn non_empty_field(value: &Value, key: &str) -> Option<String> {
-    non_empty_string(value.get(key)?.as_str().map(str::to_string))
-}
-
-pub(crate) fn non_empty_string(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
-}
-
-pub(crate) fn truncate_chars(value: &str, max: usize) -> String {
-    let chars: Vec<char> = value.chars().collect();
-    if chars.len() <= max {
-        value.to_string()
-    } else {
-        let mut truncated: String = chars[..max].iter().collect();
-        truncated.push('…');
-        truncated
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::session::{SessionInfo, SessionSearchIndexDocument};
+    #[cfg(windows)]
+    use crate::services::cli_adapters::support::paths_match;
+    use crate::services::cli_adapters::support::{
+        is_canonical_uuid, page_local, safe_session_id, truncate_chars,
+    };
 
-    #[test]
-    fn slug_matches_known_example() {
-        assert_eq!(
-            claude_slug("C:\\Projects\\cli-launchpad"),
-            "C--Projects-cli-launchpad"
-        );
+    #[tokio::test]
+    async fn a_failing_adapter_context_does_not_fail_the_whole_refresh() {
+        // Every adapter's context fails, so no scan runs: each source must keep its
+        // last usable index and be marked incomplete, and the refresh itself succeeds.
+        let sources = refresh_search_index_with(
+            "C:/project",
+            crate::services::cli_adapters::all().collect(),
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            std::env::temp_dir(),
+            Duration::ZERO,
+        )
+        .await;
+
+        assert_eq!(sources.len(), ToolKey::ALL.len());
+        for source in &sources {
+            assert!(
+                source.documents.is_none(),
+                "{} must keep its last index",
+                source.tool_key.as_str()
+            );
+            assert!(
+                source.incomplete,
+                "{} must be marked incomplete",
+                source.tool_key.as_str()
+            );
+        }
     }
 
     #[test]
@@ -490,248 +404,6 @@ mod tests {
         );
         assert!(normalize_search_query(" \t ").is_err());
         assert!(normalize_search_query(&"字".repeat(MAX_SEARCH_QUERY_CHARS + 1)).is_err());
-    }
-
-    #[test]
-    fn claude_search_indexes_summary_and_first_prompt_but_not_jsonl_body() {
-        let directory = tempfile::tempdir().unwrap();
-        let session_id = "session-1";
-        fs::write(
-            directory.path().join(format!("{session_id}.jsonl")),
-            r#"{"type":"user","message":{"content":"private body phrase"}}"#,
-        )
-        .unwrap();
-        fs::write(
-            directory.path().join("sessions-index.json"),
-            r#"{"entries":[{"sessionId":"session-1","summary":"safe metadata title","firstPrompt":"private prompt phrase"},{"sessionId":"session-2","summary":"sidechain title","isSidechain":true}]}"#,
-        )
-        .unwrap();
-
-        let source = search_claude_documents_in(directory.path()).unwrap();
-
-        assert_eq!(source.documents.len(), 1);
-        assert_eq!(source.documents[0].session.title, "safe metadata title");
-        assert_eq!(
-            source.documents[0].fields,
-            vec!["safe metadata title", "private prompt phrase"]
-        );
-        assert!(!source.documents[0]
-            .fields
-            .iter()
-            .any(|field| field.contains("private body")));
-    }
-
-    #[test]
-    fn claude_search_uses_a_bounded_first_user_message_when_index_metadata_is_missing() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::write(
-            directory.path().join("session-fallback.jsonl"),
-            concat!(
-                "{\"type\":\"system\",\"message\":{\"content\":\"ignored\"}}\n",
-                "{\"type\":\"user\",\"message\":{\"content\":\"first user message title\"}}\n",
-                "{\"type\":\"assistant\",\"message\":{\"content\":\"later body text\"}}\n"
-            ),
-        )
-        .unwrap();
-
-        let source = search_claude_documents_in(directory.path()).unwrap();
-
-        assert_eq!(source.documents.len(), 1);
-        assert_eq!(
-            source.documents[0].session.title,
-            "first user message title"
-        );
-        assert_eq!(source.documents[0].fields, vec!["first user message title"]);
-    }
-
-    #[test]
-    fn claude_search_marks_an_oversized_preview_source_incomplete() {
-        let directory = tempfile::tempdir().unwrap();
-        let session_path = directory.path().join("oversized.jsonl");
-        fs::write(
-            &session_path,
-            format!(
-                "{}\n",
-                "x".repeat(MAX_SEARCH_METADATA_LINE_BYTES as usize + 1)
-            ),
-        )
-        .unwrap();
-
-        let source = search_claude_documents_in(directory.path()).unwrap();
-
-        assert!(source.incomplete);
-        assert_eq!(source.documents.len(), 1);
-        assert_eq!(source.documents[0].session.title, "(无标题会话)");
-        assert!(source.documents[0].fields.is_empty());
-    }
-
-    #[test]
-    fn codex_search_uses_thread_name_and_preview_metadata() {
-        let thread: Value = serde_json::from_str(
-            r#"{"id":"session-1","name":"safe thread name","preview":"private preview phrase","updatedAt":1000}"#,
-        )
-        .unwrap();
-
-        let document = codex_search_document(&thread).unwrap();
-
-        assert_eq!(
-            document.fields,
-            vec!["safe thread name", "private preview phrase"]
-        );
-        assert_eq!(document.session.title, "safe thread name");
-        assert!(document
-            .fields
-            .iter()
-            .any(|field| field == "private preview phrase"));
-    }
-
-    #[test]
-    fn codex_rollout_fallback_only_accepts_project_session_metadata() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        let other_project = temporary.path().join("other-project");
-        fs::create_dir_all(&project).unwrap();
-        fs::create_dir_all(&other_project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let other_project_path = other_project.to_string_lossy().to_string();
-        let rollout = temporary
-            .path()
-            .join("rollout-2026-01-01T00-00-00-7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345.jsonl");
-        let metadata_line = serde_json::json!({
-            "timestamp": "2026-01-01T00:00:00Z",
-            "type": "session_meta",
-            "payload": {"id": "session-1", "cwd": project_path}
-        });
-        let body_line = serde_json::json!({
-            "type": "response_item",
-            "payload": {"role": "user", "content": "private body phrase"}
-        });
-        fs::write(&rollout, format!("{metadata_line}\n{body_line}\n")).unwrap();
-
-        let session = parse_codex_rollout_metadata(&rollout, &project_path)
-            .unwrap()
-            .unwrap();
-        assert_eq!(session.session_id, "session-1");
-        assert_eq!(session.title, "(Codex 会话)");
-        assert!(parse_codex_rollout_metadata(&rollout, &other_project_path)
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn codex_search_fallback_indexes_the_bounded_first_user_message() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        fs::create_dir_all(&project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let rollout = temporary.path().join("rollout-session.jsonl");
-        let metadata = serde_json::json!({
-            "type": "session_meta",
-            "payload": {"id": "session-1", "cwd": project_path}
-        });
-        let user = serde_json::json!({
-            "type": "response_item",
-            "payload": {"role": "user", "content": "first codex prompt"}
-        });
-        fs::write(&rollout, format!("{metadata}\n{user}\n")).unwrap();
-
-        let (document, bytes_read) = parse_codex_rollout_search(
-            &rollout,
-            &project_path,
-            MAX_SEARCH_PREVIEW_BYTES_PER_SESSION,
-        )
-        .unwrap();
-        let document = document.unwrap();
-
-        assert!(bytes_read > 0);
-        assert_eq!(document.session.title, "first codex prompt");
-        assert_eq!(document.fields, vec!["first codex prompt"]);
-    }
-
-    #[test]
-    fn codex_search_fallback_rejects_oversized_lines() {
-        let temporary = tempfile::tempdir().unwrap();
-        let rollout = temporary.path().join("rollout-large.jsonl");
-        fs::write(
-            &rollout,
-            format!(
-                "{}\n",
-                "x".repeat(MAX_SEARCH_METADATA_LINE_BYTES as usize + 1)
-            ),
-        )
-        .unwrap();
-
-        assert!(parse_codex_rollout_search(
-            &rollout,
-            "C:\\Projects\\example",
-            MAX_SEARCH_PREVIEW_BYTES_PER_SESSION
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn antigravity_search_indexes_title_summary_and_preview_for_current_project() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project_path = temporary.path().join("project");
-        let other_path = temporary.path().join("other");
-        fs::create_dir_all(&project_path).unwrap();
-        fs::create_dir_all(&other_path).unwrap();
-        let project_path = project_path.to_string_lossy().replace('\\', "/");
-        let other_path = other_path.to_string_lossy().replace('\\', "/");
-        let project_uri = if cfg!(windows) {
-            format!("file:///{project_path}")
-        } else {
-            format!("file://{project_path}")
-        };
-        let other_uri = if cfg!(windows) {
-            format!("file:///{other_path}")
-        } else {
-            format!("file://{other_path}")
-        };
-        let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(
-                "create table conversation_summaries (
-                    conversation_id text, title text, preview text,
-                    last_modified_time integer, workspace_uris text
-                );",
-            )
-            .unwrap();
-        connection
-            .execute(
-                "insert into conversation_summaries values (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    "current",
-                    "visible title",
-                    "private preview",
-                    10,
-                    serde_json::json!([project_uri]).to_string()
-                ],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "insert into conversation_summaries values (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    "other",
-                    "other title",
-                    "private preview",
-                    20,
-                    serde_json::json!([other_uri]).to_string()
-                ],
-            )
-            .unwrap();
-        let summaries = HashMap::from([("current".to_string(), "visible summary".to_string())]);
-
-        let source =
-            search_antigravity_rows(&connection, &project_path, &summaries, false).unwrap();
-
-        assert_eq!(source.documents.len(), 1);
-        assert_eq!(
-            source.documents[0].fields,
-            vec!["visible title", "visible summary", "private preview"]
-        );
-        assert_eq!(source.documents[0].session.title, "visible title");
     }
 
     #[test]
@@ -754,272 +426,10 @@ mod tests {
     }
 
     #[test]
-    fn codex_cursor_round_trips_as_opaque_value() {
-        let encoded = encode_codex_cursor("cursor/with + symbols=");
-        assert_eq!(
-            decode_codex_cursor(Some(&encoded)).unwrap().as_deref(),
-            Some("cursor/with + symbols=")
-        );
-    }
-
-    #[test]
-    fn claude_index_prefers_summary_over_first_prompt() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::write(
-            directory.path().join("sessions-index.json"),
-            r#"{"entries":[{"sessionId":"one","summary":"简洁标题","firstPrompt":"很长的第一句话"},{"sessionId":"two","summary":"","firstPrompt":"回退标题"}]}"#,
-        )
-        .unwrap();
-        let titles = claude_index_titles(directory.path());
-        assert_eq!(titles.get("one").map(String::as_str), Some("简洁标题"));
-        assert_eq!(titles.get("two").map(String::as_str), Some("回退标题"));
-    }
-
-    #[test]
-    fn grok_history_reads_only_bounded_summary_metadata_for_the_matching_project() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        let other_project = temporary.path().join("other-project");
-        fs::create_dir_all(&project).unwrap();
-        fs::create_dir_all(&other_project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let other_project_path = other_project.to_string_lossy().to_string();
-        let sessions_dir = temporary.path().join("sessions");
-        let session_id = "019f9a55-1234-7abc-8def-123456789abc";
-        let session_dir = write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            session_id,
-            session_id,
-            &project_path,
-            "本地摘要标题",
-        );
-        fs::write(session_dir.join("updates.jsonl"), "私有对话正文，不应读取").unwrap();
-        write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-abcdef012345",
-            "019f9a55-1234-7abc-8def-abcdef012345",
-            &other_project_path,
-            "其他项目标题",
-        );
-
-        let sessions = list_grok_sessions_in(&sessions_dir, &project_path).unwrap();
-        let search_document =
-            grok_search_document_from_summary(&session_dir, &project_path).unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].tool_key, ToolKey::Grok);
-        assert_eq!(sessions[0].session_id, session_id);
-        assert_eq!(sessions[0].title, "本地摘要标题");
-        assert!(sessions[0].last_active_ms.is_some());
-        assert!(!sessions[0].title.contains("私有对话正文"));
-        assert_eq!(
-            search_document.fields,
-            vec!["本地摘要标题", "metadata only"]
-        );
-        assert!(!search_document
-            .fields
-            .iter()
-            .any(|field| field.contains("私有对话正文")));
-        assert!(grok_session_belongs_in(&sessions_dir, &project_path, session_id).unwrap());
-        assert!(!grok_session_belongs_in(&sessions_dir, &other_project_path, session_id).unwrap());
-        assert!(!grok_session_belongs_in(&sessions_dir, &project_path, "not-a-uuid").unwrap());
-    }
-
-    #[test]
-    fn grok_search_respects_aggregate_summary_read_budget() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        fs::create_dir_all(&project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let sessions_dir = temporary.path().join("sessions");
-        let first = write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789ad1",
-            "019f9a55-1234-7abc-8def-123456789ad1",
-            &project_path,
-            "bounded summary",
-        );
-        write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789ad2",
-            "019f9a55-1234-7abc-8def-123456789ad2",
-            &project_path,
-            "bounded summary",
-        );
-        let summary_size = fs::metadata(first.join("summary.json")).unwrap().len();
-
-        let source =
-            search_grok_documents_in(&sessions_dir, &project_path, summary_size.saturating_add(1))
-                .unwrap();
-
-        assert_eq!(source.documents.len(), 1);
-        assert!(source.incomplete);
-    }
-
-    #[test]
-    fn grok_search_marks_corrupt_summaries_incomplete() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        fs::create_dir_all(&project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let sessions_dir = temporary.path().join("sessions");
-        let corrupt = write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789ad3",
-            "019f9a55-1234-7abc-8def-123456789ad3",
-            &project_path,
-            "will be replaced",
-        );
-        fs::write(corrupt.join("summary.json"), b"not json").unwrap();
-
-        let source = search_grok_documents_in(&sessions_dir, &project_path, u64::MAX).unwrap();
-
-        assert!(source.documents.is_empty());
-        assert!(source.incomplete);
-    }
-
-    #[test]
-    fn grok_history_matches_long_working_directory_groups_through_bounded_cwd_metadata() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("long-path-project");
-        fs::create_dir_all(&project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let sessions_dir = temporary.path().join("sessions");
-        let session_dir = write_grok_session_fixture(
-            &sessions_dir,
-            Some("project-slug-hash"),
-            "019f9a55-1234-7abc-8def-123456789abd",
-            "019f9a55-1234-7abc-8def-123456789abd",
-            &project_path,
-            "长路径会话",
-        );
-        fs::write(
-            session_dir.parent().unwrap().join(".cwd"),
-            format!("{project_path}\r\n"),
-        )
-        .unwrap();
-
-        let sessions = list_grok_sessions_in(&sessions_dir, &project_path).unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].title, "长路径会话");
-    }
-
-    #[test]
-    fn grok_history_skips_corrupt_oversized_mismatched_and_wrong_cwd_summaries() {
-        let temporary = tempfile::tempdir().unwrap();
-        let project = temporary.path().join("project");
-        let other_project = temporary.path().join("other-project");
-        fs::create_dir_all(&project).unwrap();
-        fs::create_dir_all(&other_project).unwrap();
-        let project_path = project.to_string_lossy().to_string();
-        let other_project_path = other_project.to_string_lossy().to_string();
-        let sessions_dir = temporary.path().join("sessions");
-
-        let corrupt = write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789abe",
-            "019f9a55-1234-7abc-8def-123456789abe",
-            &project_path,
-            "ignored",
-        );
-        fs::write(corrupt.join("summary.json"), b"not json").unwrap();
-
-        let oversized = write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789abf",
-            "019f9a55-1234-7abc-8def-123456789abf",
-            &project_path,
-            "ignored",
-        );
-        fs::write(
-            oversized.join("summary.json"),
-            vec![b'x'; (MAX_GROK_SUMMARY_BYTES + 1) as usize],
-        )
-        .unwrap();
-
-        write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789ac0",
-            "019f9a55-1234-7abc-8def-123456789ac1",
-            &project_path,
-            "mismatched id",
-        );
-        write_grok_session_fixture(
-            &sessions_dir,
-            None,
-            "019f9a55-1234-7abc-8def-123456789ac2",
-            "019f9a55-1234-7abc-8def-123456789ac2",
-            &other_project_path,
-            "wrong cwd",
-        );
-
-        assert!(list_grok_sessions_in(&sessions_dir, &project_path)
-            .unwrap()
-            .is_empty());
-    }
-
-    fn write_grok_session_fixture(
-        sessions_dir: &Path,
-        group_name: Option<&str>,
-        directory_session_id: &str,
-        metadata_session_id: &str,
-        cwd: &str,
-        title: &str,
-    ) -> PathBuf {
-        let group_name = group_name
-            .map(str::to_string)
-            .unwrap_or_else(|| encode_grok_cwd_group(cwd));
-        let session_dir = sessions_dir.join(group_name).join(directory_session_id);
-        fs::create_dir_all(&session_dir).unwrap();
-        let summary = serde_json::json!({
-            "info": { "id": metadata_session_id, "cwd": cwd },
-            "generated_title": title,
-            "session_summary": "metadata only"
-        });
-        fs::write(
-            session_dir.join("summary.json"),
-            serde_json::to_vec(&summary).unwrap(),
-        )
-        .unwrap();
-        session_dir
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn file_uri_matches_windows_path_and_decodes_spaces() {
-        let uris = r#"["file:///C:/Projects/My%20App"]"#;
-        assert!(workspace_matches(uris, "c:\\projects\\my app\\"));
-    }
-
-    #[test]
     #[cfg(windows)]
     fn paths_match_ignores_separators_and_case() {
         assert!(paths_match("C:/Projects/Demo", "c:\\projects\\demo\\"));
         assert!(!paths_match("C:\\a", "C:\\b"));
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn file_uri_matches_unix_path_and_preserves_case() {
-        let uris = r#"["file:///Users/me/Projects/My%20App"]"#;
-        assert!(workspace_matches(uris, "/Users/me/Projects/My App/"));
-        assert!(!workspace_matches(uris, "/Users/me/projects/My App/"));
-    }
-
-    #[test]
-    fn claude_message_text_reads_array_blocks() {
-        let entry: Value = serde_json::from_str(
-            r#"{"type":"user","message":{"content":[{"type":"text","text":"hello world"}]}}"#,
-        )
-        .unwrap();
-        assert_eq!(message_text(&entry).as_deref(), Some("hello world"));
     }
 
     #[test]
@@ -1029,21 +439,45 @@ mod tests {
     }
 
     #[test]
-    fn uuid_extracted_from_rollout_name() {
-        let path =
-            Path::new("rollout-2025-06-01T12-00-00-7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345.jsonl");
-        assert_eq!(
-            uuid_from_filename(path).as_deref(),
-            Some("7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345")
-        );
-    }
-
-    #[test]
     fn rejects_path_like_session_ids() {
         assert!(safe_session_id("7f9f9a2e-1b3c-4c7a-9b0e-abcdef012345"));
         assert!(!safe_session_id("../outside"));
         assert!(!safe_session_id("folder\\outside"));
         assert!(!safe_session_id("-resume-as-option"));
+    }
+
+    #[test]
+    fn canonical_uuid_session_id_accepts_only_lowercase_hyphenated_forms() {
+        let accepted = [
+            "8e783338-f464-4b10-b15e-b534748c6241",
+            "01890a5d-ac96-774b-bcce-b302099a8057",
+        ];
+        let rejected = [
+            "session-1",
+            "8e783338f4644b10b15eb534748c6241",
+            "{8e783338-f464-4b10-b15e-b534748c6241}",
+            "8E783338-F464-4B10-B15E-B534748C6241",
+            "8e783338-F464-4b10-b15e-b534748c6241",
+            "8e783338-f464-4b10-b15e-b534748c6241-extra",
+            "8e783338-f464-4b10-b15e-b534748c624",
+            "8e783338-f464-4b10-b15e-b534748c6241 ",
+            "8e783338_f464_4b10_b15e_b534748c6241",
+            "",
+            "-8e783338-f464-4b10-b15e-b534748c6241",
+        ];
+        for session_id in accepted {
+            assert!(
+                is_canonical_uuid(session_id),
+                "{session_id} must be accepted"
+            );
+        }
+        for session_id in rejected {
+            assert!(
+                !is_canonical_uuid(session_id),
+                "{session_id:?} must be rejected"
+            );
+        }
+        assert!(safe_session_id("session-1"));
     }
 
     #[test]
@@ -1091,5 +525,848 @@ mod tests {
         assert!(source.documents.is_none());
         assert_eq!(source.tool_key, ToolKey::Claude);
         assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    use crate::db::cache_connection::init_ephemeral_cache;
+
+    fn index_sources(session_id: &str) -> Vec<SessionSearchIndexSource> {
+        vec![SessionSearchIndexSource {
+            tool_key: ToolKey::Claude,
+            documents: Some(vec![SessionSearchIndexDocument {
+                tool_key: ToolKey::Claude,
+                session_id: session_id.to_string(),
+                title: "query title".to_string(),
+                last_active_ms: Some(1),
+                fields: vec!["query title".to_string()],
+            }]),
+            incomplete: false,
+        }]
+    }
+
+    fn indexed_session_ids(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare("select session_id from session_search_documents where directory_id = 1 order by session_id")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect()
+    }
+
+    fn run_with_timeout<R: Send + 'static>(
+        seconds: u64,
+        f: impl FnOnce() -> R + Send + 'static,
+    ) -> R {
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(f());
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(seconds)) {
+            Ok(value) => value,
+            Err(RecvTimeoutError::Timeout) => panic!("操作在 {seconds} 秒内没有完成（可能死锁）"),
+            Err(RecvTimeoutError::Disconnected) => panic!("工作线程 panic"),
+        }
+    }
+
+    #[test]
+    fn index_refresh_started_before_restore_is_discarded_after_restore() {
+        let connection = init_ephemeral_cache().unwrap();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        generation.advance(); // simulated restore
+
+        let outcome =
+            write_search_index_if_current(&connection, &generation, g0, 1, &index_sources("stale"))
+                .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+        assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        // The source status row must not have been written either.
+        let search =
+            crate::db::session_search_repo::search(&connection, 1, "query", &HashMap::new())
+                .unwrap();
+        assert!(search.items.is_empty());
+        assert_eq!(search.incomplete_tools, Vec::<ToolKey>::new());
+
+        // Reverse: the same write with the current generation is applied.
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        let IndexWriteOutcome::Written(refresh) = outcome else {
+            panic!("a refresh with the current generation must be written");
+        };
+        assert_eq!(refresh.indexed_sessions, 1);
+        assert_eq!(indexed_session_ids(&connection), vec!["fresh".to_string()]);
+    }
+
+    #[test]
+    fn refresh_that_captured_its_generation_before_a_restore_is_discarded_even_after_the_index_was_cleared(
+    ) {
+        let (captured_tx, captured_rx) = std::sync::mpsc::channel::<u64>();
+        let (restored_tx, restored_rx) = std::sync::mpsc::channel::<()>();
+        let cache = crate::CacheDb::new(init_ephemeral_cache().unwrap());
+        let generation = RestoreGeneration::default();
+
+        let refresh_cache = cache.clone();
+        let refresh_generation = generation.clone();
+        let refresh = std::thread::spawn(move || {
+            let captured = refresh_generation.current();
+            captured_tx.send(captured).unwrap();
+            restored_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the restore did not finish");
+            let connection = refresh_cache.lock_for_test();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &refresh_generation,
+                captured,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            matches!(outcome, IndexWriteOutcome::Discarded)
+        });
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the refresh did not capture a generation");
+        assert_eq!(captured, 0);
+        // Same order as the restore orchestration: advance first, clear the cache afterwards.
+        generation.advance();
+        {
+            let connection = cache.lock_for_test();
+            crate::db::cache_repo::clear_session_search(&crate::runtime::CacheConn::for_test(
+                &connection,
+            ))
+            .unwrap();
+        }
+        restored_tx.send(()).unwrap();
+
+        assert!(
+            refresh.join().unwrap(),
+            "the refresh that started before the restore must be discarded"
+        );
+        {
+            let connection = cache.lock_for_test();
+            assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        }
+
+        // Reverse: a refresh that captures the new generation writes normally.
+        let connection = cache.lock_for_test();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+        assert_eq!(indexed_session_ids(&connection), vec!["fresh".to_string()]);
+    }
+
+    #[test]
+    fn concurrent_refreshes_and_restores_never_leave_stale_documents() {
+        let (final_generation, remaining) = run_with_timeout(30, || {
+            let cache = crate::CacheDb::new(init_ephemeral_cache().unwrap());
+            let generation = RestoreGeneration::default();
+            std::thread::scope(|scope| {
+                for _ in 0..3 {
+                    let cache = cache.clone();
+                    let generation = generation.clone();
+                    scope.spawn(move || {
+                        for _ in 0..100 {
+                            // Capture first, as the command does; write later under the cache lock.
+                            let captured = generation.current();
+                            let sources = index_sources(&format!("g{captured}"));
+                            let connection = cache.lock_for_test();
+                            write_search_index_if_current(
+                                &connection,
+                                &generation,
+                                captured,
+                                1,
+                                &sources,
+                            )
+                            .unwrap();
+                        }
+                    });
+                }
+                let cache = cache.clone();
+                let generation = generation.clone();
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        generation.advance();
+                        let connection = cache.lock_for_test();
+                        crate::db::cache_repo::clear_session_search(
+                            &crate::runtime::CacheConn::for_test(&connection),
+                        )
+                        .unwrap();
+                    }
+                });
+            });
+            let connection = cache.lock_for_test();
+            (generation.current(), indexed_session_ids(&connection))
+        });
+
+        assert_eq!(final_generation, 100);
+        assert!(
+            remaining.len() <= 1,
+            "one source per tool keeps at most one document: {remaining:?}"
+        );
+        for tag in &remaining {
+            assert_eq!(
+                tag, "g100",
+                "a document written under an older generation survived a restore"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_generation_advances_monotonically_and_clones_share_state() {
+        let generation = RestoreGeneration::default();
+        let clone = generation.clone();
+        assert_eq!(generation.current(), 0);
+        assert_eq!(clone.advance(), 1);
+        assert_eq!(generation.current(), 1);
+        assert_eq!(generation.advance(), 2);
+        assert_eq!(clone.current(), 2);
+        assert_eq!(
+            RestoreGeneration::default().current(),
+            0,
+            "separate instances do not share state"
+        );
+    }
+
+    #[test]
+    fn discarded_outcome_maps_to_an_error_and_written_passes_through() {
+        let written = IndexWriteOutcome::Written(SessionSearchIndexRefresh {
+            incomplete_tools: vec![ToolKey::Codex],
+            indexed_sessions: 4,
+        })
+        .into_result()
+        .unwrap();
+        assert_eq!(written.indexed_sessions, 4);
+        assert_eq!(written.incomplete_tools, vec![ToolKey::Codex]);
+
+        let error = IndexWriteOutcome::Discarded.into_result().unwrap_err();
+        assert_eq!(error.code(), "backup.index_refresh_discarded");
+        let message = serde_json::to_value(&error).unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // Neutral wording: the same outcome follows a restore and an imported configuration.
+        assert!(
+            message.contains("数据已替换") && message.contains("已丢弃替换前开始的会话索引刷新"),
+            "{message}"
+        );
+    }
+
+    use crate::services::cli_adapters::{
+        AdapterContext, AdapterFuture, CliAdapter, ExecutableResolver,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+
+    fn budget_ticker() -> (Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let ticker = tokio::spawn({
+            let ticks = ticks.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    ticks.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        (ticks, ticker)
+    }
+
+    struct SleepingBudgetResolver(Duration);
+
+    impl ExecutableResolver for SleepingBudgetResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            std::thread::sleep(self.0);
+            None
+        }
+    }
+
+    struct FixedBudgetResolver {
+        delay: Duration,
+        answer: Option<PathBuf>,
+    }
+
+    impl ExecutableResolver for FixedBudgetResolver {
+        fn resolve(&self, _adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            std::thread::sleep(self.delay);
+            self.answer.clone()
+        }
+    }
+
+    struct FastHistory;
+    static FAST_HISTORY: FastHistory = FastHistory;
+    static FAST_HISTORY_CALLED: AtomicBool = AtomicBool::new(false);
+
+    impl CliAdapter for FastHistory {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Hermes).descriptor()
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            _context: AdapterContext,
+        ) -> AdapterFuture<Result<SessionPage>> {
+            FAST_HISTORY_CALLED.store(true, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+    }
+
+    struct BudgetProbe;
+    static BUDGET_PROBE: BudgetProbe = BudgetProbe;
+    static SAW_PATH: AtomicBool = AtomicBool::new(false);
+    static SAW_BUDGET_MS: AtomicU64 = AtomicU64::new(0);
+
+    impl CliAdapter for BudgetProbe {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Hermes
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Hermes).descriptor()
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["hermes"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            true
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            context: AdapterContext,
+        ) -> AdapterFuture<Result<SessionPage>> {
+            SAW_PATH.store(context.resolved_path.is_some(), Ordering::SeqCst);
+            SAW_BUDGET_MS.store(context.budget.as_millis() as u64, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+    }
+
+    struct SlowOwnership;
+    static SLOW_OWNERSHIP: SlowOwnership = SlowOwnership;
+
+    impl CliAdapter for SlowOwnership {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Claude).descriptor()
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["claude"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> AdapterFuture<Result<bool>> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(true)
+            })
+        }
+    }
+
+    enum OwnershipAnswer {
+        Yes,
+        No,
+        Fails,
+    }
+
+    struct FixedOwnership(OwnershipAnswer);
+
+    impl CliAdapter for FixedOwnership {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(ToolKey::Claude).descriptor()
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["claude"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> AdapterFuture<Result<bool>> {
+            let answer = match self.0 {
+                OwnershipAnswer::Yes => Ok(true),
+                OwnershipAnswer::No => Ok(false),
+                OwnershipAnswer::Fails => Err(anyhow!("adapter failed")),
+            };
+            Box::pin(async move { answer })
+        }
+    }
+
+    static OWNERSHIP_YES: FixedOwnership = FixedOwnership(OwnershipAnswer::Yes);
+    static OWNERSHIP_NO: FixedOwnership = FixedOwnership(OwnershipAnswer::No);
+    static OWNERSHIP_FAILS: FixedOwnership = FixedOwnership(OwnershipAnswer::Fails);
+
+    #[derive(Clone, Copy)]
+    enum IndexBehavior {
+        Complete,
+        PanicInFuture,
+        WrongTool,
+    }
+
+    struct FakeIndexAdapter {
+        tool: ToolKey,
+        requires_path: bool,
+        behavior: IndexBehavior,
+    }
+
+    static CLAUDE_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Claude,
+        requires_path: false,
+        behavior: IndexBehavior::Complete,
+    };
+    static CODEX_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Codex,
+        requires_path: true,
+        behavior: IndexBehavior::Complete,
+    };
+    static ANTIGRAVITY_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Antigravity,
+        requires_path: false,
+        behavior: IndexBehavior::Complete,
+    };
+    static GROK_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Grok,
+        requires_path: false,
+        behavior: IndexBehavior::PanicInFuture,
+    };
+    static HERMES_FAKE: FakeIndexAdapter = FakeIndexAdapter {
+        tool: ToolKey::Hermes,
+        requires_path: false,
+        behavior: IndexBehavior::WrongTool,
+    };
+    static CODEX_CALLED: AtomicBool = AtomicBool::new(false);
+
+    impl CliAdapter for FakeIndexAdapter {
+        fn tool_key(&self) -> ToolKey {
+            self.tool
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            crate::services::cli_adapters::get(self.tool).descriptor()
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["fake"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn requires_executable_path(&self) -> bool {
+            self.requires_path
+        }
+
+        fn search_index_source(
+            &self,
+            _directory_path: String,
+            _context: AdapterContext,
+        ) -> AdapterFuture<SessionSearchIndexSource> {
+            if self.tool == ToolKey::Codex {
+                CODEX_CALLED.store(true, Ordering::SeqCst);
+            }
+            let tool = self.tool;
+            match self.behavior {
+                IndexBehavior::Complete => Box::pin(async move {
+                    SessionSearchIndexSource {
+                        tool_key: tool,
+                        documents: Some(Vec::new()),
+                        incomplete: false,
+                    }
+                }),
+                IndexBehavior::PanicInFuture => Box::pin(async move { panic!("adapter panic") }),
+                IndexBehavior::WrongTool => Box::pin(async move {
+                    SessionSearchIndexSource {
+                        tool_key: ToolKey::Claude,
+                        documents: Some(Vec::new()),
+                        incomplete: false,
+                    }
+                }),
+            }
+        }
+    }
+
+    struct SelectiveSleepResolver;
+
+    impl ExecutableResolver for SelectiveSleepResolver {
+        fn resolve(&self, adapter: &'static dyn CliAdapter) -> Option<PathBuf> {
+            if adapter.tool_key() == ToolKey::Codex {
+                std::thread::sleep(Duration::from_secs(5));
+            }
+            None
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_sessions_budget_includes_executable_resolution() {
+        let (ticks, ticker) = budget_ticker();
+        let home = tempfile::tempdir().unwrap();
+
+        let started = std::time::Instant::now();
+        let result = list_sessions_with(
+            &FAST_HISTORY,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(SleepingBudgetResolver(Duration::from_secs(5))),
+            home.path().to_path_buf(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        let error = match result {
+            Ok(_) => panic!("resolution must count against the budget"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("超时"));
+        assert_eq!(AppError::from(error).code(), "blocking.timeout");
+        assert!(!FAST_HISTORY_CALLED.load(Ordering::SeqCst));
+        assert!(ticks.load(Ordering::SeqCst) >= 10);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_passes_the_remaining_budget_to_the_adapter() {
+        let home = tempfile::tempdir().unwrap();
+
+        let result = list_sessions_with(
+            &BUDGET_PROBE,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(FixedBudgetResolver {
+                delay: Duration::from_millis(200),
+                answer: Some(PathBuf::from("/opt/cli")),
+            }),
+            home.path().to_path_buf(),
+            Duration::from_secs(5),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(SAW_PATH.load(Ordering::SeqCst));
+        let budget_ms = SAW_BUDGET_MS.load(Ordering::SeqCst);
+        assert!(
+            budget_ms > 4000 && budget_ms < 5000,
+            "the resolution time must be deducted from the budget: {budget_ms} ms"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refresh_search_index_isolates_slow_resolution_and_panicking_adapter() {
+        let (ticks, ticker) = budget_ticker();
+        let home = tempfile::tempdir().unwrap();
+        let adapters: Vec<&'static dyn CliAdapter> = vec![
+            &CLAUDE_FAKE,
+            &CODEX_FAKE,
+            &ANTIGRAVITY_FAKE,
+            &GROK_FAKE,
+            &HERMES_FAKE,
+        ];
+
+        let started = std::time::Instant::now();
+        let sources = refresh_search_index_with(
+            "project",
+            adapters,
+            Arc::new(SelectiveSleepResolver),
+            home.path().to_path_buf(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        ticker.abort();
+
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        let tools: Vec<ToolKey> = sources.iter().map(|source| source.tool_key).collect();
+        assert_eq!(tools, ToolKey::ALL.to_vec());
+        for tool in [ToolKey::Claude, ToolKey::Antigravity] {
+            let source = sources
+                .iter()
+                .find(|source| source.tool_key == tool)
+                .unwrap();
+            assert!(matches!(&source.documents, Some(documents) if documents.is_empty()));
+            assert!(!source.incomplete);
+        }
+        for tool in [ToolKey::Codex, ToolKey::Grok, ToolKey::Hermes] {
+            let source = sources
+                .iter()
+                .find(|source| source.tool_key == tool)
+                .unwrap();
+            assert!(source.documents.is_none(), "{}", tool.as_str());
+            assert!(source.incomplete, "{}", tool.as_str());
+        }
+        assert!(!CODEX_CALLED.load(Ordering::SeqCst));
+        assert!(ticks.load(Ordering::SeqCst) >= 10);
+    }
+
+    #[tokio::test]
+    async fn session_ownership_check_is_bounded_by_budget() {
+        let started = std::time::Instant::now();
+        let result = session_belongs_to_directory_with(
+            &SLOW_OWNERSHIP,
+            "project".to_string(),
+            "session".to_string(),
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+        let error = match result {
+            Ok(value) => panic!("an unbounded ownership check returned {value}"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("超时"));
+        assert_eq!(AppError::from(error).code(), "blocking.timeout");
+    }
+
+    #[tokio::test]
+    async fn session_ownership_check_returns_the_adapter_result_within_budget() {
+        let budget = Duration::from_secs(5);
+
+        assert!(session_belongs_to_directory_with(
+            &OWNERSHIP_YES,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap());
+        assert!(!session_belongs_to_directory_with(
+            &OWNERSHIP_NO,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap());
+        let error = session_belongs_to_directory_with(
+            &OWNERSHIP_FAILS,
+            "project".to_string(),
+            "session".to_string(),
+            budget,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("adapter failed"));
+    }
+
+    #[test]
+    fn incomplete_sources_cover_every_adapter_in_product_order() {
+        let mut adapters: Vec<&'static dyn CliAdapter> =
+            crate::services::cli_adapters::all().collect();
+        adapters.reverse();
+
+        let sources = incomplete_sources(&adapters);
+
+        let tools: Vec<ToolKey> = sources.iter().map(|source| source.tool_key).collect();
+        assert_eq!(sources.len(), 5);
+        assert_eq!(tools, ToolKey::ALL.to_vec());
+        for source in &sources {
+            assert!(source.documents.is_none(), "{}", source.tool_key.as_str());
+            assert!(source.incomplete, "{}", source.tool_key.as_str());
+        }
+    }
+
+    struct PanicAdapter;
+
+    impl crate::services::cli_adapters::CliAdapter for PanicAdapter {
+        fn tool_key(&self) -> ToolKey {
+            ToolKey::Claude
+        }
+
+        fn descriptor(&self) -> crate::services::cli_adapters::ProviderDescriptor {
+            use crate::services::cli_adapters::{
+                ManagedUpdatePolicy, ProviderCapabilities, ProviderDescriptor, UpdateSemantics,
+                PROVIDER_DESCRIPTOR_API_VERSION,
+            };
+            ProviderDescriptor {
+                tool_key: ToolKey::Claude,
+                api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+                capabilities: ProviderCapabilities {
+                    history: false,
+                    resume: false,
+                    update_semantics: UpdateSemantics::Version,
+                    managed_update: ManagedUpdatePolicy::Always,
+                    install_effects_key: None,
+                },
+            }
+        }
+
+        fn command_candidates(&self) -> &'static [&'static str] {
+            &["x"]
+        }
+
+        fn resume_args(&self, _session_id: &str) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        fn list_sessions(
+            &self,
+            _directory_path: String,
+            _cursor: Option<String>,
+            _limit: usize,
+            _context: crate::services::cli_adapters::AdapterContext,
+        ) -> crate::services::cli_adapters::AdapterFuture<Result<SessionPage>> {
+            Box::pin(async {
+                if true {
+                    panic!("list panic");
+                }
+                Ok(SessionPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            })
+        }
+
+        fn session_belongs_to_directory(
+            &self,
+            _directory_path: String,
+            _session_id: String,
+        ) -> crate::services::cli_adapters::AdapterFuture<Result<bool>> {
+            Box::pin(async {
+                if true {
+                    panic!("ownership panic");
+                }
+                Ok(true)
+            })
+        }
+    }
+
+    static PANIC_ADAPTER: PanicAdapter = PanicAdapter;
+
+    #[tokio::test]
+    async fn list_sessions_reports_adapter_panics_through_cli_runtime() {
+        let home = tempfile::tempdir().unwrap();
+        let error = list_sessions_with(
+            &PANIC_ADAPTER,
+            "project".to_string(),
+            None,
+            10,
+            Arc::new(crate::services::cli_adapters::NativeExecutableResolver),
+            home.path().to_path_buf(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.starts_with("claude 会话读取适配器异常："), "{text}");
+        assert!(text.contains("panic"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn ownership_check_keeps_the_adapter_panic_message() {
+        let error = session_belongs_to_directory_with(
+            &PANIC_ADAPTER,
+            "project".to_string(),
+            "s".to_string(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.starts_with("claude 会话归属验证适配器异常："),
+            "{text}"
+        );
+        assert!(text.contains("panic"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn search_index_scan_panic_becomes_an_incomplete_source() {
+        let source = bounded_search_index_source(
+            ToolKey::Claude,
+            async {
+                if true {
+                    panic!("scan panic");
+                }
+                SessionSearchIndexSource {
+                    tool_key: ToolKey::Claude,
+                    documents: None,
+                    incomplete: false,
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(source.incomplete);
+        assert!(source.documents.is_none());
+        assert_eq!(source.tool_key, ToolKey::Claude);
     }
 }

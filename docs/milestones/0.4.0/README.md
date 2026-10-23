@@ -31,5 +31,15 @@ M7 与 M8 可在 M6 验收后并行推进；M9 依赖 M8 的 Git service 和状�
 
 ## 状态
 
-- M6：第四波 WP7 文档追溯、扩展成本演练、本机自动门禁及三平台 CI 均已完成；CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu jobs 全部通过。成本目标尚未达成，X-F05 CSP 三平台生产包运行检查和 Windows、macOS、Linux 实机验收尚未执行；A/B 层均未关闭，M7 不得开始。状态与实机验收矩阵见 [M6](M6-workspace-files.md) 和[基础抽象审查报告](M6-abstraction-baseline-audit.md)。
-- M7–M10：M6 A/B 门禁关闭前不得开始。
+- M6：**实现完成；A/B 层收口门禁未通过（第二轮复核）；M7 不得开工。** 2026-10-06 的第二轮复核推翻了第一轮之后四波修复的“已关闭”口径：当前提交 `cd4feac` 的 CI 在 Ubuntu 失败（run [37437040753](https://github.com/SkyJourney/cli-launchpad/actions/runs/37437040753)），并发现 3 项 P0（返回进行中持久化抛错致主窗口卸载、切换语言触发运行期 rehydrate、macOS Cmd+Q 绕过退出门）与多项 P1。X-F05 CSP 三平台生产包运行检查和 Windows、macOS、Linux 实机验收也尚未执行。
+- M7–M10：M6 A/B 门禁关闭前不得开始。M7–M10 的前置门禁是 [M6 收口复核报告](M6-closure-review.md) 第四章 4.5 节的 **B 层清单**（含跨窗口信任边界改造、扩展成本复核、统一扩展点七维度重评、CSP 三平台验证等）；M7 渲染隔离方案已确认（PD-06：sandbox iframe + 受授权资源协议）。产品决策 PD-01…PD-16 已确认（2026-10-06），见 [M6 收口复核报告](M6-closure-review.md) 4.7.1；PD-10（折叠大小写）的设计草案已评审通过（4.7.4），实现前须先完成平台实现调研并经用户确认调研结论。
+
+### 配套文档
+
+| 文档                                                              | 用途                                                                                         |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [M6 验收文档](M6-workspace-files.md)                              | M6 范围、边界审查矩阵、验收状态与三平台实机清单                                              |
+| [M6 基础抽象审查报告（第一轮）](M6-abstraction-baseline-audit.md) | 2026-10-05 的 60 项问题与 WP0–WP8 修复指导；其中追溯小节已被第二轮复核重新认定，以主报告为准 |
+| [M6 收口复核报告（第二轮，主报告）](M6-closure-review.md)         | 修复验收、测试专项、架构与抽象审查、收口路线、A/B 层门禁、证据等级与产品决策 PD-01…PD-16     |
+| [M6 收口测试规格](M6-closure-test-spec.md)                        | 前端/Rust 测试补充规格、测试基础设施与可测性 seam、CI 改进方案、Windows/macOS/Linux 实机清单 |
+| [M6 编辑器与索引调研](M6-editor-and-index-research.md)            | Monaco 与工作区索引调研结论                                                                  |

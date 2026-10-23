@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   lazy,
@@ -9,14 +8,25 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { FolderOpen, PanelLeft, PanelRight, Plus } from "lucide-react";
 import { AppLogo } from "./components/AppLogo";
 import { AppTitlebarUtilities } from "./components/AppTitlebarUtilities";
 import { WorkspaceDataRestoreListener } from "./components/WorkspaceDataRestoreListener";
+import { StartupNotices } from "./components/StartupNotices";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectMaintenanceDialog } from "./components/ProjectMaintenanceDialog";
-import { formatAppError } from "./lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppErrorState,
+  getAppErrorCode,
+  toAppErrorState,
+} from "./lib/appErrors";
+import {
+  exitCountsGrew,
+  type ExitImpactsView,
+  parseExitRequestedPayload,
+} from "./lib/exitRequest";
 import {
   PtyWorkspaceProvider,
   PtyWorkspaceRegion,
@@ -63,57 +73,68 @@ import { useThemeSync } from "./hooks/useThemeSync";
 import { useWindowLevelBehaviors } from "./hooks/useWindowLevelBehaviors";
 import { type ViewName, useAppStore } from "./store/appStore";
 import { useResolvedTheme } from "./hooks/useResolvedTheme";
-import { confirmAppExit } from "./lib/tauri";
+import { confirmAppExit, reportExitImpacts } from "./lib/tauri";
+import { onInboxEvent } from "./lib/windowInbox";
+import { ImpactTitleList } from "./components/ImpactTitleList";
+import { ImpactDialogActions } from "./components/ImpactDialogActions";
+import { summarizeExitImpacts } from "./workspace/impacts/impactSummary";
 import {
   collectAppExitImpacts,
-  shouldExitWithoutPrompt,
-  type AppExitImpacts,
+  type AppExitRequest,
 } from "./lib/appExitImpacts";
 import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
-import { windowKindOf } from "./lib/windowKinds";
+import { windowRouteOf } from "./lib/windowKinds";
+import { RUST_EVENTS } from "./lib/eventNames";
+import {
+  readFileLaunchParams,
+  readPtyLaunchParams,
+} from "./workspace/windows/windowLaunchParams";
+
+/** m6-101：把 Rust 下发的退出影响转成对话框状态（数字只来自 Rust）。 */
+function requestFromView(view: ExitImpactsView): AppExitRequest {
+  return {
+    requestId: view.requestId,
+    ptyCount: view.ptyCount,
+    executionTaskCount: view.executionTaskCount,
+    dirtyFiles: view.dirtyFiles,
+  };
+}
 
 export function App() {
   const { t } = useTranslation();
   useThemeSync();
-  const windowKind = windowKindOf(getCurrentWindow().label);
-  const params = new URLSearchParams(window.location.search);
-  const sessionId = params.get("detachedSessionId");
-  const handoffToken = params.get("handoffToken");
-  const instanceId = params.get("instanceId");
-  const sourcePaneId = params.get("sourcePaneId");
-  const detachedToolKey = TOOLS.find(
-    (tool) => tool.key === params.get("detachedToolKey"),
-  )?.key;
-  const detachedFileId = params.get("detachedFileId");
-  const fileHandoffToken = params.get("fileHandoffToken");
-  const fileSourcePaneId = params.get("sourcePaneId");
-  if (windowKind === "workspaceContent" && detachedFileId && fileHandoffToken) {
+  const route = windowRouteOf(getCurrentWindow().label);
+  const search = new URLSearchParams(window.location.search);
+  const fileParams =
+    route === "workspace-content" ? readFileLaunchParams(search) : null;
+  if (fileParams) {
     return (
       <Suspense fallback={null}>
         <StandaloneWorkspaceFileWindow
-          documentId={detachedFileId}
-          token={fileHandoffToken}
-          sourcePaneId={fileSourcePaneId ?? "unknown-pane"}
+          documentId={fileParams.documentId}
+          token={fileParams.windowToken}
+          sourcePaneId={fileParams.sourcePaneId}
         />
       </Suspense>
     );
   }
-  if (windowKind === "terminal" && sessionId && handoffToken && instanceId) {
+  const ptyParams = route === "terminal" ? readPtyLaunchParams(search) : null;
+  if (ptyParams) {
     return (
       <Suspense fallback={null}>
         <StandalonePtyWindow
-          sessionId={sessionId}
-          handoffToken={handoffToken}
-          instanceId={instanceId}
-          sourcePaneId={sourcePaneId ?? "unknown-pane"}
-          toolKey={detachedToolKey}
-          title={params.get("detachedTitle") ?? t("pty.detachedDefaultTitle")}
+          sessionId={ptyParams.sessionId}
+          handoffToken={ptyParams.handoffToken}
+          instanceId={ptyParams.instanceId}
+          sourcePaneId={ptyParams.sourcePaneId}
+          toolKey={ptyParams.toolKey}
+          title={ptyParams.title ?? t("pty.detachedDefaultTitle")}
         />
       </Suspense>
     );
   }
-  if (windowKind !== "main") return null;
+  if (route !== "main") return null;
   return (
     <PtyWorkspaceProvider>
       <AppContent />
@@ -123,9 +144,17 @@ export function App() {
 
 function AppContent() {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  tRef.current = t;
   useWindowLevelBehaviors();
-  const { collectExitImpacts, fileDocuments, fileBuffers, detachedFileIds } =
-    usePtyWorkspace();
+  const {
+    collectExitImpacts,
+    saveFiles,
+    fileDocuments,
+    fileBuffers,
+    detachedFileIds,
+    hydrationStatus,
+  } = usePtyWorkspace();
   const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
   exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
   const view = useAppStore((state) => state.view);
@@ -143,37 +172,80 @@ function AppContent() {
   const scrollPositions = useRef<Partial<Record<ViewName, number>>>({});
   const validatedDirectoryState = useRef(false);
   const { data: directories } = useDirectories();
-  const [exitRequest, setExitRequest] = useState<AppExitImpacts | null>(null);
+  const [exitRequest, setExitRequest] = useState<AppExitRequest | null>(null);
   const [exitPending, setExitPending] = useState(false);
-  const [exitError, setExitError] = useState<string | null>(null);
+  const [exitSaving, setExitSaving] = useState(false);
+  const [exitError, setExitError] = useState<AppErrorState | null>(null);
+  // 最近一次有效退出请求的 id：确认时只回传它，过期请求的异步结果据此丢弃。
+  const exitRequestIdRef = useRef<string | null>(null);
   useExecutionTaskEvents();
 
   useLayoutEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<{ ptyCount: number }>("app-exit-requested", (event) => {
+    void onInboxEvent<unknown>(RUST_EVENTS.appExitRequested, (event) => {
+      // 订阅返回前冲刷的缓冲消息会先到达已卸载的 effect（StrictMode 双挂载同理）。
+      if (disposed) return;
+      const payload = parseExitRequestedPayload(event.payload);
+      if (!payload) {
+        console.warn("app.exit_request_invalid", event.payload);
+        return;
+      }
+      const { requestId, ptyCount, executionTaskCount } = payload;
+      exitRequestIdRef.current = requestId;
+      // 新请求取代旧请求：先收起旧对话框，并解除旧确认的“终止中”，使屏幕上的内容
+      // 始终对应后端当前的待决请求；旧确认的结果会各自结束，不再影响新对话框。
+      setExitRequest(null);
+      setExitPending(false);
       setExitError(null);
-      void collectExitImpacts(event.payload.ptyCount)
-        .then(async (impacts) => {
-          if (shouldExitWithoutPrompt(impacts)) {
+      void collectExitImpacts(ptyCount)
+        .then(async (collected) => {
+          if (exitRequestIdRef.current !== requestId) return;
+          // m6-101：计数与是否需要询问都由 Rust 重算并下发；事件载荷不再决定退出方式。
+          const view = await reportExitImpacts(requestId, collected.dirtyFiles);
+          if (exitRequestIdRef.current !== requestId) return;
+          if (!view.requiresPrompt) {
             setExitPending(true);
-            await confirmAppExit();
+            try {
+              await confirmAppExit(requestId);
+            } catch (error) {
+              // 无论是否已过期，这次确认都已结束：先解除“终止中”，否则新请求的对话框会被禁用。
+              setExitPending(false);
+              // 过期请求的失败不得覆盖当前对话框（R-EXIT-1）。
+              if (exitRequestIdRef.current !== requestId) return;
+              if (getAppErrorCode(error) === "exit.impacts_changed") {
+                // 静默确认之后有了新的运行中工作：不显示错误，改为带新数字的对话框。
+                await reportExitImpacts(requestId, collected.dirtyFiles)
+                  .then((fresh) => {
+                    if (exitRequestIdRef.current === requestId)
+                      setExitRequest(requestFromView(fresh));
+                  })
+                  .catch(() => undefined);
+                return;
+              }
+              // 后端拒绝静默退出：恢复为可操作的对话框，不能停在“终止中”让两个按钮都被禁用。
+              setExitRequest(requestFromView(view));
+              setExitError(toAppErrorState(error));
+            }
             return;
           }
-          setExitRequest(impacts);
+          setExitRequest(requestFromView(view));
         })
         .catch((error) => {
+          if (exitRequestIdRef.current !== requestId) return;
           console.error("Unable to collect application exit impacts", error);
           const current = exitStateRef.current;
-          setExitRequest(
-            collectAppExitImpacts({
-              ptyCount: event.payload.ptyCount,
+          setExitRequest({
+            ...collectAppExitImpacts({
+              ptyCount,
               documents: current.fileDocuments,
               buffers: current.fileBuffers,
               uncertainDocumentIds: current.detachedFileIds,
             }),
-          );
-          setExitError(formatAppError(error, t));
+            requestId,
+            executionTaskCount,
+          });
+          setExitError(toAppErrorState(error));
         });
     })
       .then((stop) => {
@@ -187,15 +259,70 @@ function AppContent() {
     };
   }, [collectExitImpacts]);
 
-  const quitWithActiveSessions = async () => {
+  // requestId 必须来自对话框展示的那次请求（exitRequest.requestId），不得读取最新收到的请求。
+  const quitWithActiveSessions = async (requestId: string) => {
+    const shown = exitRequest;
+    const shownFiles = shown?.dirtyFiles ?? [];
     setExitPending(true);
     setExitError(null);
     try {
-      await confirmAppExit();
+      // m6-101：确认前重新上报；只要 Rust 的计数比对话框展示的更大，就不确认，改为带新数字的对话框。
+      const fresh = await reportExitImpacts(requestId, shownFiles);
+      if (exitRequestIdRef.current !== requestId) return;
+      if (shown && exitCountsGrew(shown, fresh)) {
+        setExitRequest(requestFromView(fresh));
+        setExitPending(false);
+        return;
+      }
+      await confirmAppExit(requestId);
     } catch (error) {
-      setExitError(formatAppError(error, t));
       setExitPending(false);
+      // 确认的请求已被新请求取代：失败只属于旧对话框，不得显示在新对话框上。
+      if (exitRequestIdRef.current !== requestId) return;
+      if (getAppErrorCode(error) === "exit.impacts_changed") {
+        await reportExitImpacts(requestId, shownFiles)
+          .then((fresh) => {
+            if (exitRequestIdRef.current === requestId)
+              setExitRequest(requestFromView(fresh));
+          })
+          .catch(() => undefined);
+        return;
+      }
+      setExitError(toAppErrorState(error));
     }
+  };
+
+  // m6-108：保存全部未保存的文件；全部成功后才退出。保存期间若出现新的退出请求，结果不再影响新对话框。
+  const saveAllAndQuit = async (request: AppExitRequest) => {
+    setExitSaving(true);
+    setExitError(null);
+    let remaining: string[];
+    try {
+      remaining = await saveFiles(
+        request.dirtyFiles.map((file) => file.documentId),
+      );
+    } finally {
+      setExitSaving(false);
+    }
+    if (exitRequestIdRef.current !== request.requestId) return;
+    if (remaining.length > 0) {
+      const stillUnsaved = new Set(remaining);
+      setExitRequest((current) =>
+        current && current.requestId === request.requestId
+          ? {
+              ...current,
+              dirtyFiles: current.dirtyFiles.filter((file) =>
+                stillUnsaved.has(file.documentId),
+              ),
+            }
+          : current,
+      );
+      toast.error(
+        t("workspaceFiles.saveAllFailedQuit", { count: remaining.length }),
+      );
+      return;
+    }
+    await quitWithActiveSessions(request.requestId);
   };
 
   useEffect(() => {
@@ -217,9 +344,17 @@ function AppContent() {
     }
   }, [view]);
 
+  const exitSummary = exitRequest
+    ? summarizeExitImpacts(exitRequest)
+    : summarizeExitImpacts({
+        ptyCount: 0,
+        executionTaskCount: 0,
+        dirtyFiles: [],
+      });
   return (
     <>
       <WorkspaceDataRestoreListener />
+      <StartupNotices ready={hydrationStatus !== "loading"} />
       <div className="app-window-shell">
         <WindowTitlebar
           variant="main"
@@ -339,39 +474,44 @@ function AppContent() {
             {exitRequest.ptyCount > 0 && (
               <p>{t("appExit.description", { count: exitRequest.ptyCount })}</p>
             )}
-            {exitRequest.dirtyFiles.length > 0 && (
+            {exitRequest.executionTaskCount > 0 && (
+              <p>
+                {t("appExit.executionTasks", {
+                  count: exitRequest.executionTaskCount,
+                })}
+              </p>
+            )}
+            {exitSummary.dirtyFiles.length > 0 && (
               <>
                 <p>
                   {t("appExit.unsavedDescription", {
-                    count: exitRequest.dirtyFiles.length,
+                    count: exitSummary.dirtyFiles.length,
                   })}
                 </p>
-                <ul className="app-exit-unsaved-files">
-                  {exitRequest.dirtyFiles.map((file) => (
-                    <li key={file.documentId}>{file.relativePath}</li>
-                  ))}
-                </ul>
+                <ImpactTitleList items={exitSummary.dirtyFiles} />
               </>
             )}
-            {exitError && <p className="error">{exitError}</p>}
-            <div className="app-exit-actions">
-              <button
-                className="ghost-button"
-                disabled={exitPending}
-                onClick={() => setExitRequest(null)}
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                className="primary-button"
-                disabled={exitPending}
-                onClick={() => void quitWithActiveSessions()}
-              >
-                {exitPending
-                  ? t("appExit.terminating")
-                  : t("appExit.confirmDiscard")}
-              </button>
-            </div>
+            {exitError && (
+              <p className="error">{formatAppErrorState(exitError, t)}</p>
+            )}
+            <ImpactDialogActions
+              hasUnsavedFiles={exitSummary.dirtyFiles.length > 0}
+              busy={exitPending || exitSaving}
+              confirming={exitPending}
+              labels={{
+                cancel: t("common.cancel"),
+                confirm: t("appExit.confirmDiscard"),
+                confirmBusy: t("appExit.terminating"),
+                saveAll: t("appExit.saveAllAndQuit"),
+                saveAllBusy: t("workspaceFiles.saveAllInProgress"),
+                discard: t("appExit.confirmDiscard"),
+              }}
+              onCancel={() => setExitRequest(null)}
+              onConfirm={() =>
+                void quitWithActiveSessions(exitRequest.requestId)
+              }
+              onSaveAll={() => void saveAllAndQuit(exitRequest)}
+            />
           </section>
         </div>
       )}

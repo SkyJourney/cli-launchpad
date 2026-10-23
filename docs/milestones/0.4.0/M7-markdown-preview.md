@@ -7,11 +7,27 @@
 ## 依赖与设计门禁
 
 - 依赖 M6 文件工作区及内容适配器。
+- **依赖 M6 B 层门禁关闭**：[M6 收口复核报告](M6-closure-review.md) 第四章 4.5 节的 B 层清单全部关闭前，M7 不得开始任何实现工作。
+- **渲染隔离方案已确认（PD-06，2026-10-06），且跨窗口信任边界改造先行**：Markdown 渲染采用 sandbox iframe（`srcdoc`，不给 `allow-scripts` 与 `allow-same-origin`），图片与字体经受授权约束的自定义资源协议提供，全局 CSP 不放宽；独立零命令窗口类别仅作为备选，未采用（见主报告 4.7.1）；主报告 3A.9 节列出的 7 项信任边界改造（退出请求关联、Rust 通知改走私有通道、PTY 交接令牌绑定目标、Rust 中继并盖发送方戳的跨窗消息、渲染隔离、导航与新窗口拦截、精确 CSP 契约）必须在 M7 实现前完成。事件系统不是隔离边界，渲染不可信 HTML 之前这些缺口会从理论风险变成可利用的攻击面。
 - 实施顺序固定为：`md-to-pdf` 分包边界与 API → `md-to-pdf` 向后兼容和独立构建验证 → Launchpad 按配置集成 → 跨平台验收。
 - 在实现前确定共享代码来源、许可证/声明、跨仓库依赖和版本固定策略；不得让 Launchpad 依赖开发机上的相邻仓库路径。
 - 评估选定分包作为独立 npm 包发布的技术、许可证、命名和维护条件。当前 `md-to-pdf` 工作区为私有包且根项目声明 `UNLICENSED`；在完成权利确认、开源许可证选择、依赖许可证审查和发布决策前，不执行公开发布。
 - 浏览器打包验证必须证明 renderer 入口在 Tauri WebView 工作，不依赖 Node runtime；未通过时先抽取或增加浏览器适配入口，不绕过安全清理。
 - 明确 Markdown HTML、主题 CSS、图片/字体资源和 ECharts runtime 的隔离策略。
+
+### 渲染隔离设计门禁（PD-06；m6-066 写入，M7 实现前必须逐条给出设计与验证方案，实现后逐条取得证据）
+
+PD-06 已确认采用 sandbox iframe。下列 9 条门禁是该方案的可验证约束；任何一条需要偏离，都必须先经用户确认并回写本节。
+
+- **M7-D1 iframe 属性。** 预览 iframe 使用 `srcdoc`，`sandbox` 属性为空字符串（不含任何 `allow-*`，尤其不含 `allow-scripts`、`allow-same-origin`、`allow-top-navigation`、`allow-popups`、`allow-forms`），带 `referrerpolicy="no-referrer"`，不使用指向 `http(s)` 的 `src`。验证：组件测试逐字断言这些属性。
+- **M7-D2 全局 CSP 不放宽。** 生产 CSP 保持 `contracts/` 与 `tauri.conf.json` 中的 10 个指令；自定义资源协议的 scheme 如果必须加入 `img-src`、`font-src` 或 `style-src`，需要单独的用户确认，并同时升级 `src/lib/csp.contract.test.ts`（FE-T30-a）与 `contracts::production_csp_matches_exact_directive_contract`，且在 H-2 的 H2-07、H2-08 同类实机项上重测。`script-src` 保持 `'self'`。验证：两端精确契约测试。
+- **M7-D3 资源协议。** 图片与字体经 Rust 自定义协议提供，协议处理必须：只读；授权来源于调用方窗口标签（`CallerWindow`/`WindowLabel`）对应的 `ContentWindowGrantRegistry` 授权项；路径定位采用“父目录句柄加名称”（不得用 `canonicalize` 的结果作为读取位置，R-RS-1）；拒绝授权项目目录之外的路径与符号链接逃逸；响应带 `Content-Type` 白名单与 `X-Content-Type-Options: nosniff`。验证：Rust 测试矩阵（越界路径、符号链接、保留名、未授权窗口、非白名单类型）。
+- **M7-D4 iframe 与父页面隔离。** 父页面只向 iframe 发送渲染数据，不发送令牌、文件路径授权或 IPC 句柄；iframe 内 `typeof window.__TAURI_INTERNALS__` 为 `"undefined"`，访问 `parent.document` 抛出 `SecurityError`。验证：M7 阶段二第 4 项的实机条目（三平台各一次）。
+- **M7-D5 链接处理。** 预览内的链接点击不得导航 iframe 或主 webview，也不得在 iframe 内触发网络请求；实现机制必须在 M7 设计文档中给出并经用户确认，且不得要求给 iframe 增加 `allow-scripts` 或 `allow-same-origin`（若设计需要其中之一，属于对 M7-D1 的偏离，先回到用户确认）；外链是否用系统浏览器打开由 `opener` 白名单决定；`src-tauri/src/services/navigation_guard.rs` 是兜底而不是主机制。验证：恶意链接用例（`javascript:`、`data:`、`file:`、相对路径越界、`target` 指向其他窗口）都不产生导航，也不出现被放行的网络请求。
+- **M7-D6 不新增窗口类别。** 预览运行在现有内容窗格内。若 M7 需要新窗口类别，必须同时新增静态 capability、`contracts/window-kinds.json` 条目、`contracts/app-commands.json` 中该窗口类别对应命令的 `callerCheck`、`kinds` 条目、`contracts/window-messages.json` 的收发规则，以及 H-2 同类实机项。
+- **M7-D7 卫生测试的豁免需要批准。** `src/lib/cspHygiene.test.ts` 的 `HTML_SINK_ALLOWLIST` 与 `src/lib/navigationHygiene.test.ts` 的 `ANCHOR_ALLOWLIST` 默认为空；渲染器文件加入名单必须经用户确认，并在该文件内用注释写明净化流程（净化库、版本、配置）与 iframe 隔离的对应关系。
+- **M7-D8 双层防护。** 渲染前必须经 HTML 净化（沿用 `md-to-pdf` 的 sanitize 流程），iframe 沙箱是第二层而不是替代；净化失败时显示错误而不是回退为未净化渲染。验证：净化库升级与配置变化都有对应的恶意内容回归用例。
+- **M7-D9 恶意内容验收。** M7 的安全验收必须包含：`<script>`、`onerror`/`onload` 属性、`<meta http-equiv="refresh">`、`<base>`、`<form action>`、`javascript:` 链接、`<object>`/`<embed>`、CSS `@import` 与 `url()` 外链、超大图表数据；在 iframe 内这些内容都不得产生导航、网络请求或对父页面的访问。验证：M7 验收覆盖“安全”一项逐条落实。
 
 ## 范围
 

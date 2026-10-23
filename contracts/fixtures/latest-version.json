@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "name": "latestFull",
+      "value": {
+        "commitsBehind": 2,
+        "error": "network unavailable",
+        "fromCache": true,
+        "latest": "1.2.3",
+        "managedUpdate": {
+          "reasonKey": "settings.grokUpdateSourceDenied",
+          "status": "denied"
+        },
+        "toolKey": "grok",
+        "updateAvailability": "available"
+      }
+    },
+    {
+      "name": "latestMinimal",
+      "value": {
+        "commitsBehind": null,
+        "error": null,
+        "fromCache": false,
+        "latest": null,
+        "managedUpdate": {
+          "status": "notApplicable"
+        },
+        "toolKey": "claude",
+        "updateAvailability": "unknown"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "LatestVersion"
+}

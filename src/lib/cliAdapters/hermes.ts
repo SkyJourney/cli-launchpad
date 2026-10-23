@@ -19,7 +19,6 @@ export const hermesAdapter: CliAdapter = {
   shortLabel: "HA",
   icon: HermesAgentIcon,
   terminalPaste: { controlV: "terminal", windowsAltV: "terminal" },
-  latestStatusKind: "branch-update",
   installEffects: (platform) =>
     platform === "windows"
       ? {

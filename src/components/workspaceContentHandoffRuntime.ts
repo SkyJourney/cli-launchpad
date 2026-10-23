@@ -1,5 +1,5 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getWindowChromeOptions } from "../lib/windowChrome";
+import { getChildWindowChromeOptions } from "../lib/windowChrome";
 import type { WorkspaceContentHandoffPayloadByKind } from "../lib/workspaceContentLifecycle";
 import {
   getWorkspaceContentAdapter,
@@ -31,7 +31,7 @@ export function createWorkspaceContentWindow({
   minWidth = 560,
   minHeight = 360,
 }: WorkspaceContentWindowOptions): WebviewWindow {
-  const chromeOptions = getWindowChromeOptions(navigator.userAgent);
+  const chromeOptions = getChildWindowChromeOptions(navigator.userAgent);
   return new WebviewWindow(label, {
     ...chromeOptions,
     url,

@@ -30,7 +30,7 @@ G4 只整理现有能力与内部结构，不改变已验收的产品行为、CL
 - 每个主窗口和独立终端窗口内均有轻量主题控制层，负责读取偏好、解析系统主题、应用 CSS token 和同步当前原生窗口外观。
 - 偏好修改通过明确的应用内跨窗口事件同步；事件接收方更新本地解析状态和窗口外观，不回写或再次广播形成循环。新打开的窗口启动时立即读取最新偏好，不能依赖它恰好收到历史事件。
 - 主题定义为后续新增内建主题或用户主题配置保留稳定的 token/解析扩展点；主题编辑器、主题文件导入和用户自定义主题存储不属于 G4。
-- 审查全局样式变量矩阵的覆盖和使用：每个应用级 token 必须有实际消费者或有记录的设计理由；清除确认无引用的遗留 token；组件不再复制主题分支中的裸色值。第三方库 API 必需的自定义 CSS 属性、品牌图标、终端 ANSI 色与日志专属配色列为有界例外。
+- 审查全局样式变量矩阵的覆盖和使用：每个应用级 token 必须有实际消费者或有记录的设计理由；清除确认无引用的遗留 token；组件不再复制主题分支中的裸色值。第三方库 API 必需的自定义 CSS 属性、品牌图标、终端 ANSI 色、终端画布色（`--color-terminal-*`，终端始终深色，见 PD-07）与日志专属配色列为有界例外。
 
 ### PTY 与独立窗口生命周期
 
@@ -114,7 +114,7 @@ flowchart LR
 - [x] 阶段 2 实现切片：抽出 detached window 的 instance/session/window 身份三元匹配纯函数，所有 ready/failed/returned/exited 入口共用并有过期身份测试；未重写完整交接状态机，跨窗失败/超时及真实 PTY 行为仍待阶段 5 完整复核与手工验收。
 - [x] 阶段 3 实现切片：将工作区 PTY 注册区、portal 与恢复占位组件迁入 `WorkspacePtySessionRegistry`；将 PTY fit 上界、输出事件处理、剪贴板空文本识别和 renderer 恢复迁入 `ptyTerminalRuntime`。将项目列表现有覆盖式滚动条收敛为复用的 `ThemedScrollArea`，并接入项目上下文长内容区；全局原生滚动条采用相同主题色、透明轨道和 6px 规格。PtyWorkspace 的布局和 handoff 编排及 PtyTerminal 的 xterm/会话创建保持原所有权；本轮不宣称整个组件拆分阶段已经完成。
 - [x] 阶段 4 实现切片：前端工具展示顺序由穷尽 `CLI_ADAPTERS` 派生，Rust `ToolKey::ALL` 增加序列化 round-trip 检查；移除未使用的 `emptyToolMap` 与错误默认空历史 helper，Rust adapter 未实现历史读取/归属检查时明确返回错误。
-- [x] 全局 token 静态引用审计：对 `src/styles.css` 中每个自定义属性检查整个 `src/` 的使用；唯一没有应用层二次引用的属性是第三方协议变量。Sonner 例外为 `--border-radius`、`--normal-*`、`--success-*`、`--info-*`、`--warning-*`、`--error-*` 与三个 `--toast-close-button-*`；Allotment 例外为 `--focus-border`、`--separator-border`、`--sash-size`、`--sash-hover-size`。这 23 项由第三方组件读取，均映射到语义 token 或组件规格；全局原生滚动条与覆盖式滚动条共用主题色变量。品牌素材、xterm ANSI palette 和执行日志 palette 是独立资源/内容色，不属于 UI token 缺项。确认无引用的 `--font-size-heading` 已删除。
+- [x] 全局 token 静态引用审计：对 `src/styles.css` 中每个自定义属性检查整个 `src/` 的使用；唯一没有应用层二次引用的属性是第三方协议变量。Sonner 例外为 `--border-radius`、`--normal-*`、`--success-*`、`--info-*`、`--warning-*`、`--error-*` 与三个 `--toast-close-button-*`；Allotment 例外为 `--focus-border`、`--separator-border`、`--sash-size`、`--sash-hover-size`。这 23 项由第三方组件读取，均映射到语义 token 或组件规格；全局原生滚动条与覆盖式滚动条共用主题色变量。品牌素材、xterm ANSI palette、终端画布 token（`--color-terminal-*`，浅色与深色两个 token 块取值相同，终端始终深色，已确认例外 PD-07）和执行日志 palette 是独立资源/内容色，不属于 UI token 缺项。确认无引用的 `--font-size-heading` 已删除。
 - [x] 阶段 1–4 全范围复审：对照主题同步、PTY 生命周期与失败恢复、组件边界、SQLite/IPC 注册漂移及全局 CSS/适配器残留逐项复核；详见下方门禁与最终审查记录。
 
 #### 五 CLI 适配能力对照
@@ -133,7 +133,7 @@ Rust command/history/version/platform 实现位于 `src-tauri/src/services/cli_a
 
 > 后续状态（2026-10-03）：Windows 下 macOS 专用字段的死代码警告已修复；上述门禁记录保留当日实际结果。Vite 主 bundle 超 500 KB 提示仍存在。
 
-> M6 追溯说明（2026-10-06）：G4 时期“主题变化更新 xterm 画布”描述的是订阅与刷新行为，不代表浅色、深色提供不同 ANSI 配色。当前终端 ANSI palette 在两种应用主题下保持相同深色配色；M6 的 B2-F05 按用户确认保留此行为。当前代码与测试证据见 `src/lib/themes.ts`、`src/components/PtyTerminal.tsx` 及 `src/hooks/useThemeSync.test.tsx`；跨平台原生主题行为仍列入 M6 实机矩阵。
+> M6 追溯说明（2026-10-06）：G4 时期“主题变化更新 xterm 画布”描述的是订阅与刷新行为，不代表浅色、深色提供不同 ANSI 配色。当前终端 ANSI palette 在两种应用主题下保持相同深色配色；M6 的 B2-F05 按用户确认保留此行为，并于 2026-10-06 正式确认为主题例外（PD-07）：终端始终深色，xterm 不随浅色/深色主题切换；`PtyTerminal` 经 `useResolvedTheme()` 订阅主题变化并重读 token 的逻辑读到的值不变、没有可见效果，待清理或保留为将来提供浅色终端时的扩展点。当前代码与测试证据见 `src/lib/themes.ts`、`src/components/PtyTerminal.tsx` 及 `src/hooks/useThemeSync.test.tsx`；跨平台原生主题行为仍列入 M6 实机矩阵。
 
 ### 阶段 1：主题控制层与语义 token
 
@@ -209,7 +209,7 @@ Rust command/history/version/platform 实现位于 `src-tauri/src/services/cli_a
 - [x] 独立窗口返回工作区与关闭通过用户实机验收。
 - [x] 窗格与终端交互通过用户实机验收。
 - [x] 会话历史通过用户实机验收。
-- [x] 最终复审修复：内嵌终端通过既有窗格/终端实机验收；`PtyTerminal` 在根节点主题变化时更新 xterm 画布背景、文字与选区颜色，并在卸载时清理监听。独立窗口主题同步已通过实机验收；用户说明其独立窗口验收场景无法单独观察画布绘制内容，因此不将独立窗口画布设为额外视觉门禁，两种窗口复用同一终端实现。
+- [x] 最终复审修复：内嵌终端通过既有窗格/终端实机验收；`PtyTerminal` 在根节点主题变化时更新 xterm 画布背景、文字与选区颜色，并在卸载时清理监听。独立窗口主题同步已通过实机验收；用户说明其独立窗口验收场景无法单独观察画布绘制内容，因此不将独立窗口画布设为额外视觉门禁，两种窗口复用同一终端实现。（更正，2026-10-06：此条中的“根节点主题变化时更新 xterm 画布背景、文字与选区颜色”描述的是订阅与刷新行为；由于终端 token 在两套主题下取值相同，该更新没有可见效果，终端始终深色已确认为主题例外，见 PD-07 与 `docs/architecture.md`。）
 - [x] 记录验收环境：Windows 11 专业版 10.0.26300 x64；用户于 2026-10-02 确认上述五类验收通过。CLI 版本和窗口数量未单独记录；macOS/Linux 由 M5 单独记录。
 
 ### 最终门禁

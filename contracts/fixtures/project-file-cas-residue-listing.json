@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "name": "withEntries",
+      "value": {
+        "entries": [
+          {
+            "fileIdentity": "file-id-1",
+            "modifiedAtMs": 1700000000000,
+            "relativePath": "src/.main.rs.cas-1",
+            "sizeBytes": 12
+          }
+        ],
+        "skippedCount": 2,
+        "truncated": true
+      }
+    },
+    {
+      "name": "empty",
+      "value": {
+        "entries": [],
+        "skippedCount": 0,
+        "truncated": false
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ProjectFileCasResidueListing"
+}

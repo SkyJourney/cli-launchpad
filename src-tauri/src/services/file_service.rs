@@ -1,4 +1,4 @@
-use std::io::Read;
+use crate::platform::bounded_read::read_bounded;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::project_directory::ProjectDirectory;
+use crate::domain_errors::FileError;
+use crate::platform::case_sensitivity::{is_case_probe_residue_name, PathSemantics};
+use crate::platform::file_identity::of_entry;
 
 pub const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_IMAGE_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
@@ -68,7 +71,11 @@ pub struct ProjectImagePreview {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ProjectFileOpenResult {
     Text {
         content: String,
@@ -98,7 +105,12 @@ pub struct ProjectDirectoryListing {
     pub entries: Vec<ProjectFileEntry>,
     pub truncated: bool,
     pub skipped_count: usize,
+    /// Semantics of the project root (PD-10). `list_directory_in` leaves it `UNKNOWN`; the
+    /// command fills it from the cache, because probing is not part of listing.
+    pub path_semantics: PathSemantics,
 }
+
+pub use crate::models::file_identity::FileIdentityComparison;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,7 +225,7 @@ fn scan_file_cas_residues(
             }
             continue;
         }
-        if !metadata.is_file() || !is_file_cas_temporary_name(&name) {
+        if !metadata.is_file() || !crate::platform::file_cas::is_temporary_name(&name) {
             continue;
         }
         let Some(modified_at_ms) = metadata
@@ -227,8 +239,11 @@ fn scan_file_cas_residues(
         if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS {
             continue;
         }
-        let identity = match crate::platform::file_cas::file_identity(directory, &name, &metadata) {
-            Ok(identity) => identity,
+        let identity = match crate::platform::file_identity::of_entry(
+            directory,
+            std::ffi::OsStr::new(&name),
+        ) {
+            Ok(identity) => identity.token(),
             Err(_) => {
                 listing.skipped_count += 1;
                 continue;
@@ -249,20 +264,14 @@ fn remove_file_cas_residue_with_time(
     residue: &ProjectFileCasResidue,
     now_ms: u64,
 ) -> Result<()> {
-    let relative_path = ProjectDirectory::path(&residue.relative_path)?;
-    let Some(name) = relative_path.file_name().and_then(|name| name.to_str()) else {
+    let location = root.locate(&residue.relative_path)?;
+    let parent = location.parent;
+    let Some(name) = location.name.to_str() else {
         bail!("临时文件路径无效");
     };
-    if !is_file_cas_temporary_name(name) {
+    if !crate::platform::file_cas::is_temporary_name(name) {
         bail!("只允许清理 Launchpad 文件保存临时文件");
     }
-    let parent_path = relative_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty());
-    let parent = match parent_path {
-        Some(path) => root.dir().open_dir(path).context("临时文件目录已变化")?,
-        None => root.dir().try_clone()?,
-    };
     let metadata = parent
         .symlink_metadata(name)
         .context("临时文件已不存在或无法访问")?;
@@ -277,25 +286,12 @@ fn remove_file_cas_residue_with_time(
     if now_ms.saturating_sub(modified_at_ms) < FILE_CAS_RESIDUE_MIN_AGE_MS
         || metadata.len() != residue.size_bytes
         || modified_at_ms != residue.modified_at_ms
-        || crate::platform::file_cas::file_identity(&parent, name, &metadata)?
+        || crate::platform::file_identity::of_entry(&parent, std::ffi::OsStr::new(name))?.token()
             != residue.file_identity
     {
         bail!("临时文件在预览后发生变化；请重新扫描确认");
     }
     parent.remove_file(name).context("无法删除已确认的临时文件")
-}
-
-fn is_file_cas_temporary_name(name: &str) -> bool {
-    let Some(identifier) = name
-        .strip_prefix('.')
-        .and_then(|name| name.strip_suffix(".writing"))
-    else {
-        return false;
-    };
-    identifier.len() == 32
-        && identifier
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn system_time_to_ms(time: SystemTime) -> Result<u64> {
@@ -320,21 +316,13 @@ fn list_directory_with_limit(
     relative_path: &str,
     max_entries: usize,
 ) -> Result<ProjectDirectoryListing> {
-    let directory_path = ProjectDirectory::path(relative_path)?;
-    if !relative_path.is_empty() && !root.dir().metadata(&directory_path)?.is_dir() {
-        bail!("所选项目路径不是目录");
-    }
+    let directory = root.open_directory(relative_path)?;
 
     let mut entries = Vec::new();
     let mut truncated = false;
     let mut skipped_count = 0;
     let mut scanned_count = 0;
-    let read_dir = if relative_path.is_empty() {
-        root.dir().entries()
-    } else {
-        root.dir().read_dir(&directory_path)
-    }
-    .context("无法读取项目目录")?;
+    let read_dir = directory.entries().context("无法读取项目目录")?;
     for item in read_dir {
         if scanned_count >= max_entries || entries.len() >= max_entries {
             truncated = true;
@@ -356,7 +344,8 @@ fn list_directory_with_limit(
             skipped_count += 1;
             continue;
         }
-        if is_file_cas_temporary_name(&name) {
+        if crate::platform::file_cas::is_temporary_name(&name) || is_case_probe_residue_name(&name)
+        {
             continue;
         }
         let child_relative = if relative_path.is_empty() {
@@ -364,9 +353,7 @@ fn list_directory_with_limit(
         } else {
             format!("{relative_path}/{name}")
         };
-        let metadata = match ProjectDirectory::path(&child_relative)
-            .and_then(|path| root.dir().symlink_metadata(&path).map_err(Into::into))
-        {
+        let metadata = match directory.symlink_metadata(&name) {
             Ok(metadata) => metadata,
             Err(_) => {
                 skipped_count += 1;
@@ -410,6 +397,31 @@ fn list_directory_with_limit(
         entries,
         truncated,
         skipped_count,
+        path_semantics: PathSemantics::UNKNOWN,
+    })
+}
+
+/// Compares the identity of two files of one project. A path that leaves the project or is
+/// not canonical is an error; a file that cannot be identified is `Unavailable`.
+pub(crate) fn compare_file_identity_in(
+    root: &ProjectDirectory,
+    first: &str,
+    second: &str,
+) -> Result<FileIdentityComparison> {
+    for relative in [first, second] {
+        if relative.is_empty() {
+            bail!("文件路径不能为空");
+        }
+        ProjectDirectory::validate_relative_path(relative)?;
+    }
+    let identity_of = |relative: &str| {
+        let location = root.locate(relative).ok()?;
+        of_entry(&location.parent, &location.name).ok()
+    };
+    Ok(match (identity_of(first), identity_of(second)) {
+        (Some(left), Some(right)) if left == right => FileIdentityComparison::Same,
+        (Some(_), Some(_)) => FileIdentityComparison::Different,
+        _ => FileIdentityComparison::Unavailable,
     })
 }
 
@@ -439,13 +451,13 @@ pub(crate) fn open_file_in(
     root: &ProjectDirectory,
     relative_path: &str,
 ) -> Result<ProjectFileOpenResult> {
-    let path = ProjectDirectory::path(relative_path)?;
-    let path_metadata = root
-        .dir()
-        .symlink_metadata(&path)
-        .context("项目文件不存在或无法访问")?;
+    let location = root.locate(relative_path)?;
+    let path_metadata = location
+        .parent
+        .symlink_metadata(&location.name)
+        .map_err(map_project_file_open_error)?;
     if !path_metadata.is_file() {
-        bail!("只能打开普通文件");
+        return Err(FileError::NotRegularFile.into());
     }
 
     let mut options = cap_std::fs::OpenOptions::new();
@@ -453,15 +465,15 @@ pub(crate) fn open_file_in(
     #[cfg(unix)]
     {
         use cap_std::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     }
-    let file = root
-        .dir()
-        .open_with(&path, &options)
-        .context("项目文件不存在或无法访问")?;
+    let file = location
+        .parent
+        .open_with(&location.name, &options)
+        .map_err(map_project_file_open_error)?;
     let metadata = file.metadata().context("无法读取文件属性")?;
     if !metadata.is_file() {
-        bail!("只能打开普通文件");
+        return Err(FileError::NotRegularFile.into());
     }
     let extension = Path::new(relative_path)
         .extension()
@@ -566,23 +578,37 @@ pub(crate) fn save_text_file_in(
     expected_revision: &str,
 ) -> Result<ProjectTextFileSaveResult> {
     if content.len() as u64 > MAX_TEXT_FILE_BYTES {
-        bail!("文件超过 2 MiB 文本编辑限制");
+        return Err(FileError::TooLarge {
+            max_bytes: MAX_TEXT_FILE_BYTES,
+        }
+        .into());
     }
     if !is_plain_text(content.as_bytes()) {
-        bail!("只能保存 UTF-8 文本文件");
+        return Err(FileError::NotUtf8.into());
     }
-    let path = ProjectDirectory::path(relative_path)?;
-    let file = root.dir().open(&path).context("项目文件不存在或无法访问")?;
-    let metadata = file.metadata().context("无法读取文件属性")?;
+    ProjectDirectory::path(relative_path)?;
+    // Option A (user decision, 2026-10-11): a single pre-read rejects non-text content only when the
+    // current bytes match the expected revision, which keeps the historical error for a binary file.
+    // A differing revision is not decided here: the CAS compares revisions under the lock and reports
+    // Conflict, so the authoritative revision comparison still happens once, in the CAS.
+    let location = root.locate(relative_path)?;
+    let metadata = location
+        .parent
+        .symlink_metadata(&location.name)
+        .map_err(map_project_file_open_error)?;
+    if metadata.file_type().is_symlink() {
+        bail!("项目文件是符号链接，已拒绝保存");
+    }
     if !metadata.is_file() {
-        bail!("只能保存普通文本文件");
+        return Err(FileError::NotRegularFile.into());
     }
+    let file = location
+        .parent
+        .open(&location.name)
+        .map_err(map_project_file_open_error)?;
     let current = read_bounded(file, MAX_TEXT_FILE_BYTES).context("无法读取文件")?;
-    if !is_plain_text(&current) {
-        bail!("只能保存 UTF-8 文本文件");
-    }
-    if content_revision(&current) != expected_revision {
-        return Ok(ProjectTextFileSaveResult::Conflict);
+    if content_revision(&current) == expected_revision && !is_plain_text(&current) {
+        return Err(FileError::NotUtf8.into());
     }
     let outcome =
         replace_file_if_revision(root, relative_path, content.as_bytes(), expected_revision)
@@ -603,13 +629,14 @@ pub(crate) fn save_text_file_in(
     })
 }
 
-fn read_bounded(file: impl Read, maximum_bytes: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
-    file.take(maximum_bytes + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum_bytes {
-        bail!("文件读取大小超过允许上限");
+/// A project file that cannot be opened because it is missing is `file.not_found`; any other
+/// io failure keeps the historical context.
+fn map_project_file_open_error(error: std::io::Error) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        FileError::NotFound.into()
+    } else {
+        anyhow::Error::new(error).context("项目文件不存在或无法访问")
     }
-    Ok(bytes)
 }
 
 pub(crate) fn is_ignored_name(name: &str) -> bool {
@@ -649,6 +676,7 @@ fn replace_file_if_revision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AppError;
     use std::fs;
     use tempfile::tempdir;
 
@@ -714,7 +742,7 @@ mod tests {
             .any(|entry| entry.name == ".env" && entry.hidden));
         assert!(!entries
             .iter()
-            .any(|entry| is_file_cas_temporary_name(&entry.name)));
+            .any(|entry| crate::platform::file_cas::is_temporary_name(&entry.name)));
         assert!(entries
             .iter()
             .any(|entry| entry.name == "node_modules" && entry.ignored));
@@ -895,6 +923,35 @@ mod tests {
         assert!(listing.entries.len() + listing.skipped_count <= 2);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_rejects_creating_non_utf8_file_names() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempdir().unwrap();
+        let name = std::ffi::OsStr::from_bytes(b"bad-\xff.txt");
+        let error = fs::write(directory.path().join(name), "never stored")
+            .expect_err("macOS must refuse to create a file whose name is not valid UTF-8");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::EILSEQ),
+            "unexpected error: {error:?}"
+        );
+
+        // Nothing was created: the raw directory is empty and the listing has nothing to skip.
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        let listing = list_directory(directory.path(), "").unwrap();
+        assert!(listing.entries.is_empty());
+        assert_eq!(listing.skipped_count, 0);
+
+        // Reverse: a valid UTF-8 name is created, listed and not skipped.
+        fs::write(directory.path().join("good.txt"), "stored").unwrap();
+        let listing = list_directory(directory.path(), "").unwrap();
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "good.txt");
+        assert_eq!(listing.skipped_count, 0);
+    }
+
     #[test]
     fn directory_listing_is_bounded_and_reports_truncation() {
         let directory = tempdir().unwrap();
@@ -967,14 +1024,16 @@ mod tests {
                 .iter()
                 .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Saved { .. })))
                 .count(),
-            1
+            1,
+            "必须恰好一个 Saved，实际结果：{results:?}"
         );
         assert_eq!(
             results
                 .iter()
                 .filter(|result| matches!(result, Ok(ProjectTextFileSaveResult::Conflict)))
                 .count(),
-            1
+            1,
+            "必须恰好一个 Conflict，实际结果：{results:?}"
         );
         assert!(matches!(
             fs::read_to_string(file).unwrap().as_str(),
@@ -1160,7 +1219,15 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
         #[cfg(windows)]
-        if std::os::windows::fs::symlink_dir(outside.path(), root.path().join("escape")).is_err() {
+        if let Err(error) =
+            std::os::windows::fs::symlink_dir(outside.path(), root.path().join("escape"))
+        {
+            if std::env::var_os("CI").is_some() {
+                panic!("CI 必须能创建符号链接: {error}");
+            }
+            eprintln!(
+                "SKIPPED: refuses_symbolic_link_escape 无法创建符号链接（{error}）：本机没有开发者模式或管理员权限"
+            );
             return;
         }
 
@@ -1219,5 +1286,290 @@ mod tests {
             read_text_file_in(&capability, "note.txt").unwrap().content,
             "original root"
         );
+    }
+
+    #[test]
+    fn save_reports_conflict_when_revision_differs_even_if_current_is_not_text() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("note.txt"), [b'x', 1, 2]).unwrap();
+
+        let result =
+            save_text_file(root.path(), "note.txt", "new", &content_revision(b"other")).unwrap();
+
+        assert!(matches!(result, ProjectTextFileSaveResult::Conflict));
+        assert_eq!(
+            fs::read(root.path().join("note.txt")).unwrap(),
+            vec![b'x', 1, 2]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_file_rejects_a_symlink_intermediate_directory() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "hi").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("link")).unwrap();
+
+        assert!(read_text_file(root.path(), "link/a.txt").is_err());
+        assert_eq!(
+            read_text_file(root.path(), "real/a.txt").unwrap().content,
+            "hi"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_text_file_rejects_a_symlink_final_component() {
+        let root = tempdir().unwrap();
+        fs::write(root.path().join("real.txt"), "before").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real.txt"), root.path().join("note.txt"))
+            .unwrap();
+        let opened = content_revision(b"before");
+
+        let error = save_text_file(root.path(), "note.txt", "after", &opened).unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            fs::read_to_string(root.path().join("real.txt")).unwrap(),
+            "before"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_directory_rejects_a_symlink_directory_argument() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real"), root.path().join("link")).unwrap();
+
+        assert!(list_directory(root.path(), "link").is_err());
+        let listing = list_directory(root.path(), "real").unwrap();
+        assert!(listing.entries.iter().any(|entry| entry.name == "a.txt"));
+        let top = list_directory(root.path(), "").unwrap();
+        let link = top
+            .entries
+            .iter()
+            .find(|entry| entry.name == "link")
+            .unwrap();
+        assert!(link.symbolic_link);
+        assert_eq!(link.kind, ProjectFileKind::Other);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_file_rejects_a_junction_intermediate_directory() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("real")).unwrap();
+        fs::write(root.path().join("real/a.txt"), "hi").unwrap();
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.path().join("link"))
+            .arg(root.path().join("real"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(read_text_file(root.path(), "link/a.txt").is_err());
+        assert_eq!(
+            read_text_file(root.path(), "real/a.txt").unwrap().content,
+            "hi"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn control_character_file_names_are_handled_consistently_by_listing_and_layout() {
+        use crate::models::workspace_layout::{
+            WorkspaceFileDocument, WorkspaceLayoutDocument, WorkspaceLayoutNode,
+            WorkspacePaneContentRef, WORKSPACE_LAYOUT_SCHEMA_VERSION,
+        };
+
+        let directory = tempdir().unwrap();
+        fs::write(directory.path().join("line\nbreak.txt"), "hidden").unwrap();
+        fs::write(directory.path().join("tab\tname.txt"), "hidden").unwrap();
+        fs::write(directory.path().join("ok.txt"), "visible").unwrap();
+
+        let listing = list_directory(directory.path(), "").unwrap();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, ["ok.txt"]);
+        assert!(listing.skipped_count >= 2);
+        assert!(open_file(directory.path(), "line\nbreak.txt").is_err());
+
+        let document_id = uuid::Uuid::new_v4().to_string();
+        let file = WorkspacePaneContentRef::File {
+            document_id: document_id.clone(),
+        };
+        let layout = WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![file.clone()],
+                active_content: Some(file),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: Vec::new(),
+            documents: vec![WorkspaceFileDocument {
+                id: document_id,
+                directory_id: 1,
+                directory_path: "/tmp/project".to_string(),
+                relative_path: "ok.txt".to_string(),
+            }],
+            detached_contents: Vec::new(),
+        };
+        layout.validate().unwrap();
+        let mut value = serde_json::to_value(&layout).unwrap();
+        assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_ok());
+        value["documents"][0]["relativePath"] = serde_json::json!("line\nbreak.txt");
+        assert!(WorkspaceLayoutDocument::from_json(&value.to_string()).is_err());
+    }
+
+    #[test]
+    fn same_identity_reports_same_different_and_unavailable() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        fs::write(dir.path().join("b.txt"), b"b").unwrap();
+        fs::hard_link(dir.path().join("a.txt"), dir.path().join("hard.txt")).unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub").join("c.txt"), b"c").unwrap();
+        let root = ProjectDirectory::open(dir.path()).unwrap();
+
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "hard.txt").unwrap(),
+            FileIdentityComparison::Same
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "b.txt").unwrap(),
+            FileIdentityComparison::Different
+        );
+        // A missing file cannot be identified: neither `Different` nor an error.
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "missing.txt").unwrap(),
+            FileIdentityComparison::Unavailable
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "sub/c.txt").unwrap(),
+            FileIdentityComparison::Different
+        );
+        assert_eq!(
+            compare_file_identity_in(&root, "a.txt", "no-such-dir/c.txt").unwrap(),
+            FileIdentityComparison::Unavailable
+        );
+    }
+
+    #[test]
+    fn same_identity_rejects_paths_outside_the_project() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        fs::write(dir.path().join("b.txt"), b"b").unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub").join("c.txt"), b"c").unwrap();
+        let root = ProjectDirectory::open(dir.path()).unwrap();
+
+        let absolute = if cfg!(windows) {
+            "C:\\Windows\\win.ini"
+        } else {
+            "/etc/passwd"
+        };
+        for outside in ["../a.txt", absolute, "sub/../../a.txt"] {
+            assert!(
+                compare_file_identity_in(&root, "a.txt", outside).is_err(),
+                "{outside} must be rejected"
+            );
+            assert!(
+                compare_file_identity_in(&root, outside, "a.txt").is_err(),
+                "{outside} must be rejected as the first path too"
+            );
+        }
+        assert!(compare_file_identity_in(&root, "", "a.txt").is_err());
+    }
+
+    #[test]
+    fn listing_hides_case_probe_residue() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".clp-case-probe-abcdef0123456789"), b"x").unwrap();
+        fs::write(dir.path().join("visible.txt"), b"x").unwrap();
+        fs::write(dir.path().join(".hidden-but-listed"), b"x").unwrap();
+
+        let listing = list_directory(dir.path(), "").unwrap();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert!(names.contains(&"visible.txt"));
+        assert!(
+            names.contains(&".hidden-but-listed"),
+            "ordinary dot files stay"
+        );
+        assert!(!names.contains(&".clp-case-probe-abcdef0123456789"));
+        // The listing itself never probes: the semantics are filled in by the command.
+        assert_eq!(listing.path_semantics, PathSemantics::UNKNOWN);
+    }
+
+    #[test]
+    fn opening_a_missing_file_reports_file_not_found() {
+        let directory = tempdir().unwrap();
+        let error = open_file(directory.path(), "missing.txt").unwrap_err();
+        assert_eq!(AppError::from(error).code(), "file.not_found");
+
+        // Reverse: a path that exists but is a directory is not "not found" (see below).
+        std::fs::create_dir(directory.path().join("sub")).unwrap();
+        let directory_error = open_file(directory.path(), "sub").unwrap_err();
+        assert_ne!(AppError::from(directory_error).code(), "file.not_found");
+    }
+
+    #[test]
+    fn saving_over_the_text_limit_reports_file_too_large_with_max_bytes() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("a.txt"), b"old").unwrap();
+        let content = "x".repeat((MAX_TEXT_FILE_BYTES + 1) as usize);
+        let error = save_text_file(directory.path(), "a.txt", &content, "rev").unwrap_err();
+        let value = serde_json::to_value(AppError::from(error)).unwrap();
+        assert_eq!(value["code"], "file.too_large");
+        assert_eq!(value["params"]["maxBytes"], MAX_TEXT_FILE_BYTES);
+
+        // Reverse: exactly the limit is not refused for its size.
+        let at_limit = "x".repeat(MAX_TEXT_FILE_BYTES as usize);
+        let outcome = save_text_file(directory.path(), "a.txt", &at_limit, "rev");
+        if let Err(error) = outcome {
+            assert_ne!(AppError::from(error).code(), "file.too_large");
+        }
+    }
+
+    #[test]
+    fn saving_non_utf8_content_reports_file_not_utf8() {
+        let directory = tempdir().unwrap();
+        std::fs::write(directory.path().join("a.txt"), b"plain").unwrap();
+        let error =
+            save_text_file(directory.path(), "a.txt", "bad\u{0}content", "rev").unwrap_err();
+        assert_eq!(AppError::from(error).code(), "file.not_utf8");
+
+        // Reverse: ordinary UTF-8 text is not refused for its encoding.
+        let outcome = save_text_file(directory.path(), "a.txt", "fine", "rev");
+        if let Err(error) = outcome {
+            assert_ne!(AppError::from(error).code(), "file.not_utf8");
+        }
+    }
+
+    #[test]
+    fn opening_a_directory_reports_file_not_regular() {
+        let directory = tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("sub")).unwrap();
+        let error = open_file(directory.path(), "sub").unwrap_err();
+        let value = serde_json::to_value(AppError::from(error)).unwrap();
+        assert_eq!(value["code"], "file.not_regular");
+        assert_ne!(value["code"], "file.not_found");
     }
 }

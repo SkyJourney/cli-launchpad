@@ -1,11 +1,16 @@
 {
-  "version": 1,
-  "kinds": [
+  "formatVersion": 1,
+  "items": [
     {
       "id": "main",
       "capability": "default",
       "route": "main",
       "label": "main",
+      "primary": true,
+      "ptyHost": true,
+      "ownsPty": false,
+      "fileGrant": false,
+      "contentKinds": ["pty", "file"],
       "appCommands": "all",
       "corePermissions": [
         "core:default",
@@ -19,6 +24,20 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
+      ],
+      "pluginPermissions": [
+        "dialog:allow-open",
+        "dialog:allow-save",
+        "clipboard-manager:allow-read-text",
+        "clipboard-manager:allow-write-text",
+        {
+          "identifier": "opener:allow-open-url",
+          "allow": [
+            {
+              "url": "https://github.com/SkyJourney/cli-launchpad"
+            }
+          ]
+        }
       ]
     },
     {
@@ -26,7 +45,13 @@
       "capability": "terminal-window",
       "route": "terminal",
       "labelPrefix": "terminal-",
+      "primary": false,
+      "ptyHost": true,
+      "ownsPty": true,
+      "fileGrant": false,
+      "contentKinds": ["pty"],
       "appCommands": [
+        "report_window_sync_failure",
         "begin_pty_handoff",
         "stage_pty_handoff_snapshot",
         "complete_pty_handoff",
@@ -37,10 +62,11 @@
         "resize_pty_session",
         "acknowledge_pty_output",
         "report_pty_frontend_stage",
-        "terminate_pty_session"
+        "terminate_pty_session",
+        "subscribe_window_inbox",
+        "send_window_message"
       ],
       "corePermissions": [
-        "core:event:allow-emit-to",
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "core:window:allow-close",
@@ -51,6 +77,10 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
+      ],
+      "pluginPermissions": [
+        "clipboard-manager:allow-read-text",
+        "clipboard-manager:allow-write-text"
       ]
     },
     {
@@ -58,9 +88,19 @@
       "capability": "workspace-content-window",
       "route": "workspace-content",
       "labelPrefix": "workspace-content-",
-      "appCommands": ["open_granted_file", "save_granted_text_file"],
+      "primary": false,
+      "ptyHost": false,
+      "ownsPty": false,
+      "fileGrant": true,
+      "contentKinds": ["file"],
+      "appCommands": [
+        "open_granted_file",
+        "save_granted_text_file",
+        "report_window_sync_failure",
+        "subscribe_window_inbox",
+        "send_window_message"
+      ],
       "corePermissions": [
-        "core:event:allow-emit-to",
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "core:window:allow-close",
@@ -71,7 +111,8 @@
         "core:window:allow-start-dragging",
         "core:window:allow-start-resize-dragging",
         "core:window:allow-toggle-maximize"
-      ]
+      ],
+      "pluginPermissions": []
     }
   ]
 }

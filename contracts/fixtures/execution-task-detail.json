@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "name": "withLogs",
+      "value": {
+        "logs": [
+          {
+            "content": "downloading",
+            "createdAtMs": 1700000000000,
+            "sequence": 1,
+            "stream": "stdout",
+            "taskId": "task-2"
+          },
+          {
+            "content": "exit status 1",
+            "createdAtMs": 1700000002000,
+            "sequence": 2,
+            "stream": "system",
+            "taskId": "task-2"
+          }
+        ],
+        "task": {
+          "errorMessage": "exit status 1",
+          "exitCode": 1,
+          "finishedAtMs": 1700000002000,
+          "id": "task-2",
+          "kind": "install",
+          "logTruncated": true,
+          "preview": "codex install",
+          "source": "Codex installer",
+          "startedAtMs": 1700000000000,
+          "status": "failed",
+          "toolKey": "codex"
+        }
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ExecutionTaskDetail"
+}

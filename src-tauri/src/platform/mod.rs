@@ -1,8 +1,17 @@
+pub mod bounded_read;
+pub mod case_sensitivity;
+pub mod command_path;
 pub mod detect;
+pub mod executable_resolver;
 pub mod execution_process;
 pub mod file_cas;
+pub mod file_identity;
+pub mod file_location;
+pub mod home;
+pub mod launch_environment;
 pub mod opener;
 pub mod path_identity;
+pub mod path_key;
 pub mod path_rules;
 pub mod process;
 pub mod window_geometry;

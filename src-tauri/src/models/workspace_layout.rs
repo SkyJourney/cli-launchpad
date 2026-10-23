@@ -47,8 +47,77 @@ pub struct WorkspaceLayoutDocument {
     pub detached_contents: Vec<WorkspacePaneContentRef>,
 }
 
+pub const DEGRADED_FILE_KIND: &str = "invalidFile";
+pub const DEGRADED_FILE_REASON: &str = "文件名在当前平台上无效，已降级为占位";
+
+/// A file document replaced by an `Unknown` placeholder because its relative
+/// path violates this platform's file-name rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DegradedFileDocument {
+    pub document_id: String,
+    pub relative_path: String,
+    pub reason: String,
+}
+
 impl WorkspaceLayoutDocument {
     pub fn from_json(json: &str) -> Result<Self, WorkspaceLayoutError> {
+        let document = Self::parse_migrated(json)?;
+        document.validate()?;
+        Ok(document)
+    }
+
+    /// Like `from_json`, but a file document whose only defect is a path-rule
+    /// violation is replaced by a placeholder instead of failing the layout.
+    pub fn from_json_degrading_invalid_files(
+        json: &str,
+    ) -> Result<(Self, Vec<DegradedFileDocument>), WorkspaceLayoutError> {
+        let mut document = Self::parse_migrated(json)?;
+        let degraded = document.degrade_invalid_file_documents();
+        document.validate()?;
+        Ok((document, degraded))
+    }
+
+    fn degrade_invalid_file_documents(&mut self) -> Vec<DegradedFileDocument> {
+        let documents = std::mem::take(&mut self.documents);
+        let (invalid, valid): (Vec<_>, Vec<_>) = documents
+            .into_iter()
+            .partition(is_platform_invalid_file_path);
+        self.documents = valid;
+        if invalid.is_empty() {
+            return Vec::new();
+        }
+
+        let mut placeholders = HashMap::with_capacity(invalid.len());
+        let mut degraded = Vec::with_capacity(invalid.len());
+        for document in invalid {
+            degraded.push(DegradedFileDocument {
+                document_id: document.id.clone(),
+                relative_path: document.relative_path.clone(),
+                reason: DEGRADED_FILE_REASON.to_string(),
+            });
+            let placeholder = WorkspacePaneContentRef::Unknown {
+                original_kind: DEGRADED_FILE_KIND.to_string(),
+                raw: serde_json::json!({
+                    "kind": DEGRADED_FILE_KIND,
+                    "documentId": document.id,
+                    "directoryId": document.directory_id,
+                    "directoryPath": document.directory_path,
+                    "relativePath": document.relative_path,
+                    "reason": DEGRADED_FILE_REASON,
+                    "incomplete": true,
+                }),
+            };
+            placeholders.insert(document.id, placeholder);
+        }
+
+        replace_file_references(&mut self.tree, &placeholders);
+        for content in &mut self.detached_contents {
+            replace_file_reference(content, &placeholders);
+        }
+        degraded
+    }
+
+    fn parse_migrated(json: &str) -> Result<Self, WorkspaceLayoutError> {
         if json.len() > MAX_WORKSPACE_LAYOUT_BYTES {
             return Err(WorkspaceLayoutError::PayloadTooLarge);
         }
@@ -59,17 +128,9 @@ impl WorkspaceLayoutDocument {
             .get("schemaVersion")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| WorkspaceLayoutError::InvalidJson("缺少 schemaVersion".into()))?;
-        if source_version == 4 {
-            value["schemaVersion"] = serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION);
-        } else if source_version == 1 || source_version == 2 {
-            migrate_legacy_content_refs(&mut value, source_version);
-            migrate_detached_slot_ids(&mut value);
-        } else if source_version == 3 {
-            migrate_detached_slot_ids(&mut value);
-        }
+        super::workspace_layout_codec::migrate_to_current(&mut value, source_version);
         let document: Self = serde_json::from_value(value)
             .map_err(|error| WorkspaceLayoutError::InvalidJson(error.to_string()))?;
-        document.validate()?;
         Ok(document)
     }
 
@@ -367,12 +428,29 @@ pub struct WorkspaceLayoutStateRead {
     pub slot_states: Vec<WorkspaceSlotState>,
 }
 
+/// Why a stored layout cannot be read as-is. From 077c the front end localizes by `code`; until
+/// then it shows `detail`, the backend's technical text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LayoutResetCode {
+    UnsupportedVersion,
+    VersionMismatch,
+    InvalidPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutResetReason {
+    pub code: LayoutResetCode,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "status", content = "reason", rename_all = "camelCase")]
 pub enum WorkspaceLayoutStateStatus {
     Missing,
     Ready,
-    NeedsReset(String),
+    NeedsReset(LayoutResetReason),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -395,11 +473,20 @@ pub enum WorkspaceSlotStateKind {
     SessionIdentityMismatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceLayoutSaveRejection {
+    Stale,
+    Incompatible,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayoutSaveResult {
     pub saved: bool,
     pub revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WorkspaceLayoutSaveRejection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -561,103 +648,6 @@ fn validate_node<'a>(
     Ok(())
 }
 
-fn migrate_legacy_content_refs(layout: &mut serde_json::Value, source_version: u64) {
-    if let Some(object) = layout.as_object_mut() {
-        object.insert(
-            "schemaVersion".to_string(),
-            serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
-        );
-        if let Some(tree) = object.get_mut("tree") {
-            migrate_legacy_content_node(tree, source_version);
-        }
-    }
-}
-
-fn migrate_detached_slot_ids(layout: &mut serde_json::Value) {
-    let Some(object) = layout.as_object_mut() else {
-        return;
-    };
-    let legacy = object.remove("detachedSlotIds");
-    let detached_contents = match legacy {
-        Some(serde_json::Value::Array(slot_ids)) => slot_ids
-            .into_iter()
-            .map(|value| match value.as_str() {
-                Some(slot_id) => serde_json::json!({ "kind": "pty", "slotId": slot_id }),
-                None => value,
-            })
-            .collect(),
-        Some(value) => value,
-        None => serde_json::Value::Array(Vec::new()),
-    };
-    object.insert(
-        "schemaVersion".to_string(),
-        serde_json::Value::from(WORKSPACE_LAYOUT_SCHEMA_VERSION),
-    );
-    object.insert("detachedContents".to_string(), detached_contents);
-}
-
-fn migrate_legacy_content_node(node: &mut serde_json::Value, source_version: u64) {
-    let Some(object) = node.as_object_mut() else {
-        return;
-    };
-    match object.get("kind").and_then(serde_json::Value::as_str) {
-        Some("pane") => {
-            let session_ids = object
-                .remove("sessionIds")
-                .and_then(|value| value.as_array().cloned())
-                .unwrap_or_default();
-            let document_ids = object
-                .remove("documentIds")
-                .and_then(|value| value.as_array().cloned())
-                .unwrap_or_default();
-            let active_session_id = object.remove("activeSessionId");
-            let legacy_active_content = object.remove("activeContent");
-            let mut contents = Vec::with_capacity(session_ids.len() + document_ids.len());
-            contents.extend(session_ids.iter().filter_map(|value| {
-                value
-                    .as_str()
-                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
-            }));
-            contents.extend(document_ids.iter().filter_map(|value| {
-                value.as_str().map(
-                    |document_id| serde_json::json!({ "kind": "file", "documentId": document_id }),
-                )
-            }));
-            let active_content = if source_version >= 2 {
-                legacy_active_content.filter(|value| !value.is_null())
-            } else {
-                None
-            }
-            .or_else(|| {
-                active_session_id
-                    .as_ref()
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|active| {
-                        session_ids
-                            .iter()
-                            .any(|session_id| session_id.as_str() == Some(*active))
-                    })
-                    .map(|slot_id| serde_json::json!({ "kind": "pty", "slotId": slot_id }))
-            })
-            .or_else(|| contents.first().cloned());
-            object.insert("contents".to_string(), serde_json::Value::Array(contents));
-            object.insert(
-                "activeContent".to_string(),
-                active_content.unwrap_or(serde_json::Value::Null),
-            );
-        }
-        Some("split") => {
-            if let Some(first) = object.get_mut("first") {
-                migrate_legacy_content_node(first, source_version);
-            }
-            if let Some(second) = object.get_mut("second") {
-                migrate_legacy_content_node(second, source_version);
-            }
-        }
-        _ => {}
-    }
-}
-
 fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError> {
     validate_uuid(&slot.instance_id, "slot ID")?;
     if slot.directory_id <= 0 {
@@ -688,6 +678,63 @@ fn validate_slot(slot: &WorkspaceLayoutSlot) -> Result<(), WorkspaceLayoutError>
     Ok(())
 }
 
+/// Only a path-rule violation may degrade a file document; every other defect
+/// keeps the whole layout in `NeedsReset`.
+fn is_platform_invalid_file_path(document: &WorkspaceFileDocument) -> bool {
+    validate_uuid(&document.id, "文件文档 ID").is_ok()
+        && document.directory_id > 0
+        && validate_text(
+            &document.directory_path,
+            MAX_DIRECTORY_PATH_CHARS,
+            "文件项目路径",
+        )
+        .is_ok()
+        && validate_text(
+            &document.relative_path,
+            MAX_DIRECTORY_PATH_CHARS,
+            "项目内相对路径",
+        )
+        .is_ok()
+        && !document.relative_path.is_empty()
+        && crate::platform::path_rules::validate_relative_path(&document.relative_path).is_err()
+}
+
+fn replace_file_references(
+    node: &mut WorkspaceLayoutNode,
+    placeholders: &HashMap<String, WorkspacePaneContentRef>,
+) {
+    match node {
+        WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } => {
+            for content in contents.iter_mut() {
+                replace_file_reference(content, placeholders);
+            }
+            if let Some(active) = active_content {
+                replace_file_reference(active, placeholders);
+            }
+        }
+        WorkspaceLayoutNode::Split { first, second, .. } => {
+            replace_file_references(first, placeholders);
+            replace_file_references(second, placeholders);
+        }
+    }
+}
+
+fn replace_file_reference(
+    content: &mut WorkspacePaneContentRef,
+    placeholders: &HashMap<String, WorkspacePaneContentRef>,
+) {
+    let WorkspacePaneContentRef::File { document_id } = content else {
+        return;
+    };
+    if let Some(placeholder) = placeholders.get(document_id.as_str()) {
+        *content = placeholder.clone();
+    }
+}
+
 fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), WorkspaceLayoutError> {
     validate_uuid(&document.id, "文件文档 ID")?;
     if document.directory_id <= 0 {
@@ -704,10 +751,7 @@ fn validate_file_document(document: &WorkspaceFileDocument) -> Result<(), Worksp
         "项目内相对路径",
     )?;
     if document.relative_path.is_empty()
-        || crate::services::project_directory::ProjectDirectory::validate_relative_path(
-            &document.relative_path,
-        )
-        .is_err()
+        || crate::platform::path_rules::validate_relative_path(&document.relative_path).is_err()
     {
         return invalid("文件引用必须是规范的项目内相对路径");
     }
@@ -719,7 +763,7 @@ fn validate_unknown_content_ref(
     raw: &serde_json::Value,
 ) -> Result<(), WorkspaceLayoutError> {
     validate_text(original_kind, MAX_ID_CHARS, "未知内容类型")?;
-    if matches!(original_kind, "pty" | "file" | "unknown")
+    if crate::models::content_kind::is_reserved_content_kind(original_kind)
         || !raw.is_object()
         || raw.get("kind").and_then(serde_json::Value::as_str) != Some(original_kind)
     {
@@ -749,6 +793,119 @@ fn invalid<T>(message: &'static str) -> Result<T, WorkspaceLayoutError> {
 
 fn invalid_owned<T>(message: String) -> Result<T, WorkspaceLayoutError> {
     Err(WorkspaceLayoutError::Invalid(message))
+}
+
+/// 测试夹具：生成 `version`（1~4）对应的旧版布局 JSON 载荷，载荷内的 `schemaVersion` 等于 `version`。
+/// 变换照抄 `tests` 里四个迁移测试；其他版本号 panic。
+#[cfg(test)]
+pub(crate) fn legacy_payload_json(version: u32) -> String {
+    fn legacy_base_document() -> WorkspaceLayoutDocument {
+        let instance_id = Uuid::new_v4().to_string();
+        WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }],
+                active_content: Some(WorkspacePaneContentRef::Pty {
+                    slot_id: instance_id.clone(),
+                }),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: vec![WorkspaceLayoutSlot {
+                instance_id,
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                project_name: "example".to_string(),
+                tool_key: ToolKey::Claude,
+                sequence: 1,
+                session_id: Some(Uuid::new_v4().to_string()),
+                resume_session_id: None,
+                title: WorkspaceSlotTitle::Automatic,
+            }],
+            documents: Vec::new(),
+            detached_contents: Vec::new(),
+        }
+    }
+
+    let mut document = legacy_base_document();
+    let legacy = match version {
+        1 => {
+            let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+            legacy["schemaVersion"] = serde_json::json!(1);
+            let pane = legacy["tree"].as_object_mut().unwrap();
+            pane.remove("contents");
+            pane.remove("activeContent");
+            pane.insert(
+                "sessionIds".into(),
+                serde_json::json!([document.slots[0].instance_id]),
+            );
+            pane.insert(
+                "activeSessionId".into(),
+                serde_json::json!(document.slots[0].instance_id),
+            );
+            pane.insert("documentIds".into(), serde_json::json!([]));
+            legacy
+        }
+        2 => {
+            let document_id = Uuid::new_v4().to_string();
+            document.documents.push(WorkspaceFileDocument {
+                id: document_id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: "README.md".to_string(),
+            });
+            let mut legacy = serde_json::to_value(&document).expect("serialize base layout");
+            legacy["schemaVersion"] = serde_json::json!(2);
+            let pane = legacy["tree"].as_object_mut().unwrap();
+            pane.remove("contents");
+            pane.insert(
+                "sessionIds".into(),
+                serde_json::json!([document.slots[0].instance_id]),
+            );
+            pane.insert(
+                "documentIds".into(),
+                serde_json::json!([document_id.clone()]),
+            );
+            legacy["tree"]["activeContent"] = serde_json::json!({
+                "kind": "file",
+                "documentId": document_id,
+            });
+            legacy
+        }
+        3 => {
+            document.tree = WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: Vec::new(),
+                active_content: None,
+            };
+            let slot_id = document.slots[0].instance_id.clone();
+            let mut legacy = serde_json::to_value(&document).expect("serialize v3 layout");
+            legacy["schemaVersion"] = serde_json::json!(3);
+            legacy["detachedSlotIds"] = serde_json::json!([slot_id]);
+            legacy.as_object_mut().unwrap().remove("detachedContents");
+            legacy
+        }
+        4 => {
+            let unknown_raw = serde_json::json!({
+                "kind": "markdownPreview",
+                "previewId": "preview-1",
+                "content": { "source": "README.md", "enabled": true }
+            });
+            let mut legacy = serde_json::to_value(&document).expect("serialize v4 layout");
+            legacy["schemaVersion"] = serde_json::json!(4);
+            legacy["tree"]["contents"]
+                .as_array_mut()
+                .expect("pane contents")
+                .push(unknown_raw);
+            legacy
+        }
+        _ => panic!("unsupported legacy fixture version"),
+    };
+    serde_json::to_string(&legacy).expect("serialize legacy layout")
 }
 
 #[cfg(test)]
@@ -979,6 +1136,52 @@ mod tests {
         assert!(matches!(
             document.validate(),
             Err(WorkspaceLayoutError::Invalid(message)) if message.contains("同时出现在 pane")
+        ));
+    }
+
+    #[test]
+    fn validate_keeps_literal_dedupe_for_case_variants() {
+        // Two documents that differ only by case are not duplicates for `validate`: folding is
+        // decided later from the probed semantics, never by this pure function.
+        let mut document = valid_document();
+        let mut ids = Vec::new();
+        for relative_path in ["a.txt", "A.txt"] {
+            let id = Uuid::new_v4().to_string();
+            document.documents.push(WorkspaceFileDocument {
+                id: id.clone(),
+                directory_id: 1,
+                directory_path: "C:\\Projects\\example".to_string(),
+                relative_path: relative_path.to_string(),
+            });
+            ids.push(id);
+        }
+        let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        for id in &ids {
+            contents.push(WorkspacePaneContentRef::File {
+                document_id: id.clone(),
+            });
+        }
+        document.validate().expect("case variants stay valid");
+
+        // A literal duplicate is still rejected.
+        let duplicate = Uuid::new_v4().to_string();
+        document.documents.push(WorkspaceFileDocument {
+            id: duplicate.clone(),
+            directory_id: 1,
+            directory_path: "C:\\Projects\\example".to_string(),
+            relative_path: "a.txt".to_string(),
+        });
+        let WorkspaceLayoutNode::Pane { contents, .. } = &mut document.tree else {
+            panic!("expected root pane");
+        };
+        contents.push(WorkspacePaneContentRef::File {
+            document_id: duplicate,
+        });
+        assert!(matches!(
+            document.validate(),
+            Err(WorkspaceLayoutError::Invalid(message)) if message.contains("同一项目文件不能重复打开")
         ));
     }
 
@@ -1384,5 +1587,193 @@ mod tests {
         assert!(validate_preset_name("  ").is_err());
         assert!(validate_preset_name(&"界".repeat(65)).is_err());
         assert!(validate_preset_name("坏\n名称").is_err());
+    }
+
+    #[test]
+    fn legacy_payload_fixtures_migrate_to_current_version() {
+        for version in 1..=4u32 {
+            let json = legacy_payload_json(version);
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(value["schemaVersion"], version);
+            let migrated = WorkspaceLayoutDocument::from_json(&json)
+                .unwrap_or_else(|error| panic!("v{version} fixture must migrate: {error}"));
+            assert_eq!(migrated.schema_version, WORKSPACE_LAYOUT_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
+    fn legacy_payload_json_rejects_unsupported_versions() {
+        // 不用 #[should_panic]：它的输出行是 `test <名> - should panic ... ok`，
+        // 会被 CI 的“已执行测试”抽取（`... (ok|FAILED|ignored)` 紧跟测试名）漏掉。
+        let payload = std::panic::catch_unwind(|| legacy_payload_json(5))
+            .expect_err("version 5 must be rejected by the fixture");
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(
+            message.contains("unsupported legacy fixture version"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn degrading_parse_replaces_invalid_file_documents_and_keeps_the_rest() {
+        use crate::models::tool::ToolKey;
+
+        let slot_id = Uuid::new_v4().to_string();
+        let ok_id = Uuid::new_v4().to_string();
+        let bad_id = Uuid::new_v4().to_string();
+        let detached_bad_id = Uuid::new_v4().to_string();
+        let document = |id: &str, relative_path: &str| WorkspaceFileDocument {
+            id: id.to_string(),
+            directory_id: 1,
+            directory_path: "/tmp/project".to_string(),
+            relative_path: relative_path.to_string(),
+        };
+        let file = |id: &str| WorkspacePaneContentRef::File {
+            document_id: id.to_string(),
+        };
+        let ok_file = file(&ok_id);
+        let layout = WorkspaceLayoutDocument {
+            schema_version: WORKSPACE_LAYOUT_SCHEMA_VERSION,
+            tree: WorkspaceLayoutNode::Pane {
+                id: "workspace-root".to_string(),
+                pane_number: 1,
+                contents: vec![
+                    WorkspacePaneContentRef::Pty {
+                        slot_id: slot_id.clone(),
+                    },
+                    ok_file.clone(),
+                    file(&bad_id),
+                ],
+                active_content: Some(ok_file.clone()),
+            },
+            focused_pane_id: "workspace-root".to_string(),
+            slots: vec![WorkspaceLayoutSlot {
+                instance_id: slot_id.clone(),
+                directory_id: 1,
+                directory_path: "/tmp/project".to_string(),
+                project_name: "project".to_string(),
+                tool_key: ToolKey::Claude,
+                sequence: 1,
+                session_id: None,
+                resume_session_id: None,
+                title: WorkspaceSlotTitle::Automatic,
+            }],
+            documents: vec![
+                document(&ok_id, "ok.txt"),
+                document(&bad_id, "ok2.txt"),
+                document(&detached_bad_id, "ok3.txt"),
+            ],
+            detached_contents: vec![file(&detached_bad_id)],
+        };
+        layout.validate().unwrap();
+        let mut value = serde_json::to_value(&layout).unwrap();
+        value["documents"][1]["relativePath"] = serde_json::json!("a//b.txt");
+        value["documents"][2]["relativePath"] = serde_json::json!("c//d.txt");
+        let json = value.to_string();
+
+        assert!(WorkspaceLayoutDocument::from_json(&json).is_err());
+        let (degraded_layout, degraded) =
+            WorkspaceLayoutDocument::from_json_degrading_invalid_files(&json).unwrap();
+        assert_eq!(degraded_layout.documents.len(), 1);
+        assert_eq!(degraded_layout.documents[0].id, ok_id);
+        let degraded_paths: Vec<&str> = degraded
+            .iter()
+            .map(|item| item.relative_path.as_str())
+            .collect();
+        assert_eq!(degraded_paths, ["a//b.txt", "c//d.txt"]);
+        assert!(degraded
+            .iter()
+            .all(|item| item.reason == DEGRADED_FILE_REASON));
+
+        let WorkspaceLayoutNode::Pane {
+            contents,
+            active_content,
+            ..
+        } = &degraded_layout.tree
+        else {
+            panic!("the root must remain a pane");
+        };
+        assert_eq!(contents[0], WorkspacePaneContentRef::Pty { slot_id });
+        assert_eq!(contents[1], ok_file);
+        assert!(matches!(
+            &contents[2],
+            WorkspacePaneContentRef::Unknown { original_kind, .. } if original_kind == DEGRADED_FILE_KIND
+        ));
+        assert_eq!(active_content.as_ref(), Some(&ok_file));
+        assert_eq!(degraded_layout.detached_contents.len(), 1);
+        assert!(matches!(
+            &degraded_layout.detached_contents[0],
+            WorkspacePaneContentRef::Unknown { original_kind, .. } if original_kind == DEGRADED_FILE_KIND
+        ));
+        degraded_layout.validate().unwrap();
+
+        let mut broken = value.clone();
+        broken["documents"][0]["id"] = serde_json::json!("x");
+        assert!(
+            WorkspaceLayoutDocument::from_json_degrading_invalid_files(&broken.to_string())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn registered_content_kinds_match_the_content_ref_variants() {
+        fn kind_name(content: &WorkspacePaneContentRef) -> &'static str {
+            match content {
+                WorkspacePaneContentRef::Pty { .. } => "pty",
+                WorkspacePaneContentRef::File { .. } => "file",
+                WorkspacePaneContentRef::Unknown { .. } => "unknown",
+            }
+        }
+        let samples = [
+            WorkspacePaneContentRef::Pty {
+                slot_id: "slot".to_string(),
+            },
+            WorkspacePaneContentRef::File {
+                document_id: "document".to_string(),
+            },
+        ];
+        let mut variant_kinds: Vec<&str> = samples.iter().map(kind_name).collect();
+        variant_kinds.sort_unstable();
+        let mut registered: Vec<&str> = crate::models::content_kind::registered_content_kinds()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        registered.sort_unstable();
+        assert_eq!(variant_kinds, registered);
+
+        for sample in &samples {
+            let json = serde_json::to_value(sample).expect("serialize content ref");
+            assert_eq!(json["kind"], kind_name(sample));
+            let back: WorkspacePaneContentRef =
+                serde_json::from_value(json).expect("deserialize content ref");
+            assert_eq!(&back, sample);
+        }
+    }
+
+    #[test]
+    fn reserved_content_kinds_cover_registered_kinds_and_unknown() {
+        let mut reserved: Vec<String> =
+            crate::models::content_kind::registered_content_kinds().to_vec();
+        reserved.push("unknown".to_string());
+        for kind in &reserved {
+            assert!(
+                validate_unknown_content_ref(kind, &serde_json::json!({ "kind": kind })).is_err(),
+                "{kind} 是保留字，不能作为未知内容的原始 kind"
+            );
+        }
+        assert!(validate_unknown_content_ref(
+            "markdownPreview",
+            &serde_json::json!({ "kind": "markdownPreview" })
+        )
+        .is_ok());
+        assert!(validate_unknown_content_ref(
+            "markdownPreview",
+            &serde_json::json!({ "kind": "other" })
+        )
+        .is_err());
     }
 }

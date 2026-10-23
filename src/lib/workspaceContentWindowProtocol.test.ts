@@ -1,179 +1,131 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const { emitToMock, listenMock, getCurrentWebviewWindowMock, currentLabel } =
-  vi.hoisted(() => ({
-    emitToMock: vi.fn(),
-    listenMock: vi.fn(),
-    getCurrentWebviewWindowMock: vi.fn(),
-    currentLabel: { value: "main" },
-  }));
-
-vi.mock("@tauri-apps/api/event", () => ({
-  emitTo: emitToMock,
-}));
-
-vi.mock("@tauri-apps/api/webviewWindow", () => ({
-  getCurrentWebviewWindow: getCurrentWebviewWindowMock,
-}));
-
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+import { tauriMock } from "../test/tauriMock";
+import { onInboxEvent } from "./windowInbox";
 import {
-  emitWorkspaceContentWindowEvent,
   getWorkspaceContentWindowLabelPrefix,
-  listenWorkspaceContentWindowEvent,
-  WORKSPACE_CONTENT_WINDOW_EVENT,
+  onContentHandoff,
+  sendContentHandoff,
 } from "./workspaceContentWindowProtocol";
+import {
+  toGenericMessage,
+  type LegacyHandoffName,
+} from "../test/host/handoffVocabulary";
+
+const TERMINAL = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
+
+/** Delivers a relayed handoff message to the main window's inbox, stamped with `source`. */
+function deliverToMain(
+  type: LegacyHandoffName,
+  payload: unknown,
+  source: { label: string; kind: "main" | "terminal" | "workspaceContent" },
+  apiVersion = 1,
+) {
+  const message = toGenericMessage(type, payload);
+  tauriMock.deliverInbox(
+    "main",
+    "window-message",
+    { apiVersion, type: message.type, payload: message.payload },
+    source,
+  );
+}
+
+const terminalSource = (label: string) => ({
+  label,
+  kind: "terminal" as const,
+});
 
 describe("workspace content window protocol", () => {
-  beforeEach(() => {
-    emitToMock.mockReset();
-    listenMock.mockReset();
-    getCurrentWebviewWindowMock.mockReset();
-    currentLabel.value = "main";
-    getCurrentWebviewWindowMock.mockReturnValue({ listen: listenMock });
-  });
-
-  it("multiplexes typed events through one listener and releases it last", async () => {
-    let deliver: ((event: { payload: unknown }) => void) | undefined;
-    const unlisten = vi.fn();
-    listenMock.mockImplementation(async (_name, handler) => {
-      deliver = handler;
-      return unlisten;
-    });
+  it("routes typed messages by type through the window inbox and stops delivering after unlisten", async () => {
+    tauriMock.setCurrentWindowLabel("main");
     const ready = vi.fn();
     const failed = vi.fn();
-    const stopReady = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      ready,
-    );
-    const stopFailed = await listenWorkspaceContentWindowEvent(
-      "pty-detached-failed",
-      failed,
-    );
-
-    expect(listenMock).toHaveBeenCalledTimes(1);
-    expect(listenMock).toHaveBeenCalledWith(
-      WORKSPACE_CONTENT_WINDOW_EVENT,
-      expect.any(Function),
-    );
-    deliver?.({
-      payload: {
-        apiVersion: 1,
-        type: "pty-detached-ready",
-        payload: {
-          instanceId: "slot-1",
-          sessionId: "session-1",
-          windowLabel: "terminal-1",
-        },
-      },
-    });
-    expect(ready).toHaveBeenCalledWith({
-      payload: {
-        instanceId: "slot-1",
-        sessionId: "session-1",
-        windowLabel: "terminal-1",
-      },
-    });
-    expect(failed).not.toHaveBeenCalled();
-
-    stopReady();
-    expect(unlisten).not.toHaveBeenCalled();
-    stopFailed();
-    expect(unlisten).toHaveBeenCalledTimes(1);
-  });
-
-  it("receives only events emitted to the current window", async () => {
-    currentLabel.value = "terminal-8e783338-f464-4b10-b15e-b534748c6241";
-    let deliver: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(async (_name, handler) => {
-      deliver = handler;
-      return vi.fn();
-    });
-    emitToMock.mockImplementation(async (target, _name, payload) => {
-      if (target === currentLabel.value) deliver?.({ payload });
-    });
-
-    const ready = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      ready,
-    );
-    expect(getCurrentWebviewWindowMock).toHaveBeenCalledOnce();
-
-    const event = {
-      apiVersion: 1,
-      type: "pty-detached-ready",
-      payload: {
-        instanceId: "slot-1",
-        sessionId: "session-1",
-        windowLabel: currentLabel.value,
-      },
-    };
-    await emitWorkspaceContentWindowEvent(
-      "terminal-other",
-      "pty-detached-ready",
-      event.payload,
-    );
-    expect(ready).not.toHaveBeenCalled();
-    await emitWorkspaceContentWindowEvent(
-      currentLabel.value,
-      "pty-detached-ready",
-      event.payload,
-    );
-    expect(ready).toHaveBeenCalledOnce();
-    stop();
-  });
-
-  it("emits versioned envelopes and centralizes per-kind labels", async () => {
-    emitToMock.mockResolvedValue(undefined);
+    const stopReady = await onContentHandoff("pty", "ready", ready);
+    const stopFailed = await onContentHandoff("pty", "failed", failed);
     const payload = {
       instanceId: "slot-1",
       sessionId: "session-1",
       windowLabel: "terminal-1",
     };
-    await emitWorkspaceContentWindowEvent(
-      "main",
-      "pty-detached-ready",
-      payload,
-    );
 
-    expect(emitToMock).toHaveBeenCalledWith(
-      "main",
-      WORKSPACE_CONTENT_WINDOW_EVENT,
-      {
-        apiVersion: 1,
-        type: "pty-detached-ready",
-        payload,
-      },
+    deliverToMain("pty-detached-ready", payload, terminalSource("terminal-1"));
+
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(ready.mock.calls[0][0].payload).toEqual(payload);
+    expect(failed).not.toHaveBeenCalled();
+
+    stopReady();
+    deliverToMain("pty-detached-ready", payload, terminalSource("terminal-1"));
+    expect(ready).toHaveBeenCalledTimes(1);
+    stopFailed();
+    // The inbox subscription lives as long as the window: one subscription for both handlers.
+    expect(
+      tauriMock.state.invokeCalls.filter(
+        (call) => call.command === "subscribe_window_inbox",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("emits versioned envelopes and centralizes per-kind labels", async () => {
+    tauriMock.setCurrentWindowLabel(TERMINAL);
+    await onInboxEvent("window-message", vi.fn());
+    tauriMock.setCurrentWindowLabel("main");
+    const payload = {
+      instanceId: "slot-1",
+      sessionId: "session-1",
+      windowLabel: "terminal-1",
+    };
+
+    await sendContentHandoff(TERMINAL, "pty", "ready", payload);
+
+    const calls = tauriMock.state.invokeCalls.filter(
+      (call) => call.command === "send_window_message",
     );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual({
+      target: TERMINAL,
+      messageType: "content-handoff-ready",
+      payload: {
+        apiVersion: 1,
+        type: "content-handoff-ready",
+        payload: {
+          content: { kind: "pty", id: "slot-1" },
+          transferId: null,
+          payload: { sessionId: "session-1", windowLabel: "terminal-1" },
+        },
+      },
+    });
     expect(getWorkspaceContentWindowLabelPrefix("pty")).toBe("terminal-");
     expect(getWorkspaceContentWindowLabelPrefix("file")).toBe(
       "workspace-content-",
     );
+    // The relayed message no longer travels as a Tauri event of the old name.
+    expect(
+      tauriMock.state.emittedEvents.some(
+        (event) => event.eventName === "workspace-content-window-event",
+      ),
+    ).toBe(false);
   });
 
   it("rejects file buffer events without safe epoch and version fields", async () => {
-    let deliver: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(async (_name, handler) => {
-      deliver = handler;
-      return vi.fn();
-    });
+    tauriMock.setCurrentWindowLabel("main");
     const changed = vi.fn();
-    const stop = await listenWorkspaceContentWindowEvent(
-      "workspace-file-window-buffer-changed",
-      changed,
-    );
-    const envelope = (fileBuffer: Record<string, unknown>) => ({
-      payload: {
-        apiVersion: 1,
-        type: "workspace-file-window-buffer-changed",
-        payload: {
+    const stop = await onContentHandoff("file", "state-changed", changed);
+    const source = {
+      label: "workspace-content-1",
+      kind: "workspaceContent" as const,
+    };
+    const deliverBuffer = (fileBuffer: Record<string, unknown>) =>
+      deliverToMain(
+        "workspace-file-window-buffer-changed",
+        {
           documentId: "doc-1",
           token: "transfer-1",
           windowLabel: "workspace-content-1",
           fileBuffer,
         },
-      },
-    });
+        source,
+      );
     const validBase = {
       kind: "text",
       content: "text",
@@ -182,24 +134,19 @@ describe("workspace content window protocol", () => {
       saving: false,
     };
 
-    deliver?.(envelope({ ...validBase, version: 0 }));
-    deliver?.(envelope({ ...validBase, epoch: 0 }));
-    deliver?.(envelope({ ...validBase, epoch: -1, version: 0 }));
-    deliver?.(envelope({ ...validBase, epoch: 0, version: 1.5 }));
+    deliverBuffer({ ...validBase, version: 0 });
+    deliverBuffer({ ...validBase, epoch: 0 });
+    deliverBuffer({ ...validBase, epoch: -1, version: 0 });
+    deliverBuffer({ ...validBase, epoch: 0, version: 1.5 });
     expect(changed).not.toHaveBeenCalled();
 
-    deliver?.(envelope({ ...validBase, epoch: 0, version: 0 }));
+    deliverBuffer({ ...validBase, epoch: 0, version: 0 });
     expect(changed).toHaveBeenCalledOnce();
     stop();
   });
 
   it("validates payloads and isolates sync and async subscriber failures", async () => {
-    let deliver: ((event: { payload: unknown }) => void) | undefined;
-    const unlisten = vi.fn();
-    listenMock.mockImplementation(async (_name, handler) => {
-      deliver = handler;
-      return unlisten;
-    });
+    tauriMock.setCurrentWindowLabel("main");
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const thrown = vi.fn(() => {
       throw new Error("synchronous handler failed");
@@ -208,56 +155,43 @@ describe("workspace content window protocol", () => {
       throw new Error("handler failed");
     });
     const laterHandler = vi.fn();
-    const stopThrown = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      thrown,
-    );
-    const stopRejected = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      rejected,
-    );
-    const stopLater = await listenWorkspaceContentWindowEvent(
-      "pty-detached-ready",
-      laterHandler,
-    );
+    const stopThrown = await onContentHandoff("pty", "ready", thrown);
+    const stopRejected = await onContentHandoff("pty", "ready", rejected);
+    const stopLater = await onContentHandoff("pty", "ready", laterHandler);
+    const source = terminalSource("terminal-1");
 
-    deliver?.({
-      payload: {
-        apiVersion: 2,
-        type: "pty-detached-ready",
-        payload: {
-          instanceId: "slot-1",
-          sessionId: "session-1",
-          windowLabel: "terminal-1",
-        },
+    deliverToMain(
+      "pty-detached-ready",
+      {
+        instanceId: "slot-1",
+        sessionId: "session-1",
+        windowLabel: "terminal-1",
       },
-    });
+      source,
+      2,
+    );
     expect(thrown).not.toHaveBeenCalled();
     expect(rejected).not.toHaveBeenCalled();
     expect(laterHandler).not.toHaveBeenCalled();
 
-    deliver?.({
-      payload: {
-        apiVersion: 1,
-        type: "pty-detached-ready",
-        payload: { instanceId: "slot-1", sessionId: "session-1" },
-      },
-    });
+    deliverToMain(
+      "pty-detached-ready",
+      { instanceId: "slot-1", sessionId: "session-1" },
+      source,
+    );
     expect(thrown).not.toHaveBeenCalled();
     expect(rejected).not.toHaveBeenCalled();
     expect(laterHandler).not.toHaveBeenCalled();
 
-    deliver?.({
-      payload: {
-        apiVersion: 1,
-        type: "pty-detached-ready",
-        payload: {
-          instanceId: "slot-1",
-          sessionId: "session-1",
-          windowLabel: "terminal-1",
-        },
+    deliverToMain(
+      "pty-detached-ready",
+      {
+        instanceId: "slot-1",
+        sessionId: "session-1",
+        windowLabel: "terminal-1",
       },
-    });
+      source,
+    );
     expect(thrown).toHaveBeenCalledOnce();
     expect(laterHandler).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2));
@@ -266,5 +200,49 @@ describe("workspace content window protocol", () => {
     stopRejected();
     stopLater();
     log.mockRestore();
+  });
+
+  it("drops messages whose claimed window label differs from the stamped source", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const handler = vi.fn();
+    const stop = await onContentHandoff("pty", "ready", handler);
+    const payload = {
+      instanceId: "i",
+      sessionId: "s",
+      windowLabel: "terminal-a",
+    };
+
+    deliverToMain("pty-detached-ready", payload, terminalSource("terminal-b"));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toBe(
+      "workspace_content_event.source_mismatch",
+    );
+    stop();
+    warn.mockRestore();
+  });
+
+  it("accepts messages whose claimed window label equals the stamped source", async () => {
+    tauriMock.setCurrentWindowLabel("main");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const handler = vi.fn();
+    const stop = await onContentHandoff("pty", "ready", handler);
+    const payload = {
+      instanceId: "i",
+      sessionId: "s",
+      windowLabel: "terminal-a",
+    };
+
+    deliverToMain("pty-detached-ready", payload, terminalSource("terminal-a"));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0]).toEqual({
+      payload,
+      source: { label: "terminal-a", kind: "terminal" },
+    });
+    expect(warn).not.toHaveBeenCalled();
+    stop();
+    warn.mockRestore();
   });
 });

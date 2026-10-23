@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "name": "saved",
+      "value": {
+        "revision": 4,
+        "saved": true
+      }
+    },
+    {
+      "name": "stale",
+      "value": {
+        "reason": "stale",
+        "revision": 7,
+        "saved": false
+      }
+    },
+    {
+      "name": "incompatible",
+      "value": {
+        "reason": "incompatible",
+        "revision": 3,
+        "saved": false
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "WorkspaceLayoutSaveResult"
+}

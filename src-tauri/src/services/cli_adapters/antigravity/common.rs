@@ -4,7 +4,10 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 const LATEST_BASE_URL: &str =
     "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
@@ -15,6 +18,20 @@ pub static ADAPTER: AntigravityAdapter = AntigravityAdapter;
 impl CliAdapter for AntigravityAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Antigravity
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Antigravity,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {
@@ -51,9 +68,9 @@ impl CliAdapter for AntigravityAdapter {
     fn build_plan(
         &self,
         kind: InstallKind,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> anyhow::Result<InstallPlan> {
-        platform::build_plan(kind)
+        platform::build_plan(kind, context)
     }
 
     fn list_sessions(

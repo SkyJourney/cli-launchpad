@@ -1,0 +1,1945 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "sensitive-keeps-case",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "A.txt",
+      "key": "A.txt",
+      "note": ""
+    },
+    {
+      "name": "unknown-keeps-case",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "A.txt",
+      "key": "A.txt",
+      "note": ""
+    },
+    {
+      "name": "insensitive-folds-ascii",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "A.txt",
+      "key": "a.txt",
+      "note": ""
+    },
+    {
+      "name": "separators-are-kept",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "Dir/Sub/A.txt",
+      "key": "dir/sub/a.txt",
+      "note": ""
+    },
+    {
+      "name": "non-letters-are-kept",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "A-1_b (2).TXT",
+      "key": "a-1_b (2).txt",
+      "note": ""
+    },
+    {
+      "name": "insensitive-with-unknown-normalization-does-not-normalize",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "e\u0301.txt",
+      "key": "e\u0301.txt",
+      "note": ""
+    },
+    {
+      "name": "sensitive-with-normalization-yes-normalizes-only",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "E\u0301.txt",
+      "key": "\u00c9.txt",
+      "note": ""
+    },
+    {
+      "name": "insensitive-with-normalization-yes-folds-and-normalizes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "E\u0301.txt",
+      "key": "\u00e9.txt",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "README",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "README",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "README",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "README",
+      "key": "README",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "README",
+      "key": "README",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-upper-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "README",
+      "key": "README",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g01-readme-lower-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "readme",
+      "key": "readme",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "Stra\u00dfe",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "Stra\u00dfe",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-sharp-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "Stra\u00dfe",
+      "key": "Stra\u00dfe",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "STRASSE",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "STRASSE",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "STRASSE",
+      "key": "strasse",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "STRASSE",
+      "key": "STRASSE",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "STRASSE",
+      "key": "STRASSE",
+      "note": ""
+    },
+    {
+      "name": "g02-sharp-s-word-double-s-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "STRASSE",
+      "key": "STRASSE",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00df",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00df",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00df",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00df",
+      "key": "\u00df",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00df",
+      "key": "\u00df",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00df",
+      "key": "\u00df",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u1e9e",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u1e9e",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u1e9e",
+      "key": "ss",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u1e9e",
+      "key": "\u1e9e",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u1e9e",
+      "key": "\u1e9e",
+      "note": ""
+    },
+    {
+      "name": "g03-sharp-s-letters-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u1e9e",
+      "key": "\u1e9e",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-i-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "i",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u0130",
+      "key": "i\u0307",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u0130",
+      "key": "i\u0307",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u0130",
+      "key": "i\u0307",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u0130",
+      "key": "\u0130",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u0130",
+      "key": "\u0130",
+      "note": ""
+    },
+    {
+      "name": "g04-dotted-i-dotted-capital-i-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u0130",
+      "key": "\u0130",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "I",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "I",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "I",
+      "key": "i",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "I",
+      "key": "I",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "I",
+      "key": "I",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-capital-i-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "I",
+      "key": "I",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g05-dotless-i-dotless-i-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u0131",
+      "key": "\u0131",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-small-sigma-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03c3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c2",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c2",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-final-sigma-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03c2",
+      "key": "\u03c2",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03a3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03a3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03a3",
+      "key": "\u03c3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u03a3",
+      "key": "\u03a3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u03a3",
+      "key": "\u03a3",
+      "note": ""
+    },
+    {
+      "name": "g06-sigma-capital-sigma-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u03a3",
+      "key": "\u03a3",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-composed-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "e\u0301",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "e\u0301",
+      "key": "e\u0301",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "e\u0301",
+      "key": "e\u0301",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "e\u0301",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "e\u0301",
+      "key": "e\u0301",
+      "note": ""
+    },
+    {
+      "name": "g07-composed-and-decomposed-decomposed-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "e\u0301",
+      "key": "e\u0301",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00c9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00c9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00c9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00c9",
+      "key": "\u00c9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00c9",
+      "key": "\u00c9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00c9",
+      "key": "\u00c9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g08-accented-capital-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u00e9",
+      "key": "\u00e9",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uff21",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uff21",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uff21",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uff21",
+      "key": "\uff21",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uff21",
+      "key": "\uff21",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uff21",
+      "key": "\uff21",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-fullwidth-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uff41",
+      "key": "\uff41",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "a",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "A",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "A",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "A",
+      "key": "a",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "A",
+      "key": "A",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "A",
+      "key": "A",
+      "note": ""
+    },
+    {
+      "name": "g09-fullwidth-a-ascii-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "A",
+      "key": "A",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c5",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c5",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-titlecase-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c5",
+      "key": "\u01c5",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c6",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c6",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c4",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c4",
+      "note": ""
+    },
+    {
+      "name": "g10-dz-digraph-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u01c4",
+      "key": "\u01c4",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u212a",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u212a",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u212a",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u212a",
+      "key": "K",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u212a",
+      "key": "\u212a",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-kelvin-sign-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u212a",
+      "key": "\u212a",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "k",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "K",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "K",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "K",
+      "key": "k",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "K",
+      "key": "K",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "K",
+      "key": "K",
+      "note": ""
+    },
+    {
+      "name": "g11-kelvin-ascii-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "K",
+      "key": "K",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\ufb03",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\ufb03",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\ufb03",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\ufb03",
+      "key": "\ufb03",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\ufb03",
+      "key": "\ufb03",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-ligature-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\ufb03",
+      "key": "\ufb03",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g12-ffi-ligature-letters-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "ffi",
+      "key": "ffi",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-capital-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\u13a0",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-insensitive-yes",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uab70",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-insensitive-no",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uab70",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-insensitive-unknown",
+      "semantics": {
+        "case": "insensitive",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uab70",
+      "key": "\u13a0",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-sensitive-yes",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "yes"
+      },
+      "relative": "\uab70",
+      "key": "\uab70",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-sensitive-no",
+      "semantics": {
+        "case": "sensitive",
+        "normalizationInsensitive": "no"
+      },
+      "relative": "\uab70",
+      "key": "\uab70",
+      "note": ""
+    },
+    {
+      "name": "g13-cherokee-small-unknown",
+      "semantics": {
+        "case": "unknown",
+        "normalizationInsensitive": "unknown"
+      },
+      "relative": "\uab70",
+      "key": "\uab70",
+      "note": ""
+    }
+  ]
+}

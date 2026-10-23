@@ -6,24 +6,62 @@ type LocaleShape<T> = {
 
 export const ar = {
   errors: {
+    exitReportInvalid: "بيانات تأكيد الخروج غير صالحة. حاول الخروج مرة أخرى.",
+    exitImpactsNotReported:
+      "لم يحدّد التطبيق بعد ما سيتأثر عند الخروج. حاول الخروج مرة أخرى.",
+    exitImpactsChanged:
+      "تغيّر ما سيتأثر عند الخروج (بدأ تشغيل عمل جديد). يرجى التأكيد مرة أخرى.",
     fileNotFound: "تعذر العثور على الملف.",
     fileTooLarge: "يتجاوز الملف الحجم المسموح به.",
+    ptySessionNotFound: "جلسة الطرفية غير موجودة أو انتهت.",
+    ptyHandoffInProgress:
+      "يجري نقل هذه الطرفية إلى نافذة أخرى. حاول مرة أخرى بعد قليل.",
+    fileNotUtf8: "يمكن تحرير وحفظ ملفات UTF-8 النصية فقط.",
+    fileNotRegular: "يمكن فتح أو حفظ الملفات العادية فقط.",
+    layoutNameExists: "يوجد تخطيط بهذا الاسم بالفعل. استخدم اسمًا آخر.",
+    layoutPresetLimit: "الحد الأقصى المدعوم هو {{max}} من التخطيطات المسماة.",
+    filePermissionDenied: "تم رفض الإذن. تحقق من أذونات الملف أو المجلد.",
+    backupIndexRefreshDiscarded:
+      "تم استبدال البيانات (استعادة نسخة احتياطية أو استيراد إعدادات)، لذا تم تجاهل تحديث فهرس الجلسات الذي بدأ قبل الاستبدال.",
+    projectIdentityUnreadable: "تعذّرت قراءة هوية مجلد المشروع.",
     fileConflict: "تغير الملف على القرص. أعد تحميله قبل الحفظ.",
     fileIdentityChanged:
       "تغيرت هوية مجلد المشروع. أعد تحميل المستند أو احفظه في موقع آخر.",
     ptyOwnerMismatch: "لم تعد جلسة الطرفية هذه مملوكة لهذه النافذة.",
     ptyHandoffExpired: "انتهت مهلة نقل الطرفية. حاول مرة أخرى.",
+    ptyHandoffTargetIsSource:
+      "نافذة الوجهة هي نفسها نافذة المصدر، لذلك لا يمكن نقل الطرفية.",
     ptyInputBackpressure: "قائمة إدخال الطرفية ممتلئة. حاول مرة أخرى بعد قليل.",
     ptyInputUnavailable: "قناة إدخال الطرفية مغلقة. أعد اتصال الجلسة.",
     ptySessionsActive:
-      "لا تزال هناك {{count}} جلسة طرفية قيد التشغيل. أغلقها قبل استعادة النسخة الاحتياطية.",
+      "تتعذر استعادة نسخة احتياطية أو استيراد إعدادات بينما تعمل {{count}} من جلسات الطرفية. أغلقها أولاً.",
     backupRestoreInProgress:
       "تجري استعادة نسخة احتياطية. حاول مرة أخرى بعد اكتمالها.",
     ptySessionStarting:
-      "يجري بدء {{count}} جلسة طرفية. حاول الاستعادة بعد قليل.",
+      "ما زالت {{count}} من جلسات الطرفية أو مهام التنفيذ قيد البدء. حاول مرة أخرى بعد قليل.",
     execPlanChanged: "تغيرت خطة التنفيذ. راجعها وأكدها مرة أخرى.",
     execBusy: "توجد مهمة قيد التشغيل لهذه الأداة بالفعل.",
+    exitNoPendingRequest: "لا يوجد طلب خروج معلق. حاول الخروج مرة أخرى.",
+    exitRequestMismatch: "لم يعد طلب الخروج هذا صالحًا. حاول الخروج مرة أخرى.",
     layoutNeedsReset: "تخطيط مساحة العمل غير صالح ويجب إعادة تعيينه.",
+    layoutCaseDuplicate:
+      "يحتوي التخطيط على مستندات تختلف مساراتها في حالة الأحرف فقط.",
+    internal:
+      "حدث خطأ داخلي. حاول مرة أخرى، وأعد تشغيل التطبيق إذا استمرت المشكلة.",
+    appExiting: "التطبيق قيد الإغلاق. حاول مرة أخرى بعد إعادة التشغيل.",
+    appExitDeferred:
+      "ما زالت عملية استعادة أو استيراد قيد التنفيذ، لذلك لا يمكن إغلاق التطبيق الآن.",
+    dataReplaceBlocked:
+      "ما زالت {{count}} من مهام التثبيت أو التحديث قيد التنفيذ. انتظر حتى تنتهي قبل الاستعادة أو الاستيراد.",
+    dataReplaceInProgress:
+      "هناك عملية استعادة أو استيراد أخرى قيد التنفيذ بالفعل.",
+    configImportInProgress:
+      "استيراد الإعدادات قيد التنفيذ. حاول مرة أخرى بعد انتهائه.",
+    projectNotFound: "تعذر العثور على مجلد المشروع.",
+    layoutSaveRejected: "رُفض حفظ تخطيط مساحة العمل مرارًا، لذلك توقف الحفظ.",
+    layoutSchemaIncompatible:
+      "كُتب تخطيط مساحة العمل بواسطة إصدار أحدث من التطبيق ولا يمكن لهذا الإصدار حفظه.",
+    appError: "حدث خطأ غير متوقع. حاول مرة أخرى.",
     generic: "تعذر إكمال العملية.",
     directoryInUse: "لا تزال هناك جلسة طرفية قيد التشغيل لهذا المشروع.",
   },
@@ -90,13 +128,28 @@ export const ar = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "حفظ الكل والخروج",
     title: "هل تريد إنهاء CLI Launchpad؟",
     description:
       "لا تزال {{count}} جلسة طرفية مضمّنة قيد التشغيل. سيؤدي الإنهاء إلى إنهاء هذه الجلسات والعمليات التابعة لها.",
-    confirm: "إنهاء الجلسات والخروج",
+    executionTasks:
+      "ما زالت {{count}} من مهام التثبيت أو التحديث قيد التشغيل. ستؤدي مغادرة التطبيق إلى إيقافها.",
     unsavedDescription: "تحتوي {{count}} من الملفات على تغييرات غير محفوظة:",
     confirmDiscard: "تجاهل التغييرات والخروج",
     terminating: "جارٍ الخروج…",
+  },
+  startupNotice: {
+    abnormalExit:
+      "لم يُغلق CLI Launchpad بشكل طبيعي في المرة السابقة. قد تكون التعديلات غير المحفوظة قد فُقدت.",
+    abnormalExitWithTime:
+      "لم يُغلق CLI Launchpad بشكل طبيعي في المرة السابقة (بدأ في {{time}}). قد تكون التعديلات غير المحفوظة قد فُقدت.",
+    dismiss: "إغلاق",
+  },
+  appCrash: {
+    title: "حدث خطأ غير متوقع",
+    description:
+      "واجه CLI Launchpad خطأً غير متوقع في هذه النافذة. تؤدي إعادة التحميل إلى إعادة تشغيل النافذة، وقد تُفقد التعديلات غير المحفوظة.",
+    reload: "إعادة تحميل النافذة",
   },
   windowChrome: {
     titlebar: "شريط عنوان نافذة التطبيق",
@@ -183,6 +236,9 @@ export const ar = {
     returningToWorkspace: "جارٍ النقل إلى مساحة العمل…",
     returnFailed: "تعذرت العودة إلى مساحة العمل: {{error}}",
     returnTimedOut: "لم تستجب مساحة العمل الرئيسية في الوقت المحدد.",
+    returnUnknownError: "خطأ غير معروف",
+    returnExpired: "انتهت صلاحية طلب العودة.",
+    returnRequestFailed: "فشل طلب العودة.",
     detachedDefaultTitle: "طرفية CLI",
     detachedMoveUnavailable: "لا يمكن نقل هذه الطرفية إلى نافذة منفصلة.",
     detachedMoveNotRunning:
@@ -190,6 +246,10 @@ export const ar = {
     detachedStartTimedOut: "انتهت مهلة بدء نافذة الطرفية المنفصلة.",
     detachedCreateFailed: "تعذر إنشاء نافذة الطرفية المنفصلة.",
     detachedStartFailed: "تعذر بدء نافذة الطرفية المنفصلة.",
+    listenerSetupFailed:
+      "تعذّر تسجيل بعض قنوات الاتصال بين النوافذ ({{events}}). قد لا تستجيب النوافذ المنفصلة؛ أعد تشغيل التطبيق إذا استمرت المشكلة.",
+    ownerLostRecoveryFailed:
+      "تعذّرت إعادة الاتصال بجلسة الطرفية بعد إغلاق نافذتها. أغلق هذه الطرفية وابدأها من جديد.",
     detachedStateChanged: "تغيرت حالة النافذة المنفصلة. يُرجى المحاولة مجددًا.",
     detachedSessionMissing:
       "تعذر العثور على جلسة الطرفية هذه في مساحة العمل الرئيسية.",
@@ -356,12 +416,13 @@ export const ar = {
     latest: "الأحدث: ",
     unavailableWithError: "غير متاح ({{error}})",
     unknownRefresh: "غير معروف؛ أعد الاكتشاف من أعلى اليمين",
-    hermesRefreshPrompt: "حدّث يدويًا للتحقق من الفرع main",
-    hermesUpToDate: "محدّث إلى main",
-    hermesUpdateBehind: "متأخر عن main بمقدار {{count}} التزامات",
-    hermesUpdateBehindUnknown:
-      "تتوفر تحديثات على main (عدد الالتزامات غير متاح)",
-    hermesUpdateStatus: "حالة التحديث: ",
+    branchRefreshPrompt: "حدّث يدويًا للتحقق من الفرع الأعلى (upstream)",
+    branchUpToDate: "متزامن مع الفرع الأعلى (upstream)",
+    branchUpdateBehind:
+      "متأخر عن الفرع الأعلى (upstream) بعدد {{count}} من الالتزامات",
+    branchUpdateBehindUnknown:
+      "تتوفر تحديثات على الفرع الأعلى (upstream) (عدد الالتزامات غير متاح)",
+    branchUpdateStatus: "حالة التحديث: ",
     hermesInstallEffectsHeading: "سيقوم المثبّت الرسمي بما يلي:",
     hermesInstallEffectRuntime:
       "تثبيت Hermes CLI وبيئات Python/Node المُدارة والتبعيات للمستخدم الحالي.",
@@ -501,6 +562,8 @@ export const ar = {
       pre_import: "نسخة احتياطية تلقائية قبل الاستيراد",
       pre_restore: "نسخة احتياطية وقائية قبل الاستعادة",
       pre_migration: "نسخة احتياطية تلقائية قبل الترقية",
+      pre_case_merge:
+        "نسخة احتياطية تلقائية قبل دمج المستندات التي تختلف في حالة الأحرف فقط",
     },
     preservation: {
       exact: "محفوظ بالكامل",
@@ -595,6 +658,14 @@ export const ar = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "حفظ الكل والإغلاق",
+    discardAndClose: "تجاهل التغييرات والإغلاق",
+    saveAllInProgress: "جارٍ الحفظ…",
+    saveAllFailedQuit: "تعذّر حفظ {{count}} من الملفات؛ أُلغي الخروج",
+    saveAllFailedClose: "تعذّر حفظ {{count}} من الملفات؛ أُلغي الإغلاق",
+    confirmCloseTitle: "تأكيد الإغلاق",
+    caseVariantsMerged:
+      "تم دمج {{count}} من المستندات التي كانت مساراتها تختلف في حالة الأحرف فقط.",
     rightPanelTabs: "علامات تبويب اللوحة اليمنى",
     files: "الملفات",
     git: "Git",

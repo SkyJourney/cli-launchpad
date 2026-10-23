@@ -5,6 +5,8 @@ import type {
   WorkspacePaneContentRef,
 } from "./tauri";
 import type { WorkspaceFileBuffer } from "./workspaceFileBuffer";
+import { workspaceContentKey } from "./workspaceContentKey";
+import type { RegisteredContentKind } from "../generated/contentKinds";
 
 export interface WorkspacePaneOwner {
   kind: "pane";
@@ -21,8 +23,18 @@ export type WorkspaceContentOwner = WorkspacePaneOwner | WorkspaceWindowOwner;
 
 export type ManagedWorkspacePaneContentRef = Extract<
   WorkspacePaneContentRef,
-  { kind: "pty" | "file" }
+  { kind: RegisteredContentKind }
 >;
+
+/** One handoff (a detach or a return). Unique per handoff. */
+export function newTransferId(): string {
+  return crypto.randomUUID();
+}
+
+/** One window session, from window creation to window destruction. */
+export function newWindowToken(): string {
+  return crypto.randomUUID();
+}
 
 export function canChangeWorkspaceContentPane(
   state: WorkspaceContentLifecycleState | undefined,
@@ -102,6 +114,14 @@ export type WorkspaceContentLifecycleEvent =
   | ({
       type: "detachReady";
       transferId: string;
+      windowToken: string;
+      generation: number;
+    } & WorkspaceContentHandoffEventIdentity)
+  | ({
+      // 超时对账时 Rust 报告会话归外来窗口：内容归该窗口（m6-096 F1）。
+      type: "foreignOwnerRecognized";
+      transferId: string;
+      ownerWindowLabel: string;
       generation: number;
     } & WorkspaceContentHandoffEventIdentity)
   | ({
@@ -151,7 +171,12 @@ export type WorkspaceContentLifecycleEvent =
       type: "disposeCompleted";
       requestId: string;
     } & WorkspaceContentCloseEventIdentity)
-  | ({ type: "ownerEnded" } & WorkspaceContentOwnerEndEventIdentity);
+  | ({ type: "ownerEnded" } & WorkspaceContentOwnerEndEventIdentity)
+  // 已分离内容的会话被另一窗口持有（owner-lost 重连发现外来所有者）：内容改归该窗口（m6-096 F1）。
+  | ({
+      type: "foreignOwnerAdopted";
+      ownerWindowLabel: string;
+    } & WorkspaceContentOwnerEndEventIdentity);
 
 export interface WorkspaceContentLifecycleTransition {
   state: WorkspaceContentLifecycleState;
@@ -168,18 +193,6 @@ export interface WorkspaceContentHandoffPayloadByKind {
     buffer: WorkspaceFileBuffer;
   };
 }
-
-export type WorkspaceContentHandoffEnvelope = {
-  [Kind in keyof WorkspaceContentHandoffPayloadByKind]: {
-    apiVersion: 1;
-    transferId: string;
-    generation: number;
-    content: Extract<WorkspacePaneContentRef, { kind: Kind }>;
-    source: WorkspaceContentOwner;
-    target: WorkspaceContentOwner;
-    payload: WorkspaceContentHandoffPayloadByKind[Kind];
-  };
-}[keyof WorkspaceContentHandoffPayloadByKind];
 
 export function createWorkspaceContentLifecycle(
   content: ManagedWorkspacePaneContentRef,
@@ -239,26 +252,7 @@ function sameContent(
   left: WorkspacePaneContentRef,
   right: WorkspacePaneContentRef,
 ): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "pty")
-    return (
-      left.slotId ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "pty" }>).slotId
-    );
-  if (left.kind === "file")
-    return (
-      left.documentId ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "file" }>).documentId
-    );
-  return (
-    left.originalKind ===
-      (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>)
-        .originalKind &&
-    JSON.stringify(left.raw) ===
-      JSON.stringify(
-        (right as Extract<WorkspacePaneContentRef, { kind: "unknown" }>).raw,
-      )
-  );
+  return workspaceContentKey(left) === workspaceContentKey(right);
 }
 
 function sameOwner(
@@ -309,7 +303,12 @@ export function transitionWorkspaceContentLifecycle(
       });
     }
     case "detachReady": {
-      if (state.phase !== "detaching" || !matchesTransfer(state, event)) {
+      if (
+        state.phase !== "detaching" ||
+        !matchesTransfer(state, event) ||
+        !hasText(event.windowToken) ||
+        event.windowToken === state.transferId
+      ) {
         return ignored(state);
       }
       return changed({
@@ -317,7 +316,41 @@ export function transitionWorkspaceContentLifecycle(
         content: state.content,
         generation: state.generation,
         owner: state.target,
-        windowToken: state.transferId,
+        windowToken: event.windowToken,
+        lastPaneId: state.source.paneId,
+      });
+    }
+    case "foreignOwnerAdopted": {
+      if (
+        state.phase !== "detached" ||
+        !sameContent(state.content, event.content) ||
+        state.generation !== event.generation ||
+        !hasText(event.ownerWindowLabel)
+      ) {
+        return ignored(state);
+      }
+      return changed({
+        ...state,
+        owner: { kind: "window", windowLabel: event.ownerWindowLabel },
+        // 新持有者没有本窗口签发的握手 token：派生一个确定的占位值，旧 token 不再有效。
+        windowToken: `foreign:${state.windowToken}`,
+      });
+    }
+    case "foreignOwnerRecognized": {
+      if (
+        state.phase !== "detaching" ||
+        !matchesTransfer(state, event) ||
+        !hasText(event.ownerWindowLabel)
+      ) {
+        return ignored(state);
+      }
+      return changed({
+        phase: "detached",
+        content: state.content,
+        generation: state.generation,
+        owner: { kind: "window", windowLabel: event.ownerWindowLabel },
+        // 外来窗口的握手 token 不由本窗口持有；使用只与 transfer 绑定的稳定占位值（非空且不同于 transfer id）。
+        windowToken: `foreign:${state.transferId}`,
         lastPaneId: state.source.paneId,
       });
     }

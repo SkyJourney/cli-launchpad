@@ -11,7 +11,6 @@ export const grokAdapter: CliAdapter = {
   shortLabel: "GB",
   icon: GrokIcon,
   terminalPaste: { controlV: "terminal", windowsAltV: "terminal" },
-  latestStatusKind: "version",
   installEffects: (platform) =>
     platform === "windows"
       ? {

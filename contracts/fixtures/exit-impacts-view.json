@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "name": "pending-work",
+      "value": {
+        "dirtyFiles": [
+          {
+            "documentId": "d1",
+            "relativePath": "a.ts"
+          }
+        ],
+        "executionTaskCount": 1,
+        "ptyCount": 2,
+        "requestId": "req-1",
+        "requiresPrompt": true
+      }
+    },
+    {
+      "name": "idle",
+      "value": {
+        "dirtyFiles": [],
+        "executionTaskCount": 0,
+        "ptyCount": 0,
+        "requestId": "req-1",
+        "requiresPrompt": false
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ExitImpactsView"
+}

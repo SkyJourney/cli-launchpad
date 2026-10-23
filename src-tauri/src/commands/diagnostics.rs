@@ -1,7 +1,8 @@
 use tauri::State;
 
+use crate::models::window_kind::{CallerWindow, WindowKind};
 use crate::services::{diagnostics_service, storage_service::StoragePaths};
-use crate::{with_connection, AppError, Db};
+use crate::{blocking_unbounded, AppError, Db};
 
 #[tauri::command]
 pub async fn export_diagnostics_to_path(
@@ -11,13 +12,27 @@ pub async fn export_diagnostics_to_path(
 ) -> Result<(), AppError> {
     let db = state.inner().clone();
     let storage = storage.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        with_connection(&db, |connection| {
-            diagnostics_service::export_to_path(connection, &storage, &path)?;
-            log::info!("diagnostics export completed");
-            Ok(())
-        })
+    blocking_unbounded("diagnostics.export", move || {
+        diagnostics_service::export_with(&db, &storage, &path)
     })
     .await
-    .map_err(|error| AppError::msg(format!("诊断导出任务异常：{error}")))?
+}
+
+/// Records a window synchronisation failure reported by the renderer. The window
+/// label comes from the calling window, not from the payload. The command is
+/// synchronous on purpose: it only formats text and writes to the logger.
+#[tauri::command]
+// sync: 纯内存：只格式化文本并写日志
+pub fn report_window_sync_failure(
+    caller: CallerWindow,
+    code: String,
+    message: String,
+) -> Result<(), AppError> {
+    caller.require(&[
+        WindowKind::Main,
+        WindowKind::Terminal,
+        WindowKind::WorkspaceContent,
+    ])?;
+    diagnostics_service::log_window_sync_failure(caller.label(), &code, &message);
+    Ok(())
 }

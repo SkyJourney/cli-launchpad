@@ -1,0 +1,97 @@
+// @vitest-environment jsdom
+import { cleanup } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock(
+  "react-i18next",
+  async () => (await import("../test/host/hostMocks")).reactI18nextMock,
+);
+vi.mock(
+  "sonner",
+  async () => (await import("../test/host/hostMocks")).sonnerMock,
+);
+vi.mock(
+  "./PtyTerminal",
+  async () => (await import("../test/host/hostMocks")).ptyTerminalMock,
+);
+
+import { tauriMock } from "../test/tauriMock";
+import { resetFakeTerminals } from "../test/host/hostMocks";
+import {
+  DEFAULT_PTY_WINDOW_LABEL,
+  flush,
+  mountPtyWindow,
+  relayedHandoffs,
+} from "../test/host/workspaceHarness";
+
+let windowHandle: Awaited<ReturnType<typeof mountPtyWindow>> | undefined;
+afterEach(async () => {
+  errorSpy?.mockRestore();
+  errorSpy = undefined;
+  windowHandle?.dispose();
+  windowHandle = undefined;
+  cleanup();
+  resetFakeTerminals();
+  vi.useRealTimers();
+  await flush();
+  expect(tauriMock.state.eventListeners).toHaveLength(0);
+  // ACL 拒绝会被宿主吞掉时用例仍可能通过，所以显式断言没有任何权限违规。
+  expect(tauriMock.state.aclViolations).toEqual([]);
+});
+
+function emittedEnvelopes(type: string) {
+  return relayedHandoffs().filter((message) => message.legacyType === type);
+}
+
+/** 本文件用例内安装的 console.error 静音 spy；只在 afterEach 中恢复它，不影响 tauriMock 的 vi.fn。 */
+let errorSpy: { mockRestore: () => void } | undefined;
+
+describe("StandalonePtyWindow listener setup", () => {
+  it("reports pty-detached-failed and leaves no listeners when listener registration fails", async () => {
+    tauriMock.failNextInboxSubscribe(new Error("denied"));
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    windowHandle = await mountPtyWindow();
+
+    await flush(10);
+
+    const failed = emittedEnvelopes("pty-detached-failed").filter(
+      (event) => event.target === "main",
+    );
+    expect(failed).toHaveLength(1);
+    const inner = failed[0].payload as { message?: string };
+    expect(inner.message).toContain("denied");
+    expect(
+      tauriMock.state.windowActions.some(
+        (action) =>
+          action.windowLabel === DEFAULT_PTY_WINDOW_LABEL &&
+          action.action === "destroy",
+      ),
+    ).toBe(true);
+    // 反向断言：没有 ready，窗口 dispose 之后不留任何监听。
+    expect(emittedEnvelopes("pty-detached-ready")).toHaveLength(0);
+    windowHandle.dispose();
+    windowHandle = undefined;
+    expect(tauriMock.state.eventListeners).toHaveLength(0);
+  });
+
+  it("removes every PTY window listener once the window became ready and is disposed", async () => {
+    const inboxBefore = tauriMock.inboxHandlerCount(
+      DEFAULT_PTY_WINDOW_LABEL,
+      "window-message",
+    );
+    windowHandle = await mountPtyWindow();
+    await flush(10);
+    // 反向断言前提：窗口确实进入了就绪路径，并且三个内容监听确实登记在收件箱上。
+    expect(emittedEnvelopes("pty-detached-ready")).toHaveLength(1);
+    expect(
+      tauriMock.inboxHandlerCount(DEFAULT_PTY_WINDOW_LABEL, "window-message"),
+    ).toBeGreaterThanOrEqual(inboxBefore + 3);
+
+    windowHandle.dispose();
+    windowHandle = undefined;
+    await flush();
+    expect(
+      tauriMock.inboxHandlerCount(DEFAULT_PTY_WINDOW_LABEL, "window-message"),
+    ).toBe(inboxBefore);
+  });
+});

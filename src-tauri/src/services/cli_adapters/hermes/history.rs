@@ -8,8 +8,8 @@ use rusqlite::{Connection, OpenFlags};
 use crate::models::session::{SessionInfo, SessionPage, SessionSearchIndexSource};
 use crate::models::tool::ToolKey;
 #[cfg(not(windows))]
-use crate::services::session_service::home_dir;
-use crate::services::session_service::{
+use crate::platform::home::home_dir;
+use crate::services::cli_adapters::support::{
     index_source, page_local, paths_match, read_search_metadata_file, truncate_chars,
     SearchDocument, SearchSource, MAX_SEARCH_FIELD_CHARS, TITLE_MAX_CHARS,
 };
@@ -20,7 +20,7 @@ const MAX_HERMES_PREVIEW_CHARS: usize = 1_000;
 const MAX_HERMES_PREVIEW_BYTES: usize = 32 * 1024 * 1024;
 const HERMES_DB_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 
-pub(crate) fn valid_session_id(session_id: &str) -> bool {
+pub(super) fn valid_session_id(session_id: &str) -> bool {
     !session_id.is_empty()
         && session_id.len() <= 200
         && session_id
@@ -282,7 +282,7 @@ fn normalize_preview(value: &str) -> Option<String> {
     }
     if trimmed.starts_with(['[', '{']) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return crate::services::session_service::extract_text_content(&json);
+            return crate::services::cli_adapters::support::extract_text_content(&json);
         }
     }
     Some(trimmed.to_string())
@@ -306,7 +306,7 @@ fn read_timestamp_ms(row: &rusqlite::Row<'_>, index: usize) -> Result<Option<i64
     Ok(Some((seconds * 1_000.0).round() as i64))
 }
 
-pub(crate) async fn list_sessions_page(
+pub(super) async fn list_sessions_page(
     directory_path: String,
     cursor: Option<String>,
     limit: usize,
@@ -323,11 +323,11 @@ pub(crate) async fn list_sessions_page(
     .map_err(|error| anyhow!("Hermes Agent 会话读取任务异常：{error}"))?
 }
 
-pub(crate) async fn search_index_source(
+pub(super) async fn search_index_source(
     directory_path: String,
     context: crate::services::cli_adapters::AdapterContext,
 ) -> SessionSearchIndexSource {
-    let result = crate::services::session_service::spawn_search_index_blocking(move || {
+    let result = crate::services::cli_adapters::support::spawn_search_index_blocking(move || {
         search_documents_in(&directory_path, &context.home)
     })
     .await
@@ -335,7 +335,7 @@ pub(crate) async fn search_index_source(
     index_source(ToolKey::Hermes, result)
 }
 
-pub(crate) async fn session_belongs_to_directory(
+pub(super) async fn session_belongs_to_directory(
     directory_path: String,
     session_id: String,
 ) -> Result<bool> {

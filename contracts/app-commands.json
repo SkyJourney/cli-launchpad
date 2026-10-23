@@ -1,70 +1,332 @@
-[
-  "list_backups",
-  "create_backup",
-  "restore_backup",
-  "get_cache_stats",
-  "clear_cache",
-  "export_diagnostics_to_path",
-  "list_launch_history",
-  "clear_launch_history",
-  "get_launch_history_limit",
-  "set_launch_history_limit",
-  "list_sessions",
-  "search_sessions",
-  "refresh_session_search_index",
-  "set_session_alias",
-  "delete_session_alias",
-  "create_pty_session",
-  "begin_pty_handoff",
-  "stage_pty_handoff_snapshot",
-  "complete_pty_handoff",
-  "finalize_pty_handoff",
-  "cancel_pty_handoff",
-  "get_pty_session_window_status",
-  "reattach_pty_session",
-  "write_pty_session",
-  "resize_pty_session",
-  "acknowledge_pty_output",
-  "report_pty_frontend_stage",
-  "terminate_pty_session",
-  "confirm_app_exit",
-  "list_directories",
-  "add_directory",
-  "update_directory",
-  "remove_directory",
-  "set_directory_pinned",
-  "reorder_directories",
-  "open_project_directory",
-  "list_project_files",
-  "open_project_file",
-  "save_project_text_file",
-  "grant_content_window_file",
-  "open_granted_file",
-  "save_granted_text_file",
-  "revoke_content_window_file",
-  "list_project_file_cas_residues",
-  "remove_project_file_cas_residue",
-  "start_execution_task",
-  "list_execution_tasks",
-  "get_execution_task",
-  "cancel_execution_task",
-  "clear_execution_task",
-  "clear_execution_history",
-  "detect_cli_status",
-  "fetch_latest_version",
-  "get_install_plan",
-  "export_config_to_path",
-  "import_config_from_path",
-  "get_close_behavior",
-  "set_close_behavior",
-  "set_tray_menu_labels",
-  "get_workspace_layout",
-  "save_workspace_layout",
-  "reset_workspace_layout",
-  "list_workspace_layout_presets",
-  "create_workspace_layout_preset",
-  "update_workspace_layout_preset",
-  "rename_workspace_layout_preset",
-  "delete_workspace_layout_preset",
-  "plan_apply_workspace_layout_preset"
-]
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "name": "acknowledge_pty_output",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "add_directory",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "begin_pty_handoff",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "cancel_execution_task",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "cancel_pty_handoff",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "check_project_files_same_identity",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "clear_cache",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "clear_execution_history",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "clear_execution_task",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "clear_launch_history",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "complete_pty_handoff",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "confirm_app_exit",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "create_backup",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "create_pty_session",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "create_workspace_layout_preset",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "delete_session_alias",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "delete_workspace_layout_preset",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "detect_cli_status",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "export_config_to_path",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "export_diagnostics_to_path",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "fetch_latest_version",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "finalize_pty_handoff",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "get_cache_stats",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_close_behavior",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_execution_task",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_install_plan",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_launch_history_limit",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_project_path_semantics",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "get_pty_session_window_status",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "get_workspace_layout",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "grant_content_window_file",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "import_config_from_path",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "list_backups",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_directories",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_execution_tasks",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_launch_history",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_project_file_cas_residues",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_project_files",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_sessions",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "list_workspace_layout_presets",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "open_granted_file",
+      "callerCheck": "require",
+      "kinds": ["workspaceContent"]
+    },
+    {
+      "name": "open_project_directory",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "open_project_file",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "plan_apply_workspace_layout_preset",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "reattach_pty_session",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "refresh_session_search_index",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "remove_directory",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "remove_project_file_cas_residue",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "rename_workspace_layout_preset",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "reorder_directories",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "report_exit_impacts",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "report_pty_frontend_stage",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "report_window_sync_failure",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal", "workspaceContent"]
+    },
+    {
+      "name": "reset_workspace_layout",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "resize_pty_session",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "restore_backup",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "revoke_content_window_file",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "save_granted_text_file",
+      "callerCheck": "require",
+      "kinds": ["workspaceContent"]
+    },
+    {
+      "name": "save_project_text_file",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "save_workspace_layout",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "search_sessions",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "send_window_message",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal", "workspaceContent"]
+    },
+    {
+      "name": "set_close_behavior",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "set_directory_pinned",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "set_launch_history_limit",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "set_session_alias",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "set_tray_menu_labels",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "stage_pty_handoff_snapshot",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "start_execution_task",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "subscribe_window_inbox",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal", "workspaceContent"]
+    },
+    {
+      "name": "take_startup_notices",
+      "callerCheck": "require",
+      "kinds": ["main"]
+    },
+    {
+      "name": "terminate_pty_session",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    },
+    {
+      "name": "update_directory",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "update_workspace_layout_preset",
+      "callerCheck": "acl-only"
+    },
+    {
+      "name": "write_pty_session",
+      "callerCheck": "require",
+      "kinds": ["main", "terminal"]
+    }
+  ]
+}

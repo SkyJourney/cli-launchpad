@@ -1,30 +1,32 @@
+mod app_menu;
+pub mod budgets;
 mod commands;
 #[cfg(test)]
 mod contracts;
 mod db;
+mod domain_errors;
 mod error;
+mod error_codes;
+mod events;
 mod models;
 mod platform;
+mod runtime;
 mod services;
+mod util;
 
-use std::sync::{Arc, Mutex};
+use crate::error_codes::ErrorCode;
+use std::sync::Mutex;
 
-use rusqlite::Connection;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager, State, WebviewWindow, WindowEvent};
+use tauri::{Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
-use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub use error::AppError;
 use models::app_setting::CloseBehavior;
+pub use runtime::{blocking, blocking_unbounded, bounded, CacheDb, Db};
 
-/// Business and cache databases are distinct managed-state types so commands
-/// cannot accidentally read cache rows through the configuration connection.
-#[derive(Clone)]
-pub struct Db(pub Arc<Mutex<Connection>>);
-#[derive(Clone)]
-pub struct CacheDb(pub Arc<Mutex<Connection>>);
 pub struct CloseBehaviorState(pub Mutex<CloseBehavior>);
 pub struct TrayMenuLabelsState(
     pub  Mutex<
@@ -52,56 +54,20 @@ pub fn update_close_behavior_state(
     let mut current = state
         .0
         .lock()
-        .map_err(|_| AppError::msg("关闭行为状态锁中毒"))?;
+        .map_err(|_| AppError::coded(ErrorCode::InternalLockPoisoned, "关闭行为状态锁中毒"))?;
     *current = close_behavior;
     Ok(())
 }
 
-/// Lock the shared connection and run `f` with it, mapping lock poisoning to an
-/// `AppError`. Removes the `state.lock().map_err(...)` boilerplate from commands.
-pub fn with_conn<T>(
-    state: &State<'_, Db>,
-    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    with_connection(state.inner(), f)
-}
-
-pub fn with_connection<T>(
-    state: &Db,
-    f: impl FnOnce(&mut Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let mut conn = state
-        .0
-        .lock()
-        .map_err(|_| AppError::msg("数据库连接锁中毒"))?;
-    f(&mut conn)
-}
-
-pub fn with_cache<T>(
-    state: &State<'_, CacheDb>,
-    f: impl FnOnce(&Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    with_cache_connection(state.inner(), f)
-}
-
-pub fn with_cache_connection<T>(
-    state: &CacheDb,
-    f: impl FnOnce(&Connection) -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let connection = state
-        .0
-        .lock()
-        .map_err(|_| AppError::msg("缓存数据库连接锁中毒"))?;
-    f(&connection)
-}
-
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 show_main_window(&window);
             }
         }))
+        // Only the application's own pages may be navigated to; see services/navigation_guard.rs.
+        .plugin(services::navigation_guard::plugin())
         // Native file/folder picker for the add-directory flow.
         .plugin(tauri_plugin_dialog::init())
         // Open trusted external links with the operating system's default app.
@@ -125,6 +91,9 @@ pub fn run() {
                     .build(),
             )?;
             log::info!("application startup storage_root={}", paths.root.display());
+            let previous_exit =
+                services::clean_exit_marker::begin_session(&paths, crate::util::time::now_ms());
+            log::info!("previous session exit state={previous_exit:?}");
 
             // Register after storage migration so prior window state is available
             // on the first launch under the stable Tauri identifier. Visibility
@@ -132,11 +101,11 @@ pub fn run() {
             let window_state_flags = persistent_window_state_flags();
             app.handle().plugin(
                 tauri_plugin_window_state::Builder::default()
-                    .skip_initial_state("main")
+                    .skip_initial_state(models::window_kind::main_window_label())
                     .with_state_flags(window_state_flags)
                     .build(),
             )?;
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 // Window-state files written by older app versions can contain
                 // `decorated: true`; enforce the Windows custom chrome before
                 // restoring size and position so stale state cannot revive it.
@@ -162,7 +131,7 @@ pub fn run() {
                     .app
                     .windows
                     .iter()
-                    .find(|config| config.label == "main");
+                    .find(|config| config.label == models::window_kind::main_window_label());
                 let min_width = window_config
                     .and_then(|config| config.min_width)
                     .unwrap_or(1.0);
@@ -197,23 +166,38 @@ pub fn run() {
             );
             let interrupted = db::execution_task_repo::mark_unfinished_interrupted(
                 &connection,
-                services::execution_service::now_ms(),
+                crate::util::time::now_ms(),
             )?;
             if interrupted != 0 {
                 log::warn!("marked {interrupted} unfinished execution task(s) as interrupted");
             }
-            let ended_pty_sessions = db::pty_session_repo::mark_running_ended(
-                &connection,
-                services::execution_service::now_ms(),
-            )?;
+            let ended_pty_sessions =
+                db::pty_session_repo::mark_running_ended(&connection, crate::util::time::now_ms())?;
             if ended_pty_sessions != 0 {
                 log::warn!("marked {ended_pty_sessions} stale PTY session(s) as ended");
             }
             let close_behavior = db::app_setting_repo::get_close_behavior(&connection)?;
-            app.manage(Db(Arc::new(Mutex::new(connection))));
-            app.manage(services::execution_service::ExecutionTaskManager::default());
-            app.manage(services::pty_session_service::PtySessionManager::default());
+            app.manage(Db::new(connection));
+            let execution_tasks = services::execution_service::ExecutionTaskManager::default();
+            let pty_sessions = services::pty_session_service::PtySessionManager::default();
+            app.manage(services::app_lifecycle::AppLifecycle::new(
+                {
+                    let sessions = pty_sessions.clone();
+                    move || sessions.active_count()
+                },
+                {
+                    let tasks = execution_tasks.clone();
+                    move || tasks.active_count()
+                },
+            ));
+            app.manage(execution_tasks);
+            app.manage(pty_sessions);
+            app.manage(services::session_service::RestoreGeneration::default());
             app.manage(services::content_window_grants::ContentWindowGrantRegistry::default());
+            app.manage(std::sync::Arc::new(
+                services::project_path_semantics::CaseSensitivityCache::new(),
+            ));
+            app.manage(services::window_inbox::WindowInboxRegistry::default());
             app.manage(services::app_lifecycle::AppExitGate::default());
             app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             app.manage(TrayMenuLabelsState::default());
@@ -225,12 +209,16 @@ pub fn run() {
                         .map_err(|fallback| anyhow::anyhow!(fallback.to_string()))?
                 }
             };
-            services::cache_service::remove_prefix(&cache, "sessions:")
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            app.manage(CacheDb(Arc::new(Mutex::new(cache))));
+            app.manage(CacheDb::new(cache));
+            app.manage(
+                services::startup_notices::StartupNotices::from_previous_exit(&previous_exit),
+            );
             app.manage(paths);
 
-            setup_tray(app.handle())?;
+            // 托盘创建失败不能让应用启动失败：降级后主窗口关闭一律走“退出”确认。
+            let tray_availability =
+                services::app_lifecycle::setup_tray_or_degrade(|| setup_tray(app.handle()));
+            app.manage(tray_availability);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -240,6 +228,7 @@ pub fn run() {
             commands::cache::get_cache_stats,
             commands::cache::clear_cache,
             commands::diagnostics::export_diagnostics_to_path,
+            commands::diagnostics::report_window_sync_failure,
             commands::launch_history::list_launch_history,
             commands::launch_history::clear_launch_history,
             commands::launch_history::get_launch_history_limit,
@@ -263,6 +252,9 @@ pub fn run() {
             commands::pty_session::report_pty_frontend_stage,
             commands::pty_session::terminate_pty_session,
             commands::pty_session::confirm_app_exit,
+            commands::pty_session::report_exit_impacts,
+            commands::window_inbox::subscribe_window_inbox,
+            commands::window_inbox::send_window_message,
             commands::directory::list_directories,
             commands::directory::add_directory,
             commands::directory::update_directory,
@@ -271,6 +263,8 @@ pub fn run() {
             commands::directory::reorder_directories,
             commands::directory::open_project_directory,
             commands::files::list_project_files,
+            commands::files::get_project_path_semantics,
+            commands::files::check_project_files_same_identity,
             commands::files::open_project_file,
             commands::files::save_project_text_file,
             commands::files::grant_content_window_file,
@@ -302,35 +296,27 @@ pub fn run() {
             commands::workspace_layout::rename_workspace_layout_preset,
             commands::workspace_layout::delete_workspace_layout_preset,
             commands::workspace_layout::plan_apply_workspace_layout_preset,
+            commands::startup_notice::take_startup_notices,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                let label = window.label();
-                if crate::models::window_kind::window_kind_of(label)
-                    == Some(crate::models::window_kind::WindowKind::WorkspaceContent)
-                {
+                if let Ok(destroyed) = models::window_kind::WindowLabel::parse(window.label()) {
                     let grants = window
                         .state::<services::content_window_grants::ContentWindowGrantRegistry>();
-                    if let Err(error) = grants.revoke(label) {
-                        log::warn!("unable to revoke file window grant label={label}: {error}");
-                    }
-                }
-                if crate::models::window_kind::window_kind_of(label)
-                    == Some(crate::models::window_kind::WindowKind::Terminal)
-                {
                     let sessions =
                         window.state::<services::pty_session_service::PtySessionManager>();
-                    for session_id in sessions.reclaim_window(label) {
-                        let _ = window.app_handle().emit_to(
-                            "main",
-                            "pty-session-owner-lost",
-                            serde_json::json!({ "sessionId": session_id }),
-                        );
-                    }
+                    let inbox = window.state::<services::window_inbox::WindowInboxRegistry>();
+                    let sink = TauriEventSink(window.app_handle().clone());
+                    services::window_lifecycle::on_window_destroyed(
+                        &destroyed,
+                        &[
+                            &*grants as &dyn services::window_lifecycle::WindowScopedResource,
+                            &*sessions as &dyn services::window_lifecycle::WindowScopedResource,
+                            &*inbox as &dyn services::window_lifecycle::WindowScopedResource,
+                        ],
+                        &sink,
+                    );
                 }
-            }
-            if window.label() != "main" {
-                return;
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let close_behavior = window
@@ -339,46 +325,142 @@ pub fn run() {
                     .lock()
                     .map(|behavior| *behavior)
                     .unwrap_or_default();
-                if close_behavior == CloseBehavior::MinimizeToTray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else {
-                    api.prevent_close();
-                    window.app_handle().exit(0);
+                // 托管状态在 setup 结束前可能还不存在：按不可用处理（可以退出，
+                // 比隐藏后找不回窗口更安全）。
+                let tray = window
+                    .try_state::<services::app_lifecycle::TrayAvailability>()
+                    .map(|state| state.inner().clone())
+                    .unwrap_or_else(|| services::app_lifecycle::TrayAvailability::Unavailable {
+                        reason: "tray state not initialized".to_string(),
+                    });
+                // A label that is not a canonical window label cannot be the main window.
+                let decision = match models::window_kind::WindowLabel::parse(window.label()) {
+                    Ok(label) => {
+                        services::app_lifecycle::decide_close_request(&label, close_behavior, &tray)
+                    }
+                    Err(_) => services::app_lifecycle::MainCloseDecision::NotMainWindow,
+                };
+                match decision {
+                    services::app_lifecycle::MainCloseDecision::NotMainWindow => {}
+                    services::app_lifecycle::MainCloseDecision::HideToTray => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    services::app_lifecycle::MainCloseDecision::RequestAppExit => {
+                        api.prevent_close();
+                        window.app_handle().exit(0);
+                    }
                 }
             }
         })
+        .on_menu_event(|app, event| {
+            if app_menu::route_app_menu_event(event.id().as_ref())
+                == app_menu::AppMenuCommand::RequestExit
+            {
+                app_menu::request_app_exit(app);
+            }
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(|app| app_menu::build_macos_menu(app));
+    let app = builder
         .build(tauri::generate_context!())
         .expect("failed to build CLI Launchpad");
     app.run(handle_run_event);
+}
+
+/// Sends window lifecycle events to the main window.
+struct TauriEventSink(tauri::AppHandle);
+
+impl services::window_lifecycle::EventSink for TauriEventSink {
+    fn emit_to_main(&self, event: &services::window_lifecycle::AppEvent) -> Result<(), String> {
+        match services::window_inbox::notify_main(&self.0, event.name(), event.payload()) {
+            services::window_inbox::DeliverOutcome::NoInbox => {
+                Err("main window inbox is unavailable".to_string())
+            }
+            // `Buffered` counts as delivered: the main window gets it when it subscribes.
+            _ => Ok(()),
+        }
+    }
 }
 
 fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let exit_gate = app.state::<services::app_lifecycle::AppExitGate>();
-            if exit_gate.consume_authorization() {
-                return;
+            let pty_count = app
+                .state::<services::pty_session_service::PtySessionManager>()
+                .active_count();
+            let execution_task_count = app
+                .state::<services::execution_service::ExecutionTaskManager>()
+                .active_count();
+            let main_window = app.get_webview_window(models::window_kind::main_window_label());
+            match services::app_lifecycle::decide_exit_request(
+                &exit_gate,
+                pty_count,
+                execution_task_count,
+                main_window.is_some(),
+            ) {
+                services::app_lifecycle::ExitRequestDecision::AllowExit => {}
+                services::app_lifecycle::ExitRequestDecision::PreventAndAskMain {
+                    pty_count,
+                    execution_task_count,
+                } => {
+                    api.prevent_exit();
+                    if let Some(window) = &main_window {
+                        show_main_window(window);
+                    }
+                    ask_main_to_confirm_exit(app, &exit_gate, pty_count, execution_task_count);
+                }
+                services::app_lifecycle::ExitRequestDecision::PreventWithoutMain => {
+                    // 主窗缺失：先按配置重建主窗，再由它确认（109 与 114 合并，2026-10-21 裁定）。
+                    // 重建失败时放行退出，退出清理终止全部会话（最后的兜底，不会让应用无法退出）。
+                    match restore_main_window(app) {
+                        Ok(window) => {
+                            api.prevent_exit();
+                            show_main_window(&window);
+                            ask_main_to_confirm_exit(
+                                app,
+                                &exit_gate,
+                                pty_count,
+                                execution_task_count,
+                            );
+                        }
+                        Err(error) => log::error!(
+                            "exit: unable to restore the main window ({error}); exiting and terminating {pty_count} sessions"
+                        ),
+                    }
+                }
             }
-            let sessions = app.state::<services::pty_session_service::PtySessionManager>();
-            let active_count = sessions.active_count();
-            if let Some(window) = app.get_webview_window("main") {
-                api.prevent_exit();
-                show_main_window(&window);
-                let _ = app.emit_to(
-                    "main",
-                    "app-exit-requested",
-                    serde_json::json!({
-                        "ptyCount": active_count,
-                    }),
-                );
-            } else if active_count > 0 {
-                api.prevent_exit();
+        }
+        tauri::RunEvent::Exit => {
+            // Best-effort cleanup first, then clear the clean-exit marker. This is the
+            // only place cleanup runs: ExitRequested can still be prevented.
+            // Starts that were admitted before exit get a short, bounded chance to land so their
+            // sessions are part of the cleanup below.
+            if let Some(lifecycle) = app.try_state::<services::app_lifecycle::AppLifecycle>() {
+                if !lifecycle.wait_for_starts(std::time::Duration::from_millis(1500)) {
+                    log::warn!("exit: starts were still in flight; cleaning up anyway");
+                }
+            }
+            let targets = exit_cleanup_targets(app);
+            match app.try_state::<services::storage_service::StoragePaths>() {
+                Some(paths) => services::exit_cleanup::on_run_event_exit(
+                    &paths,
+                    &targets,
+                    services::exit_cleanup::EXIT_CLEANUP_BUDGET,
+                ),
+                // Without storage paths the marker cannot be cleared, but processes and tasks still get cleaned up.
+                None => {
+                    services::exit_cleanup::run_exit_cleanup(
+                        &targets,
+                        services::exit_cleanup::EXIT_CLEANUP_BUDGET,
+                    );
+                }
             }
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window(models::window_kind::main_window_label()) {
                 show_main_window(&window);
             }
         }
@@ -392,9 +474,129 @@ fn show_main_window(window: &WebviewWindow) {
     let _ = window.set_focus();
 }
 
+/// 退出确认的重试参数：主窗重建后要等它订阅收件箱，之后消息才会被接收。
+const EXIT_REQUEST_RETRY_ATTEMPTS: u32 = 100;
+const EXIT_REQUEST_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 主窗缺失时按应用配置重建主窗（与启动时由配置创建的主窗使用同一份参数）。
+fn restore_main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    let label = models::window_kind::main_window_label();
+    if let Some(window) = app.get_webview_window(label) {
+        return Ok(window);
+    }
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == label)
+        .ok_or_else(|| format!("no window configuration for {label}"))?;
+    tauri::WebviewWindowBuilder::from_config(app, config)
+        .and_then(|builder| builder.build())
+        .map_err(|error| error.to_string())
+}
+
+/// 把退出确认交给主窗。刚重建的主窗还没有订阅收件箱，`notify_main` 返回 `NoInbox`，
+/// 因此在后台有限次重试，直到消息被发送或缓冲。
+fn ask_main_to_confirm_exit(
+    app: &tauri::AppHandle,
+    exit_gate: &services::app_lifecycle::AppExitGate,
+    pty_count: usize,
+    execution_task_count: usize,
+) {
+    let request = exit_gate.begin_request();
+    let payload = serde_json::to_value(services::app_lifecycle::exit_requested_payload(
+        &request,
+        pty_count,
+        execution_task_count,
+    ))
+    .unwrap_or(serde_json::Value::Null);
+    let first = services::window_inbox::notify_main(
+        app,
+        crate::events::APP_EXIT_REQUESTED,
+        payload.clone(),
+    );
+    if !matches!(first, services::window_inbox::DeliverOutcome::NoInbox) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        for _ in 0..EXIT_REQUEST_RETRY_ATTEMPTS {
+            std::thread::sleep(EXIT_REQUEST_RETRY_INTERVAL);
+            let outcome = services::window_inbox::notify_main(
+                &app,
+                crate::events::APP_EXIT_REQUESTED,
+                payload.clone(),
+            );
+            if !matches!(outcome, services::window_inbox::DeliverOutcome::NoInbox) {
+                return;
+            }
+        }
+        log::warn!("exit confirmation was not delivered: the main window never subscribed");
+    });
+}
+
+fn exit_cleanup_targets(
+    app: &tauri::AppHandle,
+) -> Vec<std::sync::Arc<dyn services::exit_cleanup::ExitCleanupTarget>> {
+    let mut targets: Vec<std::sync::Arc<dyn services::exit_cleanup::ExitCleanupTarget>> =
+        Vec::new();
+    if let Some(sessions) = app.try_state::<services::pty_session_service::PtySessionManager>() {
+        targets.push(std::sync::Arc::new(sessions.inner().clone()));
+    }
+    if let (Some(manager), Some(db)) = (
+        app.try_state::<services::execution_service::ExecutionTaskManager>(),
+        app.try_state::<Db>(),
+    ) {
+        targets.push(std::sync::Arc::new(
+            services::execution_service::ExecutionExitCleanup::new(
+                manager.inner().clone(),
+                db.inner().clone(),
+            ),
+        ));
+    }
+    targets
+}
+
+/// Menu item id of the acceptance-only hook (see the cargo feature in Cargo.toml).
+#[cfg(feature = "acceptance-hooks")]
+const ACCEPTANCE_FORCE_DESTROY_MENU_ID: &str = "acceptance.force_destroy_windows";
+
+/// Menu text of the acceptance-only hook.
+#[cfg(feature = "acceptance-hooks")]
+const ACCEPTANCE_FORCE_DESTROY_MENU_TEXT: &str = "验收：强制销毁全部独立窗口";
+
+/// Destroys every detached window without CloseRequested or JS interception,
+/// so manual acceptance can verify main-window recovery.
+#[cfg(feature = "acceptance-hooks")]
+fn acceptance_force_destroy_detached_windows(app: &tauri::AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if !models::window_kind::is_detached_window_label(&label) {
+            continue;
+        }
+        match window.destroy() {
+            Ok(()) => log::warn!("acceptance hook destroyed window label={label}"),
+            Err(error) => {
+                log::warn!("acceptance hook could not destroy window label={label}: {error}")
+            }
+        }
+    }
+}
+
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    #[cfg(feature = "acceptance-hooks")]
+    let acceptance_item = MenuItem::with_id(
+        app,
+        ACCEPTANCE_FORCE_DESTROY_MENU_ID,
+        ACCEPTANCE_FORCE_DESTROY_MENU_TEXT,
+        true,
+        None::<&str>,
+    )?;
+    #[cfg(feature = "acceptance-hooks")]
+    let menu = Menu::with_items(app, &[&show, &quit, &acceptance_item])?;
+    #[cfg(not(feature = "acceptance-hooks"))]
     let menu = Menu::with_items(app, &[&show, &quit])?;
     {
         let labels = app.state::<TrayMenuLabelsState>();
@@ -416,16 +618,15 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) =
+                    app.get_webview_window(models::window_kind::main_window_label())
+                {
                     show_main_window(&window);
                 }
             }
-            "quit" => {
-                if let Err(error) = app.save_window_state(persistent_window_state_flags()) {
-                    log::warn!("unable to save main window state before tray exit: {error}");
-                }
-                app.exit(0);
-            }
+            "quit" => app_menu::request_app_exit(app),
+            #[cfg(feature = "acceptance-hooks")]
+            ACCEPTANCE_FORCE_DESTROY_MENU_ID => acceptance_force_destroy_detached_windows(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -434,7 +635,10 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                if let Some(window) = tray
+                    .app_handle()
+                    .get_webview_window(models::window_kind::main_window_label())
+                {
                     let is_visible = window.is_visible().unwrap_or(false);
                     let is_minimized = window.is_minimized().unwrap_or(false);
                     if is_visible && !is_minimized {

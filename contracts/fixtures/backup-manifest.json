@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "name": "manifest",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-1",
+        "reason": "pre_import",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    },
+    {
+      "name": "manual",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-manual",
+        "reason": "manual",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    },
+    {
+      "name": "preImport",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-preImport",
+        "reason": "pre_import",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    },
+    {
+      "name": "preRestore",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-preRestore",
+        "reason": "pre_restore",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    },
+    {
+      "name": "preMigration",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-preMigration",
+        "reason": "pre_migration",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    },
+    {
+      "name": "preCaseMerge",
+      "value": {
+        "createdAtMs": 1700000000000,
+        "databaseFilename": "cli-launchpad.db",
+        "id": "backup-preCaseMerge",
+        "reason": "pre_case_merge",
+        "schemaVersion": 14,
+        "sizeBytes": 4096
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "BackupManifest"
+}

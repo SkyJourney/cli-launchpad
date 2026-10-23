@@ -1,3 +1,5 @@
+use crate::db::tx::with_tx;
+use rusqlite::TransactionBehavior;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::execution::{
@@ -108,52 +110,51 @@ pub fn append_log(
     if content.is_empty() {
         return Ok((None, false));
     }
-    let transaction = connection.transaction()?;
-    let used: i64 = transaction.query_row(
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        let used: i64 = transaction.query_row(
         "select coalesce(sum(length(cast(content as blob))), 0) from execution_task_logs where task_id = ?1",
         [task_id],
         |row| row.get(0),
     )?;
-    let remaining = TASK_LOG_LIMIT_BYTES.saturating_sub(used.max(0) as usize);
-    if remaining == 0 {
-        let newly_truncated = transaction.execute(
-            "update execution_tasks set log_truncated = 1 where id = ?1 and log_truncated = 0",
-            [task_id],
-        )? != 0;
-        transaction.commit()?;
-        return Ok((None, newly_truncated));
-    }
+        let remaining = TASK_LOG_LIMIT_BYTES.saturating_sub(used.max(0) as usize);
+        if remaining == 0 {
+            let newly_truncated = transaction.execute(
+                "update execution_tasks set log_truncated = 1 where id = ?1 and log_truncated = 0",
+                [task_id],
+            )? != 0;
+            return Ok((None, newly_truncated));
+        }
 
-    let stored = truncate_utf8(content, remaining);
-    let sequence: i64 = transaction.query_row(
-        "select coalesce(max(sequence), -1) + 1 from execution_task_logs where task_id = ?1",
-        [task_id],
-        |row| row.get(0),
-    )?;
-    transaction.execute(
+        let stored = truncate_utf8(content, remaining);
+        let sequence: i64 = transaction.query_row(
+            "select coalesce(max(sequence), -1) + 1 from execution_task_logs where task_id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )?;
+        transaction.execute(
         "insert into execution_task_logs (task_id, sequence, stream, content, created_at_ms) values (?1, ?2, ?3, ?4, ?5)",
         params![task_id, sequence, stream.as_str(), stored, created_at_ms],
     )?;
-    let newly_truncated = if stored.len() < content.len() {
-        transaction.execute(
-            "update execution_tasks set log_truncated = 1 where id = ?1 and log_truncated = 0",
-            [task_id],
-        )? != 0
-    } else {
-        false
-    };
-    transaction.commit()?;
+        let newly_truncated = if stored.len() < content.len() {
+            transaction.execute(
+                "update execution_tasks set log_truncated = 1 where id = ?1 and log_truncated = 0",
+                [task_id],
+            )? != 0
+        } else {
+            false
+        };
 
-    Ok((
-        Some(ExecutionLogChunk {
-            task_id: task_id.to_string(),
-            sequence,
-            stream,
-            content: stored.to_string(),
-            created_at_ms,
-        }),
-        newly_truncated,
-    ))
+        Ok((
+            Some(ExecutionLogChunk {
+                task_id: task_id.to_string(),
+                sequence,
+                stream,
+                content: stored.to_string(),
+                created_at_ms,
+            }),
+            newly_truncated,
+        ))
+    })
 }
 
 pub fn mark_unfinished_interrupted(
@@ -245,7 +246,6 @@ mod tests {
             fingerprint: "test-fingerprint".to_string(),
             source: "test".to_string(),
             preview: "C:\\codex.exe update".to_string(),
-            effects: None,
         }
     }
 

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::models::window_kind::test_label;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -6,7 +8,9 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{backup::Backup, Connection, DatabaseName, OpenFlags};
 
 use crate::db::connection;
+use crate::models::app_setting::CloseBehavior;
 use crate::models::backup::{BackupManifest, BackupReason};
+use crate::{AppError, CacheDb, Db};
 
 use super::storage_service::StoragePaths;
 
@@ -43,40 +47,93 @@ pub fn create(
     create_protecting(connection, paths, reason, None)
 }
 
+/// Creates a backup from the business connection. Runs on a blocking thread (the command wraps it
+/// in `blocking_unbounded`). Only the snapshot itself runs under the connection lock; the staging
+/// and the publishing steps (validation, fsync, rename, manifest, pruning) run outside it.
+pub fn create_with(
+    db: &Db,
+    paths: &StoragePaths,
+    reason: BackupReason,
+) -> Result<BackupManifest, AppError> {
+    let staged = stage(paths, reason)?;
+    let schema_version = db.with_sync("backup.create", |connection| {
+        Ok(snapshot(connection, &staged)?)
+    })?;
+    Ok(publish(paths, staged, schema_version, None)?)
+}
+
 fn create_protecting(
     connection: &Connection,
     paths: &StoragePaths,
     reason: BackupReason,
     protected_id: Option<&str>,
 ) -> Result<BackupManifest> {
+    let staged = stage(paths, reason)?;
+    let schema_version = snapshot(connection, &staged)?;
+    publish(paths, staged, schema_version, protected_id)
+}
+
+/// A backup whose snapshot is being written to a temporary file.
+struct StagedBackup {
+    id: String,
+    created_at_ms: i64,
+    reason: BackupReason,
+    filename: String,
+    database_path: PathBuf,
+    temporary_path: PathBuf,
+}
+
+/// Picks the names and clears a stale temporary file. No database lock is needed.
+fn stage(paths: &StoragePaths, reason: BackupReason) -> Result<StagedBackup> {
     let (created_at_ms, unique_timestamp) = timestamps()?;
     let id = format!("{unique_timestamp}-{}", reason.as_str());
     let filename = format!("cli-launchpad-{id}.db");
     let database_path = paths.backup_database_dir.join(&filename);
     let temporary_path = database_path.with_extension("db.tmp");
-
     if temporary_path.exists() {
         fs::remove_file(&temporary_path)?;
     }
-    connection
-        .backup(DatabaseName::Main, &temporary_path, None)
-        .context("无法生成数据库备份")?;
-    validate_database(&temporary_path)?;
-    sync_file(&temporary_path)?;
-    fs::rename(&temporary_path, &database_path)?;
-
-    let schema_version = connection::schema_version(connection)?;
-    let manifest = BackupManifest {
+    Ok(StagedBackup {
         id,
         created_at_ms,
         reason,
+        filename,
+        database_path,
+        temporary_path,
+    })
+}
+
+/// The one step that must hold the connection: a consistent copy plus the schema version the copy
+/// was taken at. The copy itself is written to the staged temporary file.
+fn snapshot(connection: &Connection, staged: &StagedBackup) -> Result<i64> {
+    connection
+        .backup(DatabaseName::Main, &staged.temporary_path, None)
+        .context("无法生成数据库备份")?;
+    connection::schema_version(connection).map_err(Into::into)
+}
+
+/// Validates, syncs and renames the snapshot into place, then writes its manifest and prunes old
+/// backups. Runs without the connection lock.
+fn publish(
+    paths: &StoragePaths,
+    staged: StagedBackup,
+    schema_version: i64,
+    protected_id: Option<&str>,
+) -> Result<BackupManifest> {
+    validate_database(&staged.temporary_path)?;
+    sync_file(&staged.temporary_path)?;
+    fs::rename(&staged.temporary_path, &staged.database_path)?;
+    let manifest = BackupManifest {
+        id: staged.id,
+        created_at_ms: staged.created_at_ms,
+        reason: staged.reason,
         schema_version,
-        database_filename: filename,
-        size_bytes: fs::metadata(&database_path)?.len(),
+        database_filename: staged.filename,
+        size_bytes: fs::metadata(&staged.database_path)?.len(),
     };
     write_manifest(paths, &manifest)?;
     prune(paths, protected_id)?;
-    log::info!("database backup created reason={}", reason.as_str());
+    log::info!("database backup created reason={}", staged.reason.as_str());
     Ok(manifest)
 }
 
@@ -125,6 +182,68 @@ pub fn restore(
     }
     log::info!("database backup restored backup_id={}", manifest.id);
     Ok(manifest)
+}
+
+pub use crate::services::app_data_service::RestoreNotifier;
+
+pub struct RestoreOutcome {
+    pub manifest: BackupManifest,
+    pub close_behavior: CloseBehavior,
+    pub cache_warning: Option<String>,
+}
+
+/// 数据库替换、缓存失效与通知的编排。数据库阶段失败时直接返回 Err（数据库未被替换）；
+/// 数据库替换成功后不再返回 Err：缓存清理失败只记录为 cache_warning，通知失败只记日志。
+pub fn restore_with_runtime_invalidation(
+    db: &Db,
+    cache: &CacheDb,
+    lifecycle: &crate::services::app_lifecycle::AppLifecycle,
+    paths: &StoragePaths,
+    backup_id: &str,
+    notifier: &dyn RestoreNotifier,
+    generation: &crate::services::session_service::RestoreGeneration,
+    revoker: &crate::services::content_window_grants::ContentWindowRevoker<'_>,
+) -> Result<RestoreOutcome, AppError> {
+    // The replacement runs in the hook entry point: admission, the database lock, the cache
+    // cleanup, the execution task reconciliation and the main-window notification all live there.
+    let ctx = crate::services::app_data_service::DataReplacementContext {
+        flavour: crate::services::app_data_service::ReplacementFlavour::RestoreBackup {
+            cache,
+            notifier,
+        },
+        lifecycle,
+        db,
+        revoker,
+    };
+    let replaced = crate::services::app_data_service::run_data_replacement(&ctx, |connection| {
+        let manifest = restore(connection, paths, backup_id)?;
+        // The business database has been replaced: any index refresh that captured an
+        // older generation must not write to the cache any more (SEAM-20).
+        generation.advance();
+        // 数据库已经替换：读取失败不能再以 Err 返回（前端会误判为未恢复），
+        // 记录后使用默认关闭行为。
+        let close_behavior = match crate::db::app_setting_repo::get_close_behavior(connection) {
+            Ok(behavior) => behavior,
+            Err(error) => {
+                log::warn!(
+                    "backup restore: unable to read the close behavior, using the default: {error}"
+                );
+                crate::models::app_setting::CloseBehavior::default()
+            }
+        };
+        Ok((manifest, close_behavior))
+    })?;
+    let (manifest, close_behavior) = replaced.value;
+    // A failed cache cleanup is reported to the frontend as a warning, not as an error.
+    let cache_warning = replaced
+        .report
+        .error_of(crate::services::app_data_service::StepName::InvalidateCaches)
+        .map(str::to_string);
+    Ok(RestoreOutcome {
+        manifest,
+        close_behavior,
+        cache_warning,
+    })
 }
 
 fn validate_database(path: &Path) -> Result<()> {
@@ -217,8 +336,206 @@ fn prune(paths: &StoragePaths, protected_id: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D6（m6-096 之后的收尾）：数据库锁内只能有快照步骤；校验、同步、改名、清单与清理都在锁外。
+    #[test]
+    fn only_the_snapshot_runs_under_the_connection_lock() {
+        let source = include_str!("backup_service.rs").replace("\r\n", "\n");
+        let body = &source[source
+            .find("pub fn create_with(")
+            .expect("create_with exists")..];
+        let locked = &body[body.find("with_sync(").expect("the lock is taken")..];
+        let locked = &locked[..locked.find(")?;").expect("the locked closure ends")];
+        assert!(
+            locked.contains("snapshot("),
+            "the snapshot is the locked step"
+        );
+        for step in [
+            "fs::",
+            "validate_database",
+            "sync_file",
+            "write_manifest",
+            "prune(",
+            "metadata",
+        ] {
+            assert!(
+                !locked.contains(step),
+                "{step} must run after the lock is released"
+            );
+        }
+    }
+    use crate::db::{app_setting_repo, session_search_repo};
     use crate::db::{connection, directory_repo};
+    use crate::models::app_setting::CloseBehavior;
+    use crate::models::cache::CacheKey;
+    use crate::models::session::{SessionSearchIndexDocument, SessionSearchIndexSource};
+    use crate::models::tool::ToolKey;
+    use crate::runtime::CacheConn;
+    use crate::services::cache_service;
+    use crate::services::content_window_grants::{
+        test_support::RecordingReclaimer, ContentWindowGrantRegistry, ContentWindowRevoker,
+        RevocationReason,
+    };
+    use crate::services::session_service::RestoreGeneration;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    const LABEL_A: &str = "workspace-content-11111111-2222-4333-8444-555555555555";
+    const LABEL_B: &str = "workspace-content-8e783338-f464-4b10-b15e-b534748c6241";
+
+    /// Writes "notify" into the same log as the reclaimer, so the order of the two is observable.
+    struct OrderedNotifier {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RestoreNotifier for OrderedNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            self.log.lock().unwrap().push("notify".to_string());
+            Ok(())
+        }
+    }
+
+    fn grant_for(
+        directory_id: i64,
+        path: &str,
+        relative_path: &str,
+    ) -> crate::services::content_window_grants::ContentWindowFileGrant {
+        crate::services::content_window_grants::ContentWindowFileGrant {
+            directory_id,
+            directory_path: path.to_string(),
+            relative_path: relative_path.to_string(),
+        }
+    }
+
+    #[test]
+    fn restore_revokes_content_window_grants_before_notifying_the_main_window() {
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::with_log(log.clone());
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        grants
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let notifier = OrderedNotifier { log: log.clone() };
+
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                LABEL_A.to_string(),
+                LABEL_B.to_string(),
+                "notify".to_string()
+            ]
+        );
+        assert!(grants.snapshot().unwrap().is_empty());
+        // 数据库确实被恢复：备份之后添加的目录 B 消失。
+        assert_eq!(directory_names(&db), vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn restore_revokes_grants_even_when_cache_cleanup_and_notification_fail() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        // 与既有的缓存清理失败用例同款：删除会话搜索表，两级清理都失败。
+        cache
+            .lock_for_test()
+            .execute("drop table session_search_documents", [])
+            .unwrap();
+        grants
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let notifier = RecordingNotifier::failing();
+
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+
+        assert!(outcome.cache_warning.is_some());
+        assert_eq!(notifier.calls(), 1);
+        assert!(grants.snapshot().unwrap().is_empty());
+        assert_eq!(
+            reclaimer.reclaimed(),
+            vec![LABEL_A.to_string(), LABEL_B.to_string()]
+        );
+    }
+
+    #[test]
+    fn failed_restore_keeps_content_window_grants_and_reclaims_nothing() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, _backup) = scenario();
+        grants
+            .grant(&test_label(LABEL_A), grant_for(1, "C:\\A", "a.txt"))
+            .unwrap();
+        grants
+            .grant(&test_label(LABEL_B), grant_for(1, "C:\\A", "b.txt"))
+            .unwrap();
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let notifier = OrderedNotifier { log: log.clone() };
+        // 反向基线：失败的恢复不清缓存。
+        cache_service::put(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+            &"x",
+        )
+        .unwrap();
+
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            "missing-backup",
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(grants.snapshot().unwrap().len(), 2);
+        assert!(reclaimer.reclaimed().is_empty());
+        assert!(log.lock().unwrap().is_empty());
+        let conn = cache.lock_for_test();
+        assert!(cache_service::get_any::<String>(
+            &CacheConn::for_test(&conn),
+            &CacheKey::CliStatusAll
+        )
+        .unwrap()
+        .is_some());
+    }
 
     fn setup() -> (tempfile::TempDir, StoragePaths, Connection) {
         let directory = tempdir().unwrap();
@@ -392,17 +709,17 @@ mod tests {
 
         restore(&mut connection, &paths, id).unwrap();
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
         assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
         assert_eq!(
             connection
                 .query_row(
-                    "select args from directory_tool_args where directory_id = 8 and tool_key = 'claude'",
+                    "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
                     [],
-                    |row| row.get::<_, String>(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            "--legacy-project-args"
+            0
         );
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
@@ -450,7 +767,7 @@ mod tests {
 
         assert!(restore(&mut connection, &paths, id).is_err());
 
-        assert_eq!(connection::schema_version(&connection).unwrap(), 14);
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
         assert_eq!(
             directory_repo::list(&connection).unwrap()[0].name,
             "Keep current"
@@ -512,5 +829,674 @@ mod tests {
         assert!(list(&paths).unwrap().is_empty());
         create(&connection, &paths, BackupReason::Manual).unwrap();
         assert!(victim.exists());
+    }
+
+    /// Notifier that probes admission from inside the notification. The notification runs
+    /// after database replacement and cache invalidation but before the restore returns.
+    struct AdmissionProbeNotifier {
+        lifecycle: crate::services::app_lifecycle::AppLifecycle,
+        observed: std::sync::Mutex<Option<String>>,
+    }
+
+    impl RestoreNotifier for AdmissionProbeNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            let code = match self
+                .lifecycle
+                .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            {
+                Ok(_permit) => "admitted".to_string(),
+                Err(error) => serde_json::to_value(&error).unwrap()["code"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            };
+            *self.observed.lock().unwrap() = Some(code);
+            Ok(())
+        }
+    }
+
+    struct RecordingNotifier {
+        calls: std::sync::atomic::AtomicUsize,
+        result: Result<(), String>,
+    }
+
+    impl RecordingNotifier {
+        fn ok() -> Self {
+            Self {
+                calls: Default::default(),
+                result: Ok(()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                calls: Default::default(),
+                result: Err("closed".to_string()),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl RestoreNotifier for RecordingNotifier {
+        fn workspace_data_restored(&self) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.result.clone()
+        }
+    }
+
+    /// 恢复测试用的生命周期：两个活动探针恒为 0，只让阶段与在途启动决定准入。
+    fn test_lifecycle() -> crate::services::app_lifecycle::AppLifecycle {
+        crate::services::app_lifecycle::AppLifecycle::with_counters(
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        )
+    }
+
+    /// 数据库里有目录 A（备份时）与 B（备份之后），备份的关闭行为为 Quit。
+    fn scenario() -> (tempfile::TempDir, StoragePaths, Db, CacheDb, BackupManifest) {
+        let (directory, paths, connection) = setup();
+        app_setting_repo::set_close_behavior(&connection, CloseBehavior::Quit).unwrap();
+        directory_repo::add(&connection, "A", "C:\\A", None).unwrap();
+        let backup = create(&connection, &paths, BackupReason::Manual).unwrap();
+        app_setting_repo::set_close_behavior(&connection, CloseBehavior::MinimizeToTray).unwrap();
+        directory_repo::add(&connection, "B", "C:\\B", None).unwrap();
+        let db = Db::new(connection);
+        let cache = CacheDb::new(
+            crate::db::cache_connection::init_cache(&directory.path().join("cache.db")).unwrap(),
+        );
+        (directory, paths, db, cache, backup)
+    }
+
+    fn directory_names(db: &Db) -> Vec<String> {
+        directory_repo::list(&db.lock_for_test())
+            .unwrap()
+            .into_iter()
+            .map(|directory| directory.name)
+            .collect()
+    }
+
+    /// Writes one session-search document for `directory_id`, so a restore can be seen to clear it.
+    fn index_query_document(connection: &Connection, directory_id: i64) {
+        session_search_repo::refresh(
+            connection,
+            directory_id,
+            &[SessionSearchIndexSource {
+                tool_key: ToolKey::Claude,
+                documents: Some(vec![SessionSearchIndexDocument {
+                    tool_key: ToolKey::Claude,
+                    session_id: "s1".to_string(),
+                    title: "query title".to_string(),
+                    last_active_ms: Some(1),
+                    fields: vec!["query title".to_string()],
+                }]),
+                incomplete: false,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn restore_cache_cleanup_failure_keeps_frontend_and_backend_in_sync() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        // 子场景 A：缓存清理两级都失败（会话搜索表被删除，两级清理都要先清它）。
+        {
+            let (_directory, paths, db, cache, backup) = scenario();
+            cache
+                .lock_for_test()
+                .execute("drop table session_search_documents", [])
+                .unwrap();
+            let notifier = RecordingNotifier::ok();
+            let outcome = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &test_lifecycle(),
+                &paths,
+                &backup.id,
+                &notifier,
+                &RestoreGeneration::default(),
+                &revoker,
+            )
+            .unwrap();
+            assert!(outcome.cache_warning.is_some());
+            assert_eq!(notifier.calls(), 1);
+            assert_eq!(outcome.close_behavior, CloseBehavior::Quit);
+            assert_eq!(directory_names(&db), vec!["A".to_string()]);
+        }
+
+        // 子场景 B：正常恢复，会话搜索索引被清除，活的缓存键保留。
+        {
+            let (_directory, paths, db, cache, backup) = scenario();
+            index_query_document(&cache.lock_for_test(), 1);
+            cache_service::put(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll,
+                &"x",
+            )
+            .unwrap();
+            let notifier = RecordingNotifier::ok();
+            let outcome = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &test_lifecycle(),
+                &paths,
+                &backup.id,
+                &notifier,
+                &RestoreGeneration::default(),
+                &revoker,
+            )
+            .unwrap();
+            assert!(outcome.cache_warning.is_none());
+            assert_eq!(notifier.calls(), 1);
+            assert!(session_search_repo::search(
+                &cache.lock_for_test(),
+                1,
+                "query",
+                &HashMap::new()
+            )
+            .unwrap()
+            .items
+            .is_empty());
+            assert_eq!(
+                cache_service::get_any::<String>(
+                    &CacheConn::for_test(&cache.lock_for_test()),
+                    &CacheKey::CliStatusAll
+                )
+                .unwrap()
+                .as_deref(),
+                Some("x")
+            );
+        }
+
+        // 子场景 C：备份不存在，数据库未被替换，缓存与守卫都保持原样。
+        {
+            let (_directory, paths, db, cache, _backup) = scenario();
+            cache_service::put(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll,
+                &"x",
+            )
+            .unwrap();
+            let notifier = RecordingNotifier::ok();
+            let lifecycle = test_lifecycle();
+            let result = restore_with_runtime_invalidation(
+                &db,
+                &cache,
+                &lifecycle,
+                &paths,
+                "missing-backup",
+                &notifier,
+                &RestoreGeneration::default(),
+                &revoker,
+            );
+            assert!(result.is_err());
+            assert_eq!(notifier.calls(), 0);
+            assert!(cache_service::get_any::<String>(
+                &CacheConn::for_test(&cache.lock_for_test()),
+                &CacheKey::CliStatusAll
+            )
+            .unwrap()
+            .is_some());
+            assert_eq!(directory_names(&db).len(), 2);
+            // 反向断言：许可已释放，同一个 lifecycle 实例仍能准入 PTY 启动。
+            assert!(lifecycle
+                .admit(crate::services::app_lifecycle::Operation::PtyStart)
+                .is_ok());
+        }
+    }
+
+    #[test]
+    fn restore_invalidates_the_session_search_index() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        {
+            let conn = cache.lock_for_test();
+            cache_service::put(&CacheConn::for_test(&conn), &CacheKey::CliStatusAll, &"x").unwrap();
+            index_query_document(&conn, 1);
+            // 反向基线：恢复前索引确实可搜到，否则“空结果”的断言会空洞地通过。
+            assert_eq!(
+                session_search_repo::search(&conn, 1, "query", &HashMap::new())
+                    .unwrap()
+                    .items
+                    .len(),
+                1
+            );
+        }
+        let notifier = RecordingNotifier::ok();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+        {
+            let conn = cache.lock_for_test();
+            assert!(
+                session_search_repo::search(&conn, 1, "query", &HashMap::new())
+                    .unwrap()
+                    .items
+                    .is_empty()
+            );
+            // 活的状态缓存键在恢复后仍可读到。
+            assert_eq!(
+                cache_service::get_any::<String>(
+                    &CacheConn::for_test(&conn),
+                    &CacheKey::CliStatusAll
+                )
+                .unwrap()
+                .as_deref(),
+                Some("x")
+            );
+        }
+        assert_eq!(notifier.calls(), 1);
+        assert!(outcome.cache_warning.is_none());
+    }
+
+    #[test]
+    fn restore_releases_the_session_guard_and_does_not_notify_on_failure() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        cache_service::put(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+            &"x",
+        )
+        .unwrap();
+        let lifecycle = test_lifecycle();
+        let notifier = RecordingNotifier::ok();
+        let starting = lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .unwrap();
+
+        // 第一步：有会话正在启动，恢复必须失败且不通知、不替换数据库。
+        let error = match restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        ) {
+            Ok(_) => panic!("restore must fail while a session is starting"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "pty.session_starting"
+        );
+        assert_eq!(notifier.calls(), 0);
+        assert_eq!(directory_names(&db).len(), 2);
+        // 反向断言：失败时缓存未被清理。
+        assert!(cache_service::get_any::<String>(
+            &CacheConn::for_test(&cache.lock_for_test()),
+            &CacheKey::CliStatusAll,
+        )
+        .unwrap()
+        .is_some());
+
+        // 第二步：守卫释放后恢复成功并通知一次。
+        drop(starting);
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+        assert_eq!(notifier.calls(), 1);
+
+        // 第三步：恢复结束后守卫已释放。
+        assert!(lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .is_ok());
+    }
+
+    #[test]
+    fn restore_notification_failure_is_logged_and_does_not_fail_the_restore() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        let notifier = RecordingNotifier::failing();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+        assert_eq!(notifier.calls(), 1);
+        assert_eq!(outcome.close_behavior, CloseBehavior::Quit);
+        assert_eq!(directory_names(&db), vec!["A".to_string()]);
+        // 反向断言：通知失败不得被伪装成缓存警告。
+        assert!(outcome.cache_warning.is_none());
+    }
+
+    #[test]
+    fn restore_keeps_admission_closed_until_the_notification_is_sent() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        let lifecycle = test_lifecycle();
+        let notifier = AdmissionProbeNotifier {
+            lifecycle: lifecycle.clone(),
+            observed: Default::default(),
+        };
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &RestoreGeneration::default(),
+            &revoker,
+        )
+        .unwrap();
+        assert_eq!(
+            notifier.observed.lock().unwrap().as_deref(),
+            Some("backup.restore_in_progress"),
+            "the data replace permit must still be held when the notification is sent"
+        );
+        // after the restore returns, the permit is released and admission reopens
+        assert!(lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .is_ok());
+    }
+
+    use crate::services::session_service::{write_search_index_if_current, IndexWriteOutcome};
+
+    fn index_sources(session_id: &str) -> Vec<SessionSearchIndexSource> {
+        vec![SessionSearchIndexSource {
+            tool_key: ToolKey::Claude,
+            documents: Some(vec![SessionSearchIndexDocument {
+                tool_key: ToolKey::Claude,
+                session_id: session_id.to_string(),
+                title: "query title".to_string(),
+                last_active_ms: Some(1),
+                fields: vec!["query title".to_string()],
+            }]),
+            incomplete: false,
+        }]
+    }
+
+    fn indexed_session_ids(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare("select session_id from session_search_documents where directory_id = 1 order by session_id")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn restore_advances_the_generation_and_discards_an_in_flight_index_refresh() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let notifier = RecordingNotifier::ok();
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+            &revoker,
+        )
+        .unwrap();
+        assert_eq!(generation.current(), g0 + 1);
+        {
+            let connection = cache.lock_for_test();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+            assert_eq!(indexed_session_ids(&connection), Vec::<String>::new());
+        }
+        let connection = cache.lock_for_test();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("stale"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+        assert_eq!(indexed_session_ids(&connection), vec!["stale".to_string()]);
+        assert_eq!(notifier.calls(), 1);
+    }
+
+    #[test]
+    fn failed_restore_does_not_advance_the_generation_and_keeps_an_in_flight_refresh_valid() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        let notifier = RecordingNotifier::ok();
+        let lifecycle = test_lifecycle();
+
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            "missing-backup",
+            &notifier,
+            &generation,
+            &revoker,
+        );
+        assert!(result.is_err());
+        assert_eq!(generation.current(), g0);
+        assert_eq!(notifier.calls(), 0);
+        {
+            let connection = cache.lock_for_test();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("valid"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+            assert_eq!(indexed_session_ids(&connection), vec!["valid".to_string()]);
+        }
+
+        let starting = lifecycle
+            .admit(crate::services::app_lifecycle::Operation::PtyStart)
+            .unwrap();
+        let result = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+            &revoker,
+        );
+        assert!(result.is_err());
+        assert_eq!(generation.current(), g0);
+        drop(starting);
+        restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &lifecycle,
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+            &revoker,
+        )
+        .unwrap();
+        assert_eq!(generation.current(), g0 + 1);
+    }
+
+    #[test]
+    fn generation_advances_even_when_cache_cleanup_fails() {
+        let grants = ContentWindowGrantRegistry::default();
+        let reclaimer = RecordingReclaimer::default();
+        let revoker =
+            ContentWindowRevoker::new(&grants, &reclaimer, RevocationReason::RestoreBackup);
+        let (_directory, paths, db, cache, backup) = scenario();
+        let generation = RestoreGeneration::default();
+        let g0 = generation.current();
+        // Fail the cleanup's deletes with a trigger instead of dropping the table, so the table stays
+        // usable for the index writes below. The trigger fires per deleted row: index one document first.
+        index_query_document(&cache.lock_for_test(), 1);
+        cache
+            .lock_for_test()
+            .execute_batch(
+                "create trigger block_clear before delete on session_search_documents begin select raise(abort, 'injected'); end;",
+            )
+            .unwrap();
+        let notifier = RecordingNotifier::ok();
+        let outcome = restore_with_runtime_invalidation(
+            &db,
+            &cache,
+            &test_lifecycle(),
+            &paths,
+            &backup.id,
+            &notifier,
+            &generation,
+            &revoker,
+        )
+        .unwrap();
+        cache
+            .lock_for_test()
+            .execute_batch("drop trigger block_clear")
+            .unwrap();
+        assert!(outcome.cache_warning.is_some());
+        assert_eq!(generation.current(), g0 + 1);
+        {
+            let connection = cache.lock_for_test();
+            let outcome = write_search_index_if_current(
+                &connection,
+                &generation,
+                g0,
+                1,
+                &index_sources("stale"),
+            )
+            .unwrap();
+            assert!(matches!(outcome, IndexWriteOutcome::Discarded));
+        }
+        let connection = cache.lock_for_test();
+        let fresh = generation.current();
+        let outcome = write_search_index_if_current(
+            &connection,
+            &generation,
+            fresh,
+            1,
+            &index_sources("fresh"),
+        )
+        .unwrap();
+        assert!(matches!(outcome, IndexWriteOutcome::Written(_)));
+    }
+
+    #[test]
+    fn restoring_a_schema_14_backup_leaves_no_legacy_objects() {
+        let (_directory, paths, mut connection) = setup();
+        let id = "0-3-0-schema-14";
+        let filename = format!("cli-launchpad-{id}.db");
+        let backup_file = paths.backup_database_dir.join(&filename);
+        let legacy = Connection::open(&backup_file).unwrap();
+        legacy.pragma_update(None, "foreign_keys", "ON").unwrap();
+        connection::apply_migrations_through(&legacy, 14).unwrap();
+        legacy
+            .execute(
+                "insert into directories (id, name, path, pinned, note, last_used_at) values (8, 'Legacy', 'C:\\legacy', 1, 'preserve', '2026-09-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "insert into directory_tool_args (directory_id, tool_key, args) values (8, 'claude', '--legacy-project-args')",
+                [],
+            )
+            .unwrap();
+        legacy.close().unwrap();
+
+        let manifest = BackupManifest {
+            id: id.to_string(),
+            created_at_ms: 10,
+            reason: BackupReason::Manual,
+            schema_version: 14,
+            database_filename: filename,
+            size_bytes: fs::metadata(&backup_file).unwrap().len(),
+        };
+        write_manifest(&paths, &manifest).unwrap();
+
+        restore(&mut connection, &paths, id).unwrap();
+
+        assert_eq!(connection::schema_version(&connection).unwrap(), 15);
+        assert_eq!(directory_repo::list(&connection).unwrap()[0].name, "Legacy");
+        let legacy_objects: i64 = connection
+            .query_row(
+                "select count(*) from sqlite_master where type = 'table' and name in ('shell_profiles', 'directory_tool_args')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_objects, 0);
+        let launch_target: i64 = connection
+            .query_row(
+                "select count(*) from application_settings where key = 'launch_target'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(launch_target, 0);
+        // Reverse: the guard backup taken before the restore is still there.
+        assert!(list(&paths)
+            .unwrap()
+            .iter()
+            .any(|item| matches!(item.reason, BackupReason::PreRestore)));
     }
 }

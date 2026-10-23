@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   defaultEngineId,
   getWorkspaceEditorEngine,
+  listWorkspaceEditorEngines,
+  recordedEditorEngineId,
+  recordEditorEngineUse,
+  releaseEditorDocument,
   resolveEditorEngine,
   registerWorkspaceEditorEngine,
 } from "./workspaceEditorEngineRegistry";
@@ -77,5 +81,106 @@ describe("workspace editor engine registry", () => {
 
   it("returns undefined when the default engine is unavailable", () => {
     expect(resolveEditorEngine()).toBeUndefined();
+  });
+
+  it("lists registered engines in registration order", () => {
+    const make = (id: string) => ({
+      id,
+      apiVersion: 1 as const,
+      releaseDocument: () => {},
+      View: () => null,
+    });
+    const unregisterA = registerWorkspaceEditorEngine(make("test.list-a"));
+    const unregisterB = registerWorkspaceEditorEngine(make("test.list-b"));
+    try {
+      expect(listWorkspaceEditorEngines().map((engine) => engine.id)).toEqual([
+        "test.list-a",
+        "test.list-b",
+      ]);
+    } finally {
+      unregisterB();
+      unregisterA();
+    }
+    // Reverse: both are gone after unregistering.
+    const ids = listWorkspaceEditorEngines().map((engine) => engine.id);
+    expect(ids).not.toContain("test.list-a");
+    expect(ids).not.toContain("test.list-b");
+  });
+
+  it("releases a document through the engine that recorded its use, not the default engine", async () => {
+    const releasedByDefault = vi.fn();
+    const releasedByRecorded = vi.fn();
+    const disposeDefault = registerWorkspaceEditorEngine({
+      id: defaultEngineId,
+      apiVersion: 1,
+      releaseDocument: releasedByDefault,
+      View: () => null,
+    });
+    const disposeRecorded = registerWorkspaceEditorEngine({
+      id: "test.recorded",
+      apiVersion: 1,
+      releaseDocument: releasedByRecorded,
+      View: () => null,
+    });
+
+    try {
+      recordEditorEngineUse("doc-recorded", "test.recorded");
+      expect(recordedEditorEngineId("doc-recorded")).toBe("test.recorded");
+
+      await releaseEditorDocument("doc-recorded");
+
+      expect(releasedByRecorded).toHaveBeenCalledOnce();
+      expect(releasedByRecorded).toHaveBeenCalledWith("doc-recorded");
+      expect(releasedByDefault).not.toHaveBeenCalled();
+      expect(recordedEditorEngineId("doc-recorded")).toBeUndefined();
+
+      await releaseEditorDocument("doc-recorded");
+      expect(releasedByDefault).toHaveBeenCalledOnce();
+    } finally {
+      disposeRecorded();
+      disposeDefault();
+    }
+  });
+
+  it("falls back to the default engine when no engine use was recorded", async () => {
+    const releasedByDefault = vi.fn();
+    const disposeDefault = registerWorkspaceEditorEngine({
+      id: defaultEngineId,
+      apiVersion: 1,
+      releaseDocument: releasedByDefault,
+      View: () => null,
+    });
+
+    try {
+      await releaseEditorDocument("doc-unrecorded");
+
+      expect(releasedByDefault).toHaveBeenCalledOnce();
+      expect(releasedByDefault).toHaveBeenCalledWith("doc-unrecorded");
+    } finally {
+      disposeDefault();
+    }
+  });
+
+  it("does nothing and does not fall back when the recorded engine is no longer registered", async () => {
+    const releasedByDefault = vi.fn();
+    const disposeDefault = registerWorkspaceEditorEngine({
+      id: defaultEngineId,
+      apiVersion: 1,
+      releaseDocument: releasedByDefault,
+      View: () => null,
+    });
+
+    try {
+      recordEditorEngineUse("doc-gone", "test.gone");
+
+      await expect(
+        Promise.resolve(releaseEditorDocument("doc-gone")),
+      ).resolves.toBeUndefined();
+
+      expect(releasedByDefault).not.toHaveBeenCalled();
+      expect(recordedEditorEngineId("doc-gone")).toBeUndefined();
+    } finally {
+      disposeDefault();
+    }
   });
 });

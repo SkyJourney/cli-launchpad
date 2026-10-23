@@ -3,7 +3,7 @@ name: 项目进度
 description: 当前完成状态和近期待办
 type: project
 last_updated: 2026-10-06
-commit: 06efdb1
+commit: cd4feac
 ---
 
 # 项目进度
@@ -141,6 +141,16 @@ commit: 06efdb1
 - 实施位置、测试名及未完成验收见 [M6 基础抽象体检与收口审查报告](../../docs/milestones/0.4.0/M6-abstraction-baseline-audit.md) 与 [M6 验收文档](../../docs/milestones/0.4.0/M6-workspace-files.md)。第二、三波代码和自动化已完成；第三波 CI run [37432180573](https://github.com/SkyJourney/cli-launchpad/actions/runs/37432180573) 与第四波 CI run [37436033117](https://github.com/SkyJourney/cli-launchpad/actions/runs/37436033117) 的 Windows、macOS、Ubuntu 均通过。第四波已修订 WP7 文档并完成 Markdown preview kind 最小骨架测量：临时分支已删除，宿主仍有大量按 kind 分支，因此扩展成本目标未达成。M6 三平台实机矩阵尚未执行，A 层未关闭；三平台生产包 CSP 运行验证和扩展成本目标使 B 层未关闭，M7 暂不得开始。
 
 **See Also：** [[decisions.md#M6-统一软件抽象并使用平台原生适配]] [[project_overview.md#CLI-适配器与公共生命周期]]
+
+## 0.4.0 M6 进展与第二轮复核
+
+- 2026-10-05 第一轮基础抽象体检（60 项问题，WP0–WP8 修复指导）见 [M6 基础抽象审查报告](../../docs/milestones/0.4.0/M6-abstraction-baseline-audit.md)；随后 Codex 用 20 个提交（`77d8ded..cd4feac`）完成四波修复，并在该报告与 M6 文档中记录了“已关闭/通过”追溯。
+- 2026-10-06 第二轮复核（修复验收、测试专项、架构与抽象审查三步串行）推翻了“已关闭”口径：当前提交 `cd4feac` 的 CI 在 Ubuntu 失败（run 37437040753，Linux CAS 间歇失败，根因是 cap-std `canonicalize` 的 “(deleted)” 竞态）；追溯文档夸大了完成度。新增三项 P0：S1A-N01（返回进行中持久化抛 unowned，主窗口整树卸载）、FE-NEW-01（切换界面语言触发运行期 rehydrate，丢弃未保存编辑）、S1C-N01（macOS Cmd+Q 绕过退出门）；另有 P1：S3J-A01（0.3.0 升级库布局永远保存失败）、S3J-A02/A03（DTO 字段名漂移）、S1A-N02、S1B-N01 等。
+- 结论与路线：M6 的 A 层、B 层门禁均未通过，M7 不得开工。逐项判定、架构审查、证据等级标准（E1–E5）、重新定义的 A/B 门禁、波次与 16 项产品决策（PD-01…PD-16，已于 2026-10-06 全部确认）见 [M6 收口复核报告](../../docs/milestones/0.4.0/M6-closure-review.md)；测试补充规格、CI 改进与三平台实机清单见 [M6 收口测试规格](../../docs/milestones/0.4.0/M6-closure-test-spec.md)。
+- 2026-10-06 产品决策 PD-01…PD-16 已全部确认（见 [[decisions.md#M6-第二轮复核产品决策已确认]]）：下一步按主报告 4.6 节波次推进；PD-10（折叠大小写）会改变文档身份键，其设计草案已评审通过（主报告 4.7.4），待平台实现调研完成并经用户确认后再实现。
+- 下一步：按主报告第四章工作包 RW0→RW8 推进，先让验证可信（CI 变绿、tauriMock 语义、权限扫描、宿主 harness、DTO golden fixture），再修 P0/P1，最后做 B 层架构收口；三平台实机验收在 P0 修复后的构建上执行。
+
+**See Also：** [[decisions.md#M6-收口分-A-B-两层且-B-层是-M7-开工前提]] [[feedback.md#审查与测试规格必须细致到无需补充]]
 
 ## See Also
 

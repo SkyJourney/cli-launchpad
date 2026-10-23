@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "items": [
+    { "id": "appPreferences", "kind": "protocol", "version": 1 },
+    { "id": "providerDescriptor", "kind": "api", "version": 1 },
+    { "id": "theme", "kind": "api", "version": 1 },
+    { "id": "windowMessage", "kind": "protocol", "version": 1 },
+    { "id": "workspaceContentAdapter", "kind": "api", "version": 3 },
+    { "id": "workspaceContentDrag", "kind": "protocol", "version": 2 },
+    { "id": "workspaceEditorEngine", "kind": "api", "version": 1 }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "cases": [
+    {
+      "name": "text",
+      "value": {
+        "content": "hello",
+        "kind": "text",
+        "revision": "r1"
+      }
+    },
+    {
+      "name": "image",
+      "value": {
+        "base64Data": "cG5n",
+        "kind": "image",
+        "mimeType": "image/png"
+      }
+    },
+    {
+      "name": "unsupportedBinary",
+      "value": {
+        "kind": "unsupported",
+        "reason": "binary"
+      }
+    },
+    {
+      "name": "unsupportedTooLarge",
+      "value": {
+        "kind": "unsupported",
+        "reason": "tooLarge"
+      }
+    },
+    {
+      "name": "unsupportedInvalidImage",
+      "value": {
+        "kind": "unsupported",
+        "reason": "invalidImage"
+      }
+    },
+    {
+      "name": "unsupportedUnsupportedImage",
+      "value": {
+        "kind": "unsupported",
+        "reason": "unsupportedImage"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ProjectFileOpenResult"
+}

@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "name": "minimizeToTray",
+      "value": "minimize_to_tray"
+    },
+    {
+      "name": "quit",
+      "value": "quit"
+    }
+  ],
+  "schema": 1,
+  "type": "CloseBehavior"
+}

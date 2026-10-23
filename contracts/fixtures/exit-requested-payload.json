@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "pending-work",
+      "value": {
+        "executionTaskCount": 3,
+        "ptyCount": 2,
+        "requestId": "req-1"
+      }
+    },
+    {
+      "name": "idle",
+      "value": {
+        "executionTaskCount": 0,
+        "ptyCount": 0,
+        "requestId": "req-2"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ExitRequestedPayload"
+}

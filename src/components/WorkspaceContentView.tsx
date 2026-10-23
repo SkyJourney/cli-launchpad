@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspacePaneContentRef } from "../lib/tauri";
 import type { WorkspaceFileDocument } from "../lib/tauri";
 import type { WorkspaceFileBuffer } from "../lib/workspaceFileBuffer";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
   getWorkspaceContentAdapterRevision,
   subscribeWorkspaceContentAdapters,
@@ -26,6 +27,7 @@ export type {
   WorkspaceContentPresentationContext,
   WorkspaceContentRenderContext,
 } from "./workspaceContentAdapterRegistry";
+import { workspaceContentKey } from "../lib/workspaceContentKey";
 
 export function WorkspaceContentView({
   content,
@@ -51,6 +53,7 @@ export function WorkspaceContentView({
     getWorkspaceContentAdapterRevision,
     getWorkspaceContentAdapterRevision,
   );
+  const theme = useResolvedTheme();
   if (!content) return null;
   if (content.kind === "unknown") {
     return (
@@ -71,6 +74,7 @@ export function WorkspaceContentView({
   }
   const renderContext: WorkspaceContentRenderContext = {
     content,
+    theme,
     ...(content.kind === "pty"
       ? { pty: { portalTarget: ptyPortalTarget } }
       : {}),
@@ -88,7 +92,7 @@ export function WorkspaceContentView({
   };
   return (
     <WorkspaceContentErrorBoundary
-      key={workspaceContentErrorBoundaryKey(content)}
+      key={workspaceContentKey(content)}
       kind={content.kind}
       onClose={onCloseUnsupported}
     >
@@ -121,8 +125,9 @@ class WorkspaceContentErrorBoundary extends Component<
   state = { hasError: false, errorMessage: "" };
 
   static getDerivedStateFromError(error: unknown) {
+    // 空值不带文案：占位组件在 error 为空时会显示已本地化的通用描述。
     const message =
-      error instanceof Error ? error.message : String(error ?? "Unknown error");
+      error instanceof Error ? error.message : String(error ?? "");
     return { hasError: true, errorMessage: message.slice(0, 200) };
   }
 
@@ -137,12 +142,6 @@ class WorkspaceContentErrorBoundary extends Component<
       this.props.children
     );
   }
-}
-
-function workspaceContentErrorBoundaryKey(content: WorkspacePaneContentRef) {
-  if (content.kind === "pty") return `pty:${content.slotId}`;
-  if (content.kind === "file") return `file:${content.documentId}`;
-  return `unknown:${content.originalKind}:${JSON.stringify(content.raw)}`;
 }
 
 function UnsupportedContentPlaceholder({

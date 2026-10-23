@@ -3,8 +3,8 @@ use tauri::State;
 use crate::db::session_alias_repo;
 use crate::models::session::{SessionPage, SessionSearchIndexRefresh, SessionSearchResults};
 use crate::models::tool::ToolKey;
-use crate::services::session_service;
-use crate::{with_cache, with_conn, AppError, CacheDb, Db};
+use crate::services::session_service::{self, RestoreGeneration};
+use crate::{AppError, CacheDb, Db};
 
 #[tauri::command]
 pub async fn list_sessions(
@@ -14,12 +14,14 @@ pub async fn list_sessions(
     cursor: Option<String>,
     limit: Option<usize>,
 ) -> Result<SessionPage, AppError> {
-    let (path, aliases) = with_conn(&state, |conn| {
-        Ok((
-            session_service::directory_path(conn, directory_id)?,
-            session_alias_repo::list_for_tool(conn, tool_key)?,
-        ))
-    })?;
+    let (path, aliases) = state
+        .call("session.list_lookup", move |conn| {
+            Ok((
+                session_service::directory_path(conn, directory_id)?,
+                session_alias_repo::list_for_tool(conn, tool_key)?,
+            ))
+        })
+        .await?;
     let mut page =
         session_service::list_sessions(tool_key, &path, cursor.as_deref(), limit.unwrap_or(10))
             .await?;
@@ -34,47 +36,68 @@ pub async fn search_sessions(
     directory_id: i64,
     query: String,
 ) -> Result<SessionSearchResults, AppError> {
-    let aliases = with_conn(&state, |conn| {
-        session_service::directory_path(conn, directory_id)?;
-        let mut aliases = std::collections::HashMap::new();
-        for tool_key in ToolKey::ALL {
-            aliases.insert(tool_key, session_alias_repo::list_for_tool(conn, tool_key)?);
-        }
-        Ok(aliases)
-    })?;
-    with_cache(&cache, |connection| {
-        Ok(session_service::search_indexed_sessions(
-            connection,
-            directory_id,
-            &query,
-            &aliases,
-        )?)
-    })
+    let aliases = state
+        .call("session.search_aliases", move |conn| {
+            session_service::directory_path(conn, directory_id)?;
+            let mut aliases = std::collections::HashMap::new();
+            for tool_key in ToolKey::ALL {
+                aliases.insert(tool_key, session_alias_repo::list_for_tool(conn, tool_key)?);
+            }
+            Ok(aliases)
+        })
+        .await?;
+    cache
+        .call("session.search", move |connection| {
+            Ok(session_service::search_indexed_sessions(
+                connection,
+                directory_id,
+                &query,
+                &aliases,
+            )?)
+        })
+        .await
 }
 
 #[tauri::command]
 pub async fn refresh_session_search_index(
     state: State<'_, Db>,
     cache: State<'_, CacheDb>,
+    generation: State<'_, RestoreGeneration>,
     directory_id: i64,
 ) -> Result<SessionSearchIndexRefresh, AppError> {
-    let path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
+    let generation = generation.inner().clone();
+    let capture = generation.clone();
+    let (path, captured) = state
+        .call("session.index_path", move |conn| {
+            Ok((
+                session_service::directory_path(conn, directory_id)?,
+                capture.current(),
+            ))
+        })
+        .await?;
     let sources = session_service::refresh_search_index(&path).await?;
-    let current_path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
+    let current_path = state
+        .call("session.index_path", move |conn| {
+            Ok(session_service::directory_path(conn, directory_id)?)
+        })
+        .await?;
     if current_path != path {
-        return Err(AppError::msg("项目目录已变更，已取消写入旧的会话搜索索引"));
+        return Err(AppError::internal(
+            "项目目录已变更，已取消写入旧的会话搜索索引",
+        ));
     }
-    with_cache(&cache, |connection| {
-        Ok(crate::db::session_search_repo::refresh(
-            connection,
-            directory_id,
-            &sources,
-        )?)
-    })
+    cache
+        .call("session.index_refresh", move |connection| {
+            session_service::write_search_index_if_current(
+                connection,
+                &generation,
+                captured,
+                directory_id,
+                &sources,
+            )?
+            .into_result()
+        })
+        .await
 }
 
 #[tauri::command]
@@ -86,14 +109,18 @@ pub async fn set_session_alias(
     alias: String,
 ) -> Result<(), AppError> {
     let alias = session_service::normalize_alias(&alias)?;
-    let path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
+    let path = state
+        .call("session.alias_path", move |conn| {
+            Ok(session_service::directory_path(conn, directory_id)?)
+        })
+        .await?;
     ensure_session_belongs(tool_key, &path, &session_id).await?;
-    with_conn(&state, |conn| {
-        session_alias_repo::save(conn, tool_key, &session_id, &alias)?;
-        Ok(())
-    })
+    state
+        .call("session.alias_save", move |conn| {
+            session_alias_repo::save(conn, tool_key, &session_id, &alias)?;
+            Ok(())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -103,14 +130,18 @@ pub async fn delete_session_alias(
     tool_key: ToolKey,
     session_id: String,
 ) -> Result<(), AppError> {
-    let path = with_conn(&state, |conn| {
-        Ok(session_service::directory_path(conn, directory_id)?)
-    })?;
+    let path = state
+        .call("session.alias_path", move |conn| {
+            Ok(session_service::directory_path(conn, directory_id)?)
+        })
+        .await?;
     ensure_session_belongs(tool_key, &path, &session_id).await?;
-    with_conn(&state, |conn| {
-        session_alias_repo::delete(conn, tool_key, &session_id)?;
-        Ok(())
-    })
+    state
+        .call("session.alias_delete", move |conn| {
+            session_alias_repo::delete(conn, tool_key, &session_id)?;
+            Ok(())
+        })
+        .await
 }
 
 async fn ensure_session_belongs(
@@ -121,6 +152,36 @@ async fn ensure_session_belongs(
     if session_service::session_belongs_to_directory(tool_key, directory_path, session_id).await? {
         Ok(())
     } else {
-        Err(AppError::msg("该会话不属于当前项目目录，已拒绝修改别名"))
+        Err(AppError::internal(
+            "该会话不属于当前项目目录，已拒绝修改别名",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn refresh_command_is_wired_through_the_restore_generation_guard() {
+        let production = include_str!("session.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(
+            production.contains("RestoreGeneration"),
+            "refresh_session_search_index must take the managed generation"
+        );
+        assert!(
+            production.contains("write_search_index_if_current("),
+            "the command must write the cache through write_search_index_if_current"
+        );
+        assert!(
+            !production.contains("session_search_repo::refresh("),
+            "the command must not bypass the generation guard with a direct cache write"
+        );
+        assert_eq!(
+            production.matches(".current()").count(),
+            1,
+            "the generation is read once, inside the database closure that reads the path"
+        );
     }
 }

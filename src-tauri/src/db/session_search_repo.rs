@@ -1,3 +1,5 @@
+use crate::db::tx::with_tx;
+use rusqlite::TransactionBehavior;
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -13,17 +15,17 @@ const MAX_SEARCH_RESULTS: usize = 2_000;
 const MAX_INDEX_TEXT_CHARS: usize = 8_000;
 
 pub fn remove_directory(connection: &Connection, directory_id: i64) -> Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute(
-        "delete from session_search_documents where directory_id = ?1",
-        [directory_id],
-    )?;
-    transaction.execute(
-        "delete from session_search_sources where directory_id = ?1",
-        [directory_id],
-    )?;
-    transaction.commit()?;
-    Ok(())
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        transaction.execute(
+            "delete from session_search_documents where directory_id = ?1",
+            [directory_id],
+        )?;
+        transaction.execute(
+            "delete from session_search_sources where directory_id = ?1",
+            [directory_id],
+        )?;
+        Ok(())
+    })
 }
 
 pub fn refresh(
@@ -31,47 +33,47 @@ pub fn refresh(
     directory_id: i64,
     sources: &[SessionSearchIndexSource],
 ) -> Result<SessionSearchIndexRefresh> {
-    let transaction = connection.unchecked_transaction()?;
-    let mut incomplete_tools = Vec::new();
-    let mut indexed_sessions = 0;
+    with_tx(connection, TransactionBehavior::Deferred, |transaction| {
+        let mut incomplete_tools = Vec::new();
+        let mut indexed_sessions = 0;
 
-    for source in sources {
-        let Some(documents) = source.documents.as_ref() else {
-            upsert_source_status(&transaction, directory_id, source.tool_key, true)?;
-            incomplete_tools.push(source.tool_key);
-            continue;
-        };
+        for source in sources {
+            let Some(documents) = source.documents.as_ref() else {
+                upsert_source_status(&transaction, directory_id, source.tool_key, true)?;
+                incomplete_tools.push(source.tool_key);
+                continue;
+            };
 
-        if !source.incomplete {
-            transaction.execute(
+            if !source.incomplete {
+                transaction.execute(
                 "delete from session_search_documents where directory_id = ?1 and tool_key = ?2",
                 params![directory_id, source.tool_key.as_str()],
             )?;
-        }
-
-        for document in documents {
-            if document.tool_key != source.tool_key {
-                continue;
             }
-            upsert_document(&transaction, directory_id, document)?;
-            indexed_sessions += 1;
+
+            for document in documents {
+                if document.tool_key != source.tool_key {
+                    continue;
+                }
+                upsert_document(&transaction, directory_id, document)?;
+                indexed_sessions += 1;
+            }
+
+            upsert_source_status(
+                &transaction,
+                directory_id,
+                source.tool_key,
+                source.incomplete,
+            )?;
+            if source.incomplete {
+                incomplete_tools.push(source.tool_key);
+            }
         }
 
-        upsert_source_status(
-            &transaction,
-            directory_id,
-            source.tool_key,
-            source.incomplete,
-        )?;
-        if source.incomplete {
-            incomplete_tools.push(source.tool_key);
-        }
-    }
-
-    transaction.commit()?;
-    Ok(SessionSearchIndexRefresh {
-        incomplete_tools,
-        indexed_sessions,
+        Ok(SessionSearchIndexRefresh {
+            incomplete_tools,
+            indexed_sessions,
+        })
     })
 }
 
@@ -244,7 +246,7 @@ fn upsert_source_status(
             directory_id,
             tool_key.as_str(),
             incomplete,
-            crate::services::execution_service::now_ms(),
+            crate::util::time::now_ms(),
         ],
     )?;
     Ok(())
@@ -543,7 +545,7 @@ mod tests {
         )
         .unwrap();
 
-        crate::services::cache_service::clear(&connection).unwrap();
+        crate::db::cache_repo::clear(&crate::runtime::CacheConn::for_test(&connection)).unwrap();
 
         assert!(search(&connection, 1, "searchable", &HashMap::new())
             .unwrap()

@@ -7,32 +7,44 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      extended_matrix:
+        description: Also run the Windows ARM64, Ubuntu ARM64 and macOS Intel entries
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.workflow == 'CI' }}
 
 env:
   CARGO_INCREMENTAL: "0"
-  RUST_BACKTRACE: short
+  RUST_BACKTRACE: "1"
 
 jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - windows-latest
-          - macos-latest
-          - ubuntu-24.04
+        os: ${{ fromJSON((inputs.extended_matrix || github.event_name == 'schedule') && '["windows-latest","macos-latest","ubuntu-24.04","windows-11-arm","ubuntu-24.04-arm","macos-15-intel"]' || '["windows-latest","macos-latest","ubuntu-24.04"]') }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+
+      - name: Prepare report directory
+        run: mkdir -p test-reports
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -51,9 +63,21 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt_retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo timeout 240 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"; then
+                return 0
+              fi
+              echo "apt-get $1 failed (attempt $attempt/3)" >&2
+              sleep $((attempt * 10))
+            done
+            return 1
+          }
+          apt_retry update
+          apt_retry install -y \
             build-essential curl wget file \
             libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev \
@@ -65,21 +89,90 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install dependencies
+        id: install
         run: pnpm install --frozen-lockfile
 
       - name: Run frontend tests
-        run: pnpm test
+        id: frontend_tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm exec vitest run --reporter=default --reporter=junit --outputFile.junit=test-reports/vitest-junit.xml
 
       - name: Build frontend
+        id: frontend_build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run build
 
+      - name: Check production HTML for CSP compatibility
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
+        run: node scripts/ci/assert-dist-html-csp.mjs dist/index.html
+
       - name: Check Rust formatting
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Check Rust compilation
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        id: rust_check
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' }}
+        env:
+          # 警告视为错误：cfg 分支遗漏、未使用代码等要在 CI 里暴露并修掉，而不是静默累积。
+          # --all-targets 让测试代码也受同样约束（cargo test 步骤本身不加 -D warnings）。
+          RUSTFLAGS: -D warnings
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked
+
+      - name: Check Rust compilation with the acceptance feature
+        if: ${{ !cancelled() && steps.frontend_build.outcome == 'success' && runner.os == 'Linux' }}
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --features acceptance-hooks --locked
+
+      - name: List Rust tests
+        if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked -- --list \
+            | tr -d '\r' | sed -n 's/: test$//p' | sort > "test-reports/rust-listed-${RUNNER_OS}.txt"
+          echo "listed=$(wc -l < "test-reports/rust-listed-${RUNNER_OS}.txt")"
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        id: rust_tests
+        if: ${{ !cancelled() && steps.rust_check.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked 2>&1 | tee "test-reports/rust-test-${RUNNER_OS}.log"
+
+      - name: Extract executed Rust tests
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: |
+          tr -d '\r' < "test-reports/rust-test-${RUNNER_OS}.log" \
+            | sed -nE 's/^test ([^ ]+) \.\.\. (ok|FAILED|ignored).*$/\1 \2/p' \
+            | sort -u > "test-reports/rust-executed-${RUNNER_OS}.txt"
+          echo "executed=$(wc -l < "test-reports/rust-executed-${RUNNER_OS}.txt")"
+
+      - name: Assert Rust test inventory
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: node scripts/ci/assert-rust-test-inventory.mjs "${RUNNER_OS}" "test-reports/rust-listed-${RUNNER_OS}.txt" "test-reports/rust-executed-${RUNNER_OS}.txt"
+
+      - name: Assert contract fixtures are unchanged
+        if: ${{ !cancelled() && steps.rust_tests.outcome != 'skipped' }}
+        run: git diff --exit-code -- contracts/fixtures
+
+      - name: Assert generated contract bindings are unchanged
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/gen-contracts.mjs
+          git diff --exit-code -- src/generated
+
+      - name: Check Rust test anti-patterns
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: bash scripts/ci/check-rust-test-antipatterns.sh
+
+      - name: Upload test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: test-reports/
+          if-no-files-found: warn
+          retention-days: 14

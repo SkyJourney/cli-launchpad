@@ -10,7 +10,6 @@ export const codexAdapter: CliAdapter = {
   shortLabel: "CDX",
   icon: CodexIcon,
   terminalPaste: { controlV: "control-v", windowsAltV: "terminal" },
-  latestStatusKind: "version",
   showCommandNotice: () => true,
   refreshLatestAfterExecution: () => false,
   displayExecutionStream: (_kind, stream) => stream,

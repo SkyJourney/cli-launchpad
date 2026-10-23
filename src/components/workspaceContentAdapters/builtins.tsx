@@ -3,17 +3,18 @@ import { FileText, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceEditorSurface } from "../WorkspaceEditorSurface";
 import type { WorkspaceFileDocument } from "../../lib/tauri";
-import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
+import {
+  isWorkspaceFileBufferDirty,
+  type WorkspaceFileBuffer,
+} from "../../lib/workspaceFileBuffer";
 import type { WorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { registerWorkspaceContentAdapter } from "../workspaceContentAdapterRegistry";
 import { createWorkspaceEditorModelUri } from "../../lib/workspaceEditorModel";
-import {
-  defaultEngineId,
-  resolveEditorEngine,
-} from "../workspaceEditorEngineRegistry";
+import { releaseEditorDocument } from "../workspaceEditorEngineRegistry";
 import { getTerminalTitleLabel, TOOLS } from "../../lib/tools";
+import { registerContributionSafely } from "../../lib/registerContribution";
 import type { WorkspaceContentPresentationContext } from "../workspaceContentAdapterRegistry";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
+import type { ResolvedTheme } from "../../lib/themes";
 
 const unsupportedReasonKeys = {
   binary: "workspaceFiles.unsupported.binary",
@@ -43,17 +44,18 @@ function TextFileContentAdapter({
   fileDocument,
   fileBuffer,
   readOnly,
+  theme,
   onEditFile,
   onSaveFile,
 }: {
   fileDocument: WorkspaceFileDocument | undefined;
   fileBuffer: WorkspaceFileBuffer | undefined;
   readOnly: boolean;
+  theme: ResolvedTheme;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const { id: theme } = useResolvedTheme();
 
   if (!fileDocument) return null;
 
@@ -137,7 +139,7 @@ function TextFileContentAdapter({
           fileDocument.id,
           fileBuffer.epoch,
         )}
-        theme={theme}
+        theme={theme.id}
         readOnly={readOnly}
         onChange={(content) => onEditFile(fileDocument.id, content)}
         onSave={() => void onSaveFile(fileDocument.id)}
@@ -148,7 +150,7 @@ function TextFileContentAdapter({
 
 const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   id: "core.pty",
-  apiVersion: 2,
+  apiVersion: 3,
   kind: "pty",
   render: (context) => {
     if (context.content.kind !== "pty") return null;
@@ -157,10 +159,10 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   lifecycle: {
     describeDisposalImpact: ({ isRunning, title }) =>
       isRunning ? [{ kind: "runningPty", title }] : [],
-    prepareHandoff: async ({ capabilities }) => {
-      const payload = await capabilities.prepare();
-      return { transferId: payload.handoff.token, payload };
-    },
+    prepareHandoff: async ({ transferId, capabilities }) => ({
+      transferId,
+      payload: await capabilities.prepare(),
+    }),
     attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),
@@ -195,7 +197,6 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
   },
   labels: {
     menu: "pty.sessionMenu",
-    close: "pty.close",
     closeCurrent: "pty.closeCurrent",
     closeOthers: "pty.closeOthers",
     closeAll: "pty.closeAllInPane",
@@ -215,7 +216,7 @@ const ptyAdapter: WorkspaceContentAdapter<"pty"> = {
 
 const fileAdapter: WorkspaceContentAdapter<"file"> = {
   id: "core.file-editor",
-  apiVersion: 2,
+  apiVersion: 3,
   kind: "file",
   render: (context) => {
     if (context.content.kind !== "file" || !context.file?.document) {
@@ -226,6 +227,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
         fileDocument={context.file.document}
         fileBuffer={context.file.buffer}
         readOnly={context.file.readOnly}
+        theme={context.theme}
         onEditFile={context.file.edit}
         onSaveFile={context.file.save}
       />
@@ -241,8 +243,7 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     attachHandoff: ({ capabilities }, payload) => capabilities.attach(payload),
     rollbackHandoff: ({ capabilities }, payload, reason) =>
       capabilities.rollback(payload, reason),
-    dispose: ({ content }) =>
-      resolveEditorEngine(defaultEngineId)?.releaseDocument(content.documentId),
+    dispose: ({ content }) => releaseEditorDocument(content.documentId),
   },
   presentation: (content, context) => {
     const document = context.fileDocuments.find(
@@ -252,21 +253,13 @@ const fileAdapter: WorkspaceContentAdapter<"file"> = {
     return {
       title: document?.relativePath ?? content.documentId,
       icon: <FileText size={13} />,
-      status:
-        buffer &&
-        (buffer.content !== buffer.savedContent ||
-          buffer.saving ||
-          buffer.conflict === true ||
-          buffer.identityChanged === true)
-          ? "dirty"
-          : undefined,
+      status: isWorkspaceFileBufferDirty(buffer) ? "dirty" : undefined,
       tooltip: document?.relativePath ?? content.documentId,
       closeLabelKey: "workspaceFiles.closeFile",
     };
   },
   labels: {
     menu: "workspaceFiles.fileMenu",
-    close: "workspaceFiles.closeFile",
     closeCurrent: "workspaceFiles.closeFileNamed",
     closeOthers: "workspaceFiles.closeOthers",
     closeAll: "workspaceFiles.closeAllInPane",
@@ -305,9 +298,11 @@ function isInvalidRestoredSlotState(state: string | undefined): boolean {
 }
 
 export function registerBuiltinWorkspaceContentAdapters(): () => void {
-  const unregister = [
-    registerWorkspaceContentAdapter(ptyAdapter),
-    registerWorkspaceContentAdapter(fileAdapter),
-  ];
+  const adapters: WorkspaceContentAdapter<any>[] = [ptyAdapter, fileAdapter];
+  const unregister = adapters.map((adapter) =>
+    registerContributionSafely("workspaceContentAdapter", adapter.id, () =>
+      registerWorkspaceContentAdapter(adapter),
+    ),
+  );
   return () => unregister.reverse().forEach((dispose) => dispose());
 }

@@ -36,6 +36,8 @@ export const qk = {
     "sessionSearchIndex",
     directoryId,
   ],
+  /** Prefix of every project's search index refresh query. */
+  sessionSearchIndexes: () => ["sessionSearchIndex"],
   sessionSearch: (
     directoryId: number | null,
     query: string,

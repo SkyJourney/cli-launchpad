@@ -6,8 +6,32 @@ type LocaleShape<T> = {
 
 export const de = {
   errors: {
+    exitReportInvalid:
+      "Die Bestätigungsdaten zum Beenden waren ungültig. Versuche erneut, die App zu beenden.",
+    exitImpactsNotReported:
+      "Die App hat noch nicht ermittelt, was durch das Beenden betroffen ist. Versuche erneut, die App zu beenden.",
+    exitImpactsChanged:
+      "Was durch das Beenden betroffen ist, hat sich geändert (es laufen neue Aufgaben). Bitte bestätige erneut.",
     fileNotFound: "Die Datei wurde nicht gefunden.",
     fileTooLarge: "Die Datei überschreitet die zulässige Größe.",
+    ptySessionNotFound:
+      "Die Terminalsitzung existiert nicht oder wurde beendet.",
+    ptyHandoffInProgress:
+      "Dieses Terminal wird gerade in ein anderes Fenster verschoben. Versuche es gleich erneut.",
+    fileNotUtf8:
+      "Nur UTF-8-Textdateien können bearbeitet und gespeichert werden.",
+    fileNotRegular:
+      "Nur reguläre Dateien können geöffnet oder gespeichert werden.",
+    layoutNameExists:
+      "Ein Layout mit diesem Namen existiert bereits. Verwende einen anderen Namen.",
+    layoutPresetLimit:
+      "Es werden höchstens {{max}} benannte Layouts unterstützt.",
+    filePermissionDenied:
+      "Zugriff verweigert. Prüfe die Berechtigungen der Datei oder des Ordners.",
+    backupIndexRefreshDiscarded:
+      "Die Daten wurden ersetzt (Backup wiederhergestellt oder Konfiguration importiert); daher wurde eine zuvor gestartete Aktualisierung des Sitzungsindex verworfen.",
+    projectIdentityUnreadable:
+      "Die Identität des Projektverzeichnisses konnte nicht gelesen werden.",
     fileConflict:
       "Die Datei auf dem Datenträger wurde geändert. Lade sie vor dem Speichern neu.",
     fileIdentityChanged:
@@ -16,21 +40,46 @@ export const de = {
       "Diese Terminal-Sitzung gehört nicht mehr zu diesem Fenster.",
     ptyHandoffExpired:
       "Die Übergabe des Terminals ist abgelaufen. Versuche es erneut.",
+    ptyHandoffTargetIsSource:
+      "Das Zielfenster ist das Quellfenster, daher kann das Terminal nicht übergeben werden.",
     ptyInputBackpressure:
       "Die Terminal-Eingabewarteschlange ist voll. Versuche es gleich erneut.",
     ptyInputUnavailable:
       "Der Terminal-Eingabekanal ist geschlossen. Verbinde die Sitzung erneut.",
     ptySessionsActive:
-      "{{count}} Terminal-Sitzung(en) laufen noch. Schließe sie vor dem Wiederherstellen eines Backups.",
+      "Das Wiederherstellen eines Backups oder das Importieren einer Konfiguration ist blockiert, solange {{count}} Terminalsitzung(en) laufen. Schließe sie zuerst.",
     backupRestoreInProgress:
       "Eine Backup-Wiederherstellung läuft. Versuche es danach erneut.",
     ptySessionStarting:
-      "{{count}} Terminal-Sitzung(en) starten gerade. Versuche die Wiederherstellung später erneut.",
+      "{{count}} Terminalsitzung(en) oder Ausführungsaufgabe(n) werden noch gestartet. Versuche es gleich erneut.",
     execPlanChanged:
       "Der Ausführungsplan hat sich geändert. Prüfe und bestätige ihn erneut.",
     execBusy: "Für dieses Tool läuft bereits eine Aufgabe.",
+    exitNoPendingRequest:
+      "Es gibt keine ausstehende Beenden-Anfrage. Versuche erneut, die App zu beenden.",
+    exitRequestMismatch:
+      "Diese Beenden-Anfrage ist nicht mehr aktuell. Versuche erneut, die App zu beenden.",
     layoutNeedsReset:
       "Das Arbeitsbereich-Layout ist ungültig und muss zurückgesetzt werden.",
+    layoutCaseDuplicate:
+      "Das Layout enthält Dokumente, deren Pfade sich nur in der Groß-/Kleinschreibung unterscheiden.",
+    internal:
+      "Es ist ein interner Fehler aufgetreten. Versuche es erneut und starte die App neu, falls das Problem bestehen bleibt.",
+    appExiting: "Die App wird beendet. Versuche es nach dem Neustart erneut.",
+    appExitDeferred:
+      "Eine Wiederherstellung oder ein Import läuft noch, daher kann die App noch nicht beendet werden.",
+    dataReplaceBlocked:
+      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Warte, bis sie beendet sind, bevor du wiederherstellst oder importierst.",
+    dataReplaceInProgress:
+      "Eine andere Wiederherstellung oder ein anderer Import läuft bereits.",
+    configImportInProgress:
+      "Ein Konfigurationsimport läuft. Versuche es nach dem Abschluss erneut.",
+    projectNotFound: "Der Projektordner wurde nicht gefunden.",
+    layoutSaveRejected:
+      "Das Arbeitsbereich-Layout wurde wiederholt abgelehnt, daher wurde das Speichern gestoppt.",
+    layoutSchemaIncompatible:
+      "Das Arbeitsbereich-Layout wurde von einer neueren App-Version geschrieben und kann von dieser Version nicht gespeichert werden.",
+    appError: "Ein unerwarteter Fehler ist aufgetreten. Versuche es erneut.",
     generic: "Der Vorgang ist fehlgeschlagen.",
     directoryInUse: "Für dieses Projekt läuft noch eine Terminal-Sitzung.",
   },
@@ -99,14 +148,29 @@ export const de = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Alle speichern und beenden",
     title: "CLI Launchpad beenden?",
     description:
       "{{count}} eingebettete Terminalsitzungen laufen noch. Beim Beenden werden diese Sitzungen und ihre Kindprozesse beendet.",
-    confirm: "Sitzungen beenden und schließen",
+    executionTasks:
+      "{{count}} Installations- oder Update-Aufgabe(n) laufen noch. Beim Beenden werden sie abgebrochen.",
     unsavedDescription:
       "{{count}} Datei(en) enthalten ungespeicherte Änderungen:",
     confirmDiscard: "Änderungen verwerfen und schließen",
     terminating: "Wird beendet…",
+  },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad wurde beim letzten Mal nicht ordnungsgemäß beendet. Nicht gespeicherte Änderungen sind möglicherweise verloren gegangen.",
+    abnormalExitWithTime:
+      "CLI Launchpad wurde beim letzten Mal (gestartet {{time}}) nicht ordnungsgemäß beendet. Nicht gespeicherte Änderungen sind möglicherweise verloren gegangen.",
+    dismiss: "Schließen",
+  },
+  appCrash: {
+    title: "Ein unerwarteter Fehler ist aufgetreten",
+    description:
+      "CLI Launchpad ist in diesem Fenster auf einen unerwarteten Fehler gestoßen. Beim Neuladen wird das Fenster neu gestartet; nicht gespeicherte Änderungen gehen möglicherweise verloren.",
+    reload: "Fenster neu laden",
   },
   windowChrome: {
     titlebar: "Titelleiste des Anwendungsfensters",
@@ -200,6 +264,9 @@ export const de = {
     returnFailed: "Rückkehr zum Arbeitsbereich fehlgeschlagen: {{error}}",
     returnTimedOut:
       "Der Hauptarbeitsbereich hat nicht rechtzeitig geantwortet.",
+    returnUnknownError: "Unbekannter Fehler",
+    returnExpired: "Die Rückkehranfrage ist abgelaufen.",
+    returnRequestFailed: "Die Rückkehranfrage ist fehlgeschlagen.",
     detachedDefaultTitle: "CLI-Terminal",
     detachedMoveUnavailable:
       "Dieses Terminal kann nicht in ein separates Fenster verschoben werden.",
@@ -211,6 +278,10 @@ export const de = {
       "Separates Terminalfenster konnte nicht erstellt werden.",
     detachedStartFailed:
       "Separates Terminalfenster konnte nicht gestartet werden.",
+    listenerSetupFailed:
+      "Einige Kommunikationskanäle zwischen Fenstern konnten nicht registriert werden ({{events}}). Separate Fenster reagieren möglicherweise nicht; starte die App neu, falls das Problem bestehen bleibt.",
+    ownerLostRecoveryFailed:
+      "Die Terminalsitzung konnte nach dem Schließen ihres Fensters nicht wieder verbunden werden. Schließe dieses Terminal und starte es neu.",
     detachedStateChanged:
       "Der Status des separaten Terminalfensters hat sich geändert. Bitte versuche es erneut.",
     detachedSessionMissing:
@@ -384,12 +455,13 @@ export const de = {
     latest: "Neueste: ",
     unavailableWithError: "Nicht verfügbar ({{error}})",
     unknownRefresh: "Unbekannt; oben rechts erneut erkennen",
-    hermesRefreshPrompt: "Manuell aktualisieren, um den main-Branch zu prüfen",
-    hermesUpToDate: "Auf dem neuesten Stand von main",
-    hermesUpdateBehind: "{{count}} Commits hinter main",
-    hermesUpdateBehindUnknown:
-      "Updates auf main (Anzahl der Commits nicht verfügbar)",
-    hermesUpdateStatus: "Update-Status: ",
+    branchRefreshPrompt:
+      "Manuell aktualisieren, um den Upstream-Branch zu prüfen",
+    branchUpToDate: "Auf demselben Stand wie der Upstream-Branch",
+    branchUpdateBehind: "{{count}} Commit(s) hinter dem Upstream-Branch",
+    branchUpdateBehindUnknown:
+      "Updates auf dem Upstream-Branch (Anzahl der Commits nicht verfügbar)",
+    branchUpdateStatus: "Update-Status: ",
     hermesInstallEffectsHeading: "Das offizielle Installationsprogramm wird:",
     hermesInstallEffectRuntime:
       "Hermes CLI, die verwalteten Python-/Node-Laufzeiten und Abhängigkeiten für den aktuellen Benutzer installieren.",
@@ -533,6 +605,8 @@ export const de = {
       pre_import: "Automatische Sicherung vor dem Import",
       pre_restore: "Schutzsicherung vor der Wiederherstellung",
       pre_migration: "Automatische Sicherung vor dem Upgrade",
+      pre_case_merge:
+        "Automatische Sicherung vor dem Zusammenführen von Dokumenten, die sich nur in der Groß-/Kleinschreibung unterscheiden",
     },
     preservation: {
       exact: "Vollständig erhalten",
@@ -634,6 +708,16 @@ export const de = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Alle speichern und schließen",
+    discardAndClose: "Änderungen verwerfen und schließen",
+    saveAllInProgress: "Wird gespeichert…",
+    saveAllFailedQuit:
+      "{{count}} Datei(en) konnten nicht gespeichert werden; Beenden abgebrochen",
+    saveAllFailedClose:
+      "{{count}} Datei(en) konnten nicht gespeichert werden; Schließen abgebrochen",
+    confirmCloseTitle: "Schließen bestätigen",
+    caseVariantsMerged:
+      "{{count}} Dokument(e) zusammengeführt, deren Pfade sich nur in der Groß-/Kleinschreibung unterschieden.",
     rightPanelTabs: "Register der rechten Seitenleiste",
     files: "Dateien",
     git: "Git",

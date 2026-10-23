@@ -8,7 +8,9 @@ import { isThemeMode, type ThemeMode } from "./themeMode";
 import { useAppStore } from "../store/appStore";
 
 export const APP_PREFERENCES_EVENT = "app-preferences";
-export const APP_PREFERENCES_REQUEST_EVENT = "app-preferences-requested";
+/** Window message types of the preferences request and its reply (contracts/window-messages.json). */
+export const APP_PREFERENCES_REQUEST_MESSAGE = "app-preferences-requested";
+export const APP_PREFERENCES_REPLY_MESSAGE = "app-preferences-reply";
 export const APP_PREFERENCES_API_VERSION = 1 as const;
 
 export interface AppPreferences {

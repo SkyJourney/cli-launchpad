@@ -1,4 +1,15 @@
 {
-  "adapterApiVersion": 2,
-  "kinds": ["pty", "file"]
+  "formatVersion": 1,
+  "items": [
+    {
+      "id": "pty",
+      "windowKind": "terminal",
+      "dragAllowed": true
+    },
+    {
+      "id": "file",
+      "windowKind": "workspaceContent",
+      "dragAllowed": true
+    }
+  ]
 }

@@ -40,6 +40,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         14,
         include_str!("../../migrations/0014_tool_key_foreign_keys.sql"),
     ),
+    (15, include_str!("../../migrations/0015_legacy_cleanup.sql")),
 ];
 
 pub fn open_database(path: &Path) -> Result<Connection> {
@@ -156,9 +157,15 @@ mod tests {
             .expect("query seeded tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read seeded tool keys");
-        let mut contract_keys: Vec<String> =
+        let manifest: serde_json::Value =
             serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
                 .expect("parse ToolKey contract");
+        let mut contract_keys: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("tool keys must be an items array")
+            .iter()
+            .map(|key| key.as_str().expect("tool key").to_string())
+            .collect();
         contract_keys.sort();
         assert_eq!(seeded_keys, contract_keys);
     }
@@ -234,16 +241,16 @@ mod tests {
     }
 
     #[test]
-    fn migrations_seed_automatic_launch_target() {
+    fn migrations_remove_the_legacy_launch_target_setting() {
         let connection = memory_db();
-        let value: String = connection
+        let rows: i64 = connection
             .query_row(
-                "select value from application_settings where key = 'launch_target'",
+                "select count(*) from application_settings where key = 'launch_target'",
                 [],
                 |row| row.get(0),
             )
-            .expect("read launch target");
-        assert_eq!(value, "auto");
+            .expect("count launch target rows");
+        assert_eq!(rows, 0);
     }
 
     #[test]
@@ -301,8 +308,8 @@ mod tests {
         assert_eq!(count, 5);
     }
 
-    #[test]
-    fn upgrades_a_representative_024_schema_eight_database_to_current_schema() {
+    /// A representative 0.2.4 (schema 8) database: projects, an alias, history and a task.
+    fn legacy_schema_eight_database() -> Connection {
         let connection = Connection::open_in_memory().expect("open schema 8 database");
         connection
             .pragma_update(None, "foreign_keys", "ON")
@@ -369,11 +376,17 @@ mod tests {
                 [],
             )
             .expect("seed execution log");
+        connection
+    }
+
+    #[test]
+    fn upgrades_a_representative_024_schema_eight_database_to_current_schema() {
+        let connection = legacy_schema_eight_database();
 
         assert_eq!(schema_version(&connection).unwrap(), 8);
         apply_migrations(&connection).expect("upgrade 0.2.4 database");
 
-        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(schema_version(&connection).unwrap(), 15);
         let project: (String, String, i64, String) = connection
             .query_row(
                 "select name, path, pinned, note from directories where id = 41",
@@ -393,12 +406,12 @@ mod tests {
         assert_eq!(
             connection
                 .query_row(
-                    "select args from directory_tool_args where directory_id = 41 and tool_key = 'claude'",
+                    "select count(*) from sqlite_master where type = 'table' and name = 'directory_tool_args'",
                     [],
-                    |row| row.get::<_, String>(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            "--legacy-project"
+            0
         );
         assert_eq!(
             connection
@@ -413,25 +426,22 @@ mod tests {
         assert_eq!(
             connection
                 .query_row(
-                    "select value from application_settings where key = 'launch_target'",
+                    "select count(*) from application_settings where key = 'launch_target'",
                     [],
-                    |row| row.get::<_, String>(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            "auto"
+            0
         );
         assert_eq!(
             connection
                 .query_row(
-                    "select name, shell_exe from shell_profiles where id = 1",
+                    "select count(*) from sqlite_master where type = 'table' and name = 'shell_profiles'",
                     [],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            (
-                "Existing PowerShell".to_string(),
-                "pwsh-custom.exe".to_string()
-            )
+            0
         );
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
@@ -481,7 +491,7 @@ mod tests {
         );
 
         apply_migrations(&connection).expect("re-running migrations is safe");
-        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(schema_version(&connection).unwrap(), 15);
         assert_eq!(
             connection
                 .query_row("select count(*) from directories", [], |row| row
@@ -524,7 +534,7 @@ mod tests {
 
         apply_migrations(&connection).expect("upgrade to tool registry foreign keys");
 
-        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(schema_version(&connection).unwrap(), 15);
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
                 &connection,
@@ -596,7 +606,7 @@ mod tests {
     #[test]
     fn workspace_layout_migration_adds_versioned_tables_without_project_foreign_keys() {
         let connection = memory_db();
-        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(schema_version(&connection).unwrap(), 15);
 
         let current_columns: i64 = connection
             .query_row(
@@ -828,7 +838,7 @@ mod tests {
 
         apply_migrations(&connection).expect("apply Hermes migration");
 
-        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(schema_version(&connection).unwrap(), 15);
         assert_eq!(
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
@@ -885,5 +895,356 @@ mod tests {
             .pragma_update(None, "user_version", latest_schema_version() + 1)
             .unwrap();
         assert!(ensure_supported_schema(&connection).is_err());
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("pragma table_info({table})"))
+            .expect("prepare table_info");
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table_info")
+            .collect::<rusqlite::Result<_>>()
+            .expect("read column names")
+    }
+
+    fn count(connection: &Connection, sql: &str) -> i64 {
+        connection
+            .query_row(sql, [], |row| row.get(0))
+            .expect("count rows")
+    }
+
+    fn foreign_key_violations(connection: &Connection) -> usize {
+        let mut statement = connection
+            .prepare("pragma foreign_key_check")
+            .expect("prepare foreign_key_check");
+        statement
+            .query_map([], |_| Ok(()))
+            .expect("run foreign_key_check")
+            .count()
+    }
+
+    #[test]
+    fn migration_0015_removes_the_legacy_objects_on_a_fresh_database() {
+        let connection = memory_db();
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from sqlite_master where type = 'table' and name in ('shell_profiles', 'directory_tool_args')",
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'launch_target'",
+            ),
+            0
+        );
+        assert_eq!(
+            table_columns(&connection, "directories"),
+            ["id", "name", "path", "sort_order", "pinned", "note"]
+        );
+        assert_eq!(foreign_key_violations(&connection), 0);
+        // Reverse: the setting the migration keeps is still there, and the version moved.
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'close_behavior'",
+            ),
+            1
+        );
+        assert_eq!(schema_version(&connection).unwrap(), 15);
+    }
+
+    #[test]
+    fn migration_0015_keeps_tools_as_a_tool_key_registry() {
+        let connection = memory_db();
+        assert_eq!(table_columns(&connection, "tools"), ["id", "key"]);
+
+        let mut statement = connection
+            .prepare("select key from tools order by key")
+            .expect("prepare tools query");
+        let seeded: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("query tools")
+            .collect::<rusqlite::Result<_>>()
+            .expect("read tool keys");
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
+                .expect("parse ToolKey contract");
+        let mut contract: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("tool keys must be an items array")
+            .iter()
+            .map(|key| key.as_str().expect("tool key").to_string())
+            .collect();
+        contract.sort();
+        assert_eq!(seeded, contract);
+
+        // Reverse: an unknown key is refused by the foreign key, a known key is accepted.
+        assert!(connection
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('not-a-tool', 'g2-unknown', 'x', 1)",
+                [],
+            )
+            .is_err());
+        connection
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('claude', 'g2-known', 'x', 1)",
+                [],
+            )
+            .expect("a known tool key is accepted");
+    }
+
+    #[test]
+    fn a_failing_migration_0015_leaves_the_schema_14_database_untouched() {
+        // PD-05: 0015 deletes data, so a failure half-way must not commit its first statements.
+        let directory = tempdir().expect("temp dir");
+        let path = directory.path().join("failing-0015.sqlite");
+        let (tool_args_before, shell_profiles_before, launch_target_before) = {
+            let connection = open_database(&path).expect("open database");
+            apply_migrations_through(&connection, 14).expect("apply schema 14");
+            connection
+                .execute(
+                    "insert into directories (id, name, path, pinned, note, last_used_at) values (7, 'Kept', 'C:\\Projects\\kept', 1, 'keep', '2026-10-01T00:00:00Z')",
+                    [],
+                )
+                .expect("seed project");
+            connection
+                .execute(
+                    "insert into directory_tool_args (directory_id, tool_key, args) values (7, 'claude', '--legacy')",
+                    [],
+                )
+                .expect("seed legacy tool args");
+            // 0015 drops this column after it has already dropped the legacy tables and deleted
+            // the launch_target setting, so removing it first makes the migration fail half-way.
+            connection
+                .execute("alter table tools drop column executable", [])
+                .expect("sabotage the schema");
+            (
+                count(&connection, "select count(*) from directory_tool_args"),
+                count(&connection, "select count(*) from shell_profiles"),
+                count(
+                    &connection,
+                    "select count(*) from application_settings where key = 'launch_target'",
+                ),
+            )
+        };
+        assert_eq!(tool_args_before, 1);
+        assert!(shell_profiles_before >= 1);
+        assert_eq!(launch_target_before, 1);
+
+        {
+            let connection = open_database(&path).expect("reopen the database");
+            assert!(
+                apply_migrations(&connection).is_err(),
+                "0015 must fail on the sabotaged schema"
+            );
+            // The failed migration must not be committed by closing the connection.
+        }
+
+        let connection = open_database(&path).expect("reopen after the failed upgrade");
+        assert_eq!(schema_version(&connection).unwrap(), 14);
+        assert_eq!(
+            count(&connection, "select count(*) from directory_tool_args"),
+            tool_args_before
+        );
+        assert_eq!(
+            count(&connection, "select count(*) from shell_profiles"),
+            shell_profiles_before
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'launch_target'",
+            ),
+            launch_target_before
+        );
+        assert_eq!(
+            count(&connection, "select count(*) from directories where id = 7"),
+            1
+        );
+    }
+
+    #[test]
+    fn upgrading_a_schema_14_database_removes_legacy_objects_and_keeps_project_data() {
+        let connection = Connection::open_in_memory().expect("open schema 14 database");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("enable foreign keys");
+        apply_migrations_through(&connection, 14).expect("apply schema 14");
+        connection
+            .execute(
+                "insert into directories (id, name, path, pinned, note, last_used_at) values (7, 'Kept', 'C:\\Projects\\kept', 1, 'keep', '2026-10-01T00:00:00Z')",
+                [],
+            )
+            .expect("seed project");
+        connection
+            .execute(
+                "insert into directory_tool_args (directory_id, tool_key, args) values (7, 'claude', '--legacy')",
+                [],
+            )
+            .expect("seed legacy tool args");
+        connection
+            .execute(
+                "update shell_profiles set name = 'Legacy shell' where id = 1",
+                [],
+            )
+            .expect("touch legacy shell profile");
+        connection
+            .execute(
+                "update application_settings set value = 'quit' where key = 'close_behavior'",
+                [],
+            )
+            .expect("set close behavior");
+        connection
+            .execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values ('claude', 'old-session', 'Old alias', 10)",
+                [],
+            )
+            .expect("seed alias");
+        assert_eq!(schema_version(&connection).unwrap(), 14);
+
+        apply_migrations(&connection).expect("upgrade to schema 15");
+        assert_eq!(schema_version(&connection).unwrap(), 15);
+
+        let project: (String, String, i64, String) = connection
+            .query_row(
+                "select name, path, pinned, note from directories where id = 7",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("read kept project");
+        assert_eq!(
+            project,
+            (
+                "Kept".to_string(),
+                "C:\\Projects\\kept".to_string(),
+                1,
+                "keep".to_string()
+            )
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'close_behavior' and value = 'quit'",
+            ),
+            1
+        );
+        let alias: String = connection
+            .query_row(
+                "select alias from session_aliases where session_id = 'old-session'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read alias");
+        assert_eq!(alias, "Old alias");
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from sqlite_master where type = 'table' and name in ('shell_profiles', 'directory_tool_args')",
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "select count(*) from application_settings where key = 'launch_target'",
+            ),
+            0
+        );
+        assert_eq!(
+            table_columns(&connection, "directories"),
+            ["id", "name", "path", "sort_order", "pinned", "note"]
+        );
+        assert_eq!(foreign_key_violations(&connection), 0);
+
+        // Reverse: running the migrations again changes nothing.
+        apply_migrations(&connection).expect("re-running migrations is safe");
+        assert_eq!(schema_version(&connection).unwrap(), 15);
+        assert_eq!(
+            count(&connection, "select count(*) from directories where id = 7"),
+            1
+        );
+    }
+
+    /// Asserts the four tables that reference `tools(key)` refuse `tool_key` values outside the registry.
+    fn assert_tool_key_inserts(
+        connection: &Connection,
+        tool_key: &str,
+        directory_id: i64,
+    ) -> Vec<rusqlite::Result<usize>> {
+        let session = format!("fk-{tool_key}");
+        vec![
+            connection.execute(
+                "insert into session_aliases (tool_key, session_id, alias, updated_at_ms) values (?1, ?2, 'x', 1)",
+                rusqlite::params![tool_key, session],
+            ),
+            connection.execute(
+                "insert into pty_sessions (session_id, directory_id, tool_key, working_directory, state, started_at_ms) values (?1, ?2, ?3, 'C:\\Projects\\fk', 'running', 1)",
+                rusqlite::params![format!("pty-{session}"), directory_id, tool_key],
+            ),
+            connection.execute(
+                "insert into launch_history (directory_id, tool_key, action, success, launched_at) values (?1, ?2, 'launch', 0, '2026-10-07 00:00:00')",
+                rusqlite::params![directory_id, tool_key],
+            ),
+            connection.execute(
+                "insert into execution_tasks (id, tool_key, kind, source, program, args_json, preview, status, started_at_ms) values (?1, ?2, 'update', 'official', 'x', '[]', 'x', 'running', 1)",
+                rusqlite::params![format!("task-{session}"), tool_key],
+            ),
+        ]
+    }
+
+    fn assert_unknown_tool_key_is_rejected(connection: &Connection, directory_id: i64) {
+        for result in assert_tool_key_inserts(connection, "unknown", directory_id) {
+            let error = result.expect_err("an unknown tool key must be rejected");
+            assert!(
+                matches!(
+                    error,
+                    rusqlite::Error::SqliteFailure(ref failure, _)
+                        if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY
+                ),
+                "{error:?}"
+            );
+        }
+        // Reverse: the same statements with a registered key succeed.
+        for result in assert_tool_key_inserts(connection, "claude", directory_id) {
+            result.expect("a registered tool key is accepted");
+        }
+    }
+
+    #[test]
+    fn unknown_tool_keys_are_rejected_by_foreign_keys_on_fresh_and_upgraded_databases() {
+        let fresh = memory_db();
+        fresh
+            .execute(
+                "insert into directories (id, name, path) values (900, 'Fresh project', 'C:\\Projects\\fresh')",
+                [],
+            )
+            .expect("seed fresh project");
+        assert_unknown_tool_key_is_rejected(&fresh, 900);
+        assert_eq!(foreign_key_violations(&fresh), 0);
+
+        let upgraded = legacy_schema_eight_database();
+        apply_migrations(&upgraded).expect("upgrade 0.2.4 database");
+        assert_unknown_tool_key_is_rejected(&upgraded, 41);
+        assert_eq!(foreign_key_violations(&upgraded), 0);
+        assert_eq!(
+            upgraded
+                .pragma_query_value(None, "foreign_keys", |row| row.get::<_, i64>(0))
+                .expect("read foreign_keys"),
+            1
+        );
+
+        // The production opener is what enables foreign keys: check the connection it returns.
+        let directory = tempfile::tempdir().expect("temp dir");
+        let opened = open_database(&directory.path().join("fk.db")).expect("open database");
+        assert_eq!(
+            opened
+                .pragma_query_value(None, "foreign_keys", |row| row.get::<_, i64>(0))
+                .expect("read foreign_keys"),
+            1
+        );
     }
 }

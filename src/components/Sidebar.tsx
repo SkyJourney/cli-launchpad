@@ -18,6 +18,7 @@ import { useAppStore } from "../store/appStore";
 import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { moveProjectWithinPinGroup } from "../lib/projectOrdering";
+import { orderProjectDirectories } from "../lib/projectOrder";
 import {
   listWorkspacePaneContents,
   listWorkspacePanes,
@@ -35,6 +36,7 @@ import { usePtyWorkspace } from "./PtyWorkspace";
 import { SearchInput } from "./SearchInput";
 import { ThemedScrollArea } from "./ThemedScrollArea";
 import { formatAppError } from "../lib/appErrors";
+import { useWorkspaceSelector } from "../workspace/host/workspaceHostStore";
 
 export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const { t } = useTranslation();
@@ -44,7 +46,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const selectDirectory = useAppStore((state) => state.selectDirectory);
   const setProjectDialog = useAppStore((state) => state.setProjectDialog);
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
-  const ptySessionsById = useAppStore((state) => state.ptySessionsById);
+  const ptySessionsById = useWorkspaceSelector(
+    (snapshot) => snapshot.ptySessionsById,
+  );
   const {
     slots,
     tree,
@@ -137,22 +141,10 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   }, [detachedInstanceIds, hydrationStatus, slots, tree]);
 
   const onProjects = view === "projects" || view === "detail";
-  const visibleDirectories = useMemo(() => {
-    const term = projectSearch.trim().toLocaleLowerCase();
-    return [...(directories ?? [])]
-      .filter(
-        (directory) =>
-          !term || directory.name.toLocaleLowerCase().includes(term),
-      )
-      .sort((a, b) => {
-        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-        return (
-          a.sortOrder - b.sortOrder ||
-          (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
-          a.name.localeCompare(b.name)
-        );
-      });
-  }, [directories, projectSearch]);
+  const visibleDirectories = useMemo(
+    () => orderProjectDirectories(directories ?? [], projectSearch),
+    [directories, projectSearch],
+  );
   const projectMenuAnchorRef = useMemo(
     () => ({
       current:

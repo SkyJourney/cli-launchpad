@@ -1,5 +1,6 @@
+use crate::platform::bounded_read::read_bounded;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -7,47 +8,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use cap_std::fs::{Dir, OpenOptions};
 
-/// Returns a stable, platform-specific identifier for a file reached through
-/// a retained directory capability. Services use this when they need to
-/// compare a previewed file with the file currently at the same relative path.
-pub fn file_identity(
-    directory: &Dir,
-    name: &str,
-    _metadata: &cap_std::fs::Metadata,
-) -> Result<String> {
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt;
-        let _ = (directory, name);
-        Ok(format!("unix:{}:{}", _metadata.dev(), _metadata.ino()))
-    }
+use crate::platform::file_location::{locate_nofollow, FileLocation};
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-
-        let file = directory.open(name)?.into_std();
-        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let file_index =
-            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-        Ok(format!(
-            "windows:{}:{file_index}",
-            information.dwVolumeSerialNumber
-        ))
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (directory, name);
-        Ok(format!("fallback:{}", _metadata.len()))
-    }
-}
+use crate::platform::file_identity::FileIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompareAndSwapOutcome {
@@ -131,6 +94,8 @@ impl FileCasAdapter for NativeFileCasAdapter {
         Ok(file)
     }
 
+    // locked_target 只在 Windows 的提交路径里使用。
+    #[cfg_attr(not(windows), allow(unused_variables))]
     fn commit(
         &self,
         directory: &Dir,
@@ -256,21 +221,59 @@ where
     R: PartialEq,
     Revision: Fn(&[u8]) -> R,
 {
-    let canonical = root
-        .canonicalize(relative_destination)
+    let location = locate_nofollow(root, relative_destination)?;
+    compare_and_swap_located(
+        adapter,
+        &location,
+        replacement,
+        expected_revision,
+        max_current_bytes,
+        revision_of,
+    )
+}
+
+/// Refuses a final component that is a symbolic link or is not a regular file.
+/// Runs before writing and again under the lock, so a name swapped after locking
+/// is still refused.
+fn ensure_regular_file(directory: &Dir, name: &Path) -> Result<()> {
+    let metadata = directory
+        .symlink_metadata(name)
         .context("项目文件不存在或无法访问")?;
-    let (parent, destination) = parent_and_name(root, &canonical)?;
-    let mut temporary = create_temporary(adapter, &parent, replacement)?;
+    if metadata.file_type().is_symlink() {
+        bail!("项目文件是符号链接，已拒绝保存");
+    }
+    if !metadata.is_file() {
+        bail!("只能保存普通文本文件");
+    }
+    Ok(())
+}
+
+fn compare_and_swap_located<R, Revision>(
+    adapter: &impl FileCasAdapter,
+    location: &FileLocation,
+    replacement: &[u8],
+    expected_revision: &R,
+    max_current_bytes: u64,
+    revision_of: Revision,
+) -> Result<CompareAndSwapOutcome>
+where
+    R: PartialEq,
+    Revision: Fn(&[u8]) -> R,
+{
+    let parent = &location.parent;
+    let destination = PathBuf::from(&location.name);
+    ensure_regular_file(parent, &destination)?;
+    let mut temporary = create_temporary(adapter, parent, replacement)?;
     temporary.finish_writing()?;
 
     for _ in 0..MAX_IDENTITY_RETRIES {
-        let locked = adapter.lock_current(&parent, &destination)?;
-        if !adapter.path_matches_locked_file(&parent, &destination, &locked)? {
+        let locked = adapter.lock_current(parent, &destination)?;
+        if !adapter.path_matches_locked_file(parent, &destination, &locked)? {
             drop(locked);
             continue;
         }
 
-        let current = read_bounded(&locked, max_current_bytes)?;
+        let current = read_bounded(locked.try_clone()?, max_current_bytes)?;
         if revision_of(&current) != *expected_revision {
             return Ok(CompareAndSwapOutcome::Conflict);
         }
@@ -278,7 +281,7 @@ where
         // identity check while this handle remains locked. Recheck immediately
         // before commit so that such a replacement is retried against its new
         // revision instead of being overwritten with stale content.
-        if !adapter.path_matches_locked_file(&parent, &destination, &locked)? {
+        if !adapter.path_matches_locked_file(parent, &destination, &locked)? {
             drop(locked);
             continue;
         }
@@ -330,37 +333,25 @@ pub fn replace_file(destination: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn parent_and_name(root: &Dir, destination: &Path) -> Result<(Dir, PathBuf)> {
-    let mut components = destination.components();
-    let mut parts = Vec::new();
-    for component in &mut components {
-        match component {
-            std::path::Component::Normal(part) => parts.push(part.to_owned()),
-            _ => bail!("文件路径必须是规范的项目内相对路径"),
-        }
-    }
-    let name = parts.pop().context("文件路径不能为空")?;
-    let parent = if parts.is_empty() {
-        root.try_clone()?
-    } else {
-        root.open_dir(parts.iter().collect::<PathBuf>())?
-    };
-    Ok((parent, PathBuf::from(name)))
-}
-
 fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
     let deadline = Instant::now() + LOCK_TIMEOUT;
     let file = loop {
         match open_target(directory, path) {
             Ok(file) => break file.into_std(),
             Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
+                if cfg!(windows)
+                    && error.kind() == std::io::ErrorKind::NotFound
+                    && Instant::now() < deadline =>
             {
-                // A concurrent Windows atomic replacement can briefly make
-                // the destination unavailable while its pathname is swapped.
+                // Windows only: a concurrent atomic replacement can briefly make the
+                // destination unavailable while its pathname is swapped. Unix rename
+                // never hides the name, so NotFound there is reported as an error.
                 thread::sleep(LOCK_RETRY_INTERVAL);
             }
-            Err(error) => return Err(error).context("无法打开待保存文件"),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("无法打开待保存文件：{}", path.display()))
+            }
         }
     };
     loop {
@@ -380,40 +371,9 @@ fn lock_current(directory: &Dir, path: &Path) -> Result<File> {
 }
 
 fn same_file(directory: &Dir, path: &Path, locked: &File) -> Result<bool> {
+    ensure_regular_file(directory, path)?;
     let current = open_target(directory, path)?.into_std();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let locked = locked.metadata()?;
-        let current = current.metadata()?;
-        Ok(locked.dev() == current.dev() && locked.ino() == current.ino())
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-        fn identity(file: &File) -> Result<(u32, u64)> {
-            let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-            if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) }
-                == 0
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            Ok((
-                information.dwVolumeSerialNumber,
-                (u64::from(information.nFileIndexHigh) << 32)
-                    | u64::from(information.nFileIndexLow),
-            ))
-        }
-        Ok(identity(locked)? == identity(&current)?)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = current;
-        bail!("当前平台尚未实现文件身份比较适配")
-    }
+    Ok(FileIdentity::of(locked)? == FileIdentity::of(&current)?)
 }
 
 fn open_target(directory: &Dir, path: &Path) -> std::io::Result<cap_std::fs::File> {
@@ -444,17 +404,6 @@ fn open_target_for_replacement_metadata(directory: &Dir, path: &Path) -> std::io
     directory
         .open_with(path, &options)
         .map(cap_std::fs::File::into_std)
-}
-
-fn read_bounded(file: &File, maximum_bytes: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024) as usize);
-    file.try_clone()?
-        .take(maximum_bytes.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > maximum_bytes {
-        bail!("文件读取大小超过允许上限");
-    }
-    Ok(bytes)
 }
 
 struct TemporaryReplacement {
@@ -501,13 +450,33 @@ impl TemporaryReplacement {
     }
 }
 
+const TEMPORARY_SUFFIX: &str = ".writing";
+
+/// Name of a new CAS temporary file: `.` + 32 lowercase hex digits + `.writing`.
+pub fn temporary_name() -> String {
+    format!(".{}{TEMPORARY_SUFFIX}", uuid::Uuid::new_v4().simple())
+}
+
+pub fn is_temporary_name(name: &str) -> bool {
+    let Some(identifier) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(TEMPORARY_SUFFIX))
+    else {
+        return false;
+    };
+    identifier.len() == 32
+        && identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn create_temporary(
     adapter: &impl FileCasAdapter,
     directory: &Dir,
     bytes: &[u8],
 ) -> Result<TemporaryReplacement> {
     for _ in 0..8 {
-        let name = PathBuf::from(format!(".{}.writing", uuid::Uuid::new_v4().simple()));
+        let name = PathBuf::from(temporary_name());
         match adapter.create_private_temporary(directory, &name) {
             Ok(file) => {
                 let mut temporary = TemporaryReplacement {
@@ -597,22 +566,7 @@ fn open_windows_rename_directory(directory: &Dir) -> std::io::Result<WindowsRena
     }
     let reopened = unsafe { File::from_raw_handle(reopened as _) };
 
-    fn identity(file: &File) -> std::io::Result<(u32, u64)> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
-        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) } == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok((
-            information.dwVolumeSerialNumber,
-            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
-        ))
-    }
-
-    if identity(&original)? != identity(&reopened)? {
+    if FileIdentity::of(&original)? != FileIdentity::of(&reopened)? {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "重新打开的目标目录与保留的目录能力不一致",
@@ -1006,7 +960,7 @@ fn preserve_windows_dacl(target: &File, replacement: &File) -> std::io::Result<(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    use std::process::{Command, Stdio};
+    use std::process::{Child, Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
@@ -1175,6 +1129,68 @@ mod tests {
     const WORKER_REVISION: &str = "CLI_LAUNCHPAD_PROJECT_CAS_REVISION";
     const WORKER_PAYLOAD: &str = "CLI_LAUNCHPAD_PROJECT_CAS_PAYLOAD";
     const WORKER_RESULT: &str = "CLI_LAUNCHPAD_PROJECT_CAS_RESULT";
+    const CAS_ROUNDS_ENV: &str = "CLI_LAUNCHPAD_CAS_ROUNDS";
+    const WORKER_WAIT_LIMIT: Duration = Duration::from_secs(30);
+    const WORKER_NAMES: [&str; 2] = ["process-a", "process-b"];
+
+    fn cas_rounds() -> usize {
+        match std::env::var(CAS_ROUNDS_ENV) {
+            Ok(value) => match value.parse::<usize>() {
+                Ok(rounds) if rounds >= 1 => rounds,
+                _ => panic!("{CAS_ROUNDS_ENV} 必须是不小于 1 的整数，实际为 {value:?}"),
+            },
+            Err(_) => 1,
+        }
+    }
+
+    fn describe_outputs(outputs: &[Output; 2]) -> String {
+        WORKER_NAMES
+            .iter()
+            .zip(outputs)
+            .map(|(name, output)| {
+                format!(
+                    "[{name}] 退出状态：{}\n[{name}] stdout：\n{}\n[{name}] stderr：\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn read_worker_results(root: &Path) -> [String; 2] {
+        WORKER_NAMES.map(|payload| {
+            std::fs::read_to_string(root.join(format!("{payload}.result")))
+                .unwrap_or_else(|error| format!("<无结果文件：{error}>"))
+        })
+    }
+
+    fn wait_for_workers(mut workers: [Child; 2], root: &Path, round: usize) -> [Output; 2] {
+        let deadline = Instant::now() + WORKER_WAIT_LIMIT;
+        loop {
+            let finished = workers
+                .iter_mut()
+                .all(|worker| worker.try_wait().unwrap().is_some());
+            if finished {
+                return workers.map(|worker| worker.wait_with_output().unwrap());
+            }
+            if Instant::now() >= deadline {
+                for worker in workers.iter_mut() {
+                    let _ = worker.kill();
+                }
+                let outputs = workers.map(|worker| worker.wait_with_output().unwrap());
+                let results = read_worker_results(root);
+                panic!(
+                    "第 {round} 轮：CAS worker 未在 {WORKER_WAIT_LIMIT:?} 内结束，已强制终止\nprocess-a 结果：{}\nprocess-b 结果：{}\n{}",
+                    results[0],
+                    results[1],
+                    describe_outputs(&outputs)
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     fn revision(bytes: &[u8]) -> String {
         Sha256::digest(bytes)
@@ -1184,6 +1200,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "仅由 separate_processes_* 以子进程调用"]
     fn cross_process_cas_worker() {
         let Ok(payload) = std::env::var(WORKER_PAYLOAD) else {
             return;
@@ -1206,22 +1223,25 @@ mod tests {
             &expected,
             1024,
             revision,
-        )
-        .unwrap();
-        std::fs::write(result_path, format!("{outcome:?}")).unwrap();
+        );
+        let text = match outcome {
+            Ok(outcome) => format!("{outcome:?}"),
+            Err(error) => format!("Error: {error:#}"),
+        };
+        std::fs::write(result_path, text).unwrap();
     }
 
-    #[test]
-    fn separate_processes_using_same_revision_allow_only_one_winner() {
+    fn run_cas_round(round: usize) {
         let root = tempdir().unwrap();
         std::fs::write(root.path().join("note.txt"), "original").unwrap();
         let expected = revision(b"original");
         let gate = root.path().join("start");
 
-        let workers = ["process-a", "process-b"].map(|payload| {
+        let workers = WORKER_NAMES.map(|payload| {
             let result_path = root.path().join(format!("{payload}.result"));
             Command::new(std::env::current_exe().unwrap())
                 .args([
+                    "--ignored",
                     "--exact",
                     "platform::file_cas::tests::cross_process_cas_worker",
                     "--nocapture",
@@ -1237,35 +1257,55 @@ mod tests {
                 .unwrap()
         });
 
-        std::thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
         std::fs::write(&gate, "go").unwrap();
-        let outputs = workers.map(|worker| worker.wait_with_output().unwrap());
-        for (payload, output) in ["process-a", "process-b"].into_iter().zip(outputs) {
+        let outputs = wait_for_workers(workers, root.path(), round);
+
+        let results = read_worker_results(root.path());
+        let report = format!(
+            "第 {round} 轮\nprocess-a 结果：{}\nprocess-b 结果：{}\n{}",
+            results[0],
+            results[1],
+            describe_outputs(&outputs),
+        );
+
+        for (payload, output) in WORKER_NAMES.into_iter().zip(&outputs) {
             assert!(
                 output.status.success(),
-                "CAS worker {payload} failed with {}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
+                "CAS worker {payload} 异常退出\n{report}"
             );
         }
-        let outcomes = ["process-a", "process-b"].map(|payload| {
-            std::fs::read_to_string(root.path().join(format!("{payload}.result"))).unwrap()
-        });
         assert_eq!(
-            outcomes.iter().filter(|value| *value == "Written").count(),
-            1
+            results.iter().filter(|value| *value == "Written").count(),
+            1,
+            "必须恰好一个 Written\n{report}"
         );
         assert_eq!(
-            outcomes.iter().filter(|value| *value == "Conflict").count(),
-            1
+            results.iter().filter(|value| *value == "Conflict").count(),
+            1,
+            "必须恰好一个 Conflict\n{report}"
         );
-        assert!(matches!(
-            std::fs::read_to_string(root.path().join("note.txt"))
-                .unwrap()
-                .as_str(),
-            "process-a" | "process-b"
-        ));
+        let note = std::fs::read_to_string(root.path().join("note.txt")).unwrap();
+        assert!(
+            matches!(note.as_str(), "process-a" | "process-b"),
+            "note.txt 内容异常：{note:?}\n{report}"
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".writing"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "存在 .writing 残留：{leftovers:?}\n{report}"
+        );
+    }
+
+    #[test]
+    fn separate_processes_using_same_revision_allow_only_one_winner() {
+        for round in 1..=cas_rounds() {
+            run_cas_round(round);
+        }
     }
 
     #[test]
@@ -1440,6 +1480,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
     }
 
+    #[cfg(windows)]
     #[test]
     fn lock_current_retries_a_temporary_missing_path() {
         let root = tempdir().unwrap();
@@ -1459,6 +1500,172 @@ mod tests {
         restore.join().unwrap();
         drop(locked);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+    }
+
+    fn file_names(root: &Path) -> Vec<String> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn lock_current_error_names_the_requested_path() {
+        let root = tempdir().unwrap();
+        let directory = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        let error = lock_current(&directory, Path::new("missing-note.txt")).unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("无法打开待保存文件：missing-note.txt"),
+            "错误文本必须带相对路径，实际为：{message}"
+        );
+        let root_kind = error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        assert_eq!(
+            root_kind,
+            Some(std::io::ErrorKind::NotFound),
+            "根因必须保留为 NotFound，实际为：{message}"
+        );
+        assert!(
+            !root.path().join("missing-note.txt").exists(),
+            "lock_current 不得创建目标文件"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_current_does_not_spin_on_unix_when_the_path_is_missing() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+
+        let started = Instant::now();
+        let error = lock_current(&dir, Path::new("missing.txt")).unwrap_err();
+        let elapsed = started.elapsed();
+
+        let kind = error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind);
+        assert_eq!(
+            kind,
+            Some(std::io::ErrorKind::NotFound),
+            "实际为：{error:#}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "耗时 {elapsed:?}，Unix 上不得自旋等待 2 秒"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "刻画上游 cap-primitives 竞态，仅在 flaky 探针中运行"]
+    fn cap_std_canonicalize_can_return_deleted_suffix_under_concurrent_replacement() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "x").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let replacer = {
+            let stop = Arc::clone(&stop);
+            let base = root.path().to_path_buf();
+            thread::spawn(move || {
+                let temporary = base.join(".r.tmp");
+                let target = base.join("note.txt");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&temporary, "x").unwrap();
+                    std::fs::rename(&temporary, &target).unwrap();
+                }
+            })
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut seen_deleted_suffix = false;
+        while Instant::now() < deadline && !seen_deleted_suffix {
+            match dir.canonicalize("note.txt") {
+                Ok(resolved) => {
+                    seen_deleted_suffix = resolved.to_string_lossy().ends_with(" (deleted)");
+                }
+                // The replacer can briefly hide the name; only the suffix
+                // observation is asserted below, so a missing name is skipped.
+                Err(_) => {}
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(
+            seen_deleted_suffix,
+            "5 秒内没有观察到 canonicalize 返回 ` (deleted)` 后缀"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_survives_tight_external_atomic_replacement_loop() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("note.txt"), "same").unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let replacer = {
+            let stop = Arc::clone(&stop);
+            let base = root.path().to_path_buf();
+            thread::spawn(move || {
+                let temporary = base.join(".r.tmp");
+                let target = base.join("note.txt");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&temporary, "same").unwrap();
+                    std::fs::rename(&temporary, &target).unwrap();
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+
+        let started = Instant::now();
+        let mut failures = Vec::new();
+        for round in 0..300 {
+            let outcome = compare_and_swap_in_directory(
+                &dir,
+                Path::new("note.txt"),
+                b"same",
+                &revision(b"same"),
+                1024,
+                revision,
+            );
+            match outcome {
+                Ok(CompareAndSwapOutcome::Written) => {}
+                Ok(other) => failures.push(format!("第 {round} 轮：非预期结果 {other:?}")),
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    if !message.contains("持续变化") {
+                        failures.push(format!("第 {round} 轮：{message}"));
+                    }
+                }
+            }
+        }
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(failures.is_empty(), "保存结果异常：{failures:?}");
+        let leftovers: Vec<String> = file_names(root.path())
+            .into_iter()
+            .filter(|name| name.ends_with(".writing"))
+            .collect();
+        assert!(leftovers.is_empty(), "存在 .writing 残留：{leftovers:?}");
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "300 轮耗时 {elapsed:?}，超过 20 秒"
+        );
     }
 
     #[cfg(unix)]
@@ -1722,5 +1929,254 @@ mod tests {
         unsafe { LocalFree(descriptor) };
         assert_eq!(actual_acl, expected_acl);
         assert!(replacement_acl_is_protected);
+    }
+
+    #[cfg(unix)]
+    struct SwapToSymlinkAdapter {
+        native: NativeFileCasAdapter,
+        root: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl FileCasAdapter for SwapToSymlinkAdapter {
+        fn lock_current(&self, directory: &Dir, path: &Path) -> Result<File> {
+            let locked = self.native.lock_current(directory, path)?;
+            // A non-cooperating party swaps the name for a symbolic link after locking.
+            let link = self.root.join(".l.tmp");
+            std::os::unix::fs::symlink(self.root.join("real.txt"), &link)?;
+            std::fs::rename(&link, self.root.join(path))?;
+            Ok(locked)
+        }
+
+        fn path_matches_locked_file(
+            &self,
+            directory: &Dir,
+            path: &Path,
+            locked: &File,
+        ) -> Result<bool> {
+            self.native
+                .path_matches_locked_file(directory, path, locked)
+        }
+
+        fn create_private_temporary(&self, directory: &Dir, path: &Path) -> std::io::Result<File> {
+            self.native.create_private_temporary(directory, path)
+        }
+
+        fn commit(
+            &self,
+            directory: &Dir,
+            destination: &Path,
+            temporary: &Path,
+            temporary_file: &mut Option<File>,
+            locked_target: Option<&File>,
+            permissions: Option<std::fs::Permissions>,
+        ) -> Result<bool> {
+            self.native.commit(
+                directory,
+                destination,
+                temporary,
+                temporary_file,
+                locked_target,
+                permissions,
+            )
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_refuses_a_symlink_final_component_and_leaves_target_and_link_untouched() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("real.txt"), b"before").unwrap();
+        std::os::unix::fs::symlink(root.path().join("real.txt"), root.path().join("note.txt"))
+            .unwrap();
+
+        let error = compare_and_swap_in_directory(
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            std::fs::read(root.path().join("real.txt")).unwrap(),
+            b"before"
+        );
+        assert!(root
+            .path()
+            .join("note.txt")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cas_checks_the_symlink_policy_again_after_locking() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("real.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt"), b"before").unwrap();
+        let adapter = SwapToSymlinkAdapter {
+            native: NativeFileCasAdapter,
+            root: root.path().to_path_buf(),
+        };
+
+        let error = compare_and_swap_with_adapter(
+            &adapter,
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("项目文件是符号链接，已拒绝保存"));
+        assert_eq!(
+            std::fs::read(root.path().join("real.txt")).unwrap(),
+            b"before"
+        );
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn cas_writes_through_the_located_parent_directory() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::create_dir(root.path().join("sub")).unwrap();
+        std::fs::write(root.path().join("sub/note.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt"), b"root-original").unwrap();
+
+        let outcome = compare_and_swap_in_directory(
+            &dir,
+            Path::new("sub/note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, CompareAndSwapOutcome::Written);
+        assert_eq!(
+            std::fs::read(root.path().join("sub/note.txt")).unwrap(),
+            b"after"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt")).unwrap(),
+            b"root-original"
+        );
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+        assert!(!file_names(&root.path().join("sub"))
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn cas_ignores_a_decoy_file_named_like_a_deleted_alias() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("note.txt"), b"before").unwrap();
+        std::fs::write(root.path().join("note.txt (deleted)"), b"decoy").unwrap();
+
+        let outcome = compare_and_swap_in_directory(
+            &dir,
+            Path::new("note.txt"),
+            b"after",
+            &revision(b"before"),
+            1024,
+            revision,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, CompareAndSwapOutcome::Written);
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt")).unwrap(),
+            b"after"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("note.txt (deleted)")).unwrap(),
+            b"decoy"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cas_error_text_never_mentions_a_deleted_alias_under_concurrent_replacement() {
+        let root = tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        std::fs::write(root.path().join("note.txt"), b"same").unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let replacer = {
+            let stop = stop.clone();
+            let root = root.path().to_path_buf();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(root.join(".r.tmp"), b"same").unwrap();
+                    std::fs::rename(root.join(".r.tmp"), root.join("note.txt")).unwrap();
+                }
+            })
+        };
+
+        let started = Instant::now();
+        for _ in 0..300 {
+            match compare_and_swap_in_directory(
+                &dir,
+                Path::new("note.txt"),
+                b"same",
+                &revision(b"same"),
+                1024,
+                revision,
+            ) {
+                Ok(outcome) => assert_eq!(outcome, CompareAndSwapOutcome::Written),
+                Err(error) => {
+                    let text = format!("{error:#}");
+                    assert!(text.contains("持续变化"), "{text}");
+                    assert!(!text.contains("(deleted)"), "{text}");
+                    assert!(!text.contains("无法打开待保存文件"), "{text}");
+                }
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        replacer.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert!(!file_names(root.path())
+            .iter()
+            .any(|name| name.ends_with(".writing")));
+    }
+
+    #[test]
+    fn temporary_name_generation_and_recognition_round_trip() {
+        let names: std::collections::HashSet<String> = (0..50).map(|_| temporary_name()).collect();
+        assert_eq!(names.len(), 50);
+        for name in &names {
+            assert!(is_temporary_name(name), "{name}");
+        }
+        assert!(is_temporary_name(&format!(".{}.writing", "a".repeat(32))));
+        for rejected in [
+            ".short.writing".to_string(),
+            format!(".{}.writing", "a".repeat(31)),
+            format!(".{}.writing", "g".repeat(32)),
+            format!(".{}.writing", "A".repeat(32)),
+            format!("{}.writing", "a".repeat(32)),
+            format!(".{}.tmp", "a".repeat(32)),
+        ] {
+            assert!(!is_temporary_name(&rejected), "{rejected}");
+        }
     }
 }

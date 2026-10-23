@@ -1,3 +1,9 @@
+import { getAppErrorCode } from "./appErrors";
+import {
+  documentIdentityKey,
+  UNKNOWN_PATH_SEMANTICS,
+  type PathSemantics,
+} from "./pathKey";
 import {
   listWorkspacePanes,
   placeContentExclusively,
@@ -17,9 +23,37 @@ import {
   type WorkspaceSlotState,
   type WorkspaceSlotStateKind,
 } from "./tauri";
-import { workspaceContentKey } from "./workspaceContentKey";
+import { abortableDelay } from "./abortableDelay";
+import { exponentialDelay } from "./retryPolicy";
+import { fileContentRef, workspaceContentKey } from "./workspaceContentKey";
 
 export const WORKSPACE_LAYOUT_SCHEMA_VERSION = 5;
+export { listPersistedDetachedContents } from "./workspaceOwnershipProjection";
+
+export type WorkspaceLayoutSaveErrorCode =
+  | "layout.save_rejected"
+  | "layout.schema_incompatible";
+
+export class WorkspaceLayoutSaveError extends Error {
+  constructor(
+    readonly code: WorkspaceLayoutSaveErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkspaceLayoutSaveError";
+  }
+}
+
+export class UnsupportedWorkspaceLayoutVersionError extends Error {
+  readonly code = "layout.needs_reset";
+
+  constructor(version: unknown) {
+    super(`Unsupported workspace layout version: ${String(version)}`);
+    this.name = "UnsupportedWorkspaceLayoutVersionError";
+  }
+}
+
+const MAX_ABNORMAL_SAVE_REJECTIONS = 3;
 
 export interface WorkspaceRuntimeSnapshot {
   tree: WorkspaceNode;
@@ -150,7 +184,7 @@ export function restoreWorkspaceLayoutApplyPlan(
   plan: WorkspaceLayoutApplyPlan,
 ): WorkspaceLayoutApplySnapshot {
   const snapshot = restoreWorkspaceRuntimeSnapshot(plan.layout);
-  const detachedSlotIds = new Set(
+  const detachedPtySlotIds = new Set(
     snapshot.detachedContents.flatMap((content) =>
       content.kind === "pty" ? [content.slotId] : [],
     ),
@@ -182,7 +216,7 @@ export function restoreWorkspaceLayoutApplyPlan(
   });
 
   let tree = snapshot.tree;
-  for (const instanceId of detachedSlotIds) {
+  for (const instanceId of detachedPtySlotIds) {
     tree = removeWorkspaceSession(tree, instanceId);
   }
   for (const instanceId of endedIds) {
@@ -212,38 +246,71 @@ export function restoreCurrentWorkspaceFilesAfterPreset(input: {
   detachedContents: WorkspacePaneContentRef[];
   currentlyDetachedContents: WorkspacePaneContentRef[];
   detachingContents: WorkspacePaneContentRef[];
+  /** Path semantics per project; omitted means `unknown` (exact paths only). */
+  semanticsOf?: (directoryId: number) => PathSemantics;
+  /**
+   * Current documents that must keep their own identity even when a restored document
+   * differs from them only by case: unsaved edits, or owned by another window.
+   */
+  protectedDocumentIds?: ReadonlySet<string>;
 }): {
   tree: WorkspaceNode;
   documents: WorkspaceFileDocument[];
   detachedContents: WorkspacePaneContentRef[];
 } {
   let tree = input.tree;
+  const semanticsOf = input.semanticsOf ?? (() => UNKNOWN_PATH_SEMANTICS);
+  const literalKey = (document: WorkspaceFileDocument) =>
+    documentIdentityKey(
+      document.directoryId,
+      document.relativePath,
+      UNKNOWN_PATH_SEMANTICS,
+    );
+  const foldedKey = (document: WorkspaceFileDocument) =>
+    documentIdentityKey(
+      document.directoryId,
+      document.relativePath,
+      semanticsOf(document.directoryId),
+    );
   const documents = [...input.restoredDocuments];
-  const restoredPaths = new Set(
-    documents.map(
-      (document) => `${document.directoryId}:${document.relativePath}`,
-    ),
+  const restoredPaths = new Set(documents.map(literalKey));
+  const restoredByFoldedKey = new Map(
+    documents.map((document) => [foldedKey(document), document]),
   );
   const currentDocumentByIdentity = new Map(
-    input.currentDocuments.map((document) => [
-      `${document.directoryId}:${document.relativePath}`,
-      document,
-    ]),
+    input.currentDocuments.map((document) => [literalKey(document), document]),
   );
   const currentlyDetached = input.currentlyDetachedContents;
   const firstPaneId = listWorkspacePanes(tree)[0].id;
+  const owns = (
+    contents: readonly WorkspacePaneContentRef[],
+    document: WorkspaceFileDocument,
+  ) =>
+    contents.some((candidate) =>
+      sameWorkspaceContent(candidate, fileContentRef(document.id)),
+    );
 
   for (const document of input.currentDocuments) {
-    const identity = `${document.directoryId}:${document.relativePath}`;
-    const alreadyRestored = restoredPaths.has(identity);
+    const identity = literalKey(document);
+    // A current document that only differs from a restored one by case folding gives way to
+    // it, unless it has edits or belongs to another window.
+    const keepsItsOwn =
+      input.protectedDocumentIds?.has(document.id) === true ||
+      owns(currentlyDetached, document) ||
+      owns(input.detachingContents, document);
+    const restoredByFolding =
+      !restoredPaths.has(identity) && !keepsItsOwn
+        ? restoredByFoldedKey.get(foldedKey(document))
+        : undefined;
+    const alreadyRestored =
+      restoredPaths.has(identity) || restoredByFolding !== undefined;
     const canonicalDocument =
-      currentDocumentByIdentity.get(identity) ?? document;
+      restoredByFolding ?? currentDocumentByIdentity.get(identity) ?? document;
     if (!alreadyRestored) documents.push({ ...canonicalDocument });
     restoredPaths.add(identity);
-    const content: WorkspacePaneContentRef = {
-      kind: "file",
-      documentId: canonicalDocument.id,
-    };
+    const content: WorkspacePaneContentRef = fileContentRef(
+      canonicalDocument.id,
+    );
     if (
       currentlyDetached.some((candidate) =>
         sameWorkspaceContent(candidate, content),
@@ -381,6 +448,7 @@ function sameWorkspaceContentRefs(
   );
 }
 
+// Validates only: layout migration from older versions lives in Rust (PD-16).
 export function migrateWorkspaceLayoutDocument(
   source: unknown,
 ): WorkspaceLayoutDocument {
@@ -388,27 +456,8 @@ export function migrateWorkspaceLayoutDocument(
     throw new Error("Workspace layout must be an object");
   }
   const value = { ...(source as Record<string, unknown>) };
-  if (value.schemaVersion === 3) {
-    const legacySlotIds =
-      value.detachedSlotIds === undefined ? [] : value.detachedSlotIds;
-    if (
-      !Array.isArray(legacySlotIds) ||
-      legacySlotIds.some((slotId) => typeof slotId !== "string")
-    ) {
-      throw new Error("Legacy detached slot references are invalid");
-    }
-    value.detachedContents = [
-      ...legacySlotIds.map((slotId) => ({ kind: "pty", slotId })),
-    ];
-    delete value.detachedSlotIds;
-    value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
-  } else if (value.schemaVersion === 4) {
-    value.schemaVersion = WORKSPACE_LAYOUT_SCHEMA_VERSION;
-  }
   if (value.schemaVersion !== WORKSPACE_LAYOUT_SCHEMA_VERSION) {
-    throw new Error(
-      `Unsupported workspace layout version: ${String(value.schemaVersion)}`,
-    );
+    throw new UnsupportedWorkspaceLayoutVersionError(value.schemaVersion);
   }
   if (value.detachedContents === undefined) value.detachedContents = [];
   const document = value as unknown as WorkspaceLayoutDocument;
@@ -495,10 +544,38 @@ export function validateWorkspaceLayoutDocument(
   }
 }
 
+export interface WorkspaceLayoutSaveQueueOptions {
+  /** 异常拒绝之后、重新发送之前的等待；测试注入立即返回的实现。 */
+  delay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * 后端因“仅大小写不同的重复文档”拒绝保存（layout.case_duplicate）时的修复入口：
+   * `merge` 合并变体并返回新的待保存布局（队列只重试一次）；`degrade` 丢弃后出现的变体，
+   * 不再发送——降级后的状态在下一次正常保存时落库。
+   */
+  repairCaseDuplicate?: (
+    error: unknown,
+    mode: "merge" | "degrade",
+  ) => Promise<{ changed: boolean; document: WorkspaceLayoutDocument | null }>;
+}
+
+/** 第 1 次异常拒绝后等 250 ms，第 2 次等 500 ms（第 3 次直接停止，不等待）。 */
+const ABNORMAL_REJECTION_BACKOFF = exponentialDelay({
+  baseMs: 250,
+  capMs: 4000,
+});
+
 export class WorkspaceLayoutSaveQueue {
   private revision: number;
   private pending: WorkspaceLayoutDocument | null = null;
   private draining: Promise<void> | null = null;
+  private abnormalRejections = 0;
+  private caseDuplicateRejections = 0;
+  private readonly repairCaseDuplicate: WorkspaceLayoutSaveQueueOptions["repairCaseDuplicate"];
+  private readonly abort = new AbortController();
+  private readonly delay: (
+    delayMs: number,
+    signal: AbortSignal,
+  ) => Promise<void>;
 
   constructor(
     initialRevision: number,
@@ -508,8 +585,16 @@ export class WorkspaceLayoutSaveQueue {
     ) => Promise<WorkspaceLayoutSaveResult>,
     private readonly onError: (error: unknown) => void,
     private readonly onSaved: () => void = () => undefined,
+    options: WorkspaceLayoutSaveQueueOptions = {},
   ) {
     this.revision = Math.max(0, initialRevision);
+    this.delay = options.delay ?? abortableDelay;
+    this.repairCaseDuplicate = options.repairCaseDuplicate;
+  }
+
+  /** 中止正在进行的退避等待；之后的退避立即返回，异常拒绝仍受 3 次上限约束。 */
+  dispose(): void {
+    this.abort.abort();
   }
 
   enqueue(document: WorkspaceLayoutDocument): void {
@@ -549,20 +634,84 @@ export class WorkspaceLayoutSaveQueue {
         );
         this.revision = Math.max(this.revision, result.revision);
         if (result.saved) {
+          this.abnormalRejections = 0;
+          this.caseDuplicateRejections = 0;
           try {
             this.onSaved();
           } catch {
             // A UI status callback must not interfere with the save queue.
           }
+        } else if (result.reason === "incompatible") {
+          // 存储的布局版本高于当前应用支持：重试没有意义，只上报一次。
+          this.abnormalRejections = 0;
+          this.report(
+            new WorkspaceLayoutSaveError(
+              "layout.schema_incompatible",
+              "当前工作区布局由更高版本的应用写入，当前版本无法保存",
+            ),
+          );
+        } else if (result.revision >= revision) {
+          // 真实落后：以后端返回的 revision 为基准重试。
+          this.abnormalRejections = 0;
+          if (!this.pending) this.pending = document;
+        } else {
+          // 后端说它的 revision 比我们发送的还小却拒绝了（N16 的症状）：限次重试。
+          this.abnormalRejections += 1;
+          if (this.abnormalRejections >= MAX_ABNORMAL_SAVE_REJECTIONS) {
+            this.abnormalRejections = 0;
+            this.report(
+              new WorkspaceLayoutSaveError(
+                "layout.save_rejected",
+                "工作区布局保存被后端连续拒绝，已停止重试",
+              ),
+            );
+          } else {
+            if (!this.pending) this.pending = document;
+            await this.delay(
+              ABNORMAL_REJECTION_BACKOFF(this.abnormalRejections - 1),
+              this.abort.signal,
+            );
+          }
         }
-        if (!result.saved && !this.pending) this.pending = document;
       } catch (error) {
-        try {
-          this.onError(error);
-        } catch {
-          // Error reporting must not stop workspace interaction or later saves.
-        }
+        if (await this.handleCaseDuplicate(error)) continue;
+        this.report(error);
       }
+    }
+  }
+
+  /**
+   * layout.case_duplicate: the first rejection merges the variants and retries once; a second
+   * rejection (or nothing to merge) drops the later variants and stops. At most two saves are
+   * sent, no timer is involved, and the degraded state is stored by the next regular save.
+   * Returns whether the error was handled (otherwise it is reported as any other error).
+   */
+  private async handleCaseDuplicate(error: unknown): Promise<boolean> {
+    const repair = this.repairCaseDuplicate;
+    if (!repair || getAppErrorCode(error) !== "layout.case_duplicate") {
+      // Any other outcome ends a case-duplicate sequence.
+      this.caseDuplicateRejections = 0;
+      return false;
+    }
+    this.caseDuplicateRejections += 1;
+    if (this.caseDuplicateRejections === 1) {
+      const merged = await repair(error, "merge").catch(() => null);
+      if (merged?.changed && merged.document) {
+        // Built from the live state after the merge: newer than anything queued before it.
+        this.pending = merged.document;
+        return true;
+      }
+    }
+    this.caseDuplicateRejections = 0;
+    const degraded = await repair(error, "degrade").catch(() => null);
+    return degraded?.changed === true;
+  }
+
+  private report(error: unknown): void {
+    try {
+      this.onError(error);
+    } catch {
+      // Error reporting must not stop workspace interaction or later saves.
     }
   }
 }

@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum WindowKind {
     Main,
@@ -14,7 +14,7 @@ pub enum WindowKind {
 
 #[derive(Deserialize)]
 struct WindowKindsManifest {
-    kinds: Vec<WindowKindDefinition>,
+    items: Vec<WindowKindDefinition>,
 }
 
 #[derive(Deserialize)]
@@ -23,6 +23,50 @@ struct WindowKindDefinition {
     label: Option<String>,
     #[serde(rename = "labelPrefix")]
     label_prefix: Option<String>,
+    primary: bool,
+    #[serde(rename = "ptyHost")]
+    pty_host: bool,
+    #[serde(rename = "ownsPty")]
+    owns_pty: bool,
+    #[serde(rename = "fileGrant")]
+    file_grant: bool,
+    #[cfg(test)]
+    #[serde(rename = "contentKinds")]
+    content_kinds: Vec<String>,
+}
+
+impl WindowKind {
+    fn definition(self) -> &'static WindowKindDefinition {
+        definitions()
+            .iter()
+            .find(|definition| definition.id == self)
+            .expect("window kind must be registered")
+    }
+
+    /// The single main application window.
+    pub fn is_primary(self) -> bool {
+        self.definition().primary
+    }
+
+    /// Windows of this kind can show a PTY terminal view.
+    pub fn is_pty_host(self) -> bool {
+        self.definition().pty_host
+    }
+
+    /// Destroying a window of this kind must hand its PTY sessions back.
+    pub fn owns_pty(self) -> bool {
+        self.definition().owns_pty
+    }
+
+    /// Windows of this kind hold file grants.
+    pub fn has_file_grant(self) -> bool {
+        self.definition().file_grant
+    }
+
+    #[cfg(test)]
+    pub fn content_kinds(self) -> &'static [String] {
+        &self.definition().content_kinds
+    }
 }
 
 fn definitions() -> &'static [WindowKindDefinition] {
@@ -30,7 +74,7 @@ fn definitions() -> &'static [WindowKindDefinition] {
     DEFINITIONS.get_or_init(|| {
         serde_json::from_str::<WindowKindsManifest>(WINDOW_KINDS_JSON)
             .expect("window-kinds.json must be valid")
-            .kinds
+            .items
     })
 }
 
@@ -54,7 +98,8 @@ pub fn window_kind_of(label: &str) -> Option<WindowKind> {
     })
 }
 
-#[allow(dead_code)] // Kept as the Rust-side counterpart to the shared TypeScript label factory.
+// Rust-side counterpart to the shared TypeScript label factory; only the tests create labels.
+#[cfg(test)]
 pub fn create_window_label(kind: WindowKind) -> String {
     let definition = definitions()
         .iter()
@@ -67,17 +112,207 @@ pub fn create_window_label(kind: WindowKind) -> String {
     }
 }
 
-#[allow(dead_code)] // Kept as the Rust-side counterpart to the shared TypeScript predicate.
+// Rust-side counterpart to the shared TypeScript predicate. The production caller is the
+// acceptance hook, so the function exists only where that hook or the tests are compiled.
+#[cfg(any(test, feature = "acceptance-hooks"))]
 pub fn is_detached_window_label(label: &str) -> bool {
-    matches!(
-        window_kind_of(label),
-        Some(WindowKind::Terminal | WindowKind::WorkspaceContent)
-    )
+    window_kind_of(label).is_some_and(|kind| !kind.is_primary())
+}
+
+use crate::error_codes::ErrorCode;
+use crate::AppError;
+
+// m6-033 moves these into the error code registry.
+
+/// The main window's label, read from `contracts/window-kinds.json`.
+pub fn main_window_label() -> &'static str {
+    definitions()
+        .iter()
+        .find(|definition| definition.id == WindowKind::Main)
+        .and_then(|definition| definition.label.as_deref())
+        .expect("window-kinds.json must declare the main window label")
+}
+
+/// A window label that is known to belong to a registered window kind.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WindowLabel {
+    raw: String,
+    kind: WindowKind,
+}
+
+impl WindowLabel {
+    pub fn parse(raw: &str) -> Result<Self, AppError> {
+        let kind = window_kind_of(raw)
+            .ok_or_else(|| AppError::coded(ErrorCode::WindowLabelInvalid, "窗口标识无效"))?;
+        Ok(Self {
+            raw: raw.to_string(),
+            kind,
+        })
+    }
+
+    /// The main window's label. The label comes from `contracts/window-kinds.json`, so it is
+    /// canonical by construction and needs no parsing.
+    pub fn main() -> Self {
+        Self {
+            raw: main_window_label().to_string(),
+            kind: WindowKind::Main,
+        }
+    }
+
+    pub fn kind(&self) -> WindowKind {
+        self.kind
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.raw
+    }
+
+    pub fn is_main(&self) -> bool {
+        self.kind == WindowKind::Main
+    }
+}
+
+impl std::fmt::Display for WindowLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.raw)
+    }
+}
+
+/// Builds a label for tests; the label must be canonical.
+#[cfg(test)]
+pub(crate) fn test_label(raw: &str) -> WindowLabel {
+    WindowLabel::parse(raw).expect("test labels are canonical")
+}
+
+/// The window that invoked a command, resolved and validated at the command boundary.
+pub struct CallerWindow(WindowLabel);
+
+impl CallerWindow {
+    pub fn from_label(raw: &str) -> Result<Self, AppError> {
+        WindowLabel::parse(raw).map(Self)
+    }
+
+    pub fn label(&self) -> &WindowLabel {
+        &self.0
+    }
+
+    pub fn require(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
+        if allowed.contains(&self.0.kind()) {
+            Ok(())
+        } else {
+            Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "当前窗口不允许执行该操作",
+            ))
+        }
+    }
+}
+
+impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CallerWindow {
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        let window =
+            <tauri::WebviewWindow<R> as tauri::ipc::CommandArg<'de, R>>::from_command(command)?;
+        Self::from_label(window.label()).map_err(tauri::ipc::InvokeError::from)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{create_window_label, is_detached_window_label, window_kind_of, WindowKind};
+    use super::{
+        create_window_label, is_detached_window_label, test_label, window_kind_of, WindowKind,
+        WindowLabel,
+    };
+
+    const WINDOW_LABEL_FIXTURES_JSON: &str =
+        include_str!("../../../contracts/window-label-fixtures.json");
+
+    #[test]
+    fn role_queries_match_the_contract_roles() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/window-kinds.json"))
+                .expect("parse window kinds");
+        let items = manifest["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3);
+        for item in items {
+            let kind: WindowKind =
+                serde_json::from_value(item["id"].clone()).expect("window kind id");
+            assert_eq!(kind.is_primary(), item["primary"].as_bool().unwrap());
+            assert_eq!(kind.is_pty_host(), item["ptyHost"].as_bool().unwrap());
+            assert_eq!(kind.owns_pty(), item["ownsPty"].as_bool().unwrap());
+            assert_eq!(kind.has_file_grant(), item["fileGrant"].as_bool().unwrap());
+            let contract_kinds: Vec<&str> = item["contentKinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                kind.content_kinds()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                contract_kinds
+            );
+        }
+        // 固定语义：只有 main 是 primary；只有 terminal 拥有 PTY；只有 workspaceContent 持有文件授权。
+        assert!(WindowKind::Main.is_primary());
+        assert!(!WindowKind::Terminal.is_primary() && !WindowKind::WorkspaceContent.is_primary());
+        assert!(WindowKind::Terminal.owns_pty() && !WindowKind::Main.owns_pty());
+        assert!(WindowKind::WorkspaceContent.has_file_grant());
+        assert!(!WindowKind::Terminal.has_file_grant() && !WindowKind::Main.has_file_grant());
+        assert!(WindowKind::Main.is_pty_host() && WindowKind::Terminal.is_pty_host());
+        assert!(!WindowKind::WorkspaceContent.is_pty_host());
+    }
+
+    #[test]
+    fn detached_labels_are_the_non_primary_kinds() {
+        assert!(!is_detached_window_label("main"));
+        assert!(is_detached_window_label(
+            "terminal-8e783338-f464-4b10-b15e-b534748c6241"
+        ));
+        assert!(is_detached_window_label(
+            "workspace-content-8e783338-f464-4b10-b15e-b534748c6241"
+        ));
+        assert!(!is_detached_window_label("settings"));
+        assert_eq!(super::main_window_label(), "main");
+    }
+
+    #[test]
+    fn window_label_fixture_vectors_match_rust_registry() {
+        let fixtures: serde_json::Value =
+            serde_json::from_str(WINDOW_LABEL_FIXTURES_JSON).expect("parse label fixtures");
+        let accept = fixtures["accept"]
+            .as_object()
+            .expect("accept must be an object");
+        assert_eq!(accept.len(), 3, "accept must cover exactly three kinds");
+        for (key, kind) in [
+            ("main", WindowKind::Main),
+            ("terminal", WindowKind::Terminal),
+            ("workspaceContent", WindowKind::WorkspaceContent),
+        ] {
+            let labels = accept[key]
+                .as_array()
+                .expect("accept entries must be arrays");
+            assert!(
+                !labels.is_empty(),
+                "{key} needs at least one accepted label"
+            );
+            for label in labels {
+                let label = label.as_str().expect("label must be a string");
+                assert_eq!(window_kind_of(label), Some(kind), "{label:?}");
+            }
+        }
+        let rejected = fixtures["reject"]
+            .as_array()
+            .expect("reject must be an array");
+        assert!(!rejected.is_empty());
+        for label in rejected {
+            let label = label.as_str().expect("label must be a string");
+            assert_eq!(window_kind_of(label), None, "{label:?}");
+        }
+    }
 
     #[test]
     fn resolves_registered_window_labels() {
@@ -112,5 +347,143 @@ mod tests {
         assert!(!is_detached_window_label("main"));
         assert!(is_detached_window_label(&terminal));
         assert!(is_detached_window_label(&file));
+    }
+
+    #[test]
+    fn window_label_parse_matches_the_shared_fixture_vectors() {
+        use super::WindowLabel;
+        let fixtures: serde_json::Value =
+            serde_json::from_str(WINDOW_LABEL_FIXTURES_JSON).expect("parse label fixtures");
+        for (key, kind) in [
+            ("main", WindowKind::Main),
+            ("terminal", WindowKind::Terminal),
+            ("workspaceContent", WindowKind::WorkspaceContent),
+        ] {
+            for label in fixtures["accept"][key].as_array().expect("accept arrays") {
+                let label = label.as_str().expect("label string");
+                let parsed = WindowLabel::parse(label)
+                    .unwrap_or_else(|error| panic!("{label:?} must parse but got {error}"));
+                assert_eq!(parsed.kind(), kind, "{label:?}");
+                assert_eq!(parsed.as_str(), label);
+            }
+        }
+        for label in fixtures["reject"].as_array().expect("reject array") {
+            let label = label.as_str().expect("label string");
+            let error = match WindowLabel::parse(label) {
+                Ok(_) => panic!("{label:?} must be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                serde_json::to_value(&error).unwrap()["code"],
+                "window.label_invalid",
+                "{label:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn window_label_exposes_kind_and_main_flag() {
+        use super::WindowLabel;
+        let main = WindowLabel::parse("main").unwrap();
+        assert!(main.is_main());
+        assert_eq!(main.kind(), WindowKind::Main);
+        let terminal = WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap();
+        assert!(!terminal.is_main());
+        assert_eq!(terminal.kind(), WindowKind::Terminal);
+        assert_eq!(
+            WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap(),
+            terminal
+        );
+        assert_ne!(main, terminal);
+        assert_eq!(terminal.to_string(), terminal.as_str());
+    }
+
+    #[test]
+    fn caller_window_require_allows_only_the_listed_kinds() {
+        use super::CallerWindow;
+        let caller =
+            CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
+                .unwrap();
+        assert!(caller
+            .require(&[WindowKind::WorkspaceContent, WindowKind::Main])
+            .is_ok());
+        let error = caller
+            .require(&[WindowKind::Main, WindowKind::Terminal])
+            .unwrap_err();
+        assert_eq!(
+            serde_json::to_value(&error).unwrap()["code"],
+            "window.not_allowed"
+        );
+        assert!(
+            caller.require(&[]).is_err(),
+            "an empty allow list admits nobody"
+        );
+        assert!(CallerWindow::from_label("settings").is_err());
+    }
+
+    #[test]
+    fn main_label_helpers_read_the_contract() {
+        use super::main_window_label;
+        assert_eq!(main_window_label(), "main");
+        // The classifier helpers are gone (m6-102): the window class comes from `WindowLabel::kind`,
+        // and the canonical-UUID rule for terminals is covered by WL-B.
+    }
+
+    #[test]
+    fn caller_window_errors_reach_the_frontend_with_their_codes() {
+        use super::CallerWindow;
+        use tauri::ipc::InvokeError;
+
+        let invalid = CallerWindow::from_label("settings").err().unwrap();
+        let InvokeError(value) = InvokeError::from(invalid);
+        assert_eq!(value["code"], "window.label_invalid");
+
+        let content =
+            CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
+                .unwrap();
+        let denied = content.require(&[WindowKind::Main]).unwrap_err();
+        let InvokeError(value) = InvokeError::from(denied);
+        assert_eq!(value["code"], "window.not_allowed");
+        assert!(value["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty()));
+    }
+
+    #[test]
+    fn window_label_main_constructor_matches_the_contract() {
+        // m6-102 WL-A: the constructor agrees with the contract and with parsing.
+        assert_eq!(WindowLabel::main().kind(), WindowKind::Main);
+        assert_eq!(WindowLabel::main().as_str(), super::main_window_label());
+        assert!(WindowLabel::main().is_main());
+        assert_eq!(
+            WindowLabel::main(),
+            WindowLabel::parse(super::main_window_label()).unwrap()
+        );
+        // Reverse: a terminal label is never the main window.
+        assert_ne!(
+            WindowLabel::main(),
+            test_label("terminal-8e783338-f464-4b10-b15e-b534748c6241")
+        );
+    }
+
+    #[test]
+    fn a_terminal_looking_label_without_a_canonical_uuid_is_not_a_window_label() {
+        // m6-102 WL-B: parsing is canonical-UUID only, so the old prefix meaning is gone.
+        for raw in [
+            "terminal-anything",
+            "terminal-a",
+            "workspace-content-invalid",
+            "settings",
+        ] {
+            let error = WindowLabel::parse(raw).expect_err(raw);
+            assert_eq!(
+                serde_json::to_value(&error).unwrap()["code"],
+                "window.label_invalid",
+                "{raw}"
+            );
+        }
+        // Reverse: the canonical terminal label is accepted.
+        let terminal = WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap();
+        assert_eq!(terminal.kind(), WindowKind::Terminal);
     }
 }

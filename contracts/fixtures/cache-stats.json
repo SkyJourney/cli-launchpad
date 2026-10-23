@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "stats",
+      "value": {
+        "entryCount": 5,
+        "newestEntryAtMs": 1700000000000,
+        "sizeBytes": 2048
+      }
+    },
+    {
+      "name": "statsEmpty",
+      "value": {
+        "entryCount": 0,
+        "newestEntryAtMs": null,
+        "sizeBytes": 0
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "CacheStats"
+}

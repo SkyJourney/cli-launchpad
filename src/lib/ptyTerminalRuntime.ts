@@ -6,7 +6,11 @@ import {
   type PtyFrontendStage,
   type PtySession,
 } from "./tauri";
-import { getAppErrorMessage } from "./appErrors";
+import {
+  type AppErrorState,
+  getAppErrorMessage,
+  toAppErrorState,
+} from "./appErrors";
 
 const MAX_PTY_COLUMNS = 500;
 const MAX_PTY_ROWS = 300;
@@ -48,7 +52,7 @@ export function handlePtyEvent(
       | null
       | ((current: PtySession | null) => PtySession | null),
   ) => void,
-  setError: (message: string | null) => void,
+  setError: (error: AppErrorState | null) => void,
   pendingExit: Map<string, Extract<PtyEvent, { type: "exited" }>>,
   reportFrontendStage: (sessionId: string, stage: PtyFrontendStage) => boolean,
   host: HTMLDivElement | null,
@@ -80,7 +84,7 @@ export function handlePtyEvent(
     } catch (reason) {
       if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
       reportFrontendStage(event.sessionId, "outputDecodeFailed");
-      setError(getAppErrorMessage(reason));
+      setError(toAppErrorState(reason));
       return;
     }
 
@@ -98,12 +102,12 @@ export function handlePtyEvent(
         }
         void acknowledgePtyOutput(event.sessionId, event.sequence)
           .then(() => onOutputProcessed(event.sequence))
-          .catch((reason) => setError(getAppErrorMessage(reason)));
+          .catch((reason) => setError(toAppErrorState(reason)));
       });
     } catch (reason) {
       if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
       reportFrontendStage(event.sessionId, "xtermWriteFailed");
-      setError(getAppErrorMessage(reason));
+      setError(toAppErrorState(reason));
     }
   } else if (event.type === "exited") {
     onExited(event.sessionId);
@@ -118,7 +122,7 @@ export function handlePtyEvent(
           })(),
     );
   } else {
-    setError(event.message);
+    setError({ message: event.message });
   }
 }
 

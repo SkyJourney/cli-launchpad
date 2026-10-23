@@ -1,0 +1,77 @@
+{
+  "formatVersion": 1,
+  "items": [
+    {
+      "name": "app-exit-requested",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "app-preferences",
+      "mechanism": "emit",
+      "direction": "window-to-all",
+      "allowedSourceKinds": ["main"],
+      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
+      "payloadVersion": 1,
+      "plannedLayer": "L3"
+    },
+    {
+      "name": "execution-task-log",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "execution-task-updated",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "pty-session-owner-lost",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "window-message",
+      "mechanism": "relay",
+      "direction": "window-to-window",
+      "allowedSourceKinds": ["rust", "main", "terminal", "workspaceContent"],
+      "allowedTargetKinds": ["main", "terminal", "workspaceContent"],
+      "payloadVersion": 1,
+      "plannedLayer": "L2"
+    },
+    {
+      "name": "workspace-content-window-lost",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    },
+    {
+      "name": "workspace-data-restored",
+      "mechanism": "inbox",
+      "direction": "rust-to-window",
+      "allowedSourceKinds": ["rust"],
+      "allowedTargetKinds": ["main"],
+      "payloadVersion": null,
+      "plannedLayer": "L1"
+    }
+  ]
+}

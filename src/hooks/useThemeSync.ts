@@ -14,15 +14,15 @@ import {
   publishAppPreferences,
   respondToAppPreferencesRequests,
 } from "../lib/appPreferencesMain";
-import { resolveThemeMode } from "../lib/themes";
+import {
+  DARK_SCHEME_QUERY,
+  getThemeDefinition,
+  resolveCurrentTheme,
+} from "../lib/themes";
 import { setTrayMenuLabels } from "../lib/tauri";
+import { MAIN_WINDOW_LABEL } from "../lib/windowKinds";
+import { reportWindowSyncFailure } from "../lib/windowSyncDiagnostics";
 import { useAppStore } from "../store/appStore";
-
-const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
-
-function reportWindowSyncFailure(code: string, error: unknown) {
-  console.warn(`[${code}] 原生窗口偏好同步失败`, error);
-}
 
 export function useThemeSync() {
   const themeMode = useAppStore((state) => state.themeMode);
@@ -34,7 +34,7 @@ export function useThemeSync() {
     const systemTheme = window.matchMedia(DARK_SCHEME_QUERY);
 
     const applyTheme = () => {
-      const resolvedTheme = resolveThemeMode(themeMode, systemTheme.matches);
+      const resolvedTheme = resolveCurrentTheme(themeMode);
       useAppStore.getState().setResolvedTheme(resolvedTheme);
       document.documentElement.dataset.theme = resolvedTheme.id;
       document.documentElement.style.colorScheme = resolvedTheme.base;
@@ -45,8 +45,10 @@ export function useThemeSync() {
       systemTheme.addEventListener("change", applyTheme);
     }
 
+    const nativeTheme =
+      themeMode === "system" ? null : getThemeDefinition(themeMode).base;
     void getCurrentWindow()
-      .setTheme(themeMode === "system" ? null : themeMode)
+      .setTheme(nativeTheme)
       .catch((error: unknown) =>
         reportWindowSyncFailure("window.theme_sync_failed", error),
       );
@@ -57,7 +59,7 @@ export function useThemeSync() {
   }, [themeMode]);
 
   useEffect(() => {
-    if (currentWindowLabel === "main") {
+    if (currentWindowLabel === MAIN_WINDOW_LABEL) {
       let disposed = false;
       let unlistenRequest: (() => void) | undefined;
       void respondToAppPreferencesRequests(() =>
@@ -81,18 +83,28 @@ export function useThemeSync() {
     }
 
     let disposed = false;
+    let replyUnavailable = false;
     let unlistenPreferences: (() => void) | undefined;
-    void listenForAppPreferences((preferences) => {
-      void applyRemotePreferences(preferences).catch((error: unknown) =>
-        reportWindowSyncFailure("window.preferences_apply_failed", error),
-      );
-    })
+    void listenForAppPreferences(
+      (preferences) => {
+        void applyRemotePreferences(preferences).catch((error: unknown) =>
+          reportWindowSyncFailure("window.preferences_apply_failed", error),
+        );
+      },
+      (path, error) => {
+        // The other path keeps working; without the reply path the initial request would never
+        // be answered, so it is skipped below.
+        if (path === "reply") replyUnavailable = true;
+        reportWindowSyncFailure("window.preferences_listen_failed", error);
+      },
+    )
       .then((stop) => {
         if (disposed) {
           stop();
           return;
         }
         unlistenPreferences = stop;
+        if (replyUnavailable) return;
         return requestInitialAppPreferences(currentWindowLabel);
       })
       .catch((error: unknown) =>
@@ -105,17 +117,22 @@ export function useThemeSync() {
     };
   }, [currentWindowLabel]);
 
+  // R-FE-1:language-sync
   useEffect(() => {
-    if (currentWindowLabel !== "main") return;
+    if (currentWindowLabel !== MAIN_WINDOW_LABEL) return;
     void setTrayMenuLabels({
       show: t("tray.show"),
       quit: t("tray.quit"),
     }).catch((error: unknown) =>
       reportWindowSyncFailure("window.tray_menu_sync_failed", error),
     );
+  }, [currentWindowLabel, translation.resolvedLanguage]);
+
+  useEffect(() => {
+    if (currentWindowLabel !== MAIN_WINDOW_LABEL) return;
     void publishAppPreferences(currentAppPreferences(themeMode)).catch(
       (error: unknown) =>
         reportWindowSyncFailure("window.preferences_publish_failed", error),
     );
-  }, [currentWindowLabel, themeMode, language, t, translation.language]);
+  }, [currentWindowLabel, themeMode, language]);
 }

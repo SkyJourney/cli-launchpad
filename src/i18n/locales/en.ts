@@ -1,26 +1,70 @@
 export const en = {
   errors: {
+    exitReportInvalid:
+      "The exit confirmation data was invalid. Try quitting again.",
+    exitImpactsNotReported:
+      "The app has not yet determined what quitting will affect. Try quitting again.",
+    exitImpactsChanged:
+      "What quitting will affect has changed (new work started running). Please confirm again.",
     fileNotFound: "The file could not be found.",
     fileTooLarge: "The file exceeds the allowed size.",
+    ptySessionNotFound: "The terminal session does not exist or has ended.",
+    ptyHandoffInProgress:
+      "This terminal is being moved to another window. Try again shortly.",
+    fileNotUtf8: "Only UTF-8 text files can be edited and saved.",
+    fileNotRegular: "Only regular files can be opened or saved.",
+    layoutNameExists:
+      "A layout with this name already exists. Use a different name.",
+    layoutPresetLimit: "At most {{max}} named layouts are supported.",
+    filePermissionDenied:
+      "Permission denied. Check the file or folder permissions.",
+    backupIndexRefreshDiscarded:
+      "The data was replaced (a backup was restored or a configuration was imported), so a session index refresh that started before it was discarded.",
+    projectIdentityUnreadable:
+      "The project directory identity could not be read.",
     fileConflict: "The file changed on disk. Reload it before saving.",
     fileIdentityChanged:
       "The project folder identity changed. Reload or save the document elsewhere.",
     ptyOwnerMismatch:
       "This terminal session is no longer owned by this window.",
     ptyHandoffExpired: "The terminal handoff expired. Try again.",
+    ptyHandoffTargetIsSource:
+      "The target window is the source window, so the terminal cannot be handed over.",
     ptyInputBackpressure:
       "The terminal input queue is full. Try again shortly.",
     ptyInputUnavailable:
       "The terminal input channel is closed. Reconnect the session.",
     ptySessionsActive:
-      "{{count}} terminal session(s) are still running. Close them before restoring a backup.",
+      "Restoring a backup or importing a configuration is blocked while {{count}} terminal session(s) are running. Close them first.",
     backupRestoreInProgress:
       "A backup restore is in progress. Try again after it finishes.",
     ptySessionStarting:
-      "{{count}} terminal session(s) are starting. Try restoring again shortly.",
+      "{{count}} terminal session(s) or execution task(s) are still starting. Try again shortly.",
     execPlanChanged: "The execution plan changed. Review and confirm it again.",
     execBusy: "This tool already has a running task.",
+    exitNoPendingRequest:
+      "There is no pending exit request. Try quitting again.",
+    exitRequestMismatch:
+      "This exit request is no longer current. Try quitting again.",
     layoutNeedsReset: "The workspace layout is invalid and needs to be reset.",
+    layoutCaseDuplicate:
+      "The layout contains documents whose paths differ only by letter case.",
+    internal:
+      "An internal error occurred. Try again, and restart the app if it keeps happening.",
+    appExiting: "The app is exiting. Try again after it restarts.",
+    appExitDeferred:
+      "A restore or import is still running, so the app cannot exit yet.",
+    dataReplaceBlocked:
+      "{{count}} install or update task(s) are still running. Wait for them to finish before restoring or importing.",
+    dataReplaceInProgress: "Another restore or import is already in progress.",
+    configImportInProgress:
+      "A configuration import is in progress. Try again after it finishes.",
+    projectNotFound: "The project folder could not be found.",
+    layoutSaveRejected:
+      "The workspace layout was rejected repeatedly, so saving has stopped.",
+    layoutSchemaIncompatible:
+      "The workspace layout was written by a newer version of the app and cannot be saved by this version.",
+    appError: "An unexpected error occurred. Try again.",
     generic: "The operation failed.",
     directoryInUse: "This project still has a running terminal session.",
   },
@@ -87,13 +131,28 @@ export const en = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "Save all and quit",
     title: "Quit CLI Launchpad?",
     description:
       "{{count}} embedded terminal session(s) are still running. Quitting will end these sessions and their child processes.",
-    confirm: "End sessions and quit",
+    executionTasks:
+      "{{count}} install or update task(s) are still running. Quitting will stop them.",
     unsavedDescription: "{{count}} file(s) have unsaved changes:",
     confirmDiscard: "Discard changes and quit",
     terminating: "Quitting…",
+  },
+  startupNotice: {
+    abnormalExit:
+      "CLI Launchpad did not exit normally last time. Unsaved edits may be lost.",
+    abnormalExitWithTime:
+      "CLI Launchpad did not exit normally last time (started {{time}}). Unsaved edits may be lost.",
+    dismiss: "Dismiss",
+  },
+  appCrash: {
+    title: "Something went wrong",
+    description:
+      "CLI Launchpad hit an unexpected error in this window. Reloading restarts the window; edits that were not saved may be lost.",
+    reload: "Reload window",
   },
   windowChrome: {
     titlebar: "Application window title bar",
@@ -183,6 +242,9 @@ export const en = {
     returningToWorkspace: "Moving back to workspace…",
     returnFailed: "Could not return to workspace: {{error}}",
     returnTimedOut: "The main workspace did not respond in time.",
+    returnUnknownError: "Unknown error",
+    returnExpired: "The return request has expired.",
+    returnRequestFailed: "The return request failed.",
     detachedDefaultTitle: "CLI terminal",
     detachedMoveUnavailable:
       "This terminal cannot be moved to a separate window.",
@@ -191,6 +253,10 @@ export const en = {
     detachedStartTimedOut: "Starting the separate terminal window timed out.",
     detachedCreateFailed: "Could not create the separate terminal window.",
     detachedStartFailed: "Could not start the separate terminal window.",
+    listenerSetupFailed:
+      "Some window communication channels could not be registered ({{events}}). Separate windows may not respond; restart the app if this persists.",
+    ownerLostRecoveryFailed:
+      "Could not reconnect the terminal session after its window closed. Close this terminal and start it again.",
     detachedStateChanged:
       "The separate terminal window state changed. Please try again.",
     detachedSessionMissing:
@@ -361,11 +427,12 @@ export const en = {
     latest: "Latest: ",
     unavailableWithError: "Unavailable ({{error}})",
     unknownRefresh: "Unknown; detect again from the top right",
-    hermesRefreshPrompt: "Refresh manually to check the main branch",
-    hermesUpToDate: "Up to date with main",
-    hermesUpdateBehind: "{{count}} commits behind main",
-    hermesUpdateBehindUnknown: "Updates on main (commit count unavailable)",
-    hermesUpdateStatus: "Update status: ",
+    branchRefreshPrompt: "Refresh manually to check the upstream branch",
+    branchUpToDate: "Up to date with the upstream branch",
+    branchUpdateBehind: "{{count}} commit(s) behind the upstream branch",
+    branchUpdateBehindUnknown:
+      "Updates on the upstream branch (commit count unavailable)",
+    branchUpdateStatus: "Update status: ",
     hermesInstallEffectsHeading: "The official installer will:",
     hermesInstallEffectRuntime:
       "Install Hermes CLI, its managed Python/Node runtimes, and dependencies for the current user.",
@@ -507,6 +574,7 @@ export const en = {
       pre_import: "Automatic pre-import backup",
       pre_restore: "Protective pre-restore backup",
       pre_migration: "Automatic pre-upgrade backup",
+      pre_case_merge: "Automatic backup before merging case-variant documents",
     },
     preservation: {
       exact: "Fully preserved",
@@ -605,6 +673,14 @@ export const en = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "Save all and close",
+    discardAndClose: "Discard changes and close",
+    saveAllInProgress: "Saving…",
+    saveAllFailedQuit: "{{count}} file(s) could not be saved; quit cancelled",
+    saveAllFailedClose: "{{count}} file(s) could not be saved; close cancelled",
+    confirmCloseTitle: "Confirm close",
+    caseVariantsMerged:
+      "Merged {{count}} document(s) whose paths differed only by letter case.",
     rightPanelTabs: "Right panel tabs",
     files: "Files",
     git: "Git",

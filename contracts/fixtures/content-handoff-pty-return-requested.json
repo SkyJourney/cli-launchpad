@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "name": "ptyReturnRequested",
+      "value": {
+        "apiVersion": 1,
+        "payload": {
+          "content": {
+            "id": "8e783338-f464-4b10-b15e-b534748c6241",
+            "kind": "pty"
+          },
+          "payload": {
+            "handoffToken": "rust-return-1",
+            "sessionId": "session-1",
+            "windowLabel": "terminal-8e783338-f464-4b10-b15e-b534748c6241"
+          },
+          "transferId": "return-1"
+        },
+        "type": "content-handoff-return-requested"
+      }
+    }
+  ],
+  "schema": 1,
+  "type": "ContentHandoffEnvelope"
+}

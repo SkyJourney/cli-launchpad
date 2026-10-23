@@ -1,0 +1,36 @@
+{
+  "detachedContents": [],
+  "documents": [],
+  "focusedPaneId": "pane-1",
+  "schemaVersion": 5,
+  "slots": [
+    {
+      "directoryId": 1,
+      "directoryPath": "/work/demo",
+      "instanceId": "8e783338-f464-4b10-b15e-b534748c6241",
+      "projectName": "demo",
+      "resumeSessionId": null,
+      "sequence": 1,
+      "sessionId": null,
+      "title": {
+        "kind": "automatic"
+      },
+      "toolKey": "claude"
+    }
+  ],
+  "tree": {
+    "activeContent": {
+      "kind": "pty",
+      "slotId": "8e783338-f464-4b10-b15e-b534748c6241"
+    },
+    "contents": [
+      {
+        "kind": "pty",
+        "slotId": "8e783338-f464-4b10-b15e-b534748c6241"
+      }
+    ],
+    "id": "pane-1",
+    "kind": "pane",
+    "paneNumber": 1
+  }
+}

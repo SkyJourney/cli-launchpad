@@ -4,6 +4,7 @@ import { codexAdapter } from "./cliAdapters/codex";
 import { grokAdapter } from "./cliAdapters/grok";
 import { hermesAdapter } from "./cliAdapters/hermes";
 import type { CliAdapter } from "./cliAdapters/types";
+import { createRef, type RefObject } from "react";
 import type { LatestVersion, ToolKey } from "./tauri";
 
 export type ToolMeta = CliAdapter;
@@ -23,6 +24,15 @@ export function getCliAdapter(toolKey: ToolKey): CliAdapter;
 export function getCliAdapter(toolKey: string): CliAdapter | undefined;
 export function getCliAdapter(toolKey: string): CliAdapter | undefined {
   return CLI_ADAPTERS[toolKey as ToolKey];
+}
+
+export function createToolAnchorRefs(): Record<
+  ToolKey,
+  RefObject<HTMLDivElement | null>
+> {
+  return Object.fromEntries(
+    TOOLS.map((tool) => [tool.key, createRef<HTMLDivElement>()]),
+  ) as Record<ToolKey, RefObject<HTMLDivElement | null>>;
 }
 
 export function getTerminalTitleLabel(toolKey: ToolKey): string {

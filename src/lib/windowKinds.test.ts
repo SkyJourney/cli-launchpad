@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
+import fixtures from "../../contracts/window-label-fixtures.json";
+import manifest from "../../contracts/window-kinds.json";
 import {
+  contentKindsOf,
   createWindowLabel,
   isDetachedWindowLabel,
+  isDraggableContentKind,
+  MAIN_WINDOW_LABEL,
+  registeredContentKinds,
+  WINDOW_KINDS,
   windowKindOf,
+  windowKindOfContent,
+  windowRoleOf,
+  type WindowKind,
 } from "./windowKinds";
 
 describe("window kind contract", () => {
@@ -26,5 +36,109 @@ describe("window kind contract", () => {
   ])("rejects noncanonical detached label %s", (label) => {
     expect(windowKindOf(label)).toBeNull();
     expect(isDetachedWindowLabel(label)).toBe(false);
+  });
+
+  it("keeps the shared label fixtures well formed", () => {
+    expect(Object.keys(fixtures.accept).sort()).toEqual([
+      "main",
+      "terminal",
+      "workspaceContent",
+    ]);
+    for (const labels of Object.values(fixtures.accept)) {
+      expect(labels.length).toBeGreaterThan(0);
+    }
+    expect(fixtures.reject.length).toBeGreaterThan(0);
+    const accepted = new Set(Object.values(fixtures.accept).flat());
+    for (const label of fixtures.reject) {
+      expect(accepted.has(label)).toBe(false);
+    }
+  });
+
+  it("classifies every shared accepted label with its registered kind", () => {
+    for (const [kind, labels] of Object.entries(fixtures.accept)) {
+      for (const label of labels) {
+        expect(windowKindOf(label), label).toBe(kind);
+        expect(isDetachedWindowLabel(label), label).toBe(kind !== "main");
+      }
+    }
+  });
+
+  it("rejects every shared rejected label", () => {
+    for (const label of fixtures.reject) {
+      expect(windowKindOf(label), JSON.stringify(label)).toBeNull();
+      expect(isDetachedWindowLabel(label), JSON.stringify(label)).toBe(false);
+    }
+  });
+});
+
+describe("window kind type", () => {
+  it("declares exactly the kinds listed in the contract", () => {
+    expect(manifest.items.map((kind) => kind.id).sort()).toEqual(
+      [...WINDOW_KINDS].sort(),
+    );
+  });
+
+  it("rejects unknown kind names at compile time", () => {
+    const known: WindowKind = "terminal";
+    // @ts-expect-error "settings" is not a registered window kind
+    const unknown: WindowKind = "settings";
+    expect([known, unknown]).toHaveLength(2);
+  });
+});
+
+describe("window kind roles", () => {
+  it("exposes the role attributes declared in the contract", () => {
+    expect(windowRoleOf("main")).toEqual({
+      primary: true,
+      ptyHost: true,
+      ownsPty: false,
+      fileGrant: false,
+      contentKinds: ["pty", "file"],
+    });
+    expect(windowRoleOf("terminal")).toMatchObject({
+      ptyHost: true,
+      ownsPty: true,
+      primary: false,
+    });
+    expect(windowRoleOf("workspaceContent")).toMatchObject({
+      fileGrant: true,
+      ptyHost: false,
+    });
+    expect(contentKindsOf("terminal")).toEqual(["pty"]);
+    expect(() => windowRoleOf("future" as never)).toThrow(
+      "未登记的窗口类别：future",
+    );
+  });
+
+  it("derives the main window label and keeps the string literal ratchet", () => {
+    expect(MAIN_WINDOW_LABEL).toBe("main");
+    const sources = import.meta.glob("../**/*.{ts,tsx}", {
+      eager: true,
+      query: "?raw",
+      import: "default",
+    }) as Record<string, string>;
+    // 基线 MAIN_LITERALS_TS 来自 m6-104 的步骤 6 实测（2026-10-22），只减不增。
+    const MAIN_LITERALS_TS_BASELINE = 9;
+    const count = Object.entries(sources)
+      .filter(([path]) => !path.includes(".test.") && !path.includes("/test/"))
+      .reduce(
+        (sum, [, source]) => sum + (source.match(/["']main["']/g)?.length ?? 0),
+        0,
+      );
+    expect(count).toBeLessThanOrEqual(MAIN_LITERALS_TS_BASELINE);
+  });
+
+  it("maps content kinds to window kinds and back and lists drag permissions", () => {
+    expect(registeredContentKinds()).toEqual(["pty", "file"]);
+    expect(windowKindOfContent("pty")).toBe("terminal");
+    expect(windowKindOfContent("file")).toBe("workspaceContent");
+    expect(windowKindOfContent("markdownPreview")).toBeNull();
+    expect(isDraggableContentKind("pty")).toBe(true);
+    expect(isDraggableContentKind("file")).toBe(true);
+    expect(isDraggableContentKind("markdownPreview")).toBe(false);
+    for (const kind of registeredContentKinds()) {
+      const owner = windowKindOfContent(kind);
+      expect(owner && contentKindsOf(owner).includes(kind)).toBe(true);
+    }
   });
 });

@@ -42,9 +42,6 @@ pub struct InstallPlan {
     pub source: String,
     /// Human-readable command preview shown before execution.
     pub preview: String,
-    /// Optional read-only details that explain the effect of an operation.
-    #[serde(default)]
-    pub effects: Option<String>,
 }
 
 impl InstallPlan {
@@ -66,10 +63,18 @@ impl InstallPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(tag = "status", rename_all = "camelCase")]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ManagedUpdateStatus {
     Allowed,
-    Denied { reason_key: String },
+    Denied {
+        /// 旧版本把字段写成 `reason_key` 并存进了 JSON 缓存，仍要能读。
+        #[serde(alias = "reason_key")]
+        reason_key: String,
+    },
     NotApplicable,
 }
 
@@ -120,7 +125,6 @@ mod tests {
             fingerprint: String::new(),
             source: "native updater".to_string(),
             preview: "codex update".to_string(),
-            effects: None,
         }
     }
 
@@ -149,5 +153,62 @@ mod tests {
         assert_eq!(cached.managed_update, ManagedUpdateStatus::NotApplicable);
         assert_eq!(cached.update_availability, UpdateAvailability::Unknown);
         assert_eq!(cached.commits_behind, None);
+    }
+
+    #[test]
+    fn managed_update_status_reads_legacy_snake_case_cache() {
+        let expected = ManagedUpdateStatus::Denied {
+            reason_key: "k".to_string(),
+        };
+        // 旧版本把 reason_key 写进了 JSON 缓存；新版本仍要能读。
+        let legacy: ManagedUpdateStatus =
+            serde_json::from_str(r#"{"status":"denied","reason_key":"k"}"#).unwrap();
+        assert_eq!(legacy, expected);
+        let current: ManagedUpdateStatus =
+            serde_json::from_str(r#"{"status":"denied","reasonKey":"k"}"#).unwrap();
+        assert_eq!(current, expected);
+
+        let serialized = serde_json::to_string(&expected).unwrap();
+        assert!(serialized.contains("reasonKey"), "{serialized}");
+        assert!(!serialized.contains("reason_key"), "{serialized}");
+    }
+
+    const PLAN_WITHOUT_EFFECTS: &str = r#"{"toolKey":"claude","kind":"update","program":"claude","args":["update"],"fingerprint":"f","source":"s","preview":"p"}"#;
+
+    #[test]
+    fn install_plan_serializes_without_an_effects_field() {
+        let plan: InstallPlan =
+            serde_json::from_str(PLAN_WITHOUT_EFFECTS).expect("plan without effects");
+        let value = serde_json::to_value(&plan).expect("serialize plan");
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("plan object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "args",
+                "fingerprint",
+                "kind",
+                "preview",
+                "program",
+                "source",
+                "toolKey"
+            ]
+        );
+        assert!(value.get("effects").is_none());
+    }
+
+    #[test]
+    fn install_plan_ignores_a_legacy_effects_key() {
+        let with_null = PLAN_WITHOUT_EFFECTS.replace('}', ",\"effects\":null}");
+        let with_text = PLAN_WITHOUT_EFFECTS.replace('}', ",\"effects\":\"old text\"}");
+        for json in [with_null, with_text] {
+            let plan: InstallPlan = serde_json::from_str(&json).expect("legacy payload");
+            assert_eq!(plan.program, "claude");
+        }
     }
 }

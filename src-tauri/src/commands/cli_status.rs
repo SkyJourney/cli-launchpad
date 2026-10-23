@@ -1,7 +1,8 @@
+use crate::models::cache::CacheKey;
 use crate::models::cli_status::CliStatus;
 use crate::models::tool::ToolKey;
 use crate::services::{cache_service, cli_detect_service};
-use crate::{with_cache, AppError, CacheDb};
+use crate::{blocking, budgets, AppError, CacheDb};
 use tauri::State;
 
 #[tauri::command]
@@ -13,15 +14,25 @@ pub async fn detect_cli_status(
     let key = cache_key(tool_key);
     let probe_versions = force.unwrap_or(false);
     if !probe_versions {
-        if let Some(cached) = with_cache(&cache, |connection| {
-            Ok(cache_service::get_fresh(connection, &key, 30_000)?)
-        })? {
+        let lookup_key = key.clone();
+        if let Some(cached) = cache
+            .call("cli_status.cached", move |connection| {
+                Ok(cache_service::get_fresh(connection, &lookup_key, 30_000)?)
+            })
+            .await?
+        {
             return Ok(cached);
         }
     }
-    let previous = with_cache(&cache, |connection| {
-        Ok(cache_service::get_any::<Vec<CliStatus>>(connection, &key)?)
-    })?;
+    let previous_key = key.clone();
+    let previous = cache
+        .call("cli_status.previous", move |connection| {
+            Ok(cache_service::get_any::<Vec<CliStatus>>(
+                connection,
+                &previous_key,
+            )?)
+        })
+        .await?;
     // Detection runs bounded, kill-on-drop subprocesses per tool, so it is safe
     // to await directly on the async runtime.
     let mut statuses = match tool_key {
@@ -29,19 +40,41 @@ pub async fn detect_cli_status(
         None => cli_detect_service::detect_all(probe_versions).await,
     };
     if !probe_versions {
-        preserve_versions_for_unchanged_paths(&mut statuses, previous.as_deref());
+        // Version preservation is an optimization: when it times out or fails, the
+        // freshly probed statuses are still correct, only without carried-over versions.
+        let unpreserved = statuses.clone();
+        statuses = match blocking(
+            "cli_status.preserve_versions",
+            budgets::EXECUTABLE_PROBE,
+            move || {
+                preserve_versions_for_unchanged_paths(&mut statuses, previous.as_deref());
+                Ok(statuses)
+            },
+        )
+        .await
+        {
+            Ok(preserved) => preserved,
+            Err(error) => {
+                log::warn!("cli status version preservation skipped: {error}");
+                unpreserved
+            }
+        };
     }
-    with_cache(&cache, |connection| {
-        cache_service::put(connection, &key, &statuses)?;
-        Ok(())
-    })?;
+    let store_key = key;
+    let stored = statuses.clone();
+    cache
+        .call("cli_status.store", move |connection| {
+            cache_service::put(connection, &store_key, &stored)?;
+            Ok(())
+        })
+        .await?;
     Ok(statuses)
 }
 
-fn cache_key(tool_key: Option<ToolKey>) -> String {
+fn cache_key(tool_key: Option<ToolKey>) -> CacheKey {
     match tool_key {
-        Some(tool_key) => format!("cli-status:{}", tool_key.as_str()),
-        None => "cli-status:all".to_string(),
+        Some(tool_key) => CacheKey::CliStatus(tool_key),
+        None => CacheKey::CliStatusAll,
     }
 }
 
@@ -78,9 +111,12 @@ mod tests {
 
     #[test]
     fn status_cache_keys_are_isolated_per_tool() {
-        assert_eq!(cache_key(Some(ToolKey::Claude)), "cli-status:claude");
-        assert_eq!(cache_key(Some(ToolKey::Codex)), "cli-status:codex");
-        assert_eq!(cache_key(None), "cli-status:all");
+        assert_eq!(
+            cache_key(Some(ToolKey::Claude)).as_key(),
+            "cli-status:claude"
+        );
+        assert_eq!(cache_key(Some(ToolKey::Codex)).as_key(), "cli-status:codex");
+        assert_eq!(cache_key(None).as_key(), "cli-status:all");
     }
 
     fn status(path: &str, version: Option<&str>) -> CliStatus {

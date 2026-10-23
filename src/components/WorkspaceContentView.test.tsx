@@ -85,7 +85,7 @@ describe("WorkspaceContentView", () => {
     unregisterAdapters.push(
       registerWorkspaceContentAdapter({
         id: "test.throwing-content",
-        apiVersion: 2,
+        apiVersion: 3,
         kind: "pty",
         render: () => {
           throw new Error("adapter render failed");
@@ -101,7 +101,10 @@ describe("WorkspaceContentView", () => {
     );
 
     try {
-      renderContent({ kind: "pty", slotId: "terminal-1" });
+      const { onCloseUnsupported } = renderContent({
+        kind: "pty",
+        slotId: "terminal-1",
+      });
       expect(screen.getByRole("alert").textContent).toContain(
         "workspaceContent.unsupportedTitle:pty",
       );
@@ -111,8 +114,47 @@ describe("WorkspaceContentView", () => {
       expect(screen.getByRole("button").textContent).toBe(
         "workspaceContent.closeUnsupported",
       );
+      fireEvent.click(screen.getByRole("button"));
+      expect(onCloseUnsupported).toHaveBeenCalledOnce();
     } finally {
       consoleError.mockRestore();
     }
   });
+
+  it.each([undefined, null])(
+    "shows the localized generic description when an adapter throws %s",
+    (thrown) => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      unregisterAdapters.push(
+        registerWorkspaceContentAdapter({
+          id: "test.throwing-nullish-content",
+          apiVersion: 3,
+          kind: "pty",
+          render: () => {
+            throw thrown;
+          },
+          presentation: () => ({
+            title: "Terminal",
+            icon: null,
+            closeLabelKey: "close",
+          }),
+          labels,
+          projectContextOf: () => null,
+        }),
+      );
+
+      try {
+        renderContent({ kind: "pty", slotId: "terminal-1" });
+        const alert = screen.getByRole("alert").textContent ?? "";
+        expect(alert).toContain("workspaceContent.unsupportedDescription");
+        // 反向断言：不得把写死的英文兜底文案带进界面。
+        expect(alert).not.toContain("Unknown error");
+        expect(alert).not.toContain("workspaceContent.unsupportedError");
+      } finally {
+        consoleError.mockRestore();
+      }
+    },
+  );
 });

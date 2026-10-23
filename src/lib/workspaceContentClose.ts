@@ -11,6 +11,8 @@ export interface WorkspaceContentBeforeCloseContext {
 export interface WorkspaceContentDisposalImpact {
   kind: "runningPty" | "dirtyFile";
   title: string;
+  /** 脏文件项的文件 id（m6-108）；由汇总处补入，适配器不需要知道。 */
+  documentId?: string;
 }
 
 export type WorkspaceContentCloseExecution =
@@ -130,8 +132,13 @@ export async function closeWorkspaceContentBatch(args: {
 
   let impacts: WorkspaceContentDisposalImpact[];
   try {
-    impacts = unique.flatMap(
-      (request) => request.describeDisposalImpact?.() ?? [],
+    impacts = unique.flatMap((request) =>
+      (request.describeDisposalImpact?.() ?? []).map((impact) =>
+        // m6-108：脏文件项带上文件 id，保存全部时据此保存。
+        impact.kind !== "runningPty" && "documentId" in request.content
+          ? { ...impact, documentId: request.content.documentId }
+          : impact,
+      ),
     );
   } catch (error) {
     console.error("Workspace content impact hook failed", error);

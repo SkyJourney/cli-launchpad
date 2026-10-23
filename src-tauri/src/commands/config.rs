@@ -1,68 +1,52 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
-use crate::models::backup::BackupReason;
+use crate::commands::files::TauriContentWindowReclaimer;
+use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::config_service;
-use crate::services::{backup_service, storage_service::StoragePaths};
-use crate::{
-    update_close_behavior_state, with_cache_connection, with_connection, AppError, CacheDb,
-    CloseBehaviorState, Db,
+use crate::services::content_window_grants::{
+    ContentWindowGrantRegistry, ContentWindowRevoker, RevocationReason,
 };
+use crate::services::session_service::RestoreGeneration;
+use crate::services::storage_service::StoragePaths;
+use crate::{blocking_unbounded, update_close_behavior_state, AppError, CloseBehaviorState, Db};
 
 #[tauri::command]
 pub async fn export_config_to_path(state: State<'_, Db>, path: String) -> Result<(), AppError> {
     let db = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        with_connection(&db, |conn| {
-            match config_service::export_to_path(conn, &path) {
-                Ok(()) => {
-                    log::info!("configuration export completed");
-                    Ok(())
-                }
-                Err(error) => {
-                    log::error!("configuration export failed");
-                    Err(error.into())
-                }
-            }
-        })
+    // A write whose timeout would be misleading: no budget, still off the async worker.
+    blocking_unbounded("config.export", move || {
+        config_service::export_with(&db, &path)
     })
     .await
-    .map_err(|error| AppError::msg(format!("配置导出任务异常：{error}")))?
 }
 
 #[tauri::command]
 pub async fn import_config_from_path(
+    caller: CallerWindow,
+    app: AppHandle,
     state: State<'_, Db>,
-    cache: State<'_, CacheDb>,
     close_behavior_state: State<'_, CloseBehaviorState>,
     storage: State<'_, StoragePaths>,
+    lifecycle: State<'_, AppLifecycle>,
+    generation: State<'_, RestoreGeneration>,
     path: String,
 ) -> Result<(), AppError> {
+    caller.require(&[WindowKind::Main])?;
     let db = state.inner().clone();
-    let cache = cache.inner().clone();
+    let generation = generation.inner().clone();
     let storage = storage.inner().clone();
-    let close_behavior = tauri::async_runtime::spawn_blocking(move || {
-        let bundle = config_service::read_bundle_from_path(&path)?;
-        let close_behavior = with_connection(&db, |conn| {
-            backup_service::create(conn, &storage, BackupReason::PreImport)?;
-            match config_service::import(conn, &bundle) {
-                Ok(()) => {
-                    log::info!("configuration import completed");
-                    Ok(crate::db::app_setting_repo::get_close_behavior(conn)?)
-                }
-                Err(error) => {
-                    log::error!("configuration import failed");
-                    Err(error.into())
-                }
-            }
-        })?;
-        with_cache_connection(&cache, |connection| {
-            crate::services::cache_service::remove_prefix(connection, "sessions:")?;
-            Ok(())
-        })?;
-        Ok::<_, AppError>(close_behavior)
+    let lifecycle = lifecycle.inner().clone();
+    let close_behavior = blocking_unbounded("config.import", move || {
+        // The revoker is built here and handed to the hook entry point, which revokes only the
+        // grants whose project was removed or re-pathed by the import (m6-099).
+        let grants = app.state::<ContentWindowGrantRegistry>();
+        let reclaimer = TauriContentWindowReclaimer(app.clone());
+        let revoker =
+            ContentWindowRevoker::new(grants.inner(), &reclaimer, RevocationReason::ImportConfig);
+        config_service::import_with(&db, &storage, &lifecycle, &generation, &revoker, &path)
     })
-    .await
-    .map_err(|error| AppError::msg(format!("配置导入任务异常：{error}")))??;
+    .await?;
     update_close_behavior_state(&close_behavior_state, close_behavior)?;
     Ok(())
 }

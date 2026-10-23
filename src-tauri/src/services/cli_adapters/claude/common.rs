@@ -7,7 +7,10 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 const LATEST_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
 
@@ -17,6 +20,20 @@ pub static ADAPTER: ClaudeAdapter = ClaudeAdapter;
 impl CliAdapter for ClaudeAdapter {
     fn tool_key(&self) -> ToolKey {
         ToolKey::Claude
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Claude,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
     }
 
     fn command_candidates(&self) -> &'static [&'static str] {
@@ -38,6 +55,10 @@ impl CliAdapter for ClaudeAdapter {
         Ok(vec!["--resume".to_string(), session_id.to_string()])
     }
 
+    fn valid_session_id(&self, session_id: &str) -> bool {
+        crate::services::cli_adapters::support::is_canonical_uuid(session_id)
+    }
+
     fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
         crate::services::cli_adapters::blocking_latest(ToolKey::Claude, context, || {
             let latest = version_service::fetch_release_text(LATEST_URL).and_then(|body| {
@@ -51,9 +72,9 @@ impl CliAdapter for ClaudeAdapter {
     fn build_plan(
         &self,
         kind: InstallKind,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> anyhow::Result<InstallPlan> {
-        platform::build_plan(kind)
+        platform::build_plan(kind, context)
     }
 
     fn prepare_command(&self, plan: &InstallPlan) -> tokio::process::Command {
@@ -151,7 +172,6 @@ mod tests {
             fingerprint: String::new(),
             source: "test".to_string(),
             preview: "claude update".to_string(),
-            effects: None,
         };
 
         let command = ADAPTER.prepare_command(&plan);
@@ -222,7 +242,6 @@ mod preflight_tests {
             fingerprint: String::new(),
             source: "test".to_string(),
             preview: "claude".to_string(),
-            effects: None,
         }
     }
 

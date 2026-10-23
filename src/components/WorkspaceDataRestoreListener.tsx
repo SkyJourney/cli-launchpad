@@ -1,5 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
+import { RUST_EVENTS } from "../lib/eventNames";
+import { onInboxEvent } from "../lib/windowInbox";
 import { usePtyWorkspace } from "./PtyWorkspace";
 
 export function WorkspaceDataRestoreListener() {
@@ -8,7 +9,9 @@ export function WorkspaceDataRestoreListener() {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen("workspace-data-restored", () => {
+    void onInboxEvent(RUST_EVENTS.workspaceDataRestored, () => {
+      // 已卸载的 effect 不再处理订阅时冲刷出来的缓冲消息。
+      if (disposed) return;
       void rehydrateWorkspace().catch((reason) =>
         console.error("Unable to reload restored workspace data", reason),
       );

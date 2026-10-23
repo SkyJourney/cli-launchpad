@@ -7,7 +7,11 @@ import { useDirectories } from "../hooks/queries";
 import { qk } from "../lib/queryKeys";
 import { addDirectory, updateDirectory } from "../lib/tauri";
 import { useAppStore } from "../store/appStore";
-import { formatAppError } from "../lib/appErrors";
+import {
+  type AppErrorState,
+  formatAppErrorState,
+  toAppErrorState,
+} from "../lib/appErrors";
 import { FormField, TextArea, TextInput } from "./FormControls";
 
 export function ProjectMaintenanceDialog() {
@@ -24,7 +28,7 @@ export function ProjectMaintenanceDialog() {
   const [name, setName] = useState(directory?.name ?? "");
   const [path, setPath] = useState(directory?.path ?? "");
   const [note, setNote] = useState(directory?.note ?? "");
-  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState<AppErrorState | null>(null);
   const initializedDirectoryId = useRef(directory?.id ?? null);
 
   useEffect(() => {
@@ -82,9 +86,7 @@ export function ProjectMaintenanceDialog() {
         setName(selected.split(/[\\/]/).filter(Boolean).pop() ?? "");
       }
     } catch (error) {
-      setFolderError(
-        t("projectDialog.chooseFailed", { error: formatAppError(error, t) }),
-      );
+      setFolderError(toAppErrorState(error, "projectDialog.chooseFailed"));
     }
   };
 
@@ -161,7 +163,7 @@ export function ProjectMaintenanceDialog() {
             </FormField>
             {folderError && (
               <p className="error" role="alert">
-                {folderError}
+                {formatAppErrorState(folderError, t)}
               </p>
             )}
             <FormField id="project-note" label={t("projectDialog.note")}>

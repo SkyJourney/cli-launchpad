@@ -6,8 +6,28 @@ type LocaleShape<T> = {
 
 export const ja = {
   errors: {
+    exitReportInvalid: "終了確認の情報が無効でした。もう一度終了してください。",
+    exitImpactsNotReported:
+      "終了によって影響を受ける内容をアプリがまだ確認できていません。もう一度終了してください。",
+    exitImpactsChanged:
+      "終了前に確認した内容が変わりました（新しく実行中の処理があります）。もう一度確認してください。",
     fileNotFound: "ファイルが見つかりません。",
     fileTooLarge: "ファイルサイズが上限を超えています。",
+    ptySessionNotFound:
+      "ターミナルセッションが存在しないか、すでに終了しています。",
+    ptyHandoffInProgress:
+      "このターミナルは別のウィンドウへ移動中です。しばらくしてからもう一度お試しください。",
+    fileNotUtf8: "編集・保存できるのは UTF-8 のテキストファイルだけです。",
+    fileNotRegular: "開いたり保存したりできるのは通常のファイルだけです。",
+    layoutNameExists:
+      "同じ名前のレイアウトがすでにあります。別の名前を使用してください。",
+    layoutPresetLimit: "名前付きレイアウトは最大 {{max}} 個までです。",
+    filePermissionDenied:
+      "アクセスが拒否されました。ファイルまたはフォルダーのアクセス許可を確認してください。",
+    backupIndexRefreshDiscarded:
+      "データを置き換えたため（バックアップの復元または設定のインポート）、置き換え前に開始したセッションインデックスの更新は破棄されました。",
+    projectIdentityUnreadable:
+      "プロジェクトフォルダーの識別情報を読み取れませんでした。",
     fileConflict:
       "ディスク上のファイルが変更されています。保存する前に再読み込みしてください。",
     fileIdentityChanged:
@@ -16,21 +36,45 @@ export const ja = {
       "このターミナルセッションは現在のウィンドウに属していません。",
     ptyHandoffExpired:
       "ターミナルの引き継ぎがタイムアウトしました。もう一度お試しください。",
+    ptyHandoffTargetIsSource:
+      "移動先のウィンドウが移動元と同じため、ターミナルを引き継げません。",
     ptyInputBackpressure:
       "ターミナル入力キューがいっぱいです。少し待ってから再試行してください。",
     ptyInputUnavailable:
       "ターミナル入力チャネルが閉じています。セッションを再接続してください。",
     ptySessionsActive:
-      "{{count}} 件のターミナルセッションが実行中です。バックアップを復元する前に終了してください。",
+      "{{count}} 件のターミナルセッションが実行中のため、バックアップの復元または設定のインポートはできません。先にセッションを閉じてください。",
     backupRestoreInProgress:
       "バックアップを復元中です。完了してからもう一度お試しください。",
     ptySessionStarting:
-      "{{count}} 件のターミナルセッションを起動中です。少し待ってから復元してください。",
+      "ターミナルセッションまたは実行タスクが {{count}} 件まだ起動中です。しばらくしてからもう一度お試しください。",
     execPlanChanged:
       "実行計画が変更されました。内容を確認して再度承認してください。",
     execBusy: "このツールではすでにタスクが実行中です。",
+    exitNoPendingRequest:
+      "保留中の終了要求がありません。もう一度終了してください。",
+    exitRequestMismatch:
+      "この終了要求は最新ではありません。もう一度終了してください。",
     layoutNeedsReset:
       "ワークスペースのレイアウトが無効です。リセットが必要です。",
+    layoutCaseDuplicate:
+      "レイアウトに、パスの大文字・小文字だけが異なる重複したドキュメントが含まれています。",
+    internal:
+      "内部エラーが発生しました。もう一度お試しください。問題が続く場合はアプリを再起動してください。",
+    appExiting: "アプリを終了しています。再起動後にもう一度お試しください。",
+    appExitDeferred:
+      "復元またはインポートが進行中のため、まだアプリを終了できません。",
+    dataReplaceBlocked:
+      "インストールまたは更新のタスクが {{count}} 件まだ実行中です。完了してから復元またはインポートしてください。",
+    dataReplaceInProgress: "別の復元またはインポートがすでに進行中です。",
+    configImportInProgress:
+      "設定のインポートが進行中です。完了後にもう一度お試しください。",
+    projectNotFound: "プロジェクトフォルダーが見つかりません。",
+    layoutSaveRejected:
+      "ワークスペースのレイアウトの保存が繰り返し拒否されたため、保存を停止しました。",
+    layoutSchemaIncompatible:
+      "ワークスペースのレイアウトはより新しいバージョンのアプリで書き込まれたため、このバージョンでは保存できません。",
+    appError: "予期しないエラーが発生しました。もう一度お試しください。",
     generic: "操作に失敗しました。",
     directoryInUse: "このプロジェクトではターミナルセッションが実行中です。",
   },
@@ -98,13 +142,28 @@ export const ja = {
     en: "English",
   },
   appExit: {
+    saveAllAndQuit: "すべて保存して終了",
     title: "CLI Launchpad を終了しますか？",
     description:
       "{{count}} 個の埋め込みターミナルセッションが実行中です。終了すると、これらのセッションと子プロセスも終了します。",
-    confirm: "セッションを終了してアプリを閉じる",
+    executionTasks:
+      "インストールまたは更新のタスクが {{count}} 件実行中です。終了すると、これらのタスクは中断されます。",
     unsavedDescription: "未保存の変更があるファイル：{{count}} 件",
     confirmDiscard: "変更を破棄して終了",
     terminating: "終了しています…",
+  },
+  startupNotice: {
+    abnormalExit:
+      "前回の CLI Launchpad は正常に終了しませんでした。未保存の編集内容が失われた可能性があります。",
+    abnormalExitWithTime:
+      "前回の CLI Launchpad（{{time}} に起動）は正常に終了しませんでした。未保存の編集内容が失われた可能性があります。",
+    dismiss: "閉じる",
+  },
+  appCrash: {
+    title: "予期しない問題が発生しました",
+    description:
+      "このウィンドウで CLI Launchpad に予期しないエラーが発生しました。再読み込みするとウィンドウが再起動され、保存していない編集内容は失われる可能性があります。",
+    reload: "ウィンドウを再読み込み",
   },
   windowChrome: {
     titlebar: "アプリケーションのタイトルバー",
@@ -197,6 +256,9 @@ export const ja = {
     returningToWorkspace: "ワークスペースに戻しています…",
     returnFailed: "ワークスペースに戻れませんでした: {{error}}",
     returnTimedOut: "メインワークスペースから時間内に応答がありませんでした。",
+    returnUnknownError: "不明なエラー",
+    returnExpired: "戻る要求の有効期限が切れました。",
+    returnRequestFailed: "戻る要求に失敗しました。",
     detachedDefaultTitle: "CLI ターミナル",
     detachedMoveUnavailable: "このターミナルは別ウィンドウに移動できません。",
     detachedMoveNotRunning:
@@ -204,6 +266,10 @@ export const ja = {
     detachedStartTimedOut: "別ウィンドウの起動がタイムアウトしました。",
     detachedCreateFailed: "別のターミナルウィンドウを作成できませんでした。",
     detachedStartFailed: "別のターミナルウィンドウを起動できませんでした。",
+    listenerSetupFailed:
+      "一部のウィンドウ間通信チャネルを登録できませんでした（{{events}}）。別ウィンドウが応答しない場合があります。問題が続く場合はアプリを再起動してください。",
+    ownerLostRecoveryFailed:
+      "ウィンドウが閉じられた後、ターミナルセッションに再接続できませんでした。このターミナルを閉じて、もう一度起動してください。",
     detachedStateChanged:
       "別ウィンドウの状態が変更されました。もう一度お試しください。",
     detachedSessionMissing:
@@ -375,11 +441,12 @@ export const ja = {
     latest: "最新: ",
     unavailableWithError: "利用できません（{{error}}）",
     unknownRefresh: "不明です。右上から再検出してください",
-    hermesRefreshPrompt: "main ブランチを確認するには手動で更新してください",
-    hermesUpToDate: "main の最新状態です",
-    hermesUpdateBehind: "main より {{count}} コミット遅れています",
-    hermesUpdateBehindUnknown: "main に更新があります（コミット数は不明）",
-    hermesUpdateStatus: "更新状態: ",
+    branchRefreshPrompt: "上流ブランチを確認するには手動で更新してください",
+    branchUpToDate: "上流ブランチと同期済みです",
+    branchUpdateBehind: "上流ブランチより {{count}} コミット遅れています",
+    branchUpdateBehindUnknown:
+      "上流ブランチに更新があります（遅れているコミット数は不明）",
+    branchUpdateStatus: "更新状態: ",
     hermesInstallEffectsHeading: "公式インストーラーは次の操作を行います:",
     hermesInstallEffectRuntime:
       "現在のユーザー向けに Hermes CLI、管理対象の Python/Node ランタイム、依存関係をインストールします。",
@@ -521,6 +588,8 @@ export const ja = {
       pre_import: "インポート前の自動バックアップ",
       pre_restore: "復元前の保護バックアップ",
       pre_migration: "アップグレード前の自動バックアップ",
+      pre_case_merge:
+        "大文字・小文字だけが異なるドキュメントを統合する前の自動バックアップ",
     },
     preservation: {
       exact: "完全に保持",
@@ -618,6 +687,16 @@ export const ja = {
     },
   },
   workspaceFiles: {
+    saveAllAndClose: "すべて保存して閉じる",
+    discardAndClose: "変更を破棄して閉じる",
+    saveAllInProgress: "保存中…",
+    saveAllFailedQuit:
+      "{{count}} 件のファイルを保存できなかったため、終了を取り消しました",
+    saveAllFailedClose:
+      "{{count}} 件のファイルを保存できなかったため、閉じる操作を取り消しました",
+    confirmCloseTitle: "閉じる操作の確認",
+    caseVariantsMerged:
+      "パスの大文字・小文字だけが異なっていた重複ドキュメントを {{count}} 件統合しました。",
     rightPanelTabs: "右側パネルのタブ",
     files: "ファイル",
     git: "Git",

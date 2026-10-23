@@ -1,0 +1,12 @@
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    include: ["**/*.proto.test.{ts,tsx}"],
+    setupFiles: ["C:/Projects/cli-launchpad/src/test/tauriMock.ts"],
+    testTimeout: 20000,
+  },
+  server: { fs: { strict: false } },
+});

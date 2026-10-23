@@ -1,11 +1,10 @@
 import { create } from "zustand";
 import {
   isThemeMode,
-  resolveThemeMode,
+  resolveCurrentTheme,
   type ResolvedTheme,
   type ThemeMode,
 } from "../lib/themes";
-import type { PtySession } from "../lib/tauri";
 
 export type { ThemeMode } from "../lib/themeMode";
 
@@ -37,13 +36,6 @@ function getStoredThemeMode(): ThemeMode {
 
 const initialThemeMode = getStoredThemeMode();
 
-function getInitialResolvedTheme(): ResolvedTheme {
-  const systemPrefersDark =
-    typeof window !== "undefined" &&
-    (window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
-  return resolveThemeMode(initialThemeMode, systemPrefersDark);
-}
-
 function getStoredDirectoryId(): number | null {
   const stored = getBrowserStorage()?.getItem(LAST_DIRECTORY_STORAGE_KEY);
   if (!stored) return null;
@@ -69,7 +61,6 @@ interface AppState {
   sidebarOpen: boolean;
   contextPanelOpen: boolean;
   projectDialog: ProjectDialogState;
-  ptySessionsById: Record<string, PtySession>;
   setView: (view: ViewName) => void;
   setThemeMode: (mode: ThemeMode) => void;
   applyRemoteThemeMode: (mode: ThemeMode) => void;
@@ -79,20 +70,16 @@ interface AppState {
   setSidebarOpen: (open: boolean) => void;
   setContextPanelOpen: (open: boolean) => void;
   setProjectDialog: (dialog: ProjectDialogState) => void;
-  upsertPtySession: (session: PtySession) => void;
-  removePtySession: (sessionId: string) => void;
-  clearPtySessions: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   view: initialDirectoryId == null ? "projects" : "detail",
   themeMode: initialThemeMode,
-  resolvedTheme: getInitialResolvedTheme(),
+  resolvedTheme: resolveCurrentTheme(initialThemeMode),
   selectedDirectoryId: initialDirectoryId,
   sidebarOpen: getStoredSidebarOpen(),
   contextPanelOpen: getStoredContextPanelOpen(),
   projectDialog: null,
-  ptySessionsById: {},
   setView: (view) => set({ view }),
   setThemeMode: (mode) => {
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
@@ -124,21 +111,4 @@ export const useAppStore = create<AppState>((set) => ({
     set({ contextPanelOpen: open });
   },
   setProjectDialog: (dialog) => set({ projectDialog: dialog }),
-  upsertPtySession: (session) =>
-    set((state) => {
-      return {
-        ptySessionsById: {
-          ...state.ptySessionsById,
-          [session.sessionId]: session,
-        },
-      };
-    }),
-  removePtySession: (sessionId) =>
-    set((state) => {
-      if (!state.ptySessionsById[sessionId]) return state;
-      const next = { ...state.ptySessionsById };
-      delete next[sessionId];
-      return { ptySessionsById: next };
-    }),
-  clearPtySessions: () => set({ ptySessionsById: {} }),
 }));

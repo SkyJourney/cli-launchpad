@@ -4,7 +4,10 @@ use crate::services::version_service;
 
 use super::platform;
 use crate::models::session::{SessionPage, SessionSearchIndexSource};
-use crate::services::cli_adapters::{AdapterContext, AdapterFuture, CliAdapter};
+use crate::services::cli_adapters::{
+    AdapterContext, AdapterFuture, CliAdapter, ManagedUpdatePolicy, ProviderCapabilities,
+    ProviderDescriptor, UpdateSemantics, PROVIDER_DESCRIPTOR_API_VERSION,
+};
 
 const LATEST_URL: &str = "https://releases.openai.com/codex/channels/latest";
 
@@ -16,8 +19,26 @@ impl CliAdapter for CodexAdapter {
         ToolKey::Codex
     }
 
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            tool_key: ToolKey::Codex,
+            api_version: PROVIDER_DESCRIPTOR_API_VERSION,
+            capabilities: ProviderCapabilities {
+                history: true,
+                resume: true,
+                update_semantics: UpdateSemantics::Version,
+                managed_update: ManagedUpdatePolicy::Always,
+                install_effects_key: None,
+            },
+        }
+    }
+
     fn command_candidates(&self) -> &'static [&'static str] {
         &["codex"]
+    }
+
+    fn requires_executable_path(&self) -> bool {
+        true
     }
 
     fn additional_install_dirs(&self) -> Vec<std::path::PathBuf> {
@@ -36,6 +57,10 @@ impl CliAdapter for CodexAdapter {
         Ok(vec!["resume".to_string(), session_id.to_string()])
     }
 
+    fn valid_session_id(&self, session_id: &str) -> bool {
+        crate::services::cli_adapters::support::is_canonical_uuid(session_id)
+    }
+
     fn query_update(&self, context: AdapterContext) -> AdapterFuture<LatestVersion> {
         crate::services::cli_adapters::blocking_latest(ToolKey::Codex, context, || {
             let latest = version_service::fetch_release_text(LATEST_URL)
@@ -47,9 +72,9 @@ impl CliAdapter for CodexAdapter {
     fn build_plan(
         &self,
         kind: InstallKind,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> anyhow::Result<InstallPlan> {
-        platform::build_plan(kind)
+        platform::build_plan(kind, context)
     }
 
     fn list_sessions(
