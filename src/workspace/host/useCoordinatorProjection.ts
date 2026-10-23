@@ -1,7 +1,10 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import type { WorkspacePaneContentRef } from "../../lib/tauri";
-import { workspaceContentKey } from "../../lib/workspaceContentKey";
+import {
+  contentIdsOfKind,
+  workspaceContentKey,
+} from "../../lib/workspaceContentKey";
 
 export interface CoordinatorProjection {
   revision: number;
@@ -34,31 +37,20 @@ export function useCoordinatorProjection(
     [coordinator, contentCoordinatorRevision],
   );
   const detachedFileIds = useMemo(
-    () =>
-      new Set(
-        detachedWindowContents.flatMap((content) =>
-          content.kind === "file" ? [content.documentId] : [],
-        ),
-      ),
+    () => new Set(contentIdsOfKind(detachedWindowContents, "file")),
     [detachedWindowContents],
   );
   const detachedInstanceIds = useMemo(
-    () =>
-      new Set(
-        detachedWindowContents.flatMap((content) =>
-          content.kind === "pty" ? [content.slotId] : [],
-        ),
-      ),
+    () => new Set(contentIdsOfKind(detachedWindowContents, "pty")),
     [detachedWindowContents],
   );
   const handoffFileIds = useMemo(
     () =>
       new Set(
-        coordinator
-          .listInPhases("detaching", "returning")
-          .flatMap((content) =>
-            content.kind === "file" ? [content.documentId] : [],
-          ),
+        contentIdsOfKind(
+          coordinator.listInPhases("detaching", "returning"),
+          "file",
+        ),
       ),
     [coordinator, contentCoordinatorRevision],
   );

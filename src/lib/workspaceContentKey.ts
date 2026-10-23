@@ -32,6 +32,16 @@ export function contentIdOf(content: ManagedContentRef): string {
   return (content as unknown as Record<string, string>)[field];
 }
 
+/** Ids of the contents of one registered kind, read through the contract's id field. */
+export function contentIdsOfKind<K extends RegisteredContentKind>(
+  contents: readonly WorkspacePaneContentRef[],
+  kind: K,
+): string[] {
+  return contents.flatMap((content) =>
+    content.kind === kind ? [contentIdOf(content as ManagedContentRef)] : [],
+  );
+}
+
 export function workspaceContentKey(content: WorkspacePaneContentRef): string {
   if (content.kind === "unknown") {
     return `unknown:${content.originalKind}:${stableJson(content.raw)}`;
