@@ -186,9 +186,6 @@ function checkCommand(command: string): void {
   const commands = windowKindsManifest.items.find(
     (candidate) => candidate.id === kind,
   )?.appCommands;
-  if (commands === "all") {
-    return;
-  }
   if (Array.isArray(commands) && commands.includes(command)) {
     return;
   }
