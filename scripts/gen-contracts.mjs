@@ -142,6 +142,48 @@ const outputs = [
   },
 ];
 
+// 适配器清单：每个契约工具对应 src/lib/cliAdapters/<key>.ts 导出的 <key>Adapter。
+// 测试构建变体把测试夹具（src/test/fixtures/cliAdapters/<key>.ts）加入清单。
+function adapterModuleSource(entries, toolKeysModule) {
+  const imports = entries.map(
+    ({ key, path }) => `import { ${key}Adapter } from "${path}";`,
+  );
+  return [
+    "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/tool-keys.json 与适配器模块",
+    'import type { CliAdapter } from "../lib/cliAdapters/types";',
+    `import type { RegisteredToolKey } from "${toolKeysModule}";`,
+    ...imports,
+    "",
+    "export const CLI_ADAPTERS_BY_KEY: Record<RegisteredToolKey, CliAdapter> = {",
+    ...entries.map(({ key }) => `  ${key}: ${key}Adapter,`),
+    "};",
+    "",
+  ].join("\n");
+}
+const adapterProductEntries = toolKeyIds.map((key) => ({
+  key,
+  path: `../lib/cliAdapters/${key}`,
+}));
+const adapterTestEntries = [
+  ...adapterProductEntries,
+  ...toolKeyFixtures.map((key) => ({
+    key,
+    path: `../test/fixtures/cliAdapters/${key}`,
+  })),
+];
+outputs.push(
+  {
+    target: "src/generated/cliAdapters.ts",
+    count: adapterProductEntries.length,
+    content: adapterModuleSource(adapterProductEntries, "./toolKeys"),
+  },
+  {
+    target: "src/generated/cliAdapters.testbuild.ts",
+    count: adapterTestEntries.length,
+    content: adapterModuleSource(adapterTestEntries, "./toolKeys.testbuild"),
+  },
+);
+
 let failed = false;
 for (const { target, content, count } of outputs) {
   if (CHECK) {

@@ -12,6 +12,10 @@ export default defineConfig({
         find: /^(.*\/generated\/)toolKeys$/,
         replacement: "$1toolKeys.testbuild",
       },
+      {
+        find: /^(.*\/generated\/)cliAdapters$/,
+        replacement: "$1cliAdapters.testbuild",
+      },
     ],
   },
   build: {

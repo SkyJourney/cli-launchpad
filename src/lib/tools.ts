@@ -1,51 +1,13 @@
 import { createRef, type RefObject } from "react";
-import { REGISTERED_TOOL_KEYS } from "../generated/toolKeys";
+import { CLI_ADAPTERS_BY_KEY } from "../generated/cliAdapters";
 import type { CliAdapter } from "./cliAdapters/types";
 import type { LatestVersion, ToolKey } from "./tauri";
 
 export type ToolMeta = CliAdapter;
 
-// 每个 cliAdapters 模块导出自己的适配器；新增工具只需新增模块，不改本文件。
-const ADAPTER_MODULES = import.meta.glob<Record<string, unknown>>(
-  "./cliAdapters/*.ts",
-  { eager: true },
-);
-
-function isCliAdapter(value: unknown): value is CliAdapter {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "key" in value &&
-    "label" in value
-  );
-}
-
-const adaptersByKey = new Map<string, CliAdapter>();
-for (const module of Object.values(ADAPTER_MODULES)) {
-  for (const value of Object.values(module)) {
-    if (!isCliAdapter(value)) continue;
-    if (adaptersByKey.has(value.key)) {
-      throw new Error(`CLI 适配器重复登记: ${value.key}`);
-    }
-    adaptersByKey.set(value.key, value);
-  }
-}
-
-/// Display order across the app follows the contract: Claude, Codex, Antigravity, Grok Build,
-/// Hermes Agent. A contract tool without an adapter, or an adapter outside the contract, is a bug.
-const CLI_ADAPTERS = Object.fromEntries(
-  REGISTERED_TOOL_KEYS.map((key) => {
-    const adapter = adaptersByKey.get(key);
-    if (!adapter) throw new Error(`契约工具缺少 CLI 适配器: ${key}`);
-    return [key, adapter];
-  }),
-) as Record<ToolKey, ToolMeta>;
-if (adaptersByKey.size !== REGISTERED_TOOL_KEYS.length) {
-  const unknown = [...adaptersByKey.keys()].filter(
-    (key) => !(REGISTERED_TOOL_KEYS as readonly string[]).includes(key),
-  );
-  throw new Error(`CLI 适配器不在契约中: ${unknown.join(", ")}`);
-}
+// 适配器按契约顺序排列（Claude、Codex、Antigravity、Grok Build、Hermes Agent）；
+// 清单由生成器从契约与适配器模块得到，缺失或多余的适配器在编译期即失败。
+const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = CLI_ADAPTERS_BY_KEY;
 
 export const TOOLS: ToolMeta[] = Object.values(CLI_ADAPTERS);
 
