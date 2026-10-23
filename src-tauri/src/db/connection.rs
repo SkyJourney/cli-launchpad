@@ -106,7 +106,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> 
 /// satisfied by this sync.
 fn sync_tool_registry(connection: &Connection) -> rusqlite::Result<()> {
     let mut statement = connection.prepare("insert or ignore into tools (key) values (?1)")?;
-    for tool_key in ToolKey::ALL {
+    for tool_key in ToolKey::registered() {
         statement.execute([tool_key.as_str()])?;
     }
     Ok(())

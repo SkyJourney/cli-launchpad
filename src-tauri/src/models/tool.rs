@@ -1,31 +1,48 @@
 use serde::{Deserialize, Serialize};
 
-/// Declares the Rust side of the tool registry: one line per tool, generating the enum, the
-/// iteration list and the key conversions. `contracts/tool-keys.json` must list the same keys in
-/// the same order; a contract test enforces it.
+/// Declares the Rust side of the tool registry. `product` lists the shipped tool keys and
+/// `fixtures` lists test-only keys (`#[cfg(test)]`); `contracts/tool-keys.json` must list the product
+/// keys in the same order, and `src/test/fixtures/tool-keys.json` the fixture keys.
 macro_rules! tool_keys {
-    ($($variant:ident => $key:literal),+ $(,)?) => {
+    (
+        product { $($variant:ident => $key:literal),+ $(,)? }
+        fixtures { $($fvariant:ident => $fkey:literal),* $(,)? }
+    ) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
         #[serde(rename_all = "snake_case")]
         pub enum ToolKey {
-            $($variant),+
+            $($variant,)+
+            $(#[cfg(test)] $fvariant,)*
         }
 
         const TOOL_KEY_COUNT: usize = [$(stringify!($variant)),+].len();
 
+        #[cfg(test)]
+        const FIXTURE_KEYS: &[ToolKey] = &[$(ToolKey::$fvariant),*];
+
         impl ToolKey {
-            /// All tool keys, in display order. Single source for iteration.
+            /// The shipped tool keys, in display order. Single source for iteration of product behaviour.
             pub const ALL: [ToolKey; TOOL_KEY_COUNT] = [$(ToolKey::$variant),+];
+
+            /// Every key the running build knows: the shipped keys, plus the fixtures in test builds.
+            pub fn registered() -> Vec<ToolKey> {
+                let keys = Self::ALL.to_vec();
+                #[cfg(test)]
+                let keys = [keys, FIXTURE_KEYS.to_vec()].concat();
+                keys
+            }
 
             pub fn as_str(self) -> &'static str {
                 match self {
-                    $(ToolKey::$variant => $key),+
+                    $(ToolKey::$variant => $key,)+
+                    $(#[cfg(test)] ToolKey::$fvariant => $fkey,)*
                 }
             }
 
             pub fn from_key(value: &str) -> Option<Self> {
                 match value {
                     $($key => Some(ToolKey::$variant),)+
+                    $(#[cfg(test)] $fkey => Some(ToolKey::$fvariant),)*
                     _ => None,
                 }
             }
@@ -34,11 +51,15 @@ macro_rules! tool_keys {
 }
 
 tool_keys! {
-    Claude => "claude",
-    Codex => "codex",
-    Antigravity => "antigravity",
-    Grok => "grok",
-    Hermes => "hermes",
+    product {
+        Claude => "claude",
+        Codex => "codex",
+        Antigravity => "antigravity",
+        Grok => "grok",
+        Hermes => "hermes",
+    }
+    fixtures {
+    }
 }
 
 #[cfg(test)]
@@ -46,6 +67,7 @@ mod tests {
     use super::ToolKey;
 
     const TOOL_KEYS_JSON: &str = include_str!("../../../contracts/tool-keys.json");
+    const FIXTURE_MANIFEST_JSON: &str = include_str!("../../../src/test/fixtures/tool-keys.json");
 
     fn contract_keys() -> Vec<String> {
         let manifest: serde_json::Value =
@@ -75,6 +97,25 @@ mod tests {
         }
         assert_eq!(ToolKey::from_key("unknown"), None);
         assert!(serde_json::from_str::<ToolKey>("\"unknown\"").is_err());
+    }
+
+    #[test]
+    fn registered_keys_are_the_product_keys_plus_the_fixture_manifest() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(FIXTURE_MANIFEST_JSON).expect("parse fixture manifest");
+        let manifest_keys: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("fixture manifest items")
+            .iter()
+            .map(|key| key.as_str().expect("fixture key").to_string())
+            .collect();
+        let registered = ToolKey::registered();
+        assert_eq!(&registered[..ToolKey::ALL.len()], &ToolKey::ALL[..]);
+        let fixtures: Vec<String> = registered[ToolKey::ALL.len()..]
+            .iter()
+            .map(|key| key.as_str().to_string())
+            .collect();
+        assert_eq!(fixtures, manifest_keys);
     }
 
     #[test]
