@@ -30,10 +30,8 @@ import {
   type PtyOwnerLostAttemptResult,
 } from "../../lib/ptyOwnerLostRecovery";
 import {
-  promotePendingWorkspaceContentWindow,
   takePendingWorkspaceContentWindow,
 } from "../../lib/workspaceContentWindowRegistry";
-import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStage";
 import { ownerWindowOf } from "../../lib/workspaceOwnershipProjection";
 import { formatAppError } from "../../lib/appErrors";
 
@@ -45,6 +43,7 @@ import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand"
 import { attachWorkspaceContentHandoff } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
+import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 export interface PtyProtocolHandlers {
   /** 与宿主原 PTY 监听列表逐项对应（名称与顺序一致）。 */
@@ -62,63 +61,25 @@ export function createPtyProtocolHandlers(
     if (!pending || !matchesDetachedWindow(pending, payload)) {
       return;
     }
-    if (!advancePendingWindowStage(pending, "attachedAck")) return;
-    const outcome = deps.execute({
-      type: "completeDetach",
-      ref: ptyContentRef(payload.instanceId),
-      token: pending.transferId,
-      windowToken: pending.windowToken,
-    });
-    if (outcome.status === "ignored") {
-      void rollbackHandoffOnce(
-        pending.handoffContext,
-        pending.handoffPayload,
-        new Error(deps.translate("pty.detachedStateChanged")),
-      ).catch(() => undefined);
-      takePendingWorkspaceContentWindow(
-        state.pending.pty,
-        ptyContentKey(payload.instanceId),
-        pending.windowLabel,
-      );
-      pending.reject(new Error(deps.translate("pty.detachedStateChanged")));
-      void pending.window.destroy().catch(() => undefined);
-      return;
-    }
-    promotePendingWorkspaceContentWindow({
+    acceptPendingAttach(orchestrator, pending, {
       pending: state.pending.pty,
       detached: state.handles.pty,
       key: ptyContentKey(payload.instanceId),
-      expectedWindowLabel: pending.windowLabel,
+      ref: ptyContentRef(payload.instanceId),
       toDetached: (record) => record.window,
     });
-    pending.resolve();
   };
   const handleDetachedFailed = (
     payload: DetachedWindowReadyEvent & { message?: string },
   ) => {
     const pending = state.pending.pty.get(ptyContentKey(payload.instanceId));
     if (!pending || !matchesDetachedWindow(pending, payload)) return;
-    void rollbackHandoffOnce(
-      pending.handoffContext,
-      pending.handoffPayload,
-      new Error(payload.message || deps.translate("pty.detachedStartFailed")),
-    ).catch(() => undefined);
-    deps
-      .getCoordinator()
-      .failHandoff(
-        ptyContentRef(payload.instanceId),
-        "detachFailed",
-        pending.transferId,
-      );
-    takePendingWorkspaceContentWindow(
-      state.pending.pty,
-      ptyContentKey(payload.instanceId),
-      pending.windowLabel,
-    );
-    pending.reject(
-      new Error(payload.message || deps.translate("pty.detachedStartFailed")),
-    );
-    void pending.window.destroy().catch(() => undefined);
+    failPendingHandoff(orchestrator, pending, {
+      pendingMap: state.pending.pty,
+      key: ptyContentKey(payload.instanceId),
+      ref: ptyContentRef(payload.instanceId),
+      message: payload.message || deps.translate("pty.detachedStartFailed"),
+    });
   };
   const handlePtySessionOwnerLost = async ({
     sessionId,

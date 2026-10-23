@@ -7,6 +7,7 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 import { rollbackHandoffOnce } from "./handoffRollback";
+import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
@@ -21,16 +22,15 @@ import {
 import { matchesWorkspaceFileWindow } from "../../lib/workspaceFileWindow";
 
 import {
-  promotePendingWorkspaceContentWindow,
   takePendingWorkspaceContentWindow,
 } from "../../lib/workspaceContentWindowRegistry";
-import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStage";
 import {
   isWorkspaceFileBufferNewer,
   workspaceFileDocumentIdentityMatches,
 } from "../../lib/workspaceFileBuffer";
 import { formatAppError } from "../../lib/appErrors";
 
+import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStage";
 import { fileContentKey, fileContentRef } from "../../lib/workspaceContentKey";
 import { requestWorkspaceFileBufferFlush } from "../../lib/workspaceFileExitFlush";
 
@@ -247,43 +247,14 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            // 只有 init 已发出（阶段为 initSent）的 pending 才接受 attached。
-            if (!advancePendingWindowStage(pending, "attachedAck")) {
-              return;
-            }
-            const outcome = deps.execute({
-              type: "completeDetach",
-              ref: fileContentRef(pending.documentId),
-              token: pending.transferId,
-              windowToken: pending.windowToken,
-            });
-            if (outcome.status === "ignored") {
-              if (pending.handoffContext) {
-                void rollbackHandoffOnce(
-                  pending.handoffContext,
-                  pending.handoffPayload,
-                  new Error(deps.translate("pty.detachedStateChanged")),
-                ).catch(() => undefined);
-              }
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(
-                new Error(deps.translate("pty.detachedStateChanged")),
-              );
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            promotePendingWorkspaceContentWindow({
+            // 只有 init 已发出（阶段为 initSent）的 pending 才接受 attached；阶段校验在共享握手中完成。
+            acceptPendingAttach(orchestrator, pending, {
               pending: state.pending.file,
               detached: state.handles.file,
               key: fileContentKey(pending.documentId),
-              expectedWindowLabel: pending.windowLabel,
+              ref: fileContentRef(pending.documentId),
               toDetached: (record) => record.window,
             });
-            pending.resolve();
           }),
       },
       {
@@ -302,35 +273,14 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            if (pending.handoffContext) {
-              void rollbackHandoffOnce(
-                pending.handoffContext,
-                pending.handoffPayload,
-                new Error(
-                  event.payload.message ??
-                    deps.translate("pty.detachedStartFailed"),
-                ),
-              ).catch(() => undefined);
-            }
-            deps
-              .getCoordinator()
-              .failHandoff(
-                fileContentRef(pending.documentId),
-                "detachFailed",
-                pending.transferId,
-              );
-            takePendingWorkspaceContentWindow(
-              state.pending.file,
-              fileContentKey(pending.documentId),
-              pending.windowLabel,
-            );
-            pending.reject(
-              new Error(
+            failPendingHandoff(orchestrator, pending, {
+              pendingMap: state.pending.file,
+              key: fileContentKey(pending.documentId),
+              ref: fileContentRef(pending.documentId),
+              message:
                 event.payload.message ??
-                  deps.translate("pty.detachedStartFailed"),
-              ),
-            );
-            void pending.window.destroy().catch(() => undefined);
+                deps.translate("pty.detachedStartFailed"),
+            });
           }),
       },
       {
