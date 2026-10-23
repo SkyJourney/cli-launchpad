@@ -4902,6 +4902,7 @@ A 层是 M6 标记整体验收通过的前提；B 层是 M7 任何实现工作�
   2. `src/workspace/windows/protocolHandlers.pty.ts`、`src/workspace/windows/protocolHandlers.file.ts`：种类相关的事件处理，新增一个种类计 1 处（不超过每个文件 1 段新增钩子）。
   3. `src/workspace/windows/contentWindowTypes.ts`、`src/workspace/windows/windowLaunchParams.ts`、`src/workspace/windows/contentWindowOrchestrator.ts`、`src/workspace/windows/useDetachedContentWindow.ts`：负载类型、启动参数与编排中的种类分支，新增一个种类时每个文件计 1 处。
   新增一个内容种类，窗口协议层的触点合计不超过 6 处；演练记录必须逐处列出文件与行号。本修正只针对内容 kind 一项，Provider、主题、窗口类别的目标不变（主题的译文上限按 2026-10-23 的裁定修正为 10 个 locale 文件）。
+  视图层的渲染分派也计入门禁（用户 2026-10-23 裁定）：`views` 目录中的种类分支与种类字面量同样必须清零，不再把渲染分派列为例外。通过内容适配器与契约派生的通用形式完成，不改动已登记的 Provider、主题与窗口类别口径。
 
 #### 4.5.6 B 层残余项的 C 层重标（2026-10-22，用户裁定按风险分级）
 
