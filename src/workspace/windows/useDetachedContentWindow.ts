@@ -11,7 +11,7 @@ import {
   encodeWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
-import { fileContentKey, ptyContentKey } from "../../lib/workspaceContentKey";
+import { contentKeyOf } from "../../lib/workspaceContentKey";
 import type { AppErrorState } from "../../lib/appErrors";
 import type { RegisteredContentKind } from "../../generated/contentKinds";
 
@@ -86,10 +86,7 @@ export function useDetachedContentWindow(
           return;
         }
         const payload = encodeWorkspaceContentDrag({
-          key:
-            kind === "pty"
-              ? ptyContentKey(contentId)
-              : fileContentKey(contentId),
+          key: contentKeyOf(kind, contentId),
           sourceWindowLabel: windowLabel,
         });
         event.dataTransfer.effectAllowed = "move";

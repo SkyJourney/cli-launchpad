@@ -50,6 +50,11 @@ export function contentOwnsPty(content: WorkspacePaneContentRef): boolean {
   return windowKind ? windowRoleOf(windowKind).ownsPty : false;
 }
 
+/** The key of a content from its kind and identity, through the contract's id field. */
+export function contentKeyOf(kind: RegisteredContentKind, id: string): string {
+  return workspaceContentKey({ kind, [CONTENT_KIND_ID_FIELD[kind]]: id } as ManagedContentRef);
+}
+
 export function workspaceContentKey(content: WorkspacePaneContentRef): string {
   if (content.kind === "unknown") {
     return `unknown:${content.originalKind}:${stableJson(content.raw)}`;
