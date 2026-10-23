@@ -7,7 +7,11 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 import { rollbackHandoffOnce } from "./handoffRollback";
-import { acceptWindowReady, reconcileFromSourcePane } from "./pendingHandshake";
+import {
+  acceptWindowReady,
+  isReturningUnderToken,
+  reconcileFromSourcePane,
+} from "./pendingHandshake";
 import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
@@ -336,10 +340,7 @@ export function createFileProtocolHandlers(
             // 本次返回的 transferId 由主窗口生成；子窗口只携带窗口令牌。
             const returnTransferId = deps.getCoordinator().newTransferId();
             let currentOwnership = deps.getCoordinator().get(content);
-            if (
-              currentOwnership?.phase === "returning" &&
-              currentOwnership.windowToken === event.payload.token
-            ) {
+            if (isReturningUnderToken(currentOwnership, event.payload.token, "windowToken")) {
               return;
             }
             if (currentOwnership?.phase === "detached") {

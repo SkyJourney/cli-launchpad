@@ -44,6 +44,7 @@ import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 import {
   acceptPendingAttach,
   failPendingHandoff,
+  isReturningUnderToken,
   reconcileFromSourcePane,
 } from "./pendingHandshake";
 
@@ -242,10 +243,7 @@ export function createPtyProtocolHandlers(
       fail(deps.translate("pty.detachedStateChanged"));
       return;
     }
-    if (
-      currentOwnership?.phase === "returning" &&
-      currentOwnership.transferId === payload.token
-    ) {
+    if (isReturningUnderToken(currentOwnership, payload.token, "transferId")) {
       return;
     }
     if (currentOwnership?.phase !== "detached") {

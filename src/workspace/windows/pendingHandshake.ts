@@ -212,3 +212,16 @@ export function reconcileFromSourcePane(
     args.windowToken(),
   );
 }
+
+/**
+ * Whether a content is already returning under this token. The token is compared against the field the
+ * caller names: `windowToken` for file returns and `transferId` for PTY returns.
+ */
+export function isReturningUnderToken(
+  ownership: { phase: string } | null | undefined,
+  token: string,
+  field: "windowToken" | "transferId",
+): boolean {
+  if (ownership?.phase !== "returning") return false;
+  return (ownership as Partial<Record<"windowToken" | "transferId", string>>)[field] === token;
+}
