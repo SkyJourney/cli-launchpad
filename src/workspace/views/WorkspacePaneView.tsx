@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import {
   type WorkspaceNode,
   canSplitWorkspacePane,
-  listWorkspacePaneContents,
   splitWorkspaceContentSequence,
   workspacePaneOtherContents,
   minimumWorkspacePaneExtent,
@@ -17,10 +16,7 @@ import {
   parseWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
-import {
-  type WorkspaceFileDocument,
-  type WorkspacePaneContentRef,
-} from "../../lib/tauri";
+import type { WorkspacePaneContentRef } from "../../lib/tauri";
 import {
   requestReturnDrop,
   returnDropFailureMessage,
@@ -41,24 +37,20 @@ import {
 import { WorkspaceContentTab } from "../../components/WorkspaceContentTab";
 import { WorkspaceContentContextMenu } from "../../components/WorkspaceContentContextMenu";
 import { partitionVisibleTabs } from "../../lib/workspaceTabLayout";
-import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
 import type { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
 import { beginWorkspaceContentDrag } from "./viewHelpers";
 import { PaneContentStack } from "./PaneContentStack";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
+import {
+  activeDocumentIdOf,
+  displayTitleOf,
+  fileOf,
+  resolvePaneContent,
+  slotOf,
+  type ResolvedPaneContent,
+} from "../domains/paneContentResolution";
 
-export type ResolvedPaneContent =
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "pty" }>;
-      slot: PtyWorkspaceSlot;
-    }
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "file" }>;
-      file: WorkspaceFileDocument;
-    }
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>;
-    };
+export type { ResolvedPaneContent };
 
 export function WorkspacePaneView({
   pane,
@@ -104,32 +96,21 @@ export function WorkspacePaneView({
     fileBuffers,
     selectedDirectoryId,
   };
-  const paneSlots = listWorkspacePaneContents(pane, "pty")
-    .map((content) =>
-      content.kind === "pty"
-        ? slots.find((slot) => slot.instanceId === content.slotId)
-        : undefined,
-    )
-    .filter((slot): slot is PtyWorkspaceSlot => Boolean(slot));
-  const activeFileId =
-    pane.activeContent?.kind === "file" ? pane.activeContent.documentId : null;
+  const paneSlots = pane.contents.flatMap((content) => {
+    const slot = slotOf(content, slots);
+    return slot ? [slot] : [];
+  });
+  const activeFileId = activeDocumentIdOf(pane);
   const activeFile = activeFileId
     ? fileDocuments.find((document) => document.id === activeFileId)
     : undefined;
   const paneContentEntries: ResolvedPaneContent[] = pane.contents.flatMap(
-    (content): ResolvedPaneContent[] => {
-      if (content.kind === "pty") {
-        const slot = slots.find(
-          (candidate) => candidate.instanceId === content.slotId,
-        );
-        return slot ? [{ content, slot }] : [];
-      }
-      if (content.kind === "unknown") return [{ content }];
-      const file = fileDocuments.find(
-        (candidate) => candidate.id === content.documentId,
-      );
-      return file && !isDetachedContent(fileContentRef(file.id)) ? [{ content, file }] : [];
-    },
+    (content) =>
+      resolvePaneContent(content, {
+        slots,
+        fileDocuments,
+        isDetachedContent,
+      }),
   );
   const contentSequence = splitWorkspaceContentSequence(
     paneContentEntries,
@@ -376,7 +357,7 @@ export function WorkspacePaneView({
           className="pty-pane-tab-title"
           title={presentation.tooltip ?? title}
         >
-          {content.kind === "file" ? title.split(/[\\/]/).pop() : title}
+          {displayTitleOf(content, title)}
           {presentation.status === "dirty" ? " •" : ""}
         </span>
       </WorkspaceContentTab>
@@ -567,16 +548,8 @@ export function WorkspacePaneView({
       {contextMenu &&
         (() => {
           const targetContent = contextMenu.target;
-          const isPty = targetContent.kind === "pty";
-          const targetId = isPty
-            ? targetContent.slotId
-            : targetContent.documentId;
-          const targetSlot = isPty
-            ? slots.find((slot) => slot.instanceId === targetId)
-            : undefined;
-          const targetFile = isPty
-            ? undefined
-            : fileDocuments.find((file) => file.id === targetId);
+          const targetSlot = slotOf(targetContent, slots);
+          const targetFile = fileOf(targetContent, fileDocuments);
           if (!targetSlot && !targetFile) return null;
           const paneContentRefs = paneContentEntries.map(
             (entry) => entry.content,
