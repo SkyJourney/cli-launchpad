@@ -3910,6 +3910,26 @@ fn acl_only_commands_are_main_only_and_take_no_window_parameter() {
     assert!(violations.is_empty(), "{violations:#?}");
 }
 
+/// The window kinds the contract grants `command` to, read from `contracts/window-kinds.json`.
+fn contract_kinds_granting(command: &str) -> BTreeSet<String> {
+    const WINDOW_KINDS: &str = include_str!("../../../contracts/window-kinds.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS).expect("parse window kinds");
+    manifest["items"]
+        .as_array()
+        .expect("window kind items")
+        .iter()
+        .filter(|kind| match &kind["appCommands"] {
+            serde_json::Value::String(grant) => grant == "all",
+            serde_json::Value::Array(commands) => {
+                commands.iter().any(|name| name.as_str() == Some(command))
+            }
+            _ => false,
+        })
+        .map(|kind| kind["id"].as_str().expect("window kind id").to_string())
+        .collect()
+}
+
 #[test]
 fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds() {
     let definitions = command_definitions();
@@ -3936,6 +3956,32 @@ fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds(
             .rev()
             .collect();
         let statement = first_statement(&definition.body);
+        // 契约驱动的形式：require_command("<命令名>")，命令名必须是本命令，且契约授权的种类集合与守卫表一致。
+        let command_prefix = format!("{name}.require_command(\"");
+        if let Some(rest) = statement.strip_prefix(&command_prefix) {
+            let Some((granted, _)) = rest.split_once("\")?") else {
+                violations.push(format!(
+                    "{}: `require_command` is not `…\")?`",
+                    check.command
+                ));
+                continue;
+            };
+            if granted != check.command {
+                violations.push(format!(
+                    "{}: require_command names `{granted}`, the command is `{}`",
+                    check.command, check.command
+                ));
+                continue;
+            }
+            let contract_kinds = contract_kinds_granting(granted);
+            if contract_kinds != check.kinds {
+                violations.push(format!(
+                    "{}: the contract grants {contract_kinds:?}, the guard expects {:?}",
+                    check.command, check.kinds
+                ));
+            }
+            continue;
+        }
         let prefix = format!("{name}.require(&[");
         let Some(list) = statement.strip_prefix(&prefix) else {
             violations.push(format!(

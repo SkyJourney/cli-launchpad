@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{ipc::Channel, State};
 
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::services::window_inbox::{InboxMessage, WindowInboxRegistry, WindowInboxSubscription};
 use crate::services::window_relay::{self, SendWindowMessageResult};
 use crate::AppError;
@@ -16,11 +16,7 @@ pub async fn subscribe_window_inbox(
     registry: State<'_, WindowInboxRegistry>,
     on_event: Channel<InboxMessage>,
 ) -> Result<WindowInboxSubscription, AppError> {
-    caller.require(&[
-        WindowKind::main(),
-        WindowKind::TERMINAL,
-        WindowKind::WORKSPACE_CONTENT,
-    ])?;
+    caller.require_command("subscribe_window_inbox")?;
     registry.subscribe(caller.label(), Arc::new(on_event))
 }
 
@@ -34,10 +30,6 @@ pub async fn send_window_message(
     message_type: String,
     payload: serde_json::Value,
 ) -> Result<SendWindowMessageResult, AppError> {
-    caller.require(&[
-        WindowKind::main(),
-        WindowKind::TERMINAL,
-        WindowKind::WORKSPACE_CONTENT,
-    ])?;
+    caller.require_command("send_window_message")?;
     window_relay::relay(&registry, &caller, &target, &message_type, payload)
 }

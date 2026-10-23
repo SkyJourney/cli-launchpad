@@ -69,6 +69,22 @@ struct WindowKindDefinition {
     #[cfg(test)]
     #[serde(rename = "contentKinds")]
     content_kinds: Vec<String>,
+    /// `"all"` for the main window, otherwise the list of app commands the window may invoke.
+    #[serde(rename = "appCommands")]
+    app_commands: serde_json::Value,
+}
+
+impl WindowKindDefinition {
+    /// Whether the contract grants this window kind the named app command.
+    fn grants_command(&self, command: &str) -> bool {
+        match &self.app_commands {
+            serde_json::Value::String(grant) => grant == "all",
+            serde_json::Value::Array(commands) => {
+                commands.iter().any(|name| name.as_str() == Some(command))
+            }
+            _ => false,
+        }
+    }
 }
 
 impl WindowKind {
@@ -232,6 +248,18 @@ impl CallerWindow {
         &self.0
     }
 
+    /// Whether the calling window's contract entry grants `command` (W1: parallel to `require`).
+    pub fn require_command(&self, command: &str) -> Result<(), AppError> {
+        if self.0.kind().definition().grants_command(command) {
+            Ok(())
+        } else {
+            Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "当前窗口不允许执行该操作",
+            ))
+        }
+    }
+
     pub fn require(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
         if allowed.contains(&self.0.kind()) {
             Ok(())
@@ -257,12 +285,36 @@ impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CallerWindow {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_window_label, is_detached_window_label, test_label, window_kind_of, WindowKind,
-        WindowLabel,
+        create_window_label, is_detached_window_label, test_label, window_kind_of, CallerWindow,
+        WindowKind, WindowLabel,
     };
 
     const WINDOW_LABEL_FIXTURES_JSON: &str =
         include_str!("../../../contracts/window-label-fixtures.json");
+
+    #[test]
+    fn contract_grants_app_commands_per_window_kind() {
+        // 主窗口为 "all"；终端与内容窗口只拿到契约声明的命令。
+        assert!(WindowKind::main()
+            .definition()
+            .grants_command("terminate_pty_session"));
+        assert!(WindowKind::TERMINAL
+            .definition()
+            .grants_command("write_pty_session"));
+        assert!(WindowKind::WORKSPACE_CONTENT
+            .definition()
+            .grants_command("send_window_message"));
+        assert!(!WindowKind::WORKSPACE_CONTENT
+            .definition()
+            .grants_command("write_pty_session"));
+        assert!(!WindowKind::TERMINAL
+            .definition()
+            .grants_command("no_such_command"));
+
+        let main = CallerWindow::from_label("main").expect("main label");
+        assert!(main.require_command("terminate_pty_session").is_ok());
+        assert!(main.require_command("no_such_command").is_ok());
+    }
 
     #[test]
     fn role_queries_match_the_contract_roles() {
