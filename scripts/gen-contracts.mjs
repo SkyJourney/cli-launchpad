@@ -184,6 +184,34 @@ outputs.push(
   },
 );
 
+// 窗口外壳映射：契约中每个非主窗口路由对应 src/components/windowShells/<route>.tsx 的默认导出。
+const windowKindItems = JSON.parse(fs.readFileSync("contracts/window-kinds.json", "utf8")).items;
+const shellRoutes = windowKindItems
+  .filter((item) => !item.primary && item.route)
+  .map((item) => item.route);
+if (shellRoutes.some((route) => !/^[a-z][a-z-]*$/.test(route))) {
+  throw new Error("contracts/window-kinds.json 含非法路由");
+}
+const shellIdentifier = (route) =>
+  route.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()) + "Shell";
+outputs.push({
+  target: "src/generated/windowShells.ts",
+  count: shellRoutes.length,
+  content: [
+    "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/window-kinds.json（非主窗口路由）",
+    'import type { ComponentType } from "react";',
+    'import type { WindowShellProps } from "../components/windowShells/types";',
+    ...shellRoutes.map(
+      (route) => `import ${shellIdentifier(route)} from "../components/windowShells/${route}";`,
+    ),
+    "",
+    `export const WINDOW_SHELLS: Record<${shellRoutes.map((route) => `"${route}"`).join(" | ") || "never"}, ComponentType<WindowShellProps>> = {`,
+    ...shellRoutes.map((route) => `  "${route}": ${shellIdentifier(route)},`),
+    "};",
+    "",
+  ].join("\n"),
+});
+
 let failed = false;
 for (const { target, content, count } of outputs) {
   if (CHECK) {
