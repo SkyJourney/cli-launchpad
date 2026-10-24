@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import appCommands from "../../contracts/app-commands.json";
 import windowKinds from "../../contracts/window-kinds.json";
 
-type Check = { name: string; callerCheck: string; kinds?: string[] };
+type Check = { name: string; callerCheck: string };
+/** The window kinds the contract grants a command to; "all" grants every command. */
+function grantedKinds(command: string): string[] {
+  return windowKinds.items
+    .filter((kind) => {
+      const grant = kind.appCommands as unknown;
+      return grant === "all" || (Array.isArray(grant) && grant.includes(command));
+    })
+    .map((kind) => kind.id);
+}
 const entries = appCommands.items as unknown as Check[];
 const commandNames = entries.map((entry) => entry.name);
 
@@ -31,7 +40,7 @@ describe("command caller checks", () => {
       for (const command of granted) {
         const entry = entries.find((candidate) => candidate.name === command);
         expect(entry?.callerCheck, `${kind.id}: ${command}`).toBe("require");
-        expect(entry?.kinds, `${kind.id}: ${command}`).toContain(kind.id);
+        expect(grantedKinds(command), `${kind.id}: ${command}`).toContain(kind.id);
         checked += 1;
       }
     }

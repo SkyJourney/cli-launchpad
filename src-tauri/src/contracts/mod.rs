@@ -3693,17 +3693,24 @@ fn caller_checks() -> Vec<CallerCheck> {
         .as_array()
         .expect("commands must be an array")
         .iter()
-        .map(|entry| CallerCheck {
-            command: entry["name"].as_str().expect("command name").to_string(),
-            require: match entry["callerCheck"].as_str() {
+        .map(|entry| {
+            let command = entry["name"].as_str().expect("command name").to_string();
+            let require = match entry["callerCheck"].as_str() {
                 Some("require") => true,
                 Some("acl-only") => false,
-                other => panic!("unknown callerCheck {other:?} for {}", entry["command"]),
-            },
-            kinds: entry
-                .get("kinds")
-                .map(|kinds| json_strings(kinds).into_iter().collect())
-                .unwrap_or_default(),
+                other => panic!("unknown callerCheck {other:?} for {command}"),
+            };
+            // 受检命令的种类来自窗口类别契约的 appCommands（唯一来源）。
+            let kinds = if require {
+                contract_kinds_granting(&command)
+            } else {
+                BTreeSet::new()
+            };
+            CallerCheck {
+                command,
+                require,
+                kinds,
+            }
         })
         .collect()
 }
@@ -5323,9 +5330,10 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
         entry.contains("\"require\""),
         "callerCheck must be require: {entry}"
     );
-    assert!(
-        entry.contains("[\"main\"]"),
-        "only the main window may report: {entry}"
+    assert_eq!(
+        contract_kinds_granting("report_exit_impacts"),
+        BTreeSet::from(["main".to_string()]),
+        "only the main window may report"
     );
 
     // (2) capability: granted to the main window only

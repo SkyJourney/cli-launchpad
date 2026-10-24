@@ -3,8 +3,7 @@
   "items": [
     {
       "name": "acknowledge_pty_output",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "add_directory",
@@ -12,8 +11,7 @@
     },
     {
       "name": "begin_pty_handoff",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "cancel_execution_task",
@@ -21,8 +19,7 @@
     },
     {
       "name": "cancel_pty_handoff",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "check_project_files_same_identity",
@@ -46,13 +43,11 @@
     },
     {
       "name": "complete_pty_handoff",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "confirm_app_exit",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "create_backup",
@@ -60,8 +55,7 @@
     },
     {
       "name": "create_pty_session",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "create_workspace_layout_preset",
@@ -93,8 +87,7 @@
     },
     {
       "name": "finalize_pty_handoff",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "get_cache_stats",
@@ -122,8 +115,7 @@
     },
     {
       "name": "get_pty_session_window_status",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "get_workspace_layout",
@@ -131,13 +123,11 @@
     },
     {
       "name": "grant_content_window_file",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "import_config_from_path",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "list_backups",
@@ -173,8 +163,7 @@
     },
     {
       "name": "open_granted_file",
-      "callerCheck": "require",
-      "kinds": ["workspaceContent"]
+      "callerCheck": "require"
     },
     {
       "name": "open_project_directory",
@@ -190,8 +179,7 @@
     },
     {
       "name": "reattach_pty_session",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "refresh_session_search_index",
@@ -215,18 +203,15 @@
     },
     {
       "name": "report_exit_impacts",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "report_pty_frontend_stage",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "report_window_sync_failure",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal", "workspaceContent"]
+      "callerCheck": "require"
     },
     {
       "name": "reset_workspace_layout",
@@ -234,23 +219,19 @@
     },
     {
       "name": "resize_pty_session",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "restore_backup",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "revoke_content_window_file",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "save_granted_text_file",
-      "callerCheck": "require",
-      "kinds": ["workspaceContent"]
+      "callerCheck": "require"
     },
     {
       "name": "save_project_text_file",
@@ -266,13 +247,11 @@
     },
     {
       "name": "send_window_message",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal", "workspaceContent"]
+      "callerCheck": "require"
     },
     {
       "name": "set_close_behavior",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "set_directory_pinned",
@@ -288,13 +267,11 @@
     },
     {
       "name": "set_tray_menu_labels",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "stage_pty_handoff_snapshot",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "start_execution_task",
@@ -302,18 +279,15 @@
     },
     {
       "name": "subscribe_window_inbox",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal", "workspaceContent"]
+      "callerCheck": "require"
     },
     {
       "name": "take_startup_notices",
-      "callerCheck": "require",
-      "kinds": ["main"]
+      "callerCheck": "require"
     },
     {
       "name": "terminate_pty_session",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     },
     {
       "name": "update_directory",
@@ -325,8 +299,7 @@
     },
     {
       "name": "write_pty_session",
-      "callerCheck": "require",
-      "kinds": ["main", "terminal"]
+      "callerCheck": "require"
     }
   ]
 }
