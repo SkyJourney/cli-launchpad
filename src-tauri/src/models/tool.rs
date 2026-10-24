@@ -1,45 +1,64 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolKey {
-    Antigravity,
-    Codex,
-    Claude,
-    Grok,
-    Hermes,
+/// Declares the Rust side of the tool registry. `product` lists the shipped tool keys and
+/// `fixtures` lists test-only keys (`#[cfg(test)]`); `contracts/tool-keys.json` must list the product
+/// keys in the same order, and `src/test/fixtures/tool-keys.json` the fixture keys.
+macro_rules! tool_keys {
+    (
+        product { $($variant:ident => $key:literal),+ $(,)? }
+        fixtures { $($fvariant:ident => $fkey:literal),* $(,)? }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum ToolKey {
+            $($variant,)+
+            $(#[cfg(test)] $fvariant,)*
+        }
+
+        const TOOL_KEY_COUNT: usize = [$(stringify!($variant)),+].len();
+
+        #[cfg(test)]
+        const FIXTURE_KEYS: &[ToolKey] = &[$(ToolKey::$fvariant),*];
+
+        impl ToolKey {
+            /// The shipped tool keys, in display order. Single source for iteration of product behaviour.
+            pub const ALL: [ToolKey; TOOL_KEY_COUNT] = [$(ToolKey::$variant),+];
+
+            /// Every key the running build knows: the shipped keys, plus the fixtures in test builds.
+            pub fn registered() -> Vec<ToolKey> {
+                let keys = Self::ALL.to_vec();
+                #[cfg(test)]
+                let keys = [keys, FIXTURE_KEYS.to_vec()].concat();
+                keys
+            }
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(ToolKey::$variant => $key,)+
+                    $(#[cfg(test)] ToolKey::$fvariant => $fkey,)*
+                }
+            }
+
+            pub fn from_key(value: &str) -> Option<Self> {
+                match value {
+                    $($key => Some(ToolKey::$variant),)+
+                    $(#[cfg(test)] $fkey => Some(ToolKey::$fvariant),)*
+                    _ => None,
+                }
+            }
+        }
+    };
 }
 
-impl ToolKey {
-    /// All tool keys, in display order. Single source for iteration so adding a
-    /// tool only requires touching this list (plus its arms).
-    pub const ALL: [ToolKey; 5] = [
-        ToolKey::Claude,
-        ToolKey::Codex,
-        ToolKey::Antigravity,
-        ToolKey::Grok,
-        ToolKey::Hermes,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ToolKey::Antigravity => "antigravity",
-            ToolKey::Codex => "codex",
-            ToolKey::Claude => "claude",
-            ToolKey::Grok => "grok",
-            ToolKey::Hermes => "hermes",
-        }
+tool_keys! {
+    product {
+        Claude => "claude",
+        Codex => "codex",
+        Antigravity => "antigravity",
+        Grok => "grok",
+        Hermes => "hermes",
     }
-
-    pub fn from_key(value: &str) -> Option<Self> {
-        match value {
-            "antigravity" => Some(ToolKey::Antigravity),
-            "codex" => Some(ToolKey::Codex),
-            "claude" => Some(ToolKey::Claude),
-            "grok" => Some(ToolKey::Grok),
-            "hermes" => Some(ToolKey::Hermes),
-            _ => None,
-        }
+    fixtures {
     }
 }
 
@@ -48,52 +67,55 @@ mod tests {
     use super::ToolKey;
 
     const TOOL_KEYS_JSON: &str = include_str!("../../../contracts/tool-keys.json");
+    const FIXTURE_MANIFEST_JSON: &str = include_str!("../../../src/test/fixtures/tool-keys.json");
 
-    #[test]
-    fn all_lists_every_variant_exactly_once() {
-        // 新增变体会让下面的 match 编译失败：必须同步 ALL、contracts/tool-keys.json、
-        // SQL 约束与前端注册表。
-        fn ordinal(key: ToolKey) -> usize {
-            match key {
-                ToolKey::Claude => 0,
-                ToolKey::Codex => 1,
-                ToolKey::Antigravity => 2,
-                ToolKey::Grok => 3,
-                ToolKey::Hermes => 4,
-            }
-        }
-        const VARIANT_COUNT: usize = 5;
-
-        assert_eq!(ToolKey::ALL.len(), VARIANT_COUNT);
-        let mut seen = std::collections::BTreeSet::new();
-        for key in ToolKey::ALL {
-            let value = ordinal(key);
-            assert!(value < VARIANT_COUNT, "{key:?}");
-            assert!(
-                seen.insert(value),
-                "ToolKey::ALL lists {key:?} more than once"
-            );
-        }
-        assert_eq!(seen.len(), VARIANT_COUNT);
-
+    fn contract_keys() -> Vec<String> {
         let manifest: serde_json::Value =
             serde_json::from_str(TOOL_KEYS_JSON).expect("parse tool keys");
-        let contract: Vec<String> = manifest["items"]
+        manifest["items"]
             .as_array()
             .expect("tool keys must be an items array")
             .iter()
             .map(|key| key.as_str().expect("tool key").to_string())
-            .collect();
-        for value in &contract {
-            let key = ToolKey::from_key(value).unwrap_or_else(|| panic!("{value} has no ToolKey"));
+            .collect()
+    }
+
+    #[test]
+    fn all_matches_the_contract_in_order() {
+        // 新增工具只改契约与 tool_keys! 宏的一行：这里保证两者在顺序和集合上一致。
+        let contract = contract_keys();
+        assert_eq!(ToolKey::ALL.len(), contract.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for (key, value) in ToolKey::ALL.iter().zip(&contract) {
             assert_eq!(key.as_str(), value);
+            assert!(seen.insert(value.clone()), "重复的工具键：{value}");
+            assert_eq!(ToolKey::from_key(value), Some(*key));
             assert_eq!(
                 serde_json::from_str::<ToolKey>(&format!("\"{value}\"")).expect("serde parse"),
-                key
+                *key
             );
         }
         assert_eq!(ToolKey::from_key("unknown"), None);
         assert!(serde_json::from_str::<ToolKey>("\"unknown\"").is_err());
+    }
+
+    #[test]
+    fn registered_keys_are_the_product_keys_plus_the_fixture_manifest() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(FIXTURE_MANIFEST_JSON).expect("parse fixture manifest");
+        let manifest_keys: Vec<String> = manifest["items"]
+            .as_array()
+            .expect("fixture manifest items")
+            .iter()
+            .map(|key| key.as_str().expect("fixture key").to_string())
+            .collect();
+        let registered = ToolKey::registered();
+        assert_eq!(&registered[..ToolKey::ALL.len()], &ToolKey::ALL[..]);
+        let fixtures: Vec<String> = registered[ToolKey::ALL.len()..]
+            .iter()
+            .map(|key| key.as_str().to_string())
+            .collect();
+        assert_eq!(fixtures, manifest_keys);
     }
 
     #[test]
@@ -107,7 +129,6 @@ mod tests {
             "\"hermes\""
         );
         assert_eq!(ToolKey::from_key("hermes"), Some(ToolKey::Hermes));
-        assert_eq!(ToolKey::ALL.len(), 5);
 
         for tool_key in ToolKey::ALL {
             let serialized = serde_json::to_string(&tool_key).unwrap();

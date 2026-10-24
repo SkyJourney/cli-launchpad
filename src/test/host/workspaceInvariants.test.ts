@@ -27,8 +27,7 @@ function host(
       slots: [],
       fileDocuments: [],
       fileBuffers: {},
-      detachedFileIds: new Set<string>(),
-      detachedInstanceIds: new Set<string>(),
+      detachedWindowContents: [],
       ...context,
     }),
     ...rest,
@@ -144,15 +143,14 @@ describe("workspace invariants", () => {
     );
 
     const slotOwned = host({
-      context: { ...base, detachedInstanceIds: new Set(["slot-9"]) },
+      context: { ...base, detachedWindowContents: [{ kind: "pty", slotId: "slot-9" }] as const },
     });
     expect(() => assertWorkspaceInvariants(slotOwned)).toThrow(/doc-9/);
 
     const bothOwned = host({
       context: {
         ...base,
-        detachedInstanceIds: new Set(["slot-9"]),
-        detachedFileIds: new Set(["doc-9"]),
+        detachedWindowContents: [{ kind: "pty", slotId: "slot-9" }, { kind: "file", documentId: "doc-9" }],
       },
     });
     expect(() => assertWorkspaceInvariants(bothOwned)).not.toThrow();
@@ -170,7 +168,7 @@ describe("workspace invariants", () => {
   });
 
   it("I7 reports detached ids that differ from the coordinator window-owned set", () => {
-    const context = { detachedFileIds: new Set(["doc-1"]) };
+    const context = { detachedWindowContents: [{ kind: "file", documentId: "doc-1" }] as const };
 
     expect(() =>
       assertWorkspaceInvariants(

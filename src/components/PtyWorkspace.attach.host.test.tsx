@@ -175,8 +175,8 @@ describe("window handle tables are not ownership facts", () => {
     expect(coordinator.listWindowOwned()).toEqual(
       expect.arrayContaining([fileContent, ptyContent]),
     );
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
 
     // 反向断言：对已由窗口拥有的文件再次分离必须是无操作，不创建新窗口。

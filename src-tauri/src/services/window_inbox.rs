@@ -135,7 +135,7 @@ impl WindowInboxRegistry {
         let label = window.as_str().to_string();
         let (replaced, dropped) = {
             let mut inboxes = self.lock()?;
-            if window.kind() == WindowKind::Main {
+            if window.kind() == WindowKind::main() {
                 self.main_released.store(false, Ordering::SeqCst);
             }
             let inbox = inboxes
@@ -200,7 +200,8 @@ impl WindowInboxRegistry {
                 return DeliverOutcome::NoInbox;
             };
             if !inboxes.contains_key(window.as_str()) {
-                if window.kind() != WindowKind::Main || self.main_released.load(Ordering::SeqCst) {
+                if window.kind() != WindowKind::main() || self.main_released.load(Ordering::SeqCst)
+                {
                     return DeliverOutcome::NoInbox;
                 }
                 inboxes.insert(window.as_str().to_string(), WindowInbox::new());
@@ -267,7 +268,7 @@ impl WindowScopedResource for WindowInboxRegistry {
     fn release_window(&self, window: &WindowLabel) -> Vec<AppEvent> {
         if let Ok(mut inboxes) = self.inboxes.lock() {
             inboxes.remove(window.as_str());
-            if window.kind() == WindowKind::Main {
+            if window.kind() == WindowKind::main() {
                 self.main_released.store(true, Ordering::SeqCst);
             }
         }
@@ -568,14 +569,14 @@ mod tests {
         let stamped = InboxMessage {
             source: Some(InboxSource {
                 label: TERMINAL.to_string(),
-                kind: WindowKind::Terminal,
+                kind: WindowKind::TERMINAL,
             }),
             ..plain.clone()
         };
         let content = InboxMessage {
             source: Some(InboxSource {
                 label: "workspace-content-8e783338-f464-4b10-b15e-b534748c6241".to_string(),
-                kind: WindowKind::WorkspaceContent,
+                kind: WindowKind::WORKSPACE_CONTENT,
             }),
             ..plain.clone()
         };
@@ -676,7 +677,7 @@ mod tests {
         registry.subscribe(&terminal, channel.clone()).unwrap();
         let source = InboxSource {
             label: "main".to_string(),
-            kind: WindowKind::Main,
+            kind: WindowKind::main(),
         };
 
         registry.deliver(&terminal, "x", json!(1), Some(source.clone()));

@@ -15,6 +15,9 @@
   ],
   "required": {
     "all": [
+      "contracts::tool_capability_fixtures_cover_exactly_the_registered_fixture_keys",
+      "models::window_kind::tests::contract_grants_app_commands_per_window_kind",
+      "models::tool::tests::registered_keys_are_the_product_keys_plus_the_fixture_manifest",
       "services::backup_service::tests::only_the_snapshot_runs_under_the_connection_lock",
       "models::install::tests::install_plan_serializes_without_an_effects_field",
       "models::install::tests::install_plan_ignores_a_legacy_effects_key",
@@ -95,7 +98,7 @@
       "contracts::window_kind_contract_matches_rust_registry",
       "db::workspace_layout_repo::tests::save_current_distinguishes_stale_from_incompatible_schema",
       "models::install::tests::managed_update_status_reads_legacy_snake_case_cache",
-      "models::tool::tests::all_lists_every_variant_exactly_once",
+      "models::tool::tests::all_matches_the_contract_in_order",
       "models::window_kind::tests::window_label_fixture_vectors_match_rust_registry",
       "models::workspace_layout::tests::legacy_payload_fixtures_migrate_to_current_version",
       "models::workspace_layout::tests::legacy_payload_json_rejects_unsupported_versions",
@@ -202,7 +205,7 @@
       "services::backup_service::tests::restore_keeps_admission_closed_until_the_notification_is_sent",
       "models::window_kind::tests::window_label_parse_matches_the_shared_fixture_vectors",
       "models::window_kind::tests::window_label_exposes_kind_and_main_flag",
-      "models::window_kind::tests::caller_window_require_allows_only_the_listed_kinds",
+      "models::window_kind::tests::caller_window_require_command_follows_the_contract",
       "models::window_kind::tests::main_label_helpers_read_the_contract",
       "services::window_lifecycle::tests::destroyed_file_window_revokes_only_its_grant",
       "services::window_lifecycle::tests::destroyed_non_terminal_or_invalid_windows_return_no_lost_sessions",

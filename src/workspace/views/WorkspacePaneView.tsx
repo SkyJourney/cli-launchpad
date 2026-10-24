@@ -3,11 +3,9 @@ import { Columns2, Rows2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   type WorkspaceNode,
   canSplitWorkspacePane,
-  listWorkspacePaneContents,
   splitWorkspaceContentSequence,
   workspacePaneOtherContents,
   minimumWorkspacePaneExtent,
@@ -15,21 +13,18 @@ import {
   type WorkspacePane,
 } from "../../lib/ptyWorkspaceLayout";
 import {
-  encodeWorkspaceContentDrag,
   parseWorkspaceContentDrag,
   WORKSPACE_CONTENT_DRAG_TYPE,
 } from "../../lib/workspaceContentDrag";
+import type { WorkspacePaneContentRef } from "../../lib/tauri";
 import {
-  type WorkspaceFileDocument,
-  type WorkspacePaneContentRef,
-} from "../../lib/tauri";
-import { formatAppError } from "../../lib/appErrors";
+  requestReturnDrop,
+  returnDropFailureMessage,
+} from "../windows/contentProtocolDescriptors";
 import {
   contentRefFromKey,
-  fileContentKey,
   fileContentRef,
   type ManagedContentRef,
-  ptyContentRef,
   workspaceContentKey,
 } from "../../lib/workspaceContentKey";
 import {
@@ -42,32 +37,28 @@ import {
 import { WorkspaceContentTab } from "../../components/WorkspaceContentTab";
 import { WorkspaceContentContextMenu } from "../../components/WorkspaceContentContextMenu";
 import { partitionVisibleTabs } from "../../lib/workspaceTabLayout";
-import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
 import type { WorkspaceTreeViewProps } from "./WorkspaceTreeView";
-import { beginWorkspaceSessionDrag } from "./viewHelpers";
+import { beginWorkspaceContentDrag } from "./viewHelpers";
 import { PaneContentStack } from "./PaneContentStack";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
+import {
+  activeDocumentIdOf,
+  displayTitleOf,
+  fileOf,
+  resolvePaneContent,
+  slotOf,
+  type ResolvedPaneContent,
+} from "../domains/paneContentResolution";
 
-export type ResolvedPaneContent =
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "pty" }>;
-      slot: PtyWorkspaceSlot;
-    }
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "file" }>;
-      file: WorkspaceFileDocument;
-    }
-  | {
-      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>;
-    };
+export type { ResolvedPaneContent };
 
 export function WorkspacePaneView({
   pane,
   slots,
   fileDocuments,
   fileBuffers,
-  handoffFileIds,
-  detachedFileIds,
+  isHandoffContent,
+  isDetachedContent,
   closingContentKeys,
   focusedPaneId,
   portalTargets,
@@ -77,21 +68,16 @@ export function WorkspacePaneView({
   ptySessionsById,
   workspacePanes,
   onFocusPane,
-  onActivateSession,
-  onActivateFile,
-  onActivateUnsupportedContent,
+  onActivateContent,
   onCloseContents,
   onDetachFile,
-  onMoveFile,
   onEditFile,
   onSaveFile,
   onSplitPane,
-  onSplitAndMoveSession,
-  onSplitAndMoveFile,
-  onMoveSession,
+  onSplitAndMoveContent,
+  onMoveContent,
   hasDetachedSessions,
-  isManagedDetachedDrag,
-  isManagedDetachedFileDrag,
+  isManagedDetachedContent,
   onDetachSession,
   onCloseEmptyPane,
 }: WorkspaceTreeViewProps & {
@@ -110,32 +96,21 @@ export function WorkspacePaneView({
     fileBuffers,
     selectedDirectoryId,
   };
-  const paneSlots = listWorkspacePaneContents(pane, "pty")
-    .map((content) =>
-      content.kind === "pty"
-        ? slots.find((slot) => slot.instanceId === content.slotId)
-        : undefined,
-    )
-    .filter((slot): slot is PtyWorkspaceSlot => Boolean(slot));
-  const activeFileId =
-    pane.activeContent?.kind === "file" ? pane.activeContent.documentId : null;
+  const paneSlots = pane.contents.flatMap((content) => {
+    const slot = slotOf(content, slots);
+    return slot ? [slot] : [];
+  });
+  const activeFileId = activeDocumentIdOf(pane);
   const activeFile = activeFileId
     ? fileDocuments.find((document) => document.id === activeFileId)
     : undefined;
   const paneContentEntries: ResolvedPaneContent[] = pane.contents.flatMap(
-    (content): ResolvedPaneContent[] => {
-      if (content.kind === "pty") {
-        const slot = slots.find(
-          (candidate) => candidate.instanceId === content.slotId,
-        );
-        return slot ? [{ content, slot }] : [];
-      }
-      if (content.kind === "unknown") return [{ content }];
-      const file = fileDocuments.find(
-        (candidate) => candidate.id === content.documentId,
-      );
-      return file && !detachedFileIds.has(file.id) ? [{ content, file }] : [];
-    },
+    (content) =>
+      resolvePaneContent(content, {
+        slots,
+        fileDocuments,
+        isDetachedContent,
+      }),
   );
   const contentSequence = splitWorkspaceContentSequence(
     paneContentEntries,
@@ -266,8 +241,11 @@ export function WorkspacePaneView({
     };
   }, []);
 
-  const requestSplit = (direction: SplitDirection, instanceId?: string) => {
-    if (instanceId) onActivateSession(pane.id, instanceId);
+  const requestSplit = (
+    direction: SplitDirection,
+    content?: WorkspacePaneContentRef,
+  ) => {
+    if (content) onActivateContent(pane.id, content);
     const bounds = contentRef.current?.parentElement?.getBoundingClientRect();
     if (
       !bounds ||
@@ -286,7 +264,7 @@ export function WorkspacePaneView({
 
   const requestSplitAndMove = (
     direction: SplitDirection,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
   ) => {
     const bounds = contentRef.current?.parentElement?.getBoundingClientRect();
     if (
@@ -301,7 +279,7 @@ export function WorkspacePaneView({
       );
       return;
     }
-    onSplitAndMoveSession(pane.id, instanceId, direction);
+    onSplitAndMoveContent(pane.id, content, direction);
   };
 
   const renderContentTab = (
@@ -342,28 +320,10 @@ export function WorkspacePaneView({
         }
         draggable={content.kind !== "unknown" && !isClosing && !!adapter}
         onDragStart={(event) => {
-          if (isClosing) return;
-          if (content.kind === "pty") {
-            beginWorkspaceSessionDrag(event, pane.id, content.slotId);
-            return;
-          }
           if (content.kind === "unknown" || isClosing || !adapter) return;
-          const payload = encodeWorkspaceContentDrag({
-            key: fileContentKey(content.documentId),
-            sourcePaneId: pane.id,
-            sourceWindowLabel: MAIN_WINDOW_LABEL,
-          });
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData(WORKSPACE_CONTENT_DRAG_TYPE, payload);
-          event.dataTransfer.setData("text/plain", payload);
+          beginWorkspaceContentDrag(event, pane.id, workspaceContentKey(content));
         }}
-        onActivate={() => {
-          if (content.kind === "pty")
-            onActivateSession(pane.id, content.slotId);
-          else if (content.kind === "file")
-            onActivateFile(pane.id, content.documentId);
-          else onActivateUnsupportedContent(pane.id, content);
-        }}
+        onActivate={() => onActivateContent(pane.id, content)}
         onRequestClose={() => void onCloseContents([content], "tab")}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -371,10 +331,7 @@ export function WorkspacePaneView({
           if (content.kind === "unknown" || isClosing) return;
           onFocusPane(pane.id);
           setContextMenu({
-            target:
-              content.kind === "pty"
-                ? ptyContentRef(content.slotId)
-                : fileContentRef(content.documentId),
+            target: content,
             x: event.clientX,
             y: event.clientY,
           });
@@ -400,7 +357,7 @@ export function WorkspacePaneView({
           className="pty-pane-tab-title"
           title={presentation.tooltip ?? title}
         >
-          {content.kind === "file" ? title.split(/[\\/]/).pop() : title}
+          {displayTitleOf(content, title)}
           {presentation.status === "dirty" ? " •" : ""}
         </span>
       </WorkspaceContentTab>
@@ -456,55 +413,20 @@ export function WorkspacePaneView({
           contentPayload.sourceWindowLabel === MAIN_WINDOW_LABEL &&
           "sourcePaneId" in contentPayload
         ) {
-          if (draggedRef.kind === "file") {
-            onMoveFile(
-              contentPayload.sourcePaneId,
-              pane.id,
-              draggedRef.documentId,
-            );
-          } else {
-            onMoveSession(
-              contentPayload.sourcePaneId,
-              pane.id,
-              draggedRef.slotId,
-            );
-          }
+          onMoveContent(contentPayload.sourcePaneId, pane.id, draggedRef);
           return;
         }
         if (
-          draggedRef.kind === "pty" &&
           contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
-          isManagedDetachedDrag(
-            draggedRef.slotId,
-            contentPayload.sourceWindowLabel,
-          )
+          isManagedDetachedContent(draggedRef, contentPayload.sourceWindowLabel)
         ) {
-          void sendContentHandoff(
+          void requestReturnDrop(
             contentPayload.sourceWindowLabel,
-            "pty",
-            "return-drop-requested",
-            { instanceId: draggedRef.slotId, targetPaneId: pane.id },
+            draggedRef,
+            pane.id,
           ).catch((reason) =>
-            toast.error(
-              t("pty.returnFailed", { error: formatAppError(reason, t) }),
-            ),
+            toast.error(returnDropFailureMessage(draggedRef, reason, t)),
           );
-          return;
-        }
-        if (
-          draggedRef.kind === "file" &&
-          contentPayload.sourceWindowLabel !== MAIN_WINDOW_LABEL &&
-          isManagedDetachedFileDrag(
-            draggedRef.documentId,
-            contentPayload.sourceWindowLabel,
-          )
-        ) {
-          void sendContentHandoff(
-            contentPayload.sourceWindowLabel,
-            "file",
-            "return-drop-requested",
-            { documentId: draggedRef.documentId, targetPaneId: pane.id },
-          ).catch((reason) => toast.error(formatAppError(reason, t)));
         }
       }}
     >
@@ -540,13 +462,7 @@ export function WorkspacePaneView({
               fileBuffers={fileBuffers}
               selectedDirectoryId={selectedDirectoryId}
               closingContentKeys={closingContentKeys}
-              onActivate={(entry) => {
-                if (entry.content.kind === "pty")
-                  onActivateSession(pane.id, entry.content.slotId);
-                else if (entry.content.kind === "file")
-                  onActivateFile(pane.id, entry.content.documentId);
-                else onActivateUnsupportedContent(pane.id, entry.content);
-              }}
+              onActivate={(entry) => onActivateContent(pane.id, entry.content)}
               onCloseContent={(entry) =>
                 void onCloseContents([entry.content], "stack")
               }
@@ -554,10 +470,7 @@ export function WorkspacePaneView({
                 if (entry.content.kind === "unknown") return;
                 onFocusPane(pane.id);
                 setContextMenu({
-                  target:
-                    entry.content.kind === "pty"
-                      ? ptyContentRef(entry.content.slotId)
-                      : fileContentRef(entry.content.documentId),
+                  target: entry.content,
                   x,
                   y,
                 });
@@ -616,7 +529,7 @@ export function WorkspacePaneView({
           content={pane.activeContent}
           fileDocument={activeFile}
           fileBuffer={activeFileBuffer}
-          readOnly={Boolean(activeFileId && handoffFileIds.has(activeFileId))}
+          readOnly={Boolean(activeFileId && isHandoffContent(fileContentRef(activeFileId)))}
           ptyPortalTarget={
             activeSlot ? portalTargets[activeSlot.instanceId] : undefined
           }
@@ -635,16 +548,8 @@ export function WorkspacePaneView({
       {contextMenu &&
         (() => {
           const targetContent = contextMenu.target;
-          const isPty = targetContent.kind === "pty";
-          const targetId = isPty
-            ? targetContent.slotId
-            : targetContent.documentId;
-          const targetSlot = isPty
-            ? slots.find((slot) => slot.instanceId === targetId)
-            : undefined;
-          const targetFile = isPty
-            ? undefined
-            : fileDocuments.find((file) => file.id === targetId);
+          const targetSlot = slotOf(targetContent, slots);
+          const targetFile = fileOf(targetContent, fileDocuments);
           if (!targetSlot && !targetFile) return null;
           const paneContentRefs = paneContentEntries.map(
             (entry) => entry.content,
@@ -704,49 +609,16 @@ export function WorkspacePaneView({
               onClose={() => setContextMenu(null)}
               onSplit={(direction) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  onActivateSession(pane.id, targetSlot.instanceId);
-                requestSplit(direction);
+                // 会话在拆分前先成为激活内容（文件不需要）。
+                requestSplit(direction, targetSlot ? targetContent : undefined);
               }}
               onSplitAndMove={(direction) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  requestSplitAndMove(direction, targetSlot.instanceId);
-                else if (targetFile) {
-                  const bounds =
-                    contentRef.current?.parentElement?.getBoundingClientRect();
-                  if (
-                    !bounds ||
-                    !canSplitWorkspacePane(
-                      bounds.width,
-                      bounds.height,
-                      direction,
-                    )
-                  ) {
-                    toast.info(
-                      t("pty.splitTooSmall", {
-                        axis:
-                          direction === "horizontal"
-                            ? t("pty.width")
-                            : t("pty.height"),
-                        size: minimumWorkspacePaneExtent(direction),
-                      }),
-                    );
-                    return;
-                  }
-                  onSplitAndMoveFile(pane.id, targetFile.id, direction);
-                }
+                requestSplitAndMove(direction, targetContent);
               }}
               onMoveToPane={(destinationPaneId) => {
                 setContextMenu(null);
-                if (targetSlot)
-                  onMoveSession(
-                    pane.id,
-                    destinationPaneId,
-                    targetSlot.instanceId,
-                  );
-                else if (targetFile)
-                  onMoveFile(pane.id, destinationPaneId, targetFile.id);
+                onMoveContent(pane.id, destinationPaneId, targetContent);
               }}
               onDetach={() => {
                 setContextMenu(null);
@@ -755,11 +627,9 @@ export function WorkspacePaneView({
               }}
               onCloseCurrent={() => requestCloseContents([targetContent])}
               onCloseOthers={() =>
-                requestCloseContents(otherContents, () => {
-                  if (targetSlot)
-                    onActivateSession(pane.id, targetSlot.instanceId);
-                  if (targetFile) onActivateFile(pane.id, targetFile.id);
-                })
+                requestCloseContents(otherContents, () =>
+                  onActivateContent(pane.id, targetContent),
+                )
               }
               onCloseAll={() => requestCloseContents(paneContentRefs)}
             />

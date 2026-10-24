@@ -2,7 +2,7 @@ use tauri::{Manager, State};
 
 use crate::commands::files::TauriContentWindowReclaimer;
 use crate::models::backup::{BackupManifest, BackupReason};
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::services::app_lifecycle::AppLifecycle;
 use crate::services::content_window_grants::{
     ContentWindowGrantRegistry, ContentWindowRevoker, RevocationReason,
@@ -69,7 +69,7 @@ pub async fn restore_backup(
     app: tauri::AppHandle,
     backup_id: String,
 ) -> Result<BackupManifest, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require_command("restore_backup")?;
     let db = state.inner().clone();
     let cache = cache.inner().clone();
     let lifecycle = lifecycle.inner().clone();

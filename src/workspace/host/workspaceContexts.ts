@@ -1,3 +1,4 @@
+import type { ManagedContentRef } from "../../lib/workspaceContentKey";
 import type { AppErrorState } from "../../lib/appErrors";
 import { createContext, useContext, type MutableRefObject } from "react";
 import type { PtyTerminalHandle } from "../../components/PtyTerminal";
@@ -26,8 +27,8 @@ export interface PtyWorkspaceContextValue {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
-  handoffFileIds: Set<string>;
-  detachedFileIds: Set<string>;
+  isHandoffContent: (content: WorkspacePaneContentRef) => boolean;
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
   tree: WorkspaceNode;
   workspaceTreeRevision: number;
   focusedPaneId: string;
@@ -49,11 +50,7 @@ export interface PtyWorkspaceContextValue {
     relativePath: string,
   ) => Promise<void>;
   loadFile: (documentId: string) => Promise<void>;
-  activateFile: (paneId: string, documentId: string) => void;
-  activateUnsupportedContent: (
-    paneId: string,
-    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-  ) => void;
+  activateContent: (paneId: string, content: WorkspacePaneContentRef) => void;
   editFile: (documentId: string, content: string) => void;
   saveFile: (documentId: string) => Promise<void>;
   closeContents: (
@@ -63,36 +60,21 @@ export interface PtyWorkspaceContextValue {
   ) => Promise<void>;
   detachFile: (documentId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
-  activateSession: (paneId: string, instanceId: string) => void;
   splitPane: (paneId: string, direction: SplitDirection) => void;
-  splitAndMoveSession: (
+  splitAndMoveContent: (
     paneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
     direction: SplitDirection,
   ) => void;
-  splitAndMoveFile: (
-    paneId: string,
-    documentId: string,
-    direction: SplitDirection,
-  ) => void;
-  moveSession: (
+  moveContent: (
     sourcePaneId: string,
     destinationPaneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
   ) => void;
-  moveFile: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    documentId: string,
-  ) => void;
-  detachedInstanceIds: Set<string>;
+  detachedWindowContents: WorkspacePaneContentRef[];
   closingContentKeys: Set<string>;
   hasDetachedSessions: boolean;
-  isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
-  isManagedDetachedFileDrag: (
-    documentId: string,
-    windowLabel: string,
-  ) => boolean;
+  isManagedDetachedContent: (content: ManagedContentRef, windowLabel: string) => boolean;
   detachSession: (instanceId: string) => Promise<void>;
   closeEmptyPane: (paneId: string) => void;
   updateSplitRatio: (
@@ -141,21 +123,16 @@ export const WORKSPACE_COMMAND_KEYS = [
   "launchSession",
   "openProjectFile",
   "loadFile",
-  "activateFile",
-  "activateUnsupportedContent",
+  "activateContent",
   "editFile",
   "saveFile",
   "closeContents",
   "detachFile",
   "focusPane",
-  "activateSession",
   "splitPane",
-  "splitAndMoveSession",
-  "splitAndMoveFile",
-  "moveSession",
-  "moveFile",
-  "isManagedDetachedDrag",
-  "isManagedDetachedFileDrag",
+  "splitAndMoveContent",
+  "moveContent",
+  "isManagedDetachedContent",
   "detachSession",
   "closeEmptyPane",
   "updateSplitRatio",
@@ -172,6 +149,12 @@ export const WORKSPACE_COMMAND_KEYS = [
   "resumeAfterFailedRestore",
   "rehydrateWorkspace",
   "getDirectoryRemovalBlockers",
+] as const satisfies readonly (keyof PtyWorkspaceContextValue)[];
+
+/** 状态查询函数：随协调器投影变化而更换身份，不属于稳定命令清单，但同样是门面的函数字段。 */
+export const WORKSPACE_STATE_QUERY_KEYS = [
+  "isDetachedContent",
+  "isHandoffContent",
 ] as const satisfies readonly (keyof PtyWorkspaceContextValue)[];
 
 export type WorkspaceCommands = Pick<

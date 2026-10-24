@@ -1,14 +1,18 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import type { WorkspacePaneContentRef } from "../../lib/tauri";
-import { workspaceContentKey } from "../../lib/workspaceContentKey";
+import { contentOwnsPty, workspaceContentKey } from "../../lib/workspaceContentKey";
 
 export interface CoordinatorProjection {
   revision: number;
+  /** Contents held by a detached window. */
   detachedWindowContents: WorkspacePaneContentRef[];
-  detachedFileIds: Set<string>;
-  detachedInstanceIds: Set<string>;
-  handoffFileIds: Set<string>;
+  /** Whether a content is held by a detached window. */
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
+  /** Whether a content is mid-handoff (detaching or returning). */
+  isHandoffContent: (content: WorkspacePaneContentRef) => boolean;
+  /** Whether any detached window owns a PTY session. */
+  hasDetachedSessions: boolean;
   closingContentKeys: Set<string>;
 }
 
@@ -33,41 +37,39 @@ export function useCoordinatorProjection(
     () => coordinator.listWindowOwned(),
     [coordinator, contentCoordinatorRevision],
   );
-  const detachedFileIds = useMemo(
-    () =>
-      new Set(
-        detachedWindowContents.flatMap((content) =>
-          content.kind === "file" ? [content.documentId] : [],
-        ),
-      ),
+  const detachedKeys = useMemo(
+    () => new Set(detachedWindowContents.map(workspaceContentKey)),
     [detachedWindowContents],
   );
-  const detachedInstanceIds = useMemo(
-    () =>
-      new Set(
-        detachedWindowContents.flatMap((content) =>
-          content.kind === "pty" ? [content.slotId] : [],
-        ),
-      ),
-    [detachedWindowContents],
-  );
-  const handoffFileIds = useMemo(
+  const handoffKeys = useMemo(
     () =>
       new Set(
         coordinator
           .listInPhases("detaching", "returning")
-          .flatMap((content) =>
-            content.kind === "file" ? [content.documentId] : [],
-          ),
+          .map(workspaceContentKey),
       ),
     [coordinator, contentCoordinatorRevision],
+  );
+  const isDetachedContent = useCallback(
+    (content: WorkspacePaneContentRef) =>
+      detachedKeys.has(workspaceContentKey(content)),
+    [detachedKeys],
+  );
+  const isHandoffContent = useCallback(
+    (content: WorkspacePaneContentRef) =>
+      handoffKeys.has(workspaceContentKey(content)),
+    [handoffKeys],
+  );
+  const hasDetachedSessions = useMemo(
+    () => detachedWindowContents.some(contentOwnsPty),
+    [detachedWindowContents],
   );
   const closingContentKeys = useMemo(
     () =>
       new Set(
         coordinator
           .listInPhases("closing")
-          .filter((content) => content.kind === "pty")
+          .filter(contentOwnsPty)
           .map(workspaceContentKey),
       ),
     [coordinator, contentCoordinatorRevision],
@@ -75,9 +77,9 @@ export function useCoordinatorProjection(
   return {
     revision: contentCoordinatorRevision,
     detachedWindowContents,
-    detachedFileIds,
-    detachedInstanceIds,
-    handoffFileIds,
+    isDetachedContent,
+    isHandoffContent,
+    hasDetachedSessions,
     closingContentKeys,
   };
 }

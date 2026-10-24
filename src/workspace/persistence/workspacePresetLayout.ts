@@ -11,11 +11,15 @@ import {
 } from "../../lib/pathKey";
 import {
   listWorkspacePanes,
-  listWorkspacePaneContents,
   remapWorkspaceFileIds,
   type WorkspaceNode,
 } from "../../lib/ptyWorkspaceLayout";
 import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
+import {
+  fileContentRef,
+  ptyContentRef,
+  workspaceContentKey,
+} from "../../lib/workspaceContentKey";
 import {
   createWorkspaceLayoutDocument,
   listPersistedDetachedContents,
@@ -41,19 +45,8 @@ export function currentPresetLayoutFrom(args: {
     });
   }
   const presetPanes = listWorkspacePanes(presetTree);
-  const paneSlotIds = new Set(
-    presetPanes.flatMap((pane) =>
-      listWorkspacePaneContents(pane, "pty").flatMap((content) =>
-        content.kind === "pty" ? [content.slotId] : [],
-      ),
-    ),
-  );
-  const paneFileIds = new Set(
-    presetPanes.flatMap((pane) =>
-      listWorkspacePaneContents(pane, "file").flatMap((content) =>
-        content.kind === "file" ? [content.documentId] : [],
-      ),
-    ),
+  const presetKeys = new Set(
+    presetPanes.flatMap((pane) => pane.contents).map(workspaceContentKey),
   );
   const currentFocusedPaneId = live.focusedPaneId;
   return createWorkspaceLayoutDocument({
@@ -62,10 +55,10 @@ export function currentPresetLayoutFrom(args: {
       ? currentFocusedPaneId
       : presetPanes[0].id,
     slots: live.slots
-      .filter((slot) => paneSlotIds.has(slot.instanceId))
+      .filter((slot) => presetKeys.has(workspaceContentKey(ptyContentRef(slot.instanceId))))
       .map((slot) => toWorkspaceLayoutSlot(slot, args.directories)),
     documents: live.documents.filter((document) =>
-      paneFileIds.has(document.id),
+      presetKeys.has(workspaceContentKey(fileContentRef(document.id))),
     ),
     detachedContents: [],
   });

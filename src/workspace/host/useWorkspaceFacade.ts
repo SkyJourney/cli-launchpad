@@ -7,11 +7,8 @@ import {
   setWorkspaceSplitRatio,
   type SplitDirection,
 } from "../../lib/ptyWorkspaceLayout";
-import {
-  fileContentKey,
-  fileContentRef,
-  ptyContentRef,
-} from "../../lib/workspaceContentKey";
+import { fileContentRef } from "../../lib/workspaceContentKey";
+import { detachedWindowOf } from "../windows/contentProtocolDescriptors";
 import type {
   PtySession,
   ToolKey,
@@ -65,9 +62,10 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     layoutResetPending,
   } = persistenceStatus;
   const {
-    detachedFileIds,
-    detachedInstanceIds,
-    handoffFileIds,
+    detachedWindowContents,
+    isDetachedContent,
+    isHandoffContent,
+    hasDetachedSessions,
     closingContentKeys,
   } = projection;
   const {
@@ -87,10 +85,10 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       fileDomain.open(
         { directoryId, directoryPath, relativePath },
         async (document) => {
-          const detachedWindow =
-            orchestrator.state.handles.file.get(fileContentKey(document.id)) ??
-            orchestrator.state.pending.file.get(fileContentKey(document.id))
-              ?.window;
+          const detachedWindow = detachedWindowOf(
+            orchestrator.state,
+            fileContentRef(document.id),
+          );
           if (detachedWindow) {
             await detachedWindow
               .setFocus()
@@ -113,23 +111,14 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [executor, fileDomain],
   );
 
-  const activateFile = useCallback(
-    (paneId: string, documentId: string) => {
-      executor.execute({
-        type: "activate",
-        ref: fileContentRef(documentId),
-        paneId,
-      });
-    },
-    [executor],
-  );
-
-  const activateUnsupportedContent = useCallback(
-    (
-      paneId: string,
-      content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-    ) => {
-      executor.execute({ type: "activate", ref: content, paneId });
+  // 内容级激活：任何已登记种类与未知内容都走同一条执行器路径（陈旧点击时静默忽略）。
+  const activateContent = useCallback(
+    (paneId: string, content: WorkspacePaneContentRef) => {
+      try {
+        executor.execute({ type: "activate", ref: content, paneId });
+      } catch {
+        return;
+      }
     },
     [executor],
   );
@@ -173,21 +162,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [directories, executor, ptyDomain, store],
   );
 
-  const activateSession = useCallback(
-    (paneId: string, instanceId: string) => {
-      try {
-        executor.execute({
-          type: "activate",
-          ref: ptyContentRef(instanceId),
-          paneId,
-        });
-      } catch {
-        return;
-      }
-    },
-    [executor],
-  );
-
   const splitPane = useCallback(
     (paneId: string, direction: SplitDirection) => {
       executor.execute({ type: "splitPane", paneId, direction });
@@ -211,18 +185,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
     [executor],
   );
 
-  const splitAndMoveSession = useCallback(
-    (paneId: string, instanceId: string, direction: SplitDirection) =>
-      splitAndMoveContent(paneId, ptyContentRef(instanceId), direction),
-    [splitAndMoveContent],
-  );
-
-  const splitAndMoveFile = useCallback(
-    (paneId: string, documentId: string, direction: SplitDirection) =>
-      splitAndMoveContent(paneId, fileContentRef(documentId), direction),
-    [splitAndMoveContent],
-  );
-
   const moveContent = useCallback(
     (
       sourcePaneId: string,
@@ -237,18 +199,6 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       });
     },
     [executor],
-  );
-
-  const moveSession = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, instanceId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, ptyContentRef(instanceId)),
-    [moveContent],
-  );
-
-  const moveFile = useCallback(
-    (sourcePaneId: string, destinationPaneId: string, documentId: string) =>
-      moveContent(sourcePaneId, destinationPaneId, fileContentRef(documentId)),
-    [moveContent],
   );
 
   const closeEmptyPane = useCallback(
@@ -314,21 +264,16 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       launchSession,
       openProjectFile,
       loadFile,
-      activateFile,
-      activateUnsupportedContent,
+      activateContent,
       editFile,
       saveFile,
       closeContents,
       detachFile: orchestrator.detachFile,
       focusPane,
-      activateSession,
       splitPane,
-      splitAndMoveSession,
-      splitAndMoveFile,
-      moveSession,
-      moveFile,
-      isManagedDetachedDrag: orchestrator.isManagedDetachedDrag,
-      isManagedDetachedFileDrag: orchestrator.isManagedDetachedFileDrag,
+      splitAndMoveContent,
+      moveContent,
+      isManagedDetachedContent: orchestrator.isManagedDetachedContent,
       detachSession: orchestrator.detachSession,
       closeEmptyPane,
       updateSplitRatio,
@@ -350,18 +295,14 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       launchSession,
       openProjectFile,
       loadFile,
-      activateFile,
-      activateUnsupportedContent,
+      activateContent,
       editFile,
       saveFile,
       closeContents,
       focusPane,
-      activateSession,
       splitPane,
-      splitAndMoveSession,
-      splitAndMoveFile,
-      moveSession,
-      moveFile,
+      splitAndMoveContent,
+      moveContent,
       closeEmptyPane,
       updateSplitRatio,
       persistence,
@@ -381,8 +322,8 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       slots,
       fileDocuments,
       fileBuffers,
-      handoffFileIds,
-      detachedFileIds,
+      isHandoffContent,
+      isDetachedContent,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -393,17 +334,17 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       layoutResetPending,
       portalTargets,
       terminalRefs,
-      detachedInstanceIds,
+      detachedWindowContents,
       closingContentKeys,
-      hasDetachedSessions: detachedInstanceIds.size > 0,
+      hasDetachedSessions,
     }),
     [
       commands,
       slots,
       fileDocuments,
       fileBuffers,
-      handoffFileIds,
-      detachedFileIds,
+      isHandoffContent,
+      isDetachedContent,
       tree,
       workspaceTreeRevision,
       focusedPaneId,
@@ -414,8 +355,9 @@ export function useWorkspaceFacade(runtime: WorkspaceRuntime): {
       layoutResetPending,
       portalTargets,
       terminalRefs,
-      detachedInstanceIds,
+      detachedWindowContents,
       closingContentKeys,
+      hasDetachedSessions,
     ],
   );
 

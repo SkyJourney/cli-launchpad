@@ -489,10 +489,12 @@ fn window_kind_contract_matches_rust_registry() {
                 )
             });
         let expected = match id {
-            "main" => WindowKind::Main,
-            "terminal" => WindowKind::Terminal,
-            "workspaceContent" => WindowKind::WorkspaceContent,
-            _ => panic!("unregistered Rust window kind: {id}"),
+            "main" => WindowKind::main(),
+            "terminal" => WindowKind::TERMINAL,
+            "workspaceContent" => WindowKind::WORKSPACE_CONTENT,
+            // 契约新增的类别没有命名常量：只要求契约能解析出该类别。
+            _ => WindowKind::from_id(id)
+                .unwrap_or_else(|| panic!("unregistered Rust window kind: {id}")),
         };
         assert_eq!(window_kind_of(&label), Some(expected), "{id}");
     }
@@ -3638,7 +3640,13 @@ fn child_windows_cannot_emit_events_and_can_use_the_relay() {
         .iter()
         .find(|kind| kind["id"] == "main")
         .unwrap();
-    assert_eq!(main_kind["appCommands"], "all");
+    let main_commands = main_kind["appCommands"]
+        .as_array()
+        .expect("main appCommands is an explicit list");
+    assert!(!main_commands
+        .iter()
+        .any(|name| name == "open_granted_file" || name == "save_granted_text_file"));
+    assert_eq!(main_commands.len(), app_command_names().len() - 2);
 }
 
 #[test]
@@ -3687,17 +3695,24 @@ fn caller_checks() -> Vec<CallerCheck> {
         .as_array()
         .expect("commands must be an array")
         .iter()
-        .map(|entry| CallerCheck {
-            command: entry["name"].as_str().expect("command name").to_string(),
-            require: match entry["callerCheck"].as_str() {
+        .map(|entry| {
+            let command = entry["name"].as_str().expect("command name").to_string();
+            let require = match entry["callerCheck"].as_str() {
                 Some("require") => true,
                 Some("acl-only") => false,
-                other => panic!("unknown callerCheck {other:?} for {}", entry["command"]),
-            },
-            kinds: entry
-                .get("kinds")
-                .map(|kinds| json_strings(kinds).into_iter().collect())
-                .unwrap_or_default(),
+                other => panic!("unknown callerCheck {other:?} for {command}"),
+            };
+            // 受检命令的种类来自窗口类别契约的 appCommands（唯一来源）。
+            let kinds = if require {
+                contract_kinds_granting(&command)
+            } else {
+                BTreeSet::new()
+            };
+            CallerCheck {
+                command,
+                require,
+                kinds,
+            }
         })
         .collect()
 }
@@ -3793,15 +3808,6 @@ fn first_statement(body: &str) -> String {
         .join(" ")
 }
 
-fn kind_id(variant: &str) -> &'static str {
-    match variant {
-        "WindowKind::Main" => "main",
-        "WindowKind::Terminal" => "terminal",
-        "WindowKind::WorkspaceContent" => "workspaceContent",
-        other => panic!("unknown window kind variant {other:?}"),
-    }
-}
-
 /// The window kinds the ACL (`window-kinds.json`) grants a command to.
 fn acl_kinds(command: &str, manifest: &Value) -> BTreeSet<String> {
     let app_commands: Vec<String> = app_command_names();
@@ -3841,15 +3847,13 @@ fn command_caller_check_contract_covers_every_registered_command() {
         sorted_strings(registered),
         "contracts/app-commands.json 必须恰好列出源码里的全部命令"
     );
-    let allowed = ["main", "terminal", "workspaceContent"];
+    // 窗口类别从契约派生，新增类别（如 drillwin）无需改此清单。
+    let allowed = window_kind_ids();
     for check in &checks {
         if check.require {
             assert!(!check.kinds.is_empty(), "{}: kinds", check.command);
             assert!(
-                check
-                    .kinds
-                    .iter()
-                    .all(|kind| allowed.contains(&kind.as_str())),
+                check.kinds.iter().all(|kind| allowed.contains(kind)),
                 "{}: unknown kind",
                 check.command
             );
@@ -3910,6 +3914,38 @@ fn acl_only_commands_are_main_only_and_take_no_window_parameter() {
     assert!(violations.is_empty(), "{violations:#?}");
 }
 
+/// Every window kind id declared in `contracts/window-kinds.json`.
+fn window_kind_ids() -> Vec<String> {
+    let manifest: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    manifest["items"]
+        .as_array()
+        .expect("window kind items")
+        .iter()
+        .map(|kind| kind["id"].as_str().expect("window kind id").to_string())
+        .collect()
+}
+
+/// The window kinds the contract grants `command` to, read from `contracts/window-kinds.json`.
+fn contract_kinds_granting(command: &str) -> BTreeSet<String> {
+    const WINDOW_KINDS: &str = include_str!("../../../contracts/window-kinds.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS).expect("parse window kinds");
+    manifest["items"]
+        .as_array()
+        .expect("window kind items")
+        .iter()
+        .filter(|kind| match &kind["appCommands"] {
+            serde_json::Value::String(grant) => grant == "all",
+            serde_json::Value::Array(commands) => {
+                commands.iter().any(|name| name.as_str() == Some(command))
+            }
+            _ => false,
+        })
+        .map(|kind| kind["id"].as_str().expect("window kind id").to_string())
+        .collect()
+}
+
 #[test]
 fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds() {
     let definitions = command_definitions();
@@ -3936,30 +3972,36 @@ fn require_commands_take_a_caller_window_and_require_exactly_the_declared_kinds(
             .rev()
             .collect();
         let statement = first_statement(&definition.body);
-        let prefix = format!("{name}.require(&[");
-        let Some(list) = statement.strip_prefix(&prefix) else {
-            violations.push(format!(
-                "{}: the first statement is not `{prefix}…` ({})",
-                check.command, statement
-            ));
+        // 契约驱动的形式：require_command("<命令名>")，命令名必须是本命令，且契约授权的种类集合与守卫表一致。
+        let command_prefix = format!("{name}.require_command(\"");
+        if let Some(rest) = statement.strip_prefix(&command_prefix) {
+            let Some((granted, _)) = rest.split_once("\")?") else {
+                violations.push(format!(
+                    "{}: `require_command` is not `…\")?`",
+                    check.command
+                ));
+                continue;
+            };
+            if granted != check.command {
+                violations.push(format!(
+                    "{}: require_command names `{granted}`, the command is `{}`",
+                    check.command, check.command
+                ));
+                continue;
+            }
+            let contract_kinds = contract_kinds_granting(granted);
+            if contract_kinds != check.kinds {
+                violations.push(format!(
+                    "{}: the contract grants {contract_kinds:?}, the guard expects {:?}",
+                    check.command, check.kinds
+                ));
+            }
             continue;
-        };
-        let Some((list, _)) = list.split_once("])?") else {
-            violations.push(format!("{}: `require` is not `…])?`", check.command));
-            continue;
-        };
-        let actual: BTreeSet<String> = list
-            .split(',')
-            .map(str::trim)
-            .filter(|variant| !variant.is_empty())
-            .map(|variant| kind_id(variant).to_string())
-            .collect();
-        if actual != check.kinds {
-            violations.push(format!(
-                "{}: requires {actual:?}, the contract declares {:?}",
-                check.command, check.kinds
-            ));
         }
+        violations.push(format!(
+            "{}: uses the legacy `require` allowlist form; use `require_command`",
+            check.command
+        ));
     }
     assert!(violations.is_empty(), "{violations:#?}");
     assert_eq!(webview_in_require, 0);
@@ -4048,7 +4090,6 @@ fn capability_window_globs_match_the_label_rules() {
 fn caller_check_contract_matches_the_window_kind_acl() {
     let manifest: Value = serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
     let mut violations = Vec::new();
-    let mut proper_subset = 0;
     for check in caller_checks() {
         let acl = acl_kinds(&check.command, &manifest);
         let children: BTreeSet<String> =
@@ -4060,16 +4101,20 @@ fn caller_check_contract_matches_the_window_kind_acl() {
                     check.command, check.kinds
                 ));
             }
-            if check.kinds.is_subset(&acl) && check.kinds != acl {
-                proper_subset += 1;
-            }
         } else if acl != BTreeSet::from(["main".to_string()]) {
             violations.push(format!("{}: acl-only but ACL is {acl:?}", check.command));
         }
     }
     assert!(violations.is_empty(), "{violations:#?}");
-    // Reverse: the rule is not an identity (the granted-file commands exclude `main` on purpose).
-    assert!(proper_subset >= 2, "{proper_subset}");
+    // Reverse: the granted-file commands are granted to the workspace-content kind only; the main
+    // window's explicit list excludes them on purpose.
+    for command in ["open_granted_file", "save_granted_text_file"] {
+        assert_eq!(
+            acl_kinds(command, &manifest),
+            BTreeSet::from(["workspaceContent".to_string()]),
+            "{command}"
+        );
+    }
 }
 
 #[test]
@@ -4241,6 +4286,26 @@ fn tool_capabilities_contract_matches_adapter_descriptors() {
         .map(|value| value.as_str().expect("tool key"))
         .collect();
     assert_eq!(keys, tool_keys, "契约顺序必须等于 tool-keys.json");
+}
+
+#[test]
+fn tool_capability_fixtures_cover_exactly_the_registered_fixture_keys() {
+    const FIXTURE_CAPABILITIES_JSON: &str =
+        include_str!("../../../src/test/fixtures/tool-capabilities.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(FIXTURE_CAPABILITIES_JSON).expect("parse capability fixtures");
+    let fixture_keys: Vec<String> = manifest["items"]
+        .as_array()
+        .expect("capability fixture items")
+        .iter()
+        .map(|item| item["toolKey"].as_str().expect("toolKey").to_string())
+        .collect();
+    let registered = crate::models::tool::ToolKey::registered();
+    let registered_fixtures: Vec<String> = registered[crate::models::tool::ToolKey::ALL.len()..]
+        .iter()
+        .map(|key| key.as_str().to_string())
+        .collect();
+    assert_eq!(fixture_keys, registered_fixtures);
 }
 
 // ---- m6-070: contract manifest envelope, window kind roles, window chrome (contracts/*.json).
@@ -4421,7 +4486,7 @@ fn services_do_not_branch_on_window_kind_variants() {
 
     let mut offenders = Vec::new();
     for (path, production) in &files {
-        for pattern in ["WindowKind::Terminal", "WindowKind::WorkspaceContent"] {
+        for pattern in ["WindowKind::TERMINAL", "WindowKind::WORKSPACE_CONTENT"] {
             if production.contains(pattern) {
                 offenders.push(format!("{path} 含 {pattern}"));
             }
@@ -5268,9 +5333,10 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
         entry.contains("\"require\""),
         "callerCheck must be require: {entry}"
     );
-    assert!(
-        entry.contains("[\"main\"]"),
-        "only the main window may report: {entry}"
+    assert_eq!(
+        contract_kinds_granting("report_exit_impacts"),
+        BTreeSet::from(["main".to_string()]),
+        "only the main window may report"
     );
 
     // (2) capability: granted to the main window only
@@ -5321,7 +5387,10 @@ fn report_exit_impacts_is_a_registered_main_only_command_without_client_counts()
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("");
-    assert_eq!(first.trim(), "caller.require(&[WindowKind::Main])?;");
+    assert_eq!(
+        first.trim(),
+        "caller.require_command(\"report_exit_impacts\")?;"
+    );
     for forbidden in [".await", "with_connection", ".call(", "with_sync"] {
         assert!(
             !body.contains(forbidden),
@@ -5348,7 +5417,7 @@ fn confirm_app_exit_goes_through_confirm_with_impacts() {
         "confirm must check the reported impacts"
     );
     assert!(function.contains("Operation::Exit"));
-    assert!(function.contains("caller.require("));
+    assert!(function.contains("caller.require_command("));
     assert!(
         !function.contains("confirm_exit_with("),
         "the command must not bypass the impact check"

@@ -558,14 +558,15 @@ describe("content handoff vocabulary", () => {
     );
     // The fixed ANY_SEND pattern sees the single-line calls: 17 at m6-091.
     expect(sendCount).toBe(17);
-    // Prettier breaks 11 port calls after `ports`; a whitespace-tolerant count still sees all 28 sends.
+    // Prettier breaks 11 port calls after `ports`; a whitespace-tolerant count still sees all 23 sends
+    // (the six file return-failed sends share one reportReturnFailed helper, which holds the one send).
     const tolerant = production.reduce(
       (total, [, text]) =>
         total +
         (text.match(/(?:sendContentHandoff|\bports\s*\.emit)\(/g)?.length ?? 0),
       0,
     );
-    expect(tolerant).toBe(28);
+    expect(tolerant).toBe(23);
     const host = byEnd("components/PtyWorkspace.tsx");
     expect(host).not.toContain("sendContentHandoff(");
     expect(host).not.toContain("onContentHandoff(");

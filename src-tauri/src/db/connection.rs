@@ -4,6 +4,8 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
+use crate::models::tool::ToolKey;
+
 /// Ordered migrations. Each entry is (target user_version, sql).
 /// New migrations append to this list; the runner applies any whose
 /// version exceeds the database's current `user_version`.
@@ -95,7 +97,19 @@ pub fn ensure_integrity(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
-    apply_migrations_to(connection, latest_schema_version())
+    apply_migrations_to(connection, latest_schema_version())?;
+    sync_tool_registry(connection)
+}
+
+/// Registers every Rust tool key in `tools`. Runs after the migrations on every open, so adding
+/// a tool to `ToolKey` needs no migration file: the foreign keys that reference `tools(key)` are
+/// satisfied by this sync.
+fn sync_tool_registry(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("insert or ignore into tools (key) values (?1)")?;
+    for tool_key in ToolKey::registered() {
+        statement.execute([tool_key.as_str()])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -157,17 +171,12 @@ mod tests {
             .expect("query seeded tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read seeded tool keys");
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
-                .expect("parse ToolKey contract");
-        let mut contract_keys: Vec<String> = manifest["items"]
-            .as_array()
-            .expect("tool keys must be an items array")
+        let mut registered: Vec<String> = crate::models::tool::ToolKey::registered()
             .iter()
-            .map(|key| key.as_str().expect("tool key").to_string())
+            .map(|key| key.as_str().to_string())
             .collect();
-        contract_keys.sort();
-        assert_eq!(seeded_keys, contract_keys);
+        registered.sort();
+        assert_eq!(seeded_keys, registered);
     }
 
     #[test]
@@ -305,7 +314,7 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, 5);
+        assert_eq!(count, ToolKey::registered().len() as i64);
     }
 
     /// A representative 0.2.4 (schema 8) database: projects, an alias, history and a task.
@@ -477,7 +486,7 @@ mod tests {
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            ToolKey::registered().len() as i64
         );
         assert_eq!(
             connection
@@ -843,7 +852,7 @@ mod tests {
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
                 .expect("count tool identities"),
-            5
+            ToolKey::registered().len() as i64
         );
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
@@ -970,17 +979,12 @@ mod tests {
             .expect("query tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read tool keys");
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
-                .expect("parse ToolKey contract");
-        let mut contract: Vec<String> = manifest["items"]
-            .as_array()
-            .expect("tool keys must be an items array")
+        let mut registered: Vec<String> = crate::models::tool::ToolKey::registered()
             .iter()
-            .map(|key| key.as_str().expect("tool key").to_string())
+            .map(|key| key.as_str().to_string())
             .collect();
-        contract.sort();
-        assert_eq!(seeded, contract);
+        registered.sort();
+        assert_eq!(seeded, registered);
 
         // Reverse: an unknown key is refused by the foreign key, a known key is accepted.
         assert!(connection

@@ -25,7 +25,10 @@ import {
   type WorkspaceHost,
 } from "../test/host/workspaceHarness";
 import { listWorkspacePanes } from "../lib/ptyWorkspaceLayout";
-import { WORKSPACE_COMMAND_KEYS } from "../workspace/host/workspaceContexts";
+import {
+  WORKSPACE_COMMAND_KEYS,
+  WORKSPACE_STATE_QUERY_KEYS,
+} from "../workspace/host/workspaceContexts";
 
 let host: WorkspaceHost | undefined;
 
@@ -61,13 +64,15 @@ describe("workspace commands context", () => {
       (key) => !Object.is(after[key], before[key]),
     );
     expect(unstable).toEqual([]);
-    expect(WORKSPACE_COMMAND_KEYS).toHaveLength(34);
+    expect(WORKSPACE_COMMAND_KEYS).toHaveLength(29);
     // 函数值键必须恰好等于命令清单：漏列或误列都会在这里失败。
     const ctx = host.ctx() as unknown as Record<string, unknown>;
     const functionKeys = Object.keys(ctx)
       .filter((key) => typeof ctx[key] === "function")
       .sort();
-    expect(functionKeys).toEqual([...WORKSPACE_COMMAND_KEYS].sort());
+    expect(functionKeys).toEqual(
+      [...WORKSPACE_COMMAND_KEYS, ...WORKSPACE_STATE_QUERY_KEYS].sort(),
+    );
     // 反向：状态确实变化了（焦点、树与槽位都已改变）。
     expect(host.ctx().focusedPaneId).not.toBe(focusBefore);
     expect(host.ctx().slots).toHaveLength(1);

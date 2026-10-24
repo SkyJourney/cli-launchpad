@@ -4897,6 +4897,19 @@ A 层是 M6 标记整体验收通过的前提；B 层是 M7 任何实现工作�
   - 窗口类别：契约 JSON、capability 文件、外壳组件，不超过 3 处。
 - **演练方式**：在临时分支实际为 Markdown 预览新增内容 kind 的完整骨架，必须覆盖全部判别点：契约、Rust 校验与布局往返、TS 类型、注册、渲染、拖放、右键菜单、关闭、独立窗口入口、协议、capability、i18n；同时对另外三类扩展（Provider、主题、窗口类别）做同样的演练。
 - **记录**：每次演练记录实际改动文件数、判别点数、diff 统计，与基线和目标对比；达不到目标时，列出未能消除的触点和原因，并经产品确认后才能降低目标；演练结束后丢弃临时分支，记录写入追溯表。
+- **目标修正（2026-10-23，用户批准“修正目标，然后继续”）**：内容 kind 的“宿主文件改动 0 行”门禁保持不变，适用范围限定为宿主目录（`src/workspace/host`、`src/workspace/views`、`src/workspace/persistence`）：这些目录中不得出现按内容种类写死的分支、字面量或种类专用的 props。窗口协议层的种类相关代码不计入宿主，但必须逐处列明，允许的明确触点只有以下几处：
+  1. `src/workspace/windows/contentProtocolDescriptors.ts`：每种内容一项描述，新增一个种类计 1 处。
+  2. `src/workspace/windows/protocolHandlers.pty.ts`、`src/workspace/windows/protocolHandlers.file.ts`：种类相关的事件处理，新增一个种类计 1 处（不超过每个文件 1 段新增钩子）。
+  3. `src/workspace/windows/contentWindowTypes.ts`、`src/workspace/windows/windowLaunchParams.ts`、`src/workspace/windows/contentWindowOrchestrator.ts`、`src/workspace/windows/useDetachedContentWindow.ts`：负载类型、启动参数与编排中的种类分支，新增一个种类时每个文件计 1 处。
+  新增一个内容种类，窗口协议层的触点合计不超过 6 处；演练记录必须逐处列出文件与行号。本修正只针对内容 kind 一项，Provider、主题、窗口类别的目标不变（主题的译文上限按 2026-10-23 的裁定修正为 10 个 locale 文件）。
+  视图层的渲染分派也计入门禁（用户 2026-10-23 裁定）：`views` 目录中的种类分支与种类字面量同样必须清零，不再把渲染分派列为例外。通过内容适配器与契约派生的通用形式完成，不改动已登记的 Provider、主题与窗口类别口径。
+  演练的 Provider 项只能使用测试夹具（用户 2026-10-23 裁定，选项 1）：产品清单（AGENTS.md 的 claude、codex、agy、grok、hermes）不变，产品范围守卫区分“产品清单”与“测试清单”，演练的第六个 Provider 只存在于测试夹具中，不进入产品检测、安装或启动范围。
+  渲染器的翻译完整性（10 个 locale 文件）计入允许上限，与主题的口径一致（用户 2026-10-23 批准）：文本文件渲染器的允许上限为代码触点 6 处加上 10 个 locale 文件。Rust 扫描器的截断规则保持收紧，测试辅助代码移入测试模块，不恢复旧规则（用户 2026-10-23 裁定）。
+  Provider 的允许上限调为 7 处：每个 Provider 必须声明能力（contracts/tool-capabilities.json 的能力条目），该条目计为固有代码位置（用户 2026-10-24 批准，与 locale 同口径）。窗口类别的外壳挂载不再需要 App.tsx 的单独分支：路由由 contracts/window-kinds.json 的 route 字段驱动的注册表完成挂载（用户 2026-10-24 裁定）。
+  内容种类 markdown 一项的定义修订（用户 2026-10-23 确认）：markdown 不作为独立内容种类，而是文本文件的渲染器。规则：文本文件默认使用 Monaco 编辑器渲染；若文件类型注册了独立渲染器，优先使用独立渲染器；非文本文件且无独立渲染器时，显示“无法打开”提示，不打开内容。文档只有一个所有权（按文档身份登记），不存在 file 与 markdown 双重分离。M7 开工前，markdown 按 Monaco 默认的文档编辑器渲染打开。演练衡量项改为：渲染器注册表条目（1）、渲染器组件（1 个文件）、文件类型判定（1 处）、无渲染器时的提示（1 处）、i18n 文案；上限为 6 处，演练记录逐处列出文件与行号。协议层的通用化（G1–G3）不再是 B-G7 的前置条件。
+  测试夹具分派的位置（用户 2026-10-24 选择“写入门禁规则”）：产品构建的穷尽 `match` 中不得出现 `#[cfg(test)]` 分支。测试夹具工具键的分派统一为生产函数 `get()` 的通配分支 `other => fixture_adapter(other)`（并标注 `#[allow(unreachable_patterns)]`），`fixture_adapter` 的测试版与非测试版，以及 `mod fixtures` 声明，均置于文件末尾。原因：`contracts/mod.rs` 中的 `production()` 扫描守卫以首个 `#[cfg(test)]` 截断生产文本，分派位于生产函数内部时，其后的生产代码会脱离守卫。本规则适用于此后新增的所有测试夹具分派；存量文件按工作包收口。
+  第九次 B-G7 演练结果（2026-10-24，用户接受“前置改造按一次性成本处理”的建议）：增量口径通过。markdown 代码 3 加 locale 10；Provider 6（上限 7）；主题 12 个文件（上限 12）；drillwin 3（上限 3）；宿主目录 `git diff a90e198` 为 0 行。前置改造（窗口类别、Provider 与主题守卫由契约派生）已作为主线提交 `f44e187` 落地在 `m6-drill-batch1`，不计入四类增量。演练分支 `m6-drill-rerun9`（提交 `83e27e3`）只用于记录，不合并。证据：本地 Windows，`pnpm exec tsc --noEmit` 通过、`pnpm test` 188 文件 1495 项通过（演练分支）、`cargo test --locked` 898 通过、`cargo fmt --check` 与 `cargo check` 通过、`gen-contracts --check` 通过。证据等级 E3（本地宿主编排检查），尚未经三平台 CI 于当前提交运行，因此未达 E4；B-G7 行的收口仍须 CI 结果。`contracts/events.json` 的类别列表未改为派生：它是每个事件的策略数据（如 `app-preferences` 面向哪些窗口），不是可机械派生的清单，需要单独的产品决定。标签夹具断言放宽已接受（新类别不强制补标签夹具）。
+  B-G7 与前置改造的 CI 证据（2026-10-24）：主线分支 `m6-drill-batch1` 的 CI 运行 `40058336346` 在提交 `b755643` 上于 macOS、Ubuntu、Windows 三平台全部通过（`pnpm test`、`pnpm run build`、`cargo fmt --check`、`cargo check --locked`、`cargo test --locked`，以及 Rust 测试清单断言）。前置改造 `f44e187` 与清单修正 `b755643` 的证据等级为 E4；第九次演练的增量检查仍为 E3（本地 Windows 宿主编排检查，演练分支 `83e27e3` 不合并）。首次运行 `40057751003` 因清单中的测试名未同步而三平台失败，已在 `b755643` 修正。B-G7 行的收口还需确认本文档所在提交的 CI 结果；M6 其余门禁不因本条收口。
 
 #### 4.5.6 B 层残余项的 C 层重标（2026-10-22，用户裁定按风险分级）
 

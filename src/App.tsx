@@ -1,3 +1,4 @@
+import { fileContentRef } from "./lib/workspaceContentKey";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   lazy,
@@ -37,16 +38,6 @@ import {
   WindowResizeHandles,
   WindowTitlebar,
 } from "./components/WindowTitlebar";
-const StandalonePtyWindow = lazy(() =>
-  import("./components/StandalonePtyWindow").then((module) => ({
-    default: module.StandalonePtyWindow,
-  })),
-);
-const StandaloneWorkspaceFileWindow = lazy(() =>
-  import("./components/StandaloneWorkspaceFileWindow").then((module) => ({
-    default: module.StandaloneWorkspaceFileWindow,
-  })),
-);
 const ProjectDetailView = lazy(() =>
   import("./views/ProjectDetailView").then((module) => ({
     default: module.ProjectDetailView,
@@ -86,10 +77,7 @@ import { useDirectories } from "./hooks/queries";
 import { TOOLS } from "./lib/tools";
 import { windowRouteOf } from "./lib/windowKinds";
 import { RUST_EVENTS } from "./lib/eventNames";
-import {
-  readFileLaunchParams,
-  readPtyLaunchParams,
-} from "./workspace/windows/windowLaunchParams";
+import { windowShellFor } from "./components/windowShells/registry";
 
 /** m6-101：把 Rust 下发的退出影响转成对话框状态（数字只来自 Rust）。 */
 function requestFromView(view: ExitImpactsView): AppExitRequest {
@@ -102,35 +90,15 @@ function requestFromView(view: ExitImpactsView): AppExitRequest {
 }
 
 export function App() {
-  const { t } = useTranslation();
   useThemeSync();
   const route = windowRouteOf(getCurrentWindow().label);
   const search = new URLSearchParams(window.location.search);
-  const fileParams =
-    route === "workspace-content" ? readFileLaunchParams(search) : null;
-  if (fileParams) {
+  // 子窗口外壳由契约路由驱动（见 scripts/gen-contracts.mjs 与 components/windowShells）；参数不匹配时外壳为空。
+  const Shell = windowShellFor(route);
+  if (Shell) {
     return (
       <Suspense fallback={null}>
-        <StandaloneWorkspaceFileWindow
-          documentId={fileParams.documentId}
-          token={fileParams.windowToken}
-          sourcePaneId={fileParams.sourcePaneId}
-        />
-      </Suspense>
-    );
-  }
-  const ptyParams = route === "terminal" ? readPtyLaunchParams(search) : null;
-  if (ptyParams) {
-    return (
-      <Suspense fallback={null}>
-        <StandalonePtyWindow
-          sessionId={ptyParams.sessionId}
-          handoffToken={ptyParams.handoffToken}
-          instanceId={ptyParams.instanceId}
-          sourcePaneId={ptyParams.sourcePaneId}
-          toolKey={ptyParams.toolKey}
-          title={ptyParams.title ?? t("pty.detachedDefaultTitle")}
-        />
+        <Shell search={search} />
       </Suspense>
     );
   }
@@ -152,11 +120,11 @@ function AppContent() {
     saveFiles,
     fileDocuments,
     fileBuffers,
-    detachedFileIds,
+    isDetachedContent,
     hydrationStatus,
   } = usePtyWorkspace();
-  const exitStateRef = useRef({ fileDocuments, fileBuffers, detachedFileIds });
-  exitStateRef.current = { fileDocuments, fileBuffers, detachedFileIds };
+  const exitStateRef = useRef({ fileDocuments, fileBuffers, isDetachedContent });
+  exitStateRef.current = { fileDocuments, fileBuffers, isDetachedContent };
   const view = useAppStore((state) => state.view);
   const resolvedTheme = useResolvedTheme();
   const selectedDirectoryId = useAppStore((state) => state.selectedDirectoryId);
@@ -240,7 +208,11 @@ function AppContent() {
               ptyCount,
               documents: current.fileDocuments,
               buffers: current.fileBuffers,
-              uncertainDocumentIds: current.detachedFileIds,
+              uncertainDocumentIds: current.fileDocuments
+                .filter((document) =>
+                  current.isDetachedContent(fileContentRef(document.id)),
+                )
+                .map((document) => document.id),
             }),
             requestId,
             executionTaskCount,

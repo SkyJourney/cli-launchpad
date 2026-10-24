@@ -10,7 +10,6 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   presentWorkspaceContent,
-  tryGetWorkspaceContentAdapter,
   workspaceContentProjectContext,
   type WorkspaceContentPresentationContext,
 } from "../../components/WorkspaceContentView";
@@ -22,10 +21,13 @@ import {
 } from "../../lib/ptyWorkspaceLayout";
 import { reduceWorkspaceTree } from "../../lib/workspaceContentCommand";
 import { disposeWorkspaceContent } from "../../lib/workspaceContentClose";
+import {
+  ptyContentDisposer,
+  releaseFileDocuments as releaseFileDocumentsInDomain,
+} from "../domains/contentDisposers";
 import { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
 import {
   fileContentRef,
-  ptyContentKey,
   ptyContentRef,
 } from "../../lib/workspaceContentKey";
 import { LISTENER_REGISTRATION_RETRY_DELAYS_MS } from "../../lib/workspaceContentListenerSetup";
@@ -41,11 +43,9 @@ import { ProjectPathSemanticsRegistry } from "../../lib/projectPathSemantics";
 import { formatAppError } from "../../lib/appErrors";
 import { createActiveFileLoader } from "./activeFileLoader";
 import { checkProjectFilesSameIdentity } from "../../lib/tauri";
-import { createFileContentDomain } from "../domains/fileContentDomain";
 import { createFileDocumentsDomain } from "../domains/fileDocumentsDomain";
-import { createPtyContentDomain } from "../domains/ptyContentDomain";
+import { createWorkspaceDomains } from "../domains/workspaceDomains";
 import { createPtySlotsDomain } from "../domains/ptySlotsDomain";
-import { createWorkspaceDomainTable } from "../domains/workspaceDomainTable";
 import {
   createWorkspacePersistence,
   latestPersistenceDeps,
@@ -58,12 +58,11 @@ import {
   latestContentWindowDeps,
   type ContentWindowDeps,
 } from "../windows/contentWindowOrchestrator";
-import { createFileProtocolHandlers } from "../windows/protocolHandlers.file";
-import { createPtyProtocolHandlers } from "../windows/protocolHandlers.pty";
 import {
-  createContentWindowProtocol,
-  useContentWindowProtocol,
-} from "../windows/useContentWindowProtocol";
+  createDetachedContentProtocol,
+  forgetDetachedHandle,
+} from "../windows/contentProtocolDescriptors";
+import { useContentWindowProtocol } from "../windows/useContentWindowProtocol";
 import { useCloseConfirmation } from "./useCloseConfirmation";
 import { useCoordinatorProjection } from "./useCoordinatorProjection";
 import type { HostResetReason, HostRuntimeSteps } from "./resetHostRuntime";
@@ -177,23 +176,7 @@ export function useWorkspaceRuntime({
   const activeView = useAppStore((state) => state.view);
 
   const releaseFileDocuments = useCallback((documentIds: readonly string[]) => {
-    if (documentIds.length === 0) return;
-    const dispose = tryGetWorkspaceContentAdapter("file")?.lifecycle?.dispose;
-    if (!dispose) return;
-    for (const documentId of documentIds) {
-      void (async () => {
-        try {
-          await dispose({
-            content: fileContentRef(documentId),
-            owner: { kind: "window", windowLabel: MAIN_WINDOW_LABEL },
-            generation: 0,
-            reason: "ownerEnded",
-          });
-        } catch (error) {
-          console.error("Workspace file document release failed", error);
-        }
-      })();
-    }
+    releaseFileDocumentsInDomain(documentIds);
   }, []);
   releaseFileDocumentsRef.current = releaseFileDocuments;
 
@@ -418,10 +401,10 @@ export function useWorkspaceRuntime({
           coordinator: contentCoordinatorRef.current,
           content,
           reason: "ownerEnded",
-          dispose: tryGetWorkspaceContentAdapter("pty")?.lifecycle?.dispose,
+          dispose: ptyContentDisposer(),
         });
       }
-      orchestrator.state.handles.pty.delete(ptyContentKey(instanceId));
+      forgetDetachedHandle(orchestrator.state, content);
       // 槽位移除与树关闭在同一次提交中发布。
       const liveTree = store.getLive().tree;
       store.commit((live) => {
@@ -446,25 +429,14 @@ export function useWorkspaceRuntime({
   // 领域操作注入表：宿主只通过 domainTable[kind] 访问内容类型的关闭行为（file 在前、pty 在后，即关闭顺序）。
   const domainTable = useMemo(
     () =>
-      createWorkspaceDomainTable({
-        file: createFileContentDomain({
-          store,
-          fileDomain,
-          isWindowOwned: (ref) =>
-            isWindowOwned(contentCoordinatorRef.current.get(ref)),
-          isHandoffActive: (ref) =>
-            isHandoffActive(contentCoordinatorRef.current.get(ref)),
-        }),
-        pty: createPtyContentDomain({
-          store,
-          terminalRefs: ptyDomain.terminalRefs,
-          isWindowOwned: (ref) =>
-            isWindowOwned(contentCoordinatorRef.current.get(ref)),
-          titleOf: (ref) =>
-            presentWorkspaceContent(ref, getWorkspacePresentationContext())
-              .title,
-          removeSlot: (instanceId, options) => removeSlot(instanceId, options),
-        }),
+      createWorkspaceDomains({
+        store,
+        fileDomain,
+        terminalRefs: ptyDomain.terminalRefs,
+        isWindowOwned: (ref) => isWindowOwned(contentCoordinatorRef.current.get(ref)),
+        isHandoffActive: (ref) => isHandoffActive(contentCoordinatorRef.current.get(ref)),
+        titleOf: (ref) => presentWorkspaceContent(ref, getWorkspacePresentationContext()).title,
+        removeSlot: (instanceId, options) => removeSlot(instanceId, options),
       }),
     [store, fileDomain, ptyDomain, removeSlot, getWorkspacePresentationContext],
   );
@@ -493,13 +465,9 @@ export function useWorkspaceRuntime({
 
   // 独立窗口协议监听：三组监听由 useContentWindowProtocol 统一注册一次（依赖只有稳定的 protocol）。
   const [protocol] = useState(() =>
-    createContentWindowProtocol({
-      pty: createPtyProtocolHandlers(orchestrator),
-      file: createFileProtocolHandlers(orchestrator),
-      shell: {
-        retryDelaysMs: listenerRetryDelaysRef.current,
-        onFailed: reportListenerSetupFailure,
-      },
+    createDetachedContentProtocol(orchestrator, {
+      retryDelaysMs: listenerRetryDelaysRef.current,
+      onFailed: reportListenerSetupFailure,
     }),
   );
   useContentWindowProtocol(protocol);

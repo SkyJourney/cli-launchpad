@@ -40,7 +40,7 @@ describe("Tauri DOM test environment", () => {
     await listen("contract-test-event", onEvent);
 
     render(
-      <button onClick={() => void invoke("contract_test_command", { id: 7 })}>
+      <button onClick={() => void invoke("get_close_behavior", { id: 7 })}>
         Run command
       </button>,
     );
@@ -48,7 +48,7 @@ describe("Tauri DOM test environment", () => {
 
     expect(tauriMock.state.invokeCalls).toEqual([
       {
-        command: "contract_test_command",
+        command: "get_close_behavior",
         args: { id: 7 },
         windowLabel: "main",
       },

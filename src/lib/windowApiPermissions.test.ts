@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import windowKinds from "../../contracts/window-kinds.json";
 import defaultCapability from "../../src-tauri/capabilities/default.json";
 import terminalCapability from "../../src-tauri/capabilities/terminal-window.json";
-import workspaceContentCapability from "../../src-tauri/capabilities/workspace-content-window.json";
 import { projectSources } from "../test/sourceClosure";
 import { CORE_DEFAULT_IMPLIES } from "../test/tauriMock";
 import {
@@ -25,11 +24,16 @@ const MAIN_ONLY_USES = [
   },
 ] as const;
 
-const CAPABILITIES: Record<WindowKindId, Capability> = {
-  main: defaultCapability,
-  terminal: terminalCapability,
-  workspaceContent: workspaceContentCapability,
-};
+const capabilityFiles = import.meta.glob("../../src-tauri/capabilities/*.json", {
+  eager: true,
+  import: "default",
+}) as Record<string, Capability>;
+const CAPABILITIES = Object.fromEntries(
+  windowKinds.items.map((kind) => [
+    kind.id,
+    capabilityFiles[`../../src-tauri/capabilities/${kind.capability}.json`],
+  ]),
+) as Record<WindowKindId, Capability>;
 
 const apiPermissionRequirements: Array<{
   pattern: RegExp;

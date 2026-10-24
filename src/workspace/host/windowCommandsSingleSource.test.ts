@@ -29,6 +29,8 @@ const countOf = (text: string, needle: string): number =>
 const EXECUTOR = "workspace/host/workspaceCommandExecutor.ts";
 const HANDLERS_PTY = "workspace/windows/protocolHandlers.pty.ts";
 const HANDLERS_FILE = "workspace/windows/protocolHandlers.file.ts";
+// 尾部握手的共享实现（pendingHandshake.ts）也是尾部：命令在那里构造，计入两侧的扫描。
+const HANDSHAKE = "workspace/windows/pendingHandshake.ts";
 const ORCHESTRATOR = "workspace/windows/contentWindowOrchestrator.ts";
 const PERSISTENCE = "workspace/persistence/workspacePersistence.ts";
 
@@ -62,8 +64,9 @@ describe("window commands single source", () => {
   });
 
   it("window handlers and persistence only construct commands for the tails", () => {
-    const pty = sourceOf(HANDLERS_PTY);
-    const file = sourceOf(HANDLERS_FILE);
+    const handshake = sourceOf(HANDSHAKE);
+    const pty = sourceOf(HANDLERS_PTY) + handshake;
+    const file = sourceOf(HANDLERS_FILE) + handshake;
     const orchestrator = sourceOf(ORCHESTRATOR);
     const persistence = sourceOf(PERSISTENCE);
     for (const type of ["completeDetach", "completeReturn", "reclaim"]) {

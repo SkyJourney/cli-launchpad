@@ -82,7 +82,7 @@ export function PtyWorkspaceProvider(props: PtyWorkspaceProviderProps) {
               onSessionChange={commands.recordSession}
               onPortalTarget={runtime.registerPortalTarget}
               onFocusPane={commands.focusPane}
-              detachedInstanceIds={runtime.projection.detachedInstanceIds}
+              isDetachedContent={runtime.projection.isDetachedContent}
             />
           )}
         </PtyWorkspaceContext.Provider>

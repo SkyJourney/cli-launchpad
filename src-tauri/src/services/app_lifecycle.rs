@@ -307,7 +307,7 @@ pub fn decide_close_request(
     stored: CloseBehavior,
     tray: &TrayAvailability,
 ) -> MainCloseDecision {
-    if window.kind() != WindowKind::Main {
+    if window.kind() != WindowKind::main() {
         return MainCloseDecision::NotMainWindow;
     }
     match effective_close_behavior(stored, tray) {

@@ -2,15 +2,8 @@ import clsx from "clsx";
 import { ChevronDown, Layers, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  encodeWorkspaceContentDrag,
-  WORKSPACE_CONTENT_DRAG_TYPE,
-} from "../../lib/workspaceContentDrag";
 import { type WorkspaceFileDocument, type PtySession } from "../../lib/tauri";
-import {
-  fileContentKey,
-  workspaceContentKey,
-} from "../../lib/workspaceContentKey";
+import { workspaceContentKey } from "../../lib/workspaceContentKey";
 import { AnchoredPopover } from "../../components/AnchoredPopover";
 import {
   presentWorkspaceContent,
@@ -19,9 +12,8 @@ import {
 } from "../../components/WorkspaceContentView";
 import type { WorkspaceFileBuffer } from "../../lib/workspaceFileBuffer";
 import { type PtyWorkspaceSlot } from "../../components/WorkspacePtySessionRegistry";
-import { beginWorkspaceSessionDrag } from "./viewHelpers";
+import { beginWorkspaceContentDrag } from "./viewHelpers";
 import type { ResolvedPaneContent } from "./WorkspacePaneView";
-import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 
 export function PaneContentStack({
   side,
@@ -146,7 +138,6 @@ export function PaneContentStack({
             }}
           >
             {entries.map((entry, index) => {
-              const slot = "slot" in entry ? entry.slot : undefined;
               const presentation = presentWorkspaceContent(
                 entry.content,
                 presentationContext,
@@ -194,26 +185,12 @@ export function PaneContentStack({
                     }
                     onFocus={() => setFocusedIndex(index)}
                     onDragStart={(event) => {
-                      if (isClosing) return;
-                      if (slot) {
-                        beginWorkspaceSessionDrag(
-                          event,
-                          sourcePaneId,
-                          slot.instanceId,
-                        );
-                      } else if ("file" in entry) {
-                        const payload = encodeWorkspaceContentDrag({
-                          key: fileContentKey(entry.file.id),
-                          sourcePaneId,
-                          sourceWindowLabel: MAIN_WINDOW_LABEL,
-                        });
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData(
-                          WORKSPACE_CONTENT_DRAG_TYPE,
-                          payload,
-                        );
-                        event.dataTransfer.setData("text/plain", payload);
-                      }
+                      if (isClosing || entry.content.kind === "unknown") return;
+                      beginWorkspaceContentDrag(
+                        event,
+                        sourcePaneId,
+                        workspaceContentKey(entry.content),
+                      );
                     }}
                     onDragEnd={() => setOpen(false)}
                     onClick={() => {

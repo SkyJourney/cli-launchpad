@@ -1,22 +1,13 @@
-import { antigravityAdapter } from "./cliAdapters/antigravity";
-import { claudeAdapter } from "./cliAdapters/claude";
-import { codexAdapter } from "./cliAdapters/codex";
-import { grokAdapter } from "./cliAdapters/grok";
-import { hermesAdapter } from "./cliAdapters/hermes";
-import type { CliAdapter } from "./cliAdapters/types";
 import { createRef, type RefObject } from "react";
+import { CLI_ADAPTERS_BY_KEY } from "../generated/cliAdapters";
+import type { CliAdapter } from "./cliAdapters/types";
 import type { LatestVersion, ToolKey } from "./tauri";
 
 export type ToolMeta = CliAdapter;
 
-/// Display order across the app: Claude, Codex, Antigravity, Grok Build, Hermes Agent.
-const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = {
-  claude: claudeAdapter,
-  codex: codexAdapter,
-  antigravity: antigravityAdapter,
-  grok: grokAdapter,
-  hermes: hermesAdapter,
-};
+// 适配器按契约顺序排列（Claude、Codex、Antigravity、Grok Build、Hermes Agent）；
+// 清单由生成器从契约与适配器模块得到，缺失或多余的适配器在编译期即失败。
+const CLI_ADAPTERS: Record<ToolKey, ToolMeta> = CLI_ADAPTERS_BY_KEY;
 
 export const TOOLS: ToolMeta[] = Object.values(CLI_ADAPTERS);
 

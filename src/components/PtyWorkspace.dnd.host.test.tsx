@@ -140,7 +140,7 @@ describe("pane drag and drop", () => {
     const { paneA, paneB, panes } = await setup();
     const { slot } = await launchPty(host!);
     act(() => {
-      host!.ctx().moveSession(paneB.id, paneA.id, slot.instanceId);
+      host!.ctx().moveContent(paneB.id, paneA.id, { kind: "pty", slotId: slot.instanceId });
     });
     await flush();
     // 前置条件：拖动之前 PTY 必须已经在 paneA、不在 paneB；否则移动是空操作，下面的断言会平凡地通过。

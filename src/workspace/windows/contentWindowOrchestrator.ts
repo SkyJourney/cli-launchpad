@@ -10,6 +10,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { createWindowLabel, MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
 import { sendContentHandoff } from "../../lib/workspaceContentWindowProtocol";
+import { formatAppError } from "../../lib/appErrors";
 import {
   type WorkspaceNode,
   listWorkspacePanes,
@@ -41,9 +42,9 @@ import {
   isWindowOwned,
   ownerWindowOf,
 } from "../../lib/workspaceOwnershipProjection";
-import { formatAppError } from "../../lib/appErrors";
 
 import type { WorkspaceContentCoordinator } from "../../lib/workspaceContentCoordinator";
+import type { ManagedContentRef } from "../../lib/workspaceContentKey";
 import {
   fileContentKey,
   fileContentRef,
@@ -141,8 +142,7 @@ export interface ContentWindowOrchestrator {
   detachFile(documentId: string): Promise<void>;
   detachSession(instanceId: string): Promise<void>;
   reconcileTimedOutDetach(pending: PendingDetachedWindow): Promise<void>;
-  isManagedDetachedDrag(instanceId: string, windowLabel: string): boolean;
-  isManagedDetachedFileDrag(documentId: string, windowLabel: string): boolean;
+  isManagedDetachedContent(content: ManagedContentRef, windowLabel: string): boolean;
   rollbackPending(): void;
   forgetHandles(): void;
   disposeAll(): void;
@@ -207,19 +207,12 @@ export function createContentWindowOrchestrator(
     ...deps.ports,
   };
 
-  const isManagedDetachedDrag = (instanceId: string, windowLabel: string) => {
-    const ownership = deps.getCoordinator().get(ptyContentRef(instanceId));
-    return (
-      ownership?.phase === "detached" &&
-      ownership.owner.kind === "window" &&
-      ownership.owner.windowLabel === windowLabel
-    );
-  };
-  const isManagedDetachedFileDrag = (
-    documentId: string,
+  // 拖入时判断内容是否仍由该子窗口持有（协调器按内容引用查询，不分种类）。
+  const isManagedDetachedContent = (
+    content: ManagedContentRef,
     windowLabel: string,
   ) => {
-    const ownership = deps.getCoordinator().get(fileContentRef(documentId));
+    const ownership = deps.getCoordinator().get(content);
     return (
       ownership?.phase === "detached" &&
       ownership.owner.kind === "window" &&
@@ -722,8 +715,7 @@ export function createContentWindowOrchestrator(
     detachFile,
     detachSession,
     reconcileTimedOutDetach,
-    isManagedDetachedDrag,
-    isManagedDetachedFileDrag,
+    isManagedDetachedContent,
     rollbackPending,
     forgetHandles,
     disposeAll,

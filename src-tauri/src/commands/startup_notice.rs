@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::models::window_kind::{CallerWindow, WindowKind};
+use crate::models::window_kind::CallerWindow;
 use crate::services::startup_notices::{StartupNotice, StartupNotices};
 use crate::AppError;
 
@@ -13,6 +13,6 @@ pub fn take_startup_notices(
     caller: CallerWindow,
     notices: State<'_, StartupNotices>,
 ) -> Result<Vec<StartupNotice>, AppError> {
-    caller.require(&[WindowKind::Main])?;
+    caller.require_command("take_startup_notices")?;
     Ok(notices.take())
 }

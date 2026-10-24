@@ -197,7 +197,7 @@ describe("PTY return to the workspace", () => {
       ),
     );
     expect(panesWithSlot).toHaveLength(1);
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(tauriMock.state.windowActions).toContainEqual(
       expect.objectContaining({ windowLabel, action: "destroy" }),
     );
@@ -233,7 +233,7 @@ describe("PTY return to the workspace", () => {
     expect(emittedTypesTo(windowLabel)).toContain("pty-return-failed");
     expect(terminal.cancelHandoff).toHaveBeenCalledTimes(1);
     expect(terminal.cancelHandoff).toHaveBeenCalledWith("rust-return-1");
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(coordinator.get(content)?.phase).toBe("detached");
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：窗口还在、没有宣告返回完成。
@@ -284,7 +284,7 @@ describe("PTY return to the workspace", () => {
       panesBefore,
     );
     expect(panesContaining(host, content)).toBe(1);
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(coordinator.get(content)?.phase).toBe("attached");
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：没有向窗口发出返回失败，也没有记录错误。
@@ -453,7 +453,7 @@ describe("file return to the workspace", () => {
           (item) => item.kind === "file" && item.documentId === doc.id,
         ),
     ).toBe(false);
-    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host!.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     expect(emittedTypesTo(detached.windowLabel)).toContain(
       "workspace-file-window-return-complete",
     );
@@ -510,7 +510,7 @@ describe("file return to the workspace", () => {
     expect(emittedTypesTo(detached.windowLabel)).toContain(
       "workspace-file-window-return-failed",
     );
-    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host!.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(coordinator.get(content)?.phase).toBe("detached");
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
     // 反向断言：没有宣告完成、没有撤销授权、没有销毁窗口。
@@ -547,7 +547,7 @@ describe("file return to the workspace", () => {
     expect(emittedTypesTo(detached.windowLabel)).toContain(
       "workspace-file-window-return-failed",
     );
-    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host!.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
 
     // 同一份载荷（同一个 token）再发一次：这次走真实实现。
     await emitToMain("workspace-file-window-return-requested", returnPayload);
@@ -564,7 +564,7 @@ describe("file return to the workspace", () => {
           (item) => item.kind === "file" && item.documentId === doc.id,
         ),
     ).toBe(false);
-    expect(host!.ctx().detachedFileIds.has(doc.id)).toBe(false);
+    expect(host!.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(false);
     const types = emittedTypesTo(detached.windowLabel);
     expect(
       types.filter((type) => type === "workspace-file-window-return-complete"),
@@ -661,7 +661,7 @@ describe("named layouts while a file is detached to a window", () => {
     await expect(applied).resolves.toBeUndefined();
     // 预设只替换树；窗口占有的文件仍属于窗口，缓冲与文档都不能丢。
     expect(panesContaining(host, content)).toBe(0);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(host.ctx().fileDocuments.map((item) => item.id)).toContain(doc.id);
     expect(host.ctx().fileBuffers[doc.id]).toEqual(bufferBefore);
     expect(coordinator.get(content)?.phase).toBe("detached");

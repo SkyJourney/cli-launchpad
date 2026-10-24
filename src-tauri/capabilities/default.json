@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "主窗口默认能力：核心 API 与应用命令。",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",
@@ -73,8 +75,6 @@
     "allow-open-project-file",
     "allow-save-project-text-file",
     "allow-grant-content-window-file",
-    "allow-open-granted-file",
-    "allow-save-granted-text-file",
     "allow-revoke-content-window-file",
     "allow-list-project-file-cas-residues",
     "allow-remove-project-file-cas-residue",

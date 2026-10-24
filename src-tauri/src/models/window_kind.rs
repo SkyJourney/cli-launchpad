@@ -4,12 +4,49 @@ use serde::{Deserialize, Serialize};
 
 const WINDOW_KINDS_JSON: &str = include_str!("../../../contracts/window-kinds.json");
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
-#[serde(rename_all = "camelCase")]
-pub enum WindowKind {
-    Main,
-    Terminal,
-    WorkspaceContent,
+/// A window kind, identified by its id in `contracts/window-kinds.json`.
+///
+/// The contract is the single source of truth: a kind is valid exactly when the contract lists it,
+/// so adding a kind does not require a Rust enum variant. The three kinds the Rust side names
+/// directly are constants; any other kind is obtained with [`WindowKind::from_id`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct WindowKind(&'static str);
+
+impl WindowKind {
+    #[cfg(test)]
+    pub const TERMINAL: WindowKind = WindowKind("terminal");
+    pub const WORKSPACE_CONTENT: WindowKind = WindowKind("workspaceContent");
+
+    /// The main application window: the one kind the contract marks `primary`.
+    pub fn main() -> WindowKind {
+        definitions()
+            .iter()
+            .find(|definition| definition.primary)
+            .map(|definition| WindowKind(definition.id.as_str()))
+            .expect("window-kinds.json must declare the primary window kind")
+    }
+
+    /// The kind the contract lists under `id`, or `None` when the contract has no such kind.
+    pub fn from_id(id: &str) -> Option<WindowKind> {
+        definitions()
+            .iter()
+            .find(|definition| definition.id == id)
+            .map(|definition| WindowKind(definition.id.as_str()))
+    }
+}
+
+impl Serialize for WindowKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for WindowKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        WindowKind::from_id(&id)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown window kind `{id}`")))
+    }
 }
 
 #[derive(Deserialize)]
@@ -19,7 +56,7 @@ struct WindowKindsManifest {
 
 #[derive(Deserialize)]
 struct WindowKindDefinition {
-    id: WindowKind,
+    id: String,
     label: Option<String>,
     #[serde(rename = "labelPrefix")]
     label_prefix: Option<String>,
@@ -33,13 +70,29 @@ struct WindowKindDefinition {
     #[cfg(test)]
     #[serde(rename = "contentKinds")]
     content_kinds: Vec<String>,
+    /// `"all"` for the main window, otherwise the list of app commands the window may invoke.
+    #[serde(rename = "appCommands")]
+    app_commands: serde_json::Value,
+}
+
+impl WindowKindDefinition {
+    /// Whether the contract grants this window kind the named app command.
+    fn grants_command(&self, command: &str) -> bool {
+        match &self.app_commands {
+            serde_json::Value::String(grant) => grant == "all",
+            serde_json::Value::Array(commands) => {
+                commands.iter().any(|name| name.as_str() == Some(command))
+            }
+            _ => false,
+        }
+    }
 }
 
 impl WindowKind {
     fn definition(self) -> &'static WindowKindDefinition {
         definitions()
             .iter()
-            .find(|definition| definition.id == self)
+            .find(|definition| definition.id == self.0)
             .expect("window kind must be registered")
     }
 
@@ -81,7 +134,7 @@ fn definitions() -> &'static [WindowKindDefinition] {
 pub fn window_kind_of(label: &str) -> Option<WindowKind> {
     definitions().iter().find_map(|definition| {
         if definition.label.as_deref() == Some(label) {
-            return Some(definition.id);
+            return Some(WindowKind(definition.id.as_str()));
         }
         let prefix = definition.label_prefix.as_deref()?;
         let suffix = label.strip_prefix(prefix)?;
@@ -94,7 +147,7 @@ pub fn window_kind_of(label: &str) -> Option<WindowKind> {
             && canonical.eq_ignore_ascii_case(suffix)
             && (1..=8).contains(&version)
             && variant == 0b10)
-            .then_some(definition.id)
+            .then_some(WindowKind(definition.id.as_str()))
     })
 }
 
@@ -103,7 +156,7 @@ pub fn window_kind_of(label: &str) -> Option<WindowKind> {
 pub fn create_window_label(kind: WindowKind) -> String {
     let definition = definitions()
         .iter()
-        .find(|definition| definition.id == kind)
+        .find(|definition| definition.id == kind.0)
         .expect("window kind must be registered");
     match (&definition.label, &definition.label_prefix) {
         (Some(label), None) => label.clone(),
@@ -128,7 +181,7 @@ use crate::AppError;
 pub fn main_window_label() -> &'static str {
     definitions()
         .iter()
-        .find(|definition| definition.id == WindowKind::Main)
+        .find(|definition| definition.primary)
         .and_then(|definition| definition.label.as_deref())
         .expect("window-kinds.json must declare the main window label")
 }
@@ -155,7 +208,7 @@ impl WindowLabel {
     pub fn main() -> Self {
         Self {
             raw: main_window_label().to_string(),
-            kind: WindowKind::Main,
+            kind: WindowKind::main(),
         }
     }
 
@@ -168,7 +221,7 @@ impl WindowLabel {
     }
 
     pub fn is_main(&self) -> bool {
-        self.kind == WindowKind::Main
+        self.kind == WindowKind::main()
     }
 }
 
@@ -196,8 +249,22 @@ impl CallerWindow {
         &self.0
     }
 
-    pub fn require(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
+    /// Whether the caller's kind is one of `allowed`. Message routing uses this with the sender
+    /// kinds that `contracts/window-messages.json` declares for each message type.
+    pub fn require_kind(&self, allowed: &[WindowKind]) -> Result<(), AppError> {
         if allowed.contains(&self.0.kind()) {
+            Ok(())
+        } else {
+            Err(AppError::coded(
+                ErrorCode::WindowNotAllowed,
+                "当前窗口不允许执行该操作",
+            ))
+        }
+    }
+
+    /// Whether the calling window's contract entry grants `command`.
+    pub fn require_command(&self, command: &str) -> Result<(), AppError> {
+        if self.0.kind().definition().grants_command(command) {
             Ok(())
         } else {
             Err(AppError::coded(
@@ -221,12 +288,37 @@ impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for CallerWindow {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_window_label, is_detached_window_label, test_label, window_kind_of, WindowKind,
-        WindowLabel,
+        create_window_label, is_detached_window_label, test_label, window_kind_of, CallerWindow,
+        WindowKind, WindowLabel,
     };
 
     const WINDOW_LABEL_FIXTURES_JSON: &str =
         include_str!("../../../contracts/window-label-fixtures.json");
+
+    #[test]
+    fn contract_grants_app_commands_per_window_kind() {
+        // 主窗口为 "all"；终端与内容窗口只拿到契约声明的命令。
+        assert!(WindowKind::main()
+            .definition()
+            .grants_command("terminate_pty_session"));
+        assert!(WindowKind::TERMINAL
+            .definition()
+            .grants_command("write_pty_session"));
+        assert!(WindowKind::WORKSPACE_CONTENT
+            .definition()
+            .grants_command("send_window_message"));
+        assert!(!WindowKind::WORKSPACE_CONTENT
+            .definition()
+            .grants_command("write_pty_session"));
+        assert!(!WindowKind::TERMINAL
+            .definition()
+            .grants_command("no_such_command"));
+
+        let main = CallerWindow::from_label("main").expect("main label");
+        assert!(main.require_command("terminate_pty_session").is_ok());
+        assert!(main.require_command("no_such_command").is_err());
+        assert!(main.require_command("open_granted_file").is_err());
+    }
 
     #[test]
     fn role_queries_match_the_contract_roles() {
@@ -234,7 +326,12 @@ mod tests {
             serde_json::from_str(include_str!("../../../contracts/window-kinds.json"))
                 .expect("parse window kinds");
         let items = manifest["items"].as_array().expect("items");
-        assert_eq!(items.len(), 3);
+        // 类别数量由契约决定；这里只校验契约中恰好一个主窗口。
+        assert!(!items.is_empty());
+        assert_eq!(
+            items.iter().filter(|item| item["primary"] == true).count(),
+            1
+        );
         for item in items {
             let kind: WindowKind =
                 serde_json::from_value(item["id"].clone()).expect("window kind id");
@@ -257,13 +354,13 @@ mod tests {
             );
         }
         // 固定语义：只有 main 是 primary；只有 terminal 拥有 PTY；只有 workspaceContent 持有文件授权。
-        assert!(WindowKind::Main.is_primary());
-        assert!(!WindowKind::Terminal.is_primary() && !WindowKind::WorkspaceContent.is_primary());
-        assert!(WindowKind::Terminal.owns_pty() && !WindowKind::Main.owns_pty());
-        assert!(WindowKind::WorkspaceContent.has_file_grant());
-        assert!(!WindowKind::Terminal.has_file_grant() && !WindowKind::Main.has_file_grant());
-        assert!(WindowKind::Main.is_pty_host() && WindowKind::Terminal.is_pty_host());
-        assert!(!WindowKind::WorkspaceContent.is_pty_host());
+        assert!(WindowKind::main().is_primary());
+        assert!(!WindowKind::TERMINAL.is_primary() && !WindowKind::WORKSPACE_CONTENT.is_primary());
+        assert!(WindowKind::TERMINAL.owns_pty() && !WindowKind::main().owns_pty());
+        assert!(WindowKind::WORKSPACE_CONTENT.has_file_grant());
+        assert!(!WindowKind::TERMINAL.has_file_grant() && !WindowKind::main().has_file_grant());
+        assert!(WindowKind::main().is_pty_host() && WindowKind::TERMINAL.is_pty_host());
+        assert!(!WindowKind::WORKSPACE_CONTENT.is_pty_host());
     }
 
     #[test]
@@ -288,9 +385,9 @@ mod tests {
             .expect("accept must be an object");
         assert_eq!(accept.len(), 3, "accept must cover exactly three kinds");
         for (key, kind) in [
-            ("main", WindowKind::Main),
-            ("terminal", WindowKind::Terminal),
-            ("workspaceContent", WindowKind::WorkspaceContent),
+            ("main", WindowKind::main()),
+            ("terminal", WindowKind::TERMINAL),
+            ("workspaceContent", WindowKind::WORKSPACE_CONTENT),
         ] {
             let labels = accept[key]
                 .as_array()
@@ -316,14 +413,14 @@ mod tests {
 
     #[test]
     fn resolves_registered_window_labels() {
-        assert_eq!(window_kind_of("main"), Some(WindowKind::Main));
+        assert_eq!(window_kind_of("main"), Some(WindowKind::main()));
         assert_eq!(
             window_kind_of("terminal-8e783338-f464-4b10-b15e-b534748c6241"),
-            Some(WindowKind::Terminal)
+            Some(WindowKind::TERMINAL)
         );
         assert_eq!(
             window_kind_of("workspace-content-8e783338-f464-4b10-b15e-b534748c6241"),
-            Some(WindowKind::WorkspaceContent)
+            Some(WindowKind::WORKSPACE_CONTENT)
         );
         assert_eq!(window_kind_of("terminal-invalid!"), None);
         assert_eq!(
@@ -339,11 +436,11 @@ mod tests {
 
     #[test]
     fn creates_detached_labels_from_the_registered_prefix() {
-        let terminal = create_window_label(WindowKind::Terminal);
-        let file = create_window_label(WindowKind::WorkspaceContent);
+        let terminal = create_window_label(WindowKind::TERMINAL);
+        let file = create_window_label(WindowKind::WORKSPACE_CONTENT);
 
-        assert_eq!(window_kind_of(&terminal), Some(WindowKind::Terminal));
-        assert_eq!(window_kind_of(&file), Some(WindowKind::WorkspaceContent));
+        assert_eq!(window_kind_of(&terminal), Some(WindowKind::TERMINAL));
+        assert_eq!(window_kind_of(&file), Some(WindowKind::WORKSPACE_CONTENT));
         assert!(!is_detached_window_label("main"));
         assert!(is_detached_window_label(&terminal));
         assert!(is_detached_window_label(&file));
@@ -355,9 +452,9 @@ mod tests {
         let fixtures: serde_json::Value =
             serde_json::from_str(WINDOW_LABEL_FIXTURES_JSON).expect("parse label fixtures");
         for (key, kind) in [
-            ("main", WindowKind::Main),
-            ("terminal", WindowKind::Terminal),
-            ("workspaceContent", WindowKind::WorkspaceContent),
+            ("main", WindowKind::main()),
+            ("terminal", WindowKind::TERMINAL),
+            ("workspaceContent", WindowKind::WORKSPACE_CONTENT),
         ] {
             for label in fixtures["accept"][key].as_array().expect("accept arrays") {
                 let label = label.as_str().expect("label string");
@@ -386,10 +483,10 @@ mod tests {
         use super::WindowLabel;
         let main = WindowLabel::parse("main").unwrap();
         assert!(main.is_main());
-        assert_eq!(main.kind(), WindowKind::Main);
+        assert_eq!(main.kind(), WindowKind::main());
         let terminal = WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap();
         assert!(!terminal.is_main());
-        assert_eq!(terminal.kind(), WindowKind::Terminal);
+        assert_eq!(terminal.kind(), WindowKind::TERMINAL);
         assert_eq!(
             WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap(),
             terminal
@@ -399,24 +496,21 @@ mod tests {
     }
 
     #[test]
-    fn caller_window_require_allows_only_the_listed_kinds() {
+    fn caller_window_require_command_follows_the_contract() {
         use super::CallerWindow;
         let caller =
             CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
                 .unwrap();
-        assert!(caller
-            .require(&[WindowKind::WorkspaceContent, WindowKind::Main])
-            .is_ok());
-        let error = caller
-            .require(&[WindowKind::Main, WindowKind::Terminal])
-            .unwrap_err();
+        assert!(caller.require_command("open_granted_file").is_ok());
+        assert!(caller.require_command("send_window_message").is_ok());
+        let error = caller.require_command("write_pty_session").unwrap_err();
         assert_eq!(
             serde_json::to_value(&error).unwrap()["code"],
             "window.not_allowed"
         );
         assert!(
-            caller.require(&[]).is_err(),
-            "an empty allow list admits nobody"
+            caller.require_command("no_such_command").is_err(),
+            "a command the contract does not grant is refused"
         );
         assert!(CallerWindow::from_label("settings").is_err());
     }
@@ -441,7 +535,7 @@ mod tests {
         let content =
             CallerWindow::from_label("workspace-content-11111111-2222-4333-8444-555555555555")
                 .unwrap();
-        let denied = content.require(&[WindowKind::Main]).unwrap_err();
+        let denied = content.require_command("write_pty_session").unwrap_err();
         let InvokeError(value) = InvokeError::from(denied);
         assert_eq!(value["code"], "window.not_allowed");
         assert!(value["message"]
@@ -452,7 +546,7 @@ mod tests {
     #[test]
     fn window_label_main_constructor_matches_the_contract() {
         // m6-102 WL-A: the constructor agrees with the contract and with parsing.
-        assert_eq!(WindowLabel::main().kind(), WindowKind::Main);
+        assert_eq!(WindowLabel::main().kind(), WindowKind::main());
         assert_eq!(WindowLabel::main().as_str(), super::main_window_label());
         assert!(WindowLabel::main().is_main());
         assert_eq!(
@@ -484,6 +578,6 @@ mod tests {
         }
         // Reverse: the canonical terminal label is accepted.
         let terminal = WindowLabel::parse("terminal-8e783338-f464-4b10-b15e-b534748c6241").unwrap();
-        assert_eq!(terminal.kind(), WindowKind::Terminal);
+        assert_eq!(terminal.kind(), WindowKind::TERMINAL);
     }
 }

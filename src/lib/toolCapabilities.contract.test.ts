@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import toolKeys from "../../contracts/tool-keys.json";
+import toolKeyFixtures from "../test/fixtures/tool-keys.json";
 import { ar } from "../i18n/locales/ar";
 import { de } from "../i18n/locales/de";
 import { en } from "../i18n/locales/en";
@@ -43,7 +44,8 @@ describe("tool capability contract", () => {
   it("declares exactly the contract tool keys in display order", () => {
     const keys = listProviderDescriptors().map((item) => item.toolKey);
 
-    expect(keys).toEqual(toolKeys.items);
+    // 测试构建的 Provider 清单 = 产品工具键 + 夹具工具键（夹具只存在于测试构建）。
+    expect(keys).toEqual([...toolKeys.items, ...toolKeyFixtures.items]);
     expect(keys).toEqual(TOOLS.map((tool) => tool.key));
     expect(getProviderDescriptor("hermes").toolKey).toBe("hermes");
     expect(() => getProviderDescriptor("future-cli" as never)).toThrow(

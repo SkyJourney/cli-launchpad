@@ -1,3 +1,4 @@
+import { ptyContentRef } from "../lib/workspaceContentKey";
 import {
   Ellipsis,
   FolderKanban,
@@ -52,7 +53,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const {
     slots,
     tree,
-    detachedInstanceIds,
+    isDetachedContent,
     hydrationStatus,
     getDirectoryRemovalBlockers,
   } = usePtyWorkspace();
@@ -130,7 +131,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           content.kind === "pty" ? [content.slotId] : [],
         ),
       ),
-      ...detachedInstanceIds,
+      ...slots
+        .filter((slot) => isDetachedContent(ptyContentRef(slot.instanceId)))
+        .map((slot) => slot.instanceId),
     ]);
     return new Set(
       slots
@@ -138,7 +141,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
         .map((slot) => slot.sessionId)
         .filter((sessionId): sessionId is string => Boolean(sessionId)),
     );
-  }, [detachedInstanceIds, hydrationStatus, slots, tree]);
+  }, [isDetachedContent, hydrationStatus, slots, tree]);
 
   const onProjects = view === "projects" || view === "detail";
   const visibleDirectories = useMemo(

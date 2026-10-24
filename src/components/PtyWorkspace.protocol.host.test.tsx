@@ -170,7 +170,7 @@ describe("duplicate and out-of-order handoff events", () => {
     expect(coordinator.get(content)?.phase).toBe("detaching");
     expect(settled).toBe("pending");
     // detaching 属于窗口拥有阶段，由 coordinator 派生。
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     // 反向断言：init 只在步骤 B 的 ready 之后才会发出。
     expect(eventsTo(windowLabel, "workspace-file-window-init")).toHaveLength(0);
 
@@ -263,7 +263,7 @@ describe("duplicate and out-of-order handoff events", () => {
         owner: { kind: "window", windowLabel },
       },
     );
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(host.ctx().tree).toBe(treeBefore);
     expect(savedLayouts(host).length).toBe(savesBefore);
     expect(() => assertWorkspaceInvariants(host!)).not.toThrow();
@@ -824,13 +824,13 @@ describe("untrusted window events", () => {
     expect(
       String((failed[0].payload as { message?: string }).message),
     ).toContain("pty.detachedSessionMissing");
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(eventsTo(windowLabel, "pty-return-complete")).toHaveLength(0);
     expect(eventsTo(windowLabel, "pty-return-failed")).toHaveLength(0);
     // Reverse: the owning terminal's request still returns the PTY.
     await emitToMain("pty-return-requested", request(windowLabel, "owner-1"));
     await flush();
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(host.errors).toEqual([]);
   });
 
@@ -900,7 +900,7 @@ describe("untrusted window events", () => {
     });
     await flush();
 
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(true);
     expect(repliesTo()).toHaveLength(0);
     expect(warn).toHaveBeenCalledWith(
       "workspace_content_event.source_mismatch",
@@ -909,7 +909,7 @@ describe("untrusted window events", () => {
     // Reverse: without a forged sender the request is processed.
     await emitToMain("pty-return-requested", request);
     await flush();
-    expect(host.ctx().detachedInstanceIds.has(slot.instanceId)).toBe(false);
+    expect(host.ctx().isDetachedContent({ kind: "pty", slotId: slot.instanceId })).toBe(false);
     expect(host.errors).toEqual([]);
     warn.mockRestore();
   });
@@ -1096,7 +1096,7 @@ describe("untrusted window events", () => {
     ).toContain("pty.returnFailed");
     // The file stays with its window: nothing was merged, revoked or attached.
     expect(coordinator.get(content)?.phase).toBe("detached");
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(occurrences(host, content)).toBe(0);
     expect(host.ctx().fileBuffers[doc.id].content).toBe(initBuffer.content);
     expect(invokes("revoke_content_window_file")).toHaveLength(0);

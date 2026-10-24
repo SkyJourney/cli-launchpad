@@ -7,6 +7,12 @@ import type {
   ProtocolListenerShell,
 } from "./contentWindowOrchestrator";
 import { rollbackHandoffOnce } from "./handoffRollback";
+import {
+  acceptWindowReady,
+  isReturningUnderToken,
+  reconcileFromSourcePane,
+} from "./pendingHandshake";
+import { acceptPendingAttach, failPendingHandoff } from "./pendingHandshake";
 
 import { RUST_EVENTS } from "../../lib/eventNames";
 import { windowKindOf } from "../../lib/windowKinds";
@@ -15,16 +21,12 @@ import { onContentHandoff } from "../../lib/workspaceContentWindowProtocol";
 import {
   findWorkspacePane,
   listWorkspacePanes,
-  hasWorkspaceContent,
 } from "../../lib/ptyWorkspaceLayout";
 
 import { matchesWorkspaceFileWindow } from "../../lib/workspaceFileWindow";
 
 import {
-  promotePendingWorkspaceContentWindow,
-  takePendingWorkspaceContentWindow,
 } from "../../lib/workspaceContentWindowRegistry";
-import { advancePendingWindowStage } from "../../lib/workspaceContentPendingStage";
 import {
   isWorkspaceFileBufferNewer,
   workspaceFileDocumentIdentityMatches,
@@ -39,7 +41,6 @@ import { type WorkspaceContentHandoffPayloadByKind } from "../../lib/workspaceCo
 import { resolveWorkspaceReturnPaneId } from "../../lib/workspaceContentCommand";
 import {
   attachWorkspaceContentHandoff,
-  prepareWorkspaceContentHandoff,
 } from "../../components/workspaceContentHandoffRuntime";
 import type { WorkspaceContentHandoffHookContext } from "../../components/workspaceContentAdapterRegistry";
 import { MAIN_WINDOW_LABEL } from "../../lib/windowKinds";
@@ -93,6 +94,16 @@ export function createFileProtocolHandlers(
   orchestrator: ContentWindowOrchestrator,
 ): FileProtocolHandlers {
   const { state, deps, ports } = orchestrator;
+  // 返回失败的统一应答：送达失败只能忽略（子窗口可能已经关闭）。
+  const reportReturnFailed = (
+    windowLabel: string,
+    documentId: string,
+    token: string,
+    message: string,
+  ) =>
+    ports
+      .emit(windowLabel, "file", "return-failed", { documentId, token, message })
+      .catch(() => undefined);
 
   const handleWorkspaceContentWindowLost = ({
     windowLabel,
@@ -137,12 +148,6 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            if (!advancePendingWindowStage(pending, "windowReady")) {
-              console.warn(
-                `Ignoring duplicate or late file:ready for ${pending.documentId} (stage ${pending.stage}).`,
-              );
-              return;
-            }
             const content = fileContentRef(pending.documentId);
             const driverContext: WorkspaceContentHandoffHookContext<"file"> = {
               content,
@@ -179,56 +184,23 @@ export function createFileProtocolHandlers(
                 rollback: async () => undefined,
               },
             };
-            let prepared: Awaited<
-              ReturnType<typeof prepareWorkspaceContentHandoff<"file">>
-            >;
-            try {
-              prepared = await prepareWorkspaceContentHandoff(driverContext);
-              pending.handoffContext = driverContext;
-              pending.handoffPayload = prepared.payload;
-            } catch (reason) {
-              void rollbackHandoffOnce(driverContext, undefined, reason).catch(
-                () => undefined,
-              );
-              deps
-                .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.transferId);
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(new Error(formatAppError(reason, deps.translate)));
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            if (!advancePendingWindowStage(pending, "initSent")) return;
-            try {
-              await ports.emit(pending.windowLabel, "file", "init", {
-                documentId: pending.documentId,
-                token: pending.windowToken,
-                windowLabel: pending.windowLabel,
-                fileDocument: prepared.payload.document,
-                fileBuffer: prepared.payload.buffer,
-              });
-            } catch (reason) {
-              // init 没有送达：立即回滚并结束等待，不再依赖 15 秒超时兜底。
-              void rollbackHandoffOnce(
-                driverContext,
-                prepared.payload,
-                reason,
-              ).catch(() => undefined);
-              deps
-                .getCoordinator()
-                .failHandoff(content, "detachFailed", pending.transferId);
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(new Error(formatAppError(reason, deps.translate)));
-              void pending.window.destroy().catch(() => undefined);
-            }
+            await acceptWindowReady(orchestrator, {
+              pending,
+              pendingMap: state.pending.file,
+              key: fileContentKey(pending.documentId),
+              ref: content,
+              lateReadyMessage: `Ignoring duplicate or late file:ready for ${pending.documentId} (stage ${pending.stage}).`,
+              driverContext,
+              emitInit: (payload) =>
+                ports.emit(pending.windowLabel, "file", "init", {
+                  documentId: pending.documentId,
+                  token: pending.windowToken,
+                  windowLabel: pending.windowLabel,
+                  fileDocument: payload.document,
+                  fileBuffer: payload.buffer,
+                }),
+              reasonText: (reason) => formatAppError(reason, deps.translate),
+            });
           }),
       },
       {
@@ -247,43 +219,14 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            // 只有 init 已发出（阶段为 initSent）的 pending 才接受 attached。
-            if (!advancePendingWindowStage(pending, "attachedAck")) {
-              return;
-            }
-            const outcome = deps.execute({
-              type: "completeDetach",
-              ref: fileContentRef(pending.documentId),
-              token: pending.transferId,
-              windowToken: pending.windowToken,
-            });
-            if (outcome.status === "ignored") {
-              if (pending.handoffContext) {
-                void rollbackHandoffOnce(
-                  pending.handoffContext,
-                  pending.handoffPayload,
-                  new Error(deps.translate("pty.detachedStateChanged")),
-                ).catch(() => undefined);
-              }
-              takePendingWorkspaceContentWindow(
-                state.pending.file,
-                fileContentKey(pending.documentId),
-                pending.windowLabel,
-              );
-              pending.reject(
-                new Error(deps.translate("pty.detachedStateChanged")),
-              );
-              void pending.window.destroy().catch(() => undefined);
-              return;
-            }
-            promotePendingWorkspaceContentWindow({
+            // 只有 init 已发出（阶段为 initSent）的 pending 才接受 attached；阶段校验在共享握手中完成。
+            acceptPendingAttach(orchestrator, pending, {
               pending: state.pending.file,
               detached: state.handles.file,
               key: fileContentKey(pending.documentId),
-              expectedWindowLabel: pending.windowLabel,
+              ref: fileContentRef(pending.documentId),
               toDetached: (record) => record.window,
             });
-            pending.resolve();
           }),
       },
       {
@@ -302,35 +245,14 @@ export function createFileProtocolHandlers(
             ) {
               return;
             }
-            if (pending.handoffContext) {
-              void rollbackHandoffOnce(
-                pending.handoffContext,
-                pending.handoffPayload,
-                new Error(
-                  event.payload.message ??
-                    deps.translate("pty.detachedStartFailed"),
-                ),
-              ).catch(() => undefined);
-            }
-            deps
-              .getCoordinator()
-              .failHandoff(
-                fileContentRef(pending.documentId),
-                "detachFailed",
-                pending.transferId,
-              );
-            takePendingWorkspaceContentWindow(
-              state.pending.file,
-              fileContentKey(pending.documentId),
-              pending.windowLabel,
-            );
-            pending.reject(
-              new Error(
+            failPendingHandoff(orchestrator, pending, {
+              pendingMap: state.pending.file,
+              key: fileContentKey(pending.documentId),
+              ref: fileContentRef(pending.documentId),
+              message:
                 event.payload.message ??
-                  deps.translate("pty.detachedStartFailed"),
-              ),
-            );
-            void pending.window.destroy().catch(() => undefined);
+                deps.translate("pty.detachedStartFailed"),
+            });
           }),
       },
       {
@@ -383,15 +305,9 @@ export function createFileProtocolHandlers(
                 incomingDocument,
               )
             ) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             // 返回完成之后到达的重复请求：静默忽略，不得走 reconcileDetached。
@@ -416,24 +332,15 @@ export function createFileProtocolHandlers(
               !managedWindow ||
               windowKindOf(event.payload.windowLabel) !== "workspaceContent"
             ) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             // 本次返回的 transferId 由主窗口生成；子窗口只携带窗口令牌。
             const returnTransferId = deps.getCoordinator().newTransferId();
             let currentOwnership = deps.getCoordinator().get(content);
-            if (
-              currentOwnership?.phase === "returning" &&
-              currentOwnership.windowToken === event.payload.token
-            ) {
+            if (isReturningUnderToken(currentOwnership, event.payload.token, "windowToken")) {
               return;
             }
             if (currentOwnership?.phase === "detached") {
@@ -443,47 +350,21 @@ export function createFileProtocolHandlers(
                   event.payload.windowLabel ||
                 currentOwnership.windowToken !== event.payload.token
               ) {
-                await ports
-                  .emit(event.payload.windowLabel, "file", "return-failed", {
-                    documentId: event.payload.documentId,
-                    token: event.payload.token,
-                    message: deps.translate("pty.returnFailed", {
+                await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                       error: deps.translate("pty.detachedStateChanged"),
-                    }),
-                  })
-                  .catch(() => undefined);
+                    }));
                 return;
               }
             } else if (
               !currentOwnership ||
               currentOwnership.phase === "attached"
             ) {
-              const sourcePane =
-                listWorkspacePanes(deps.store.getLive().tree).find((pane) =>
-                  hasWorkspaceContent(pane, content),
-                ) ??
-                findWorkspacePane(
-                  deps.store.getLive().tree,
-                  deps.store.getLive().focusedPaneId,
-                ) ??
-                listWorkspacePanes(deps.store.getLive().tree)[0];
-              if (sourcePane) {
-                deps.getCoordinator().reconcileDetached(
-                  content,
-                  {
-                    kind: "pane",
-                    windowLabel: MAIN_WINDOW_LABEL,
-                    paneId: sourcePane.id,
-                  },
-                  {
-                    kind: "window",
-                    windowLabel: event.payload.windowLabel,
-                  },
-                  deps.getCoordinator().newTransferId(),
-                  event.payload.token,
-                );
-                currentOwnership = deps.getCoordinator().get(content);
-              }
+              reconcileFromSourcePane(orchestrator, {
+                content,
+                windowLabel: event.payload.windowLabel,
+                windowToken: () => event.payload.token,
+              });
+              currentOwnership = deps.getCoordinator().get(content);
             }
             if (
               currentOwnership?.phase !== "detached" ||
@@ -531,15 +412,9 @@ export function createFileProtocolHandlers(
               },
             );
             if (!returnTargetPaneId) {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.workspaceRestoring"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             const returning = deps
@@ -551,15 +426,9 @@ export function createFileProtocolHandlers(
                 returnTargetPaneId,
               );
             if (returning?.outcome !== "changed") {
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: deps.translate("pty.detachedStateChanged"),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
               return;
             }
             let fileReturnDriverContext: WorkspaceContentHandoffHookContext<"file"> | null =
@@ -686,15 +555,9 @@ export function createFileProtocolHandlers(
                   "returnFailed",
                   returnTransferId,
                 );
-              await ports
-                .emit(event.payload.windowLabel, "file", "return-failed", {
-                  documentId: event.payload.documentId,
-                  token: event.payload.token,
-                  message: deps.translate("pty.returnFailed", {
+              await reportReturnFailed(event.payload.windowLabel, event.payload.documentId, event.payload.token, deps.translate("pty.returnFailed", {
                     error: formatAppError(reason, deps.translate),
-                  }),
-                })
-                .catch(() => undefined);
+                  }));
             }
           }),
       },

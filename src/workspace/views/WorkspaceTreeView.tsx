@@ -1,3 +1,4 @@
+import type { ManagedContentRef } from "../../lib/workspaceContentKey";
 import { Allotment, type AllotmentHandle } from "allotment";
 import { useEffect, useRef } from "react";
 import {
@@ -25,8 +26,8 @@ export interface WorkspaceTreeViewProps {
   slots: PtyWorkspaceSlot[];
   fileDocuments: WorkspaceFileDocument[];
   fileBuffers: Record<string, WorkspaceFileBuffer>;
-  handoffFileIds: Set<string>;
-  detachedFileIds: Set<string>;
+  isHandoffContent: (content: WorkspacePaneContentRef) => boolean;
+  isDetachedContent: (content: WorkspacePaneContentRef) => boolean;
   closingContentKeys: Set<string>;
   focusedPaneId: string;
   portalTargets: Record<string, HTMLDivElement>;
@@ -36,47 +37,28 @@ export interface WorkspaceTreeViewProps {
   ptySessionsById: Record<string, PtySession>;
   workspacePanes: WorkspacePane[];
   onFocusPane: (paneId: string) => void;
-  onActivateSession: (paneId: string, instanceId: string) => void;
-  onActivateFile: (paneId: string, documentId: string) => void;
-  onActivateUnsupportedContent: (
-    paneId: string,
-    content: Extract<WorkspacePaneContentRef, { kind: "unknown" }>,
-  ) => void;
+  onActivateContent: (paneId: string, content: WorkspacePaneContentRef) => void;
   onCloseContents: (
     contents: WorkspacePaneContentRef[],
     origin: "tab" | "menu" | "stack" | "window",
     onApproved?: () => void,
   ) => Promise<void>;
   onDetachFile: (documentId: string) => void;
-  onMoveFile: (
-    sourcePaneId: string,
-    destinationPaneId: string,
-    documentId: string,
-  ) => void;
   onEditFile: (documentId: string, content: string) => void;
   onSaveFile: (documentId: string) => Promise<void>;
   onSplitPane: (paneId: string, direction: SplitDirection) => void;
-  onSplitAndMoveSession: (
+  onSplitAndMoveContent: (
     paneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
     direction: SplitDirection,
   ) => void;
-  onSplitAndMoveFile: (
-    paneId: string,
-    documentId: string,
-    direction: SplitDirection,
-  ) => void;
-  onMoveSession: (
+  onMoveContent: (
     sourcePaneId: string,
     destinationPaneId: string,
-    instanceId: string,
+    content: WorkspacePaneContentRef,
   ) => void;
   hasDetachedSessions: boolean;
-  isManagedDetachedDrag: (instanceId: string, windowLabel: string) => boolean;
-  isManagedDetachedFileDrag: (
-    documentId: string,
-    windowLabel: string,
-  ) => boolean;
+  isManagedDetachedContent: (content: ManagedContentRef, windowLabel: string) => boolean;
   onDetachSession: (instanceId: string) => void;
   onCloseEmptyPane: (paneId: string) => void;
   onSplitResize: (

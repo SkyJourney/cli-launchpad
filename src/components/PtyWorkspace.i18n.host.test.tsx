@@ -148,7 +148,7 @@ describe("workspace across UI language changes", () => {
     await flush(10);
     expect(i18n.resolvedLanguage).toBe("zh");
     expect(invokes("get_workspace_layout")).toHaveLength(1);
-    expect(host.ctx().detachedFileIds.has(doc.id)).toBe(true);
+    expect(host.ctx().isDetachedContent({ kind: "file", documentId: doc.id })).toBe(true);
     expect(
       listWorkspacePanes(host.ctx().tree).some((pane) =>
         pane.contents.some(
