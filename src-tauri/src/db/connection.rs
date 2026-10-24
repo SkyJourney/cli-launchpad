@@ -171,17 +171,12 @@ mod tests {
             .expect("query seeded tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read seeded tool keys");
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
-                .expect("parse ToolKey contract");
-        let mut contract_keys: Vec<String> = manifest["items"]
-            .as_array()
-            .expect("tool keys must be an items array")
+        let mut registered: Vec<String> = crate::models::tool::ToolKey::registered()
             .iter()
-            .map(|key| key.as_str().expect("tool key").to_string())
+            .map(|key| key.as_str().to_string())
             .collect();
-        contract_keys.sort();
-        assert_eq!(seeded_keys, contract_keys);
+        registered.sort();
+        assert_eq!(seeded_keys, registered);
     }
 
     #[test]
@@ -319,7 +314,7 @@ mod tests {
         let count: i64 = connection
             .query_row("select count(*) from tools", [], |row| row.get(0))
             .expect("count tools");
-        assert_eq!(count, ToolKey::ALL.len() as i64);
+        assert_eq!(count, ToolKey::registered().len() as i64);
     }
 
     /// A representative 0.2.4 (schema 8) database: projects, an alias, history and a task.
@@ -491,7 +486,7 @@ mod tests {
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            ToolKey::ALL.len() as i64
+            ToolKey::registered().len() as i64
         );
         assert_eq!(
             connection
@@ -857,7 +852,7 @@ mod tests {
             connection
                 .query_row("select count(*) from tools", [], |row| row.get::<_, i64>(0))
                 .expect("count tool identities"),
-            ToolKey::ALL.len() as i64
+            ToolKey::registered().len() as i64
         );
         assert_eq!(
             crate::db::session_alias_repo::list_for_tool(
@@ -984,17 +979,12 @@ mod tests {
             .expect("query tools")
             .collect::<rusqlite::Result<_>>()
             .expect("read tool keys");
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../../contracts/tool-keys.json"))
-                .expect("parse ToolKey contract");
-        let mut contract: Vec<String> = manifest["items"]
-            .as_array()
-            .expect("tool keys must be an items array")
+        let mut registered: Vec<String> = crate::models::tool::ToolKey::registered()
             .iter()
-            .map(|key| key.as_str().expect("tool key").to_string())
+            .map(|key| key.as_str().to_string())
             .collect();
-        contract.sort();
-        assert_eq!(seeded, contract);
+        registered.sort();
+        assert_eq!(seeded, registered);
 
         // Reverse: an unknown key is refused by the foreign key, a known key is accepted.
         assert!(connection

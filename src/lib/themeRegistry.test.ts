@@ -116,7 +116,7 @@ describe("theme registry", () => {
       }
     }
     // Reverse: the loop really ran.
-    expect(checked).toBe(20);
+    expect(checked).toBe(listThemes().length * Object.keys(LOCALES).length);
   });
 });
 

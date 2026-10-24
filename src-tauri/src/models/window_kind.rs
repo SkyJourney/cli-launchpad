@@ -326,7 +326,12 @@ mod tests {
             serde_json::from_str(include_str!("../../../contracts/window-kinds.json"))
                 .expect("parse window kinds");
         let items = manifest["items"].as_array().expect("items");
-        assert_eq!(items.len(), 3);
+        // 类别数量由契约决定；这里只校验契约中恰好一个主窗口。
+        assert!(!items.is_empty());
+        assert_eq!(
+            items.iter().filter(|item| item["primary"] == true).count(),
+            1
+        );
         for item in items {
             let kind: WindowKind =
                 serde_json::from_value(item["id"].clone()).expect("window kind id");

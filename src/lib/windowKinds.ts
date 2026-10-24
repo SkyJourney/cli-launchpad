@@ -1,15 +1,12 @@
+import { WINDOW_KIND_IDS, type WindowKind } from "../generated/windowKinds";
 import contentKindManifest from "../../contracts/content-kinds.json";
 import manifest from "../../contracts/window-kinds.json";
 
-export type WindowKind = "main" | "terminal" | "workspaceContent";
+export type { WindowKind };
 /** The primary window label type; the single definition of the main window label type. */
 export type MainWindowLabel = "main";
-/** Every registered window kind; windowKinds.test.ts compares it with the contract. */
-export const WINDOW_KINDS: readonly WindowKind[] = [
-  "main",
-  "terminal",
-  "workspaceContent",
-];
+/** Every registered window kind, generated from contracts/window-kinds.json. */
+export const WINDOW_KINDS: readonly WindowKind[] = WINDOW_KIND_IDS;
 export type DetachedWindowKind = Exclude<WindowKind, "main">;
 
 interface WindowKindDefinition {

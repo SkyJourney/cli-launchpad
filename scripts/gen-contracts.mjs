@@ -186,6 +186,17 @@ outputs.push(
 
 // 窗口外壳映射：契约中每个非主窗口路由对应 src/components/windowShells/<route>.tsx 的默认导出。
 const windowKindItems = JSON.parse(fs.readFileSync("contracts/window-kinds.json", "utf8")).items;
+// 窗口类别的 id 列表与类型，来自契约（唯一来源）。
+outputs.push({
+  target: "src/generated/windowKinds.ts",
+  count: windowKindItems.length,
+  content: [
+    "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/window-kinds.json",
+    `export const WINDOW_KIND_IDS = ${JSON.stringify(windowKindItems.map((item) => item.id), null, 2)} as const;`,
+    "export type WindowKind = (typeof WINDOW_KIND_IDS)[number];",
+    "",
+  ].join("\n"),
+});
 const shellRoutes = windowKindItems
   .filter((item) => !item.primary && item.route)
   .map((item) => item.route);

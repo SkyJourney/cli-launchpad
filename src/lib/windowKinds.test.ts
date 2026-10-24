@@ -39,11 +39,9 @@ describe("window kind contract", () => {
   });
 
   it("keeps the shared label fixtures well formed", () => {
-    expect(Object.keys(fixtures.accept).sort()).toEqual([
-      "main",
-      "terminal",
-      "workspaceContent",
-    ]);
+    for (const kind of Object.keys(fixtures.accept)) {
+      expect(WINDOW_KINDS, kind).toContain(kind);
+    }
     for (const labels of Object.values(fixtures.accept)) {
       expect(labels.length).toBeGreaterThan(0);
     }

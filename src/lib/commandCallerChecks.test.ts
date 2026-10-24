@@ -54,7 +54,10 @@ describe("command caller checks", () => {
       expect(childCommands.has(entry.name), entry.name).toBe(false);
     }
     // Reverse: terminal 14 + workspaceContent 5 commands were all checked.
-    expect(checked).toBe(19);
+    const childPairs = windowKinds.items
+      .filter((kind) => kind.id !== "main")
+      .reduce((total, kind) => total + (kind.appCommands as string[]).length, 0);
+    expect(checked).toBe(childPairs);
   });
 
   it("declares the documented main-window commands as require", () => {

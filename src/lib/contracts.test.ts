@@ -2,7 +2,9 @@ import appCommands from "../../contracts/app-commands.json";
 import apiVersions from "../../contracts/api-versions.json";
 import contentKinds from "../../contracts/content-kinds.json";
 import toolKeys from "../../contracts/tool-keys.json";
+import toolFixtureManifest from "../test/fixtures/tool-keys.json";
 import windowKinds from "../../contracts/window-kinds.json";
+import { WINDOW_KIND_IDS } from "../generated/windowKinds";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerBuiltinContributions } from "../bootstrap/registerBuiltinContributions";
 import {
@@ -45,9 +47,11 @@ describe("shared contracts", () => {
   });
 
   it("matches the TypeScript CLI registry and union", () => {
-    expect(TOOLS.map((tool) => tool.key)).toEqual(toolKeys.items);
+    // 测试构建的工具键 = 产品契约 + 测试夹具清单（夹具只在测试构建中存在）。
+    const testBuildToolKeys = [...toolKeys.items, ...toolFixtureManifest.items];
+    expect(TOOLS.map((tool) => tool.key)).toEqual(testBuildToolKeys);
     // ToolKey 由生成的 REGISTERED_TOOL_KEYS 派生，这里只校验生成结果与契约一致。
-    expect([...REGISTERED_TOOL_KEYS]).toEqual(toolKeys.items);
+    expect([...REGISTERED_TOOL_KEYS]).toEqual(testBuildToolKeys);
   });
 
   it("matches the TypeScript workspace content kinds", () => {
@@ -59,11 +63,8 @@ describe("shared contracts", () => {
 
   it("declares each current window kind and registered app command", () => {
     expect(windowKinds.formatVersion).toBe(1);
-    expect(windowKinds.items.map((kind) => kind.id)).toEqual([
-      "main",
-      "terminal",
-      "workspaceContent",
-    ]);
+    expect(WINDOW_KIND_IDS).toEqual(windowKinds.items.map((kind) => kind.id));
+    expect(windowKinds.items.filter((kind) => kind.primary)).toHaveLength(1);
     const commandNames = appCommands.items.map(
       (item: { name: string }) => item.name,
     );

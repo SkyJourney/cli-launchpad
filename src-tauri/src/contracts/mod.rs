@@ -492,7 +492,9 @@ fn window_kind_contract_matches_rust_registry() {
             "main" => WindowKind::main(),
             "terminal" => WindowKind::TERMINAL,
             "workspaceContent" => WindowKind::WORKSPACE_CONTENT,
-            _ => panic!("unregistered Rust window kind: {id}"),
+            // 契约新增的类别没有命名常量：只要求契约能解析出该类别。
+            _ => WindowKind::from_id(id)
+                .unwrap_or_else(|| panic!("unregistered Rust window kind: {id}")),
         };
         assert_eq!(window_kind_of(&label), Some(expected), "{id}");
     }
@@ -3806,15 +3808,6 @@ fn first_statement(body: &str) -> String {
         .join(" ")
 }
 
-fn kind_id(variant: &str) -> &'static str {
-    match variant {
-        "WindowKind::main()" => "main",
-        "WindowKind::TERMINAL" => "terminal",
-        "WindowKind::WORKSPACE_CONTENT" => "workspaceContent",
-        other => panic!("unknown window kind variant {other:?}"),
-    }
-}
-
 /// The window kinds the ACL (`window-kinds.json`) grants a command to.
 fn acl_kinds(command: &str, manifest: &Value) -> BTreeSet<String> {
     let app_commands: Vec<String> = app_command_names();
@@ -3854,15 +3847,13 @@ fn command_caller_check_contract_covers_every_registered_command() {
         sorted_strings(registered),
         "contracts/app-commands.json 必须恰好列出源码里的全部命令"
     );
-    let allowed = ["main", "terminal", "workspaceContent"];
+    // 窗口类别从契约派生，新增类别（如 drillwin）无需改此清单。
+    let allowed = window_kind_ids();
     for check in &checks {
         if check.require {
             assert!(!check.kinds.is_empty(), "{}: kinds", check.command);
             assert!(
-                check
-                    .kinds
-                    .iter()
-                    .all(|kind| allowed.contains(&kind.as_str())),
+                check.kinds.iter().all(|kind| allowed.contains(kind)),
                 "{}: unknown kind",
                 check.command
             );
@@ -3921,6 +3912,18 @@ fn acl_only_commands_are_main_only_and_take_no_window_parameter() {
         }
     }
     assert!(violations.is_empty(), "{violations:#?}");
+}
+
+/// Every window kind id declared in `contracts/window-kinds.json`.
+fn window_kind_ids() -> Vec<String> {
+    let manifest: serde_json::Value =
+        serde_json::from_str(WINDOW_KINDS_JSON).expect("parse window kinds");
+    manifest["items"]
+        .as_array()
+        .expect("window kind items")
+        .iter()
+        .map(|kind| kind["id"].as_str().expect("window kind id").to_string())
+        .collect()
 }
 
 /// The window kinds the contract grants `command` to, read from `contracts/window-kinds.json`.

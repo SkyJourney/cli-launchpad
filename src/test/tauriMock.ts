@@ -15,9 +15,6 @@
 //    the static contract tests).
 import { afterEach, vi } from "vitest";
 import windowKindsManifest from "../../contracts/window-kinds.json";
-import defaultCapability from "../../src-tauri/capabilities/default.json";
-import terminalCapability from "../../src-tauri/capabilities/terminal-window.json";
-import workspaceContentCapability from "../../src-tauri/capabilities/workspace-content-window.json";
 import {
   inboxHandlerCountForTests,
   inboxRegistrationCountForTests,
@@ -109,14 +106,17 @@ export const CORE_DEFAULT_IMPLIES = [
   "core:webview:allow-get-all-webviews",
 ];
 
-const CAPABILITY_BY_KIND: Record<
-  WindowKind,
-  { permissions: ReadonlyArray<string | { identifier: string }> }
-> = {
-  main: defaultCapability,
-  terminal: terminalCapability,
-  workspaceContent: workspaceContentCapability,
-};
+// 能力文件按契约 capability 字段取用，新增窗口类别无需改此表。
+const capabilityFiles = import.meta.glob("../../src-tauri/capabilities/*.json", {
+  eager: true,
+  import: "default",
+}) as Record<string, { permissions: ReadonlyArray<string | { identifier: string }> }>;
+const CAPABILITY_BY_KIND = Object.fromEntries(
+  windowKindsManifest.items.map((kind) => [
+    kind.id,
+    capabilityFiles[`../../src-tauri/capabilities/${kind.capability}.json`],
+  ]),
+) as Record<WindowKind, { permissions: ReadonlyArray<string | { identifier: string }> }>;
 
 const API_PERMISSIONS = {
   setTheme: "core:window:allow-set-theme",
