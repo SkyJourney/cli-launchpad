@@ -4278,6 +4278,26 @@ fn tool_capabilities_contract_matches_adapter_descriptors() {
     assert_eq!(keys, tool_keys, "契约顺序必须等于 tool-keys.json");
 }
 
+#[test]
+fn tool_capability_fixtures_cover_exactly_the_registered_fixture_keys() {
+    const FIXTURE_CAPABILITIES_JSON: &str =
+        include_str!("../../../src/test/fixtures/tool-capabilities.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(FIXTURE_CAPABILITIES_JSON).expect("parse capability fixtures");
+    let fixture_keys: Vec<String> = manifest["items"]
+        .as_array()
+        .expect("capability fixture items")
+        .iter()
+        .map(|item| item["toolKey"].as_str().expect("toolKey").to_string())
+        .collect();
+    let registered = crate::models::tool::ToolKey::registered();
+    let registered_fixtures: Vec<String> = registered[crate::models::tool::ToolKey::ALL.len()..]
+        .iter()
+        .map(|key| key.as_str().to_string())
+        .collect();
+    assert_eq!(fixture_keys, registered_fixtures);
+}
+
 // ---- m6-070: contract manifest envelope, window kind roles, window chrome (contracts/*.json).
 
 #[test]

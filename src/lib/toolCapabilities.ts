@@ -1,4 +1,4 @@
-import contract from "../../contracts/tool-capabilities.json";
+import { TOOL_CAPABILITY_ITEMS } from "../generated/toolCapabilities";
 import type { ToolKey } from "./tauri";
 
 export type UpdateSemantics = "version" | "branch";
@@ -22,7 +22,7 @@ export interface ProviderDescriptor {
 }
 
 // JSON 模块会把字面量推断为 string，这里的形状由 Rust 测试 C-1 与 TS 测试 TC-1 至 TC-3 守护。
-const descriptors = contract.items as unknown as ProviderDescriptor[];
+const descriptors = TOOL_CAPABILITY_ITEMS as unknown as ProviderDescriptor[];
 
 export function listProviderDescriptors(): readonly ProviderDescriptor[] {
   return descriptors;

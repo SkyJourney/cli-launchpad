@@ -212,6 +212,36 @@ outputs.push({
   ].join("\n"),
 });
 
+// 工具能力清单：产品清单来自 contracts/tool-capabilities.json；测试构建变体加入夹具条目。
+const toolCapabilityItems = JSON.parse(fs.readFileSync("contracts/tool-capabilities.json", "utf8")).items;
+const toolCapabilityFixtures = JSON.parse(
+  fs.readFileSync("src/test/fixtures/tool-capabilities.json", "utf8"),
+).items;
+if (toolCapabilityFixtures.some((item) => !toolKeyFixtures.includes(item.toolKey))) {
+  throw new Error("能力夹具的工具键不在夹具清单中");
+}
+if (toolCapabilityFixtures.some((item) => toolKeyIds.includes(item.toolKey))) {
+  throw new Error("能力夹具与产品工具键重复");
+}
+const capabilityModule = (items) =>
+  [
+    "// 由 scripts/gen-contracts.mjs 生成，请勿手改。来源：contracts/tool-capabilities.json（测试变体另含 src/test/fixtures/tool-capabilities.json）",
+    `export const TOOL_CAPABILITY_ITEMS = ${JSON.stringify(items, null, 2)} as const;`,
+    "",
+  ].join("\n");
+outputs.push(
+  {
+    target: "src/generated/toolCapabilities.ts",
+    count: toolCapabilityItems.length,
+    content: capabilityModule(toolCapabilityItems),
+  },
+  {
+    target: "src/generated/toolCapabilities.testbuild.ts",
+    count: toolCapabilityItems.length + toolCapabilityFixtures.length,
+    content: capabilityModule([...toolCapabilityItems, ...toolCapabilityFixtures]),
+  },
+);
+
 let failed = false;
 for (const { target, content, count } of outputs) {
   if (CHECK) {

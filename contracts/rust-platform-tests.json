@@ -15,6 +15,7 @@
   ],
   "required": {
     "all": [
+      "contracts::tool_capability_fixtures_cover_exactly_the_registered_fixture_keys",
       "models::window_kind::tests::contract_grants_app_commands_per_window_kind",
       "models::tool::tests::registered_keys_are_the_product_keys_plus_the_fixture_manifest",
       "services::backup_service::tests::only_the_snapshot_runs_under_the_connection_lock",

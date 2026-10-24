@@ -16,6 +16,10 @@ export default defineConfig({
         find: /^(.*\/generated\/)cliAdapters$/,
         replacement: "$1cliAdapters.testbuild",
       },
+      {
+        find: /^(.*\/generated\/)toolCapabilities$/,
+        replacement: "$1toolCapabilities.testbuild",
+      },
     ],
   },
   build: {
