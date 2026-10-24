@@ -98,7 +98,7 @@
       "contracts::window_kind_contract_matches_rust_registry",
       "db::workspace_layout_repo::tests::save_current_distinguishes_stale_from_incompatible_schema",
       "models::install::tests::managed_update_status_reads_legacy_snake_case_cache",
-      "models::tool::tests::all_lists_every_variant_exactly_once",
+      "models::tool::tests::all_matches_the_contract_in_order",
       "models::window_kind::tests::window_label_fixture_vectors_match_rust_registry",
       "models::workspace_layout::tests::legacy_payload_fixtures_migrate_to_current_version",
       "models::workspace_layout::tests::legacy_payload_json_rejects_unsupported_versions",
